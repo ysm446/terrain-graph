@@ -1,7 +1,7 @@
 # node-graph — ノードグラフの設計
 
 作成日時: 2026-09-02 12:50
-更新日時: 2026-09-02 18:41
+更新日時: 2026-09-02 19:40
 
 `src/graph/` とグラフパネル（`src/app/ApplicationGraphPanel.cpp`）の設計。
 terrain-editor から移植したのは**仕組み**であって、ノードの中身ではない
@@ -27,13 +27,17 @@ terrain-editor から移植したのは**仕組み**であって、ノードの�
 
 ## ノードの種類（現状）
 
+**ノードの名前とピンのラベルは英語で書く。** ノードグラフを持つツール
+（Substance / Houdini / Gaea など）はどれも英語表記で、ノードの呼び名も
+その語彙で流通しているため。説明文（追加メニューの副題、ヒント、コメント）は日本語。
+
 | 種類 | 保存名 | ピン | 設定 |
 | --- | --- | --- | --- |
-| ハイトマップ | `heightmap` | 結果(出力) のみ | `MaterialLayer`（kind=Shape） |
-| サーフェス | `surface` | 下地(入力) / 結果(出力) | `MaterialLayer`（kind=Surface） |
-| シェイプ | `shape` | 同上 | `MaterialLayer`（kind=Shape） |
-| 水面 | `liquid` | 同上 | `MaterialLayer`（kind=Liquid) |
-| 出力 | `output` | マテリアル(入力) | なし |
+| Heightmap | `heightmap` | Result(出力) のみ | `MaterialLayer`（kind=Shape）+ `TerrainScale` |
+| Surface | `surface` | Base(入力) / Result(出力) | `MaterialLayer`（kind=Surface） |
+| Shape | `shape` | 同上 | `MaterialLayer`（kind=Shape） |
+| Liquid | `liquid` | 同上 | `MaterialLayer`（kind=Liquid) |
+| Output | `output` | Material(入力) | なし |
 
 サーフェス / シェイプ / 水面は**旧レイヤーそのもの**をノード化したもの。
 設定構造体は `compositor::MaterialLayer` をそのまま持ち、プロパティ UI は
@@ -48,11 +52,16 @@ terrain-editor の Import Heightmap にあたる。**入力を持たないソー
 チェーンの先頭に置く前提なので、下地（0.5）への加算がそのまま地形になる。
 
 - 入力が無いので**マスクの節は出さない**（下地と競合させる相手がいない）。
-- **実寸（m）は持たない。** 高さは 0〜1 で、何メートルかは
-  プレビュー設定の「変位量」が決める（[rendering.md](rendering.md) の
-  「メートルなのはジオメトリだけ」）。terrain-editor は Import Heightmap の
-  `scaleMeters` と PreviewSettings の `terrainSizeMeters` を両方持っていたが、
-  「同じ意味の値を 2 か所に置かない」に反するので真似していない。
+- **実寸（m）はこのノードが持つ**（`TerrainScale`: サイズと標高差）。
+  「この地形は一辺 2048m、標高差 604m」を**読み込むときに一度だけ**決め、
+  以後は触らない。プレビュー設定ではなくノードに置くのは、実寸が見え方の
+  設定ではなく**読み込んだデータそのものの性質**だから。
+- プレビューの平面のサイズと変位量は、**チェーンの根にあるソースの実寸に従う**
+  （`FindChainScale()`。プレビュー設定側の行は表示だけにする）。
+  ソースが無いグラフ（素材のプレビュー）ではプレビュー設定の値をそのまま使う。
+- ハイト自体は 0〜1 の正規化値のまま。`heightMeters` は**その全幅が何 m か**を
+  表すだけで、グラフのデータにメートルは入らない
+  （[rendering.md](rendering.md) の「メートルなのはジオメトリだけ」）。
 
 ## 評価 — レイヤー列へのコンパイル
 

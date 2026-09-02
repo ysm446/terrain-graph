@@ -43,8 +43,12 @@ void Application::DrawMaterialPanel() {
 
             // 平面の大きさ（m）。**ジオメトリだけがメートル**で、
             // テクスチャは無次元のまま（1 UV が何 m かは決めない）。
-            // 素材の 2m 角から地形の 2km 角まで、ここ 1 つで切り替える。
-            if (m_renderer.Shape() == renderer::PreviewShape::Plane) {
+            //
+            // **グラフに Heightmap ノードがあるときは、その実寸に従う。**
+            // 地形の大きさは見え方の設定ではなく読み込んだデータの性質なので、
+            // 決める場所はノード側の 1 か所だけにする。
+            const bool scaleFromGraph = (m_graph.FindChainScale(m_selectedGraphNode) != nullptr);
+            if (m_renderer.Shape() == renderer::PreviewShape::Plane && !scaleFromGraph) {
                 ui::PropertyFloat("平面のサイズ", &m_renderer.PlaneSize(), 0.5f, 8192.0f,
                                   defaults.planeSize,
                                   "平面の一辺の長さ（m）。素材は 2m 前後、"
@@ -61,13 +65,21 @@ void Application::DrawMaterialPanel() {
                 // 地形（2km 角）なら 1000m まで指定できる。
                 // ハイト 0〜1 の全幅がこの高さに対応するので、
                 // 「この地形の標高差は何 m か」をそのまま入れる。
-                const float displacementMax =
-                    std::max(1.0f, m_renderer.PlaneSize() * 0.5f);
-                ui::PropertyFloat("変位量", &m_renderer.DisplacementScale(), 0.0f,
-                                  displacementMax, defaults.displacementScale,
-                                  "ハイトを形状に反映する量（ディスプレイスメント）。"
-                                  "ハイト 0〜1 の全幅がこの高さ（m）になる。0 なら形は変わらない",
-                                  "%.2f m", 0, 0.01f);
+                if (scaleFromGraph) {
+                    // ノードが実寸を持っているときは表示だけにする。
+                    // 同じ値を 2 か所から編集できると、どちらが効くのか分からなくなる。
+                    ui::PropertyValue("平面のサイズ", "%.1f m", m_renderer.PlaneSize());
+                    ui::PropertyValue("変位量", "%.1f m", m_renderer.DisplacementScale());
+                } else {
+                    const float displacementMax =
+                        std::max(1.0f, m_renderer.PlaneSize() * 0.5f);
+                    ui::PropertyFloat(
+                        "変位量", &m_renderer.DisplacementScale(), 0.0f, displacementMax,
+                        defaults.displacementScale,
+                        "ハイトを形状に反映する量（ディスプレイスメント）。"
+                        "ハイト 0〜1 の全幅がこの高さ（m）になる。0 なら形は変わらない",
+                        "%.2f m", 0, 0.01f);
+                }
 
                 ui::PropertyBool("テセレーション", &m_renderer.TessellationEnabled(),
                                  defaults.tessellationEnabled,

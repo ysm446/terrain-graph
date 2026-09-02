@@ -154,7 +154,7 @@ struct LayerMask {
 //   Shape:  heightBase は全体の持ち上げ（0.5 で変化なし）。
 //   Liquid: heightBase が水位（絶対値）、blendRange が汀線のフェザー幅。
 struct MaterialLayer {
-    std::string name = "レイヤー";
+    std::string name = "Layer";
     bool enabled = true;
     LayerKind kind = LayerKind::Surface;
 

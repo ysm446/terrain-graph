@@ -55,7 +55,7 @@ inline const compositor::MaterialLayer kDefaultLayer;
 inline const compositor::MaterialLayer kDefaultShapeLayer = [] {
     compositor::MaterialLayer layer;
     layer.kind = compositor::LayerKind::Shape;
-    layer.name = "シェイプ";
+    layer.name = "Shape";
     layer.heightSource = compositor::ValueSource::Noise;
     layer.heightBase = 0.5f;  // 0.5 で持ち上げなし
     layer.heightGain = 0.6f;
@@ -69,7 +69,7 @@ inline const compositor::MaterialLayer kDefaultShapeLayer = [] {
 inline const compositor::MaterialLayer kDefaultLiquidLayer = [] {
     compositor::MaterialLayer layer;
     layer.kind = compositor::LayerKind::Liquid;
-    layer.name = "水面";
+    layer.name = "Liquid";
     layer.baseColor = {0.01f, 0.03f, 0.035f};
     layer.roughness = 0.07f;
     layer.metallic = 0.0f;
@@ -86,7 +86,7 @@ inline const compositor::MaterialLayer kDefaultLiquidLayer = [] {
 inline const compositor::MaterialLayer kDefaultHeightmapLayer = [] {
     compositor::MaterialLayer layer;
     layer.kind = compositor::LayerKind::Shape;
-    layer.name = "ハイトマップ";
+    layer.name = "Heightmap";
     layer.heightSource = compositor::ValueSource::Texture;
     layer.heightBase = 0.5f;  // 0.5 で持ち上げなし
     layer.heightGain = 1.0f;

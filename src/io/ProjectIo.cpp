@@ -464,6 +464,13 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
         item["outputs"] = std::move(outputs);
         if (const auto* settings = std::get_if<graph::LayerNodeSettings>(&node.settings)) {
             item["layer"] = WriteLayer(settings->layer, writeTexture, writeMaterial, writePaint);
+            // 地形の実寸（m）。ソース（Heightmap）だけが持つ。
+            if (graph::IsSourceNodeKind(node.kind)) {
+                json scale;
+                scale["size"] = settings->scale.sizeMeters;
+                scale["height"] = settings->scale.heightMeters;
+                item["scale"] = std::move(scale);
+            }
         }
         nodes.push_back(std::move(item));
     }
@@ -485,7 +492,8 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
 // 呼び出し側が旧 layers からの移行に切り替える。
 bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReader& readTexture,
                const std::function<compositor::MaterialAssetId(const json&)>& readMaterial,
-               const std::function<compositor::PaintMaskId(const json&)>& readPaint) {
+               const std::function<compositor::PaintMaskId(const json&)>& readPaint,
+               const graph::TerrainScale& scaleFallback) {
     std::vector<graph::Node> nodes;
     std::vector<graph::Link> links;
     graph::GraphId maxId = 0;
@@ -552,6 +560,17 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                 if (const json* layer = FindMember(item, "layer");
                     layer != nullptr && layer->is_object()) {
                     settings.layer = ReadLayer(*layer, readTexture, readMaterial, readPaint);
+                }
+                // scale を持たないのは、実寸をノードへ移す前に保存されたファイル。
+                // **プレビュー設定の値を引き継ぐ**（既定値を入れると地形の
+                // 大きさが勝手に変わってしまう）。
+                settings.scale = scaleFallback;
+                if (const json* scale = FindMember(item, "scale");
+                    scale != nullptr && scale->is_object()) {
+                    settings.scale.sizeMeters =
+                        ReadFloat(*scale, "size", scaleFallback.sizeMeters);
+                    settings.scale.heightMeters =
+                        ReadFloat(*scale, "height", scaleFallback.heightMeters);
                 }
                 // 種類とレイヤー種別は常に一致させる（ファイルの食い違いは種類を信じる）。
                 settings.layer.kind = graph::LayerKindFor(created.kind);
@@ -1294,6 +1313,18 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
         }
     }
 
+    // 実寸（scale）を持たないソースが引き継ぐ値。実寸をノードへ移す前のファイルは、
+    // プレビュー設定に平面のサイズと変位量を持っている。**そちらを正とする**
+    // （既定値を入れると、開いただけで地形の大きさが変わってしまう）。
+    graph::TerrainScale scaleFallback;
+    if (const json* preview = FindMember(document, "preview");
+        preview != nullptr && preview->is_object()) {
+        const renderer::PreviewDefaults& previewDefaults = renderer::kPreviewDefaults;
+        scaleFallback.sizeMeters = ReadFloat(*preview, "planeSize", previewDefaults.planeSize);
+        scaleFallback.heightMeters =
+            ReadFloat(*preview, "displacementScale", previewDefaults.displacementScale);
+    }
+
     // グラフの決め方。
     //   版 4 以降: graph 節が唯一の合成（無ければ既定へ戻す）。
     //   版 3 以前: 「プレビューに適用」（apply）がオンで保存されていれば graph 節を、
@@ -1306,7 +1337,8 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
         const bool legacyApply = ReadBool(*graphNode, "apply", version >= 4);
         if (version >= 4 || legacyApply || legacyLayers.empty()) {
             graphLoaded =
-                ReadGraph(*graphNode, refs.graph, readTexture, readMaterial, readPaint);
+                ReadGraph(*graphNode, refs.graph, readTexture, readMaterial, readPaint,
+                          scaleFallback);
         }
     }
     if (!graphLoaded) {

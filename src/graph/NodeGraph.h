@@ -75,9 +75,24 @@ struct Pin {
 // (3) NodeGraph.cpp の定義テーブルへ登録し、(4) 保存とプロパティ UI の
 // 対応を足す。それ以外の場所を触る必要がないように保つ。
 
-// サーフェス / シェイプ / 水面。既存のレイヤーそのもの（kind も layer が持つ）。
+// ジオメトリの実寸（m）。**ソース（Heightmap）だけが持つ。**
+//
+// 「この地形は一辺 2048m、標高差 604m」を**読み込むときに一度だけ**決める。
+// プレビュー設定ではなくノードに置くのは、実寸がプレビューの都合ではなく
+// 読み込んだデータそのものの性質だから。後から触るものではない。
+//
+// **メートルなのはジオメトリだけ。** ハイトは 0〜1 の正規化値のままで、
+// heightMeters はその全幅が何 m かを表す（[design/rendering.md]）。
+struct TerrainScale {
+    float sizeMeters = 1024.0f;
+    float heightMeters = 200.0f;
+};
+
+// サーフェス / シェイプ / 水面 / ハイトマップ。既存のレイヤーそのもの
+// （kind も layer が持つ）。scale はソースのときだけ意味を持つ。
 struct LayerNodeSettings {
     compositor::MaterialLayer layer;
+    TerrainScale scale;
 };
 
 // 出力。ここに繋いだチェーンがプレビューのマテリアルになる。
@@ -139,6 +154,11 @@ public:
     // レイヤー設定を持たないノード（出力など）や無効な ID は出力ノード扱いに落とす。
     std::vector<compositor::MaterialLayer> CompileLayersTo(GraphId nodeId) const;
 
+    // チェーンの根にあるソース（Heightmap）の実寸。無ければ nullptr。
+    // プレビューの平面のサイズと変位量はこれに従う。
+    // nodeId が 0 なら出力ノードのチェーンを見る。
+    const TerrainScale* FindChainScale(GraphId nodeId) const;
+
     // 変更があったことを記録する。Application はこれを見て再コンパイルする。
     void MarkDirty() { ++m_revision; }
     uint64_t Revision() const { return m_revision; }
@@ -146,8 +166,14 @@ public:
 private:
     GraphId AllocateGraphId() { return m_nextGraphId++; }
     void RebuildNextGraphId();
+    // top から「下地」チェーンを遡る（上から下の順）。
+    std::vector<const Node*> ChainFrom(const Node* top) const;
     // top から「下地」チェーンを遡ってレイヤー列（下から上）にする共通部。
     std::vector<compositor::MaterialLayer> CompileChainFrom(const Node* top) const;
+    // 出力ノードへ繋がっている一番上のノード。無ければ nullptr。
+    const Node* ChainTop() const;
+    // プレビュー対象（nodeId が 0 なら出力チェーン）の一番上のノード。
+    const Node* PreviewTop(GraphId nodeId) const;
     // producer の出力を辿って target に届くか（循環チェック用）。
     bool ReachesDownstream(GraphId fromNodeId, GraphId targetNodeId) const;
 

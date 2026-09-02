@@ -6,7 +6,7 @@ namespace tg::compositor {
 
 MaterialLayer MaterialStack::MakeBaseLayer() {
     MaterialLayer layer;
-    layer.name = "ベース";
+    layer.name = "Base";
     // **ノイズを載せない。** 既定の ValueSource::Noise のままだと、
     // 変位量が 0 でも法線に模様が出て「まっさらな球」に見えない。
     layer.heightSource = ValueSource::Constant;

@@ -13,26 +13,29 @@ namespace {
 // --- 定義テーブル ---------------------------------------------------------
 // ノードの種類・保存名・表示名・ピン構成。CreateNode() がここからピンを作る。
 
+// **ノードの名前とピンのラベルは英語で書く。**
+// ノードグラフを持つツール（Substance / Houdini / Gaea など）はどれも英語表記で、
+// 素材やノードの呼び名もその語彙で流通している。説明文だけ日本語にする。
 constexpr std::array<PinDefinition, 2> kLayerNodePins = {{
-    {PinKind::Input, ValueType::Material, "下地"},
-    {PinKind::Output, ValueType::Material, "結果"},
+    {PinKind::Input, ValueType::Material, "Base"},
+    {PinKind::Output, ValueType::Material, "Result"},
 }};
 
 constexpr std::array<PinDefinition, 1> kOutputNodePins = {{
-    {PinKind::Input, ValueType::Material, "マテリアル"},
+    {PinKind::Input, ValueType::Material, "Material"},
 }};
 
 // ソースノードのピン。**入力を持たない。**
 constexpr std::array<PinDefinition, 1> kSourceNodePins = {{
-    {PinKind::Output, ValueType::Material, "結果"},
+    {PinKind::Output, ValueType::Material, "Result"},
 }};
 
 constexpr std::array<NodeDefinition, 5> kNodeDefinitions = {{
-    {NodeKind::Heightmap, "heightmap", "ハイトマップ", kSourceNodePins},
-    {NodeKind::Surface, "surface", "サーフェス", kLayerNodePins},
-    {NodeKind::Shape, "shape", "シェイプ", kLayerNodePins},
-    {NodeKind::Liquid, "liquid", "水面", kLayerNodePins},
-    {NodeKind::Output, "output", "出力", kOutputNodePins},
+    {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
+    {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
+    {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
+    {NodeKind::Liquid, "liquid", "Liquid", kLayerNodePins},
+    {NodeKind::Output, "output", "Output", kOutputNodePins},
 }};
 
 }  // namespace
@@ -316,7 +319,8 @@ void NodeGraph::RebuildNextGraphId() {
     m_nextGraphId = maxId + 1;
 }
 
-std::vector<compositor::MaterialLayer> NodeGraph::CompileChainFrom(const Node* top) const {
+// 「下地」チェーンを上から下へ辿る。輪は visited で止める。
+std::vector<const Node*> NodeGraph::ChainFrom(const Node* top) const {
     std::vector<const Node*> chain;
     std::unordered_set<GraphId> visited;
     const Node* current = top;
@@ -326,6 +330,44 @@ std::vector<compositor::MaterialLayer> NodeGraph::CompileChainFrom(const Node* t
         current = current->inputs.empty() ? nullptr
                                           : FindUpstreamNodeForPin(current->inputs.front().id);
     }
+    return chain;
+}
+
+const Node* NodeGraph::ChainTop() const {
+    // 出力ノード（最初の 1 つ）に繋がっているノード。
+    for (const Node& node : m_nodes) {
+        if (node.kind != NodeKind::Output) {
+            continue;
+        }
+        return node.inputs.empty() ? nullptr : FindUpstreamNodeForPin(node.inputs.front().id);
+    }
+    return nullptr;
+}
+
+const Node* NodeGraph::PreviewTop(GraphId nodeId) const {
+    const Node* node = FindNode(nodeId);
+    if (node != nullptr && IsLayerNodeKind(node->kind)) {
+        return node;
+    }
+    return ChainTop();
+}
+
+const TerrainScale* NodeGraph::FindChainScale(GraphId nodeId) const {
+    // チェーンの根（一番下）にあるソースを探す。地形の実寸はそこが持つ。
+    const std::vector<const Node*> chain = ChainFrom(PreviewTop(nodeId));
+    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+        if (!IsSourceNodeKind((*it)->kind)) {
+            continue;
+        }
+        if (const auto* settings = std::get_if<LayerNodeSettings>(&(*it)->settings)) {
+            return &settings->scale;
+        }
+    }
+    return nullptr;
+}
+
+std::vector<compositor::MaterialLayer> NodeGraph::CompileChainFrom(const Node* top) const {
+    const std::vector<const Node*> chain = ChainFrom(top);
 
     // 遡った順（上→下）を、レイヤー列の順（下→上）へ反転する。
     std::vector<compositor::MaterialLayer> layers;
@@ -343,18 +385,7 @@ std::vector<compositor::MaterialLayer> NodeGraph::CompileChainFrom(const Node* t
 }
 
 std::vector<compositor::MaterialLayer> NodeGraph::CompileLayers() const {
-    // 出力ノード（最初の 1 つ）から「下地」チェーンを遡る。
-    const Node* output = nullptr;
-    for (const Node& node : m_nodes) {
-        if (node.kind == NodeKind::Output) {
-            output = &node;
-            break;
-        }
-    }
-    const Node* top = (output != nullptr && !output->inputs.empty())
-                          ? FindUpstreamNodeForPin(output->inputs.front().id)
-                          : nullptr;
-    return CompileChainFrom(top);
+    return CompileChainFrom(ChainTop());
 }
 
 std::vector<compositor::MaterialLayer> NodeGraph::CompileLayersTo(GraphId nodeId) const {

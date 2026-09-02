@@ -164,6 +164,13 @@ void Application::SyncGraphStack() {
     m_graphStack.Layers() =
         (target != 0) ? m_graph.CompileLayersTo(target) : m_graph.CompileLayers();
     m_graphStack.MarkDirty();
+
+    // 地形の実寸はチェーンの根にある Heightmap ノードが持つ。
+    // **読み込むときに一度決めたら、以後はプレビュー側で触らない。**
+    if (const graph::TerrainScale* scale = m_graph.FindChainScale(target)) {
+        m_renderer.PlaneSize() = scale->sizeMeters;
+        m_renderer.DisplacementScale() = scale->heightMeters;
+    }
 }
 
 void Application::DrawGraphNode(const graph::Node& node) {
@@ -419,13 +426,13 @@ void Application::DrawGraphEditor() {
             // ステータスバーに残す。追加が効いたかを画面で確かめられるようにする。
             TG_LOG_INFO("ノードを追加しました: %s", NodeDisplayName(*node));
         };
-        addNodeMenuItem(graph::NodeKind::Heightmap, "ハイトマップ — 画像を地形として読み込む");
+        addNodeMenuItem(graph::NodeKind::Heightmap, "Heightmap — 画像を地形として読み込む");
         ImGui::Separator();
-        addNodeMenuItem(graph::NodeKind::Surface, "サーフェス — 素材を高さで張り合わせる");
-        addNodeMenuItem(graph::NodeKind::Shape, "シェイプ — 高さへ起伏を加算する");
-        addNodeMenuItem(graph::NodeKind::Liquid, "水面 — 水位より低い所に水を張る");
+        addNodeMenuItem(graph::NodeKind::Surface, "Surface — 素材を高さで張り合わせる");
+        addNodeMenuItem(graph::NodeKind::Shape, "Shape — 高さへ起伏を加算する");
+        addNodeMenuItem(graph::NodeKind::Liquid, "Liquid — 水位より低い所に水を張る");
         ImGui::Separator();
-        addNodeMenuItem(graph::NodeKind::Output, "出力 — ここに繋いだ結果をプレビューする");
+        addNodeMenuItem(graph::NodeKind::Output, "Output — ここに繋いだ結果をプレビューする");
         ImGui::EndPopup();
     }
     ed::Resume();
@@ -507,8 +514,29 @@ void Application::DrawGraphPanel() {
         const bool isBase =
             selected->inputs.empty() ||
             m_graph.FindUpstreamNodeForPin(selected->inputs.front().id) == nullptr;
-        changed |= DrawLayerSettings(settings->layer, isBase,
-                                     graph::IsSourceNodeKind(selected->kind));
+        const bool isSource = graph::IsSourceNodeKind(selected->kind);
+        changed |= DrawLayerSettings(settings->layer, isBase, isSource);
+
+        // 地形の実寸。**ソースだけが持ち、読み込むときに一度だけ決める。**
+        // プレビュー設定ではなくここに置くのは、実寸が見え方の設定ではなく
+        // 読み込んだデータそのものの性質だから。
+        if (isSource) {
+            ui::SectionHeader("スケール");
+            if (ui::BeginPropertyTable("graphNodeScaleRows")) {
+                const graph::TerrainScale defaults;
+                changed |= ui::PropertyFloat(
+                    "サイズ", &settings->scale.sizeMeters, 0.5f, 8192.0f, defaults.sizeMeters,
+                    "地形の一辺の長さ（m）。カメラと影の範囲もこれに追従する", "%.1f m",
+                    ImGuiSliderFlags_Logarithmic);
+                changed |= ui::PropertyFloat(
+                    "標高差", &settings->scale.heightMeters, 0.0f,
+                    std::max(1.0f, settings->scale.sizeMeters * 0.5f), defaults.heightMeters,
+                    "ハイト 0〜1 の全幅が何 m になるか（最低地点から最高地点までの差）",
+                    "%.1f m", ImGuiSliderFlags_Logarithmic);
+                ui::EndPropertyTable();
+            }
+            ui::HintText("読み込んだ地形の実寸。プレビュー設定の平面のサイズと変位量はこれに従う");
+        }
         if (changed) {
             m_graph.MarkDirty();
             MarkDocumentChanged();

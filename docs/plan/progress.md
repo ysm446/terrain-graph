@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-02 18:41
+更新日時: 2026-09-02 19:35
 
 ## 現在の状況
 
@@ -53,6 +53,26 @@ Megascans の ORD（チャンネルパック）と EXR にも対応した。
 UI はグレー基調に整理し、ルールを [design/design-guide.md](../design/design-guide.md) に置いた。
 
 ## 完了済み
+
+- 2026-09-02 19:35 — **地形の実寸を Heightmap ノードへ移し、ノード名を英語にした**。
+  - `graph::TerrainScale`（サイズ / 標高差、m）を `LayerNodeSettings` へ追加。
+    **ソース（Heightmap）だけが意味を持つ。** 実寸は見え方の設定ではなく
+    読み込んだデータの性質なので、プレビュー設定ではなくノードに置く。
+  - `NodeGraph::FindChainScale()` がチェーンの根のソースを探し、
+    `SyncGraphStack()` がレンダラの平面のサイズと変位量へ流し込む。
+    プレビュー設定側の行は、ソースがあるときは表示だけにする。
+  - **移行**: `scale` を持たない（実寸をノードへ移す前の）ファイルは、
+    プレビュー設定の `planeSize` / `displacementScale` を引き継ぐ。
+    既定値を入れると開いただけで地形の大きさが変わってしまうため。
+    ReadGraph は preview より先に走るので、値は document から直接拾って渡す。
+  - ノードの表示名とピンのラベルを英語へ（Heightmap / Surface / Shape /
+    Liquid / Output、Base / Result / Material）。既定のノード名も英語
+    （Base / Shape / Liquid / Heightmap）。説明文は日本語のまま。
+  - 検証: Debug / Release ビルド、ctest、ノード側の実寸がプレビュー設定を
+    上書きすること、保存往復、既存プロジェクト（scale 無し）が
+    2m / 0.5m を引き継ぐこと、素材スケールの描画がピクセル一致することを確認。
+  - **注意: `data/sample.tgproj` はユーザーが編集中**。テストで書き換えないこと
+    （検証は `data/_t.tgproj` のような一時ファイルを作って行い、後で消す）。
 
 - 2026-09-02 18:41 — **地形スケール対応（第 1 段）とハイトマップノード**。
   - `PreviewRenderer::PlaneSize()`（m）を追加。メッシュは 2m のまま作り、
