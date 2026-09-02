@@ -499,6 +499,8 @@ int NodeGraph::EmitMaskOps(const Node& maskNode, int defaultHeightLayer,
         compositor::MaskOp sedimentOp;
         sedimentOp.kind = compositor::MaskOpKind::Sediment;
         sedimentOp.sedimentMask.contrast = layerSettings->layer.sediment.maskContrast;
+        sedimentOp.sedimentMask.thicknessMeters =
+            layerSettings->layer.sediment.maskThicknessMeters;
         sedimentOp.heightSourceLayer = -1;
         for (size_t i = 0; i < layerNodes.size(); ++i) {
             if (layerNodes[i] == &maskNode) {

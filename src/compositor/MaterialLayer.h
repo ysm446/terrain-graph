@@ -256,6 +256,12 @@ struct MaterialLayer {
         uint32_t resolution = 512;
         // Mask 出力（土砂の厚み）のコントラスト。0 で線形。
         float maskContrast = 0.0f;
+        // **Mask が 1 になる厚み（m）。** 実寸で正規化する。
+        //
+        // 0 にすると「一番厚い所で 1」になる（昔の挙動）。それだと少数の
+        // 分厚い点が基準になって残りが 0 付近へ潰れ、マスクとして使えない
+        // （実測で 0.5 以上の面積が 0.29% しかなかった）。
+        float maskThicknessMeters = 0.5f;
     };
     SedimentSettings sediment;
 

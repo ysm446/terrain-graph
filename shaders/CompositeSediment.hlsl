@@ -28,7 +28,7 @@ struct SedimentConstants
     // x: 最大値をためる R32_UINT の UAV、y: マスクの出力 UAV、zw: 未使用
     uint4 indices3;
     // x: 安息角ぶんの落差（正規化ハイト）、y: 1 反復あたりの供給量、
-    // z: マスクのコントラスト、w: 未使用
+    // z: マスクのコントラスト、w: マスクが 1 になる厚み（正規化ハイト。0 なら最大値で正規化）
     float4 params;
 };
 
@@ -250,9 +250,15 @@ void CsMask(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     const float2 uv = (float2(texel) + 0.5f) / float(resolution);
     const float thickness = sediment.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
-    const float maxThickness = max(asfloat(maxScratch[uint2(0, 0)]), 1e-6f);
 
-    float value = saturate(thickness / maxThickness);
+    // **基準の厚みが与えられていれば実寸で正規化する。**
+    // 0 のときだけ「一番厚い所で 1」に落とす（少数の分厚い点が基準になるので、
+    // 残りが 0 付近へ潰れる。マスクとしては使いにくい）。
+    const float reference = g_sediment.params.w;
+    const float denominator =
+        (reference > 0.0f) ? reference : max(asfloat(maxScratch[uint2(0, 0)]), 1e-6f);
+
+    float value = saturate(thickness / denominator);
     // コントラスト。0 で線形、上げるほど「積もった / 積もっていない」が分かれる。
     value = ApplyMaskCurve(value, 1.0f + saturate(g_sediment.params.z) * 7.0f);
     mask[texel] = value;

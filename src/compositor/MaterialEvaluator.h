@@ -148,7 +148,7 @@ private:
     // **堆積レイヤーの直後にしか使えない**（作業用テクスチャを使い回すため）。
     bool ApplySedimentMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                            ID3D12GraphicsCommandList* commandList, const MaskOp& op,
-                           rhi::GpuTexture& target);
+                           const MaterialStack& stack, rhi::GpuTexture& target);
     // ぼかし / 堆積のあと、Height から法線を作り直す（形と陰影を合わせる）。
     void RebuildNormalsFromHeight(rhi::Device& device, ID3D12PipelineState* pipeline,
                                   ID3D12GraphicsCommandList* commandList,

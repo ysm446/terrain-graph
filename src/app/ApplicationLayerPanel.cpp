@@ -93,6 +93,12 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                 changed = true;
             }
             changed |= ui::PropertyFloat(
+                "基準の厚み", &layer.sediment.maskThicknessMeters, 0.0f, 20.0f,
+                sedimentDefaults.maskThicknessMeters,
+                "**Mask 出力がこの厚みで 1 になる。** 0 にすると一番厚い所が 1 に"
+                "なるが、少数の分厚い点が基準になって残りが 0 付近へ潰れる",
+                "%.2f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat(
                 "マスクの締まり", &layer.sediment.maskContrast, 0.0f, 1.0f,
                 sedimentDefaults.maskContrast,
                 "Mask 出力（積もった厚み）のコントラスト。0 で線形、"

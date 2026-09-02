@@ -375,7 +375,7 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
     }
     // 堆積の厚みは、直前に走った堆積レイヤーの作業用テクスチャから焼く。
     if (op.kind == MaskOpKind::Sediment) {
-        return ApplySedimentMask(device, pipelineCache, commandList, op, target);
+        return ApplySedimentMask(device, pipelineCache, commandList, op, stack, target);
     }
 
     const wchar_t* entry = L"CsImage";
@@ -845,7 +845,8 @@ bool MaterialEvaluator::ApplySediment(rhi::Device& device, rhi::PipelineCache& p
 bool MaterialEvaluator::ApplySedimentMask(rhi::Device& device,
                                           rhi::PipelineCache& pipelineCache,
                                           ID3D12GraphicsCommandList* commandList,
-                                          const MaskOp& op, rhi::GpuTexture& target) {
+                                          const MaskOp& op, const MaterialStack& stack,
+                                          rhi::GpuTexture& target) {
     if (!m_sediment.IsValid() || !target.IsValid()) {
         return false;
     }
@@ -867,6 +868,12 @@ bool MaterialEvaluator::ApplySedimentMask(rhi::Device& device,
     constants.indices3[0] = m_sediment.maxScratch.UavIndex();
     constants.indices3[1] = target.UavIndex();
     constants.params[2] = std::clamp(op.sedimentMask.contrast, 0.0f, 1.0f);
+    // 基準の厚みは実寸（m）で持つ。ハイト 0〜1 の全幅が標高差なので、その比へ直す。
+    // 0（＝一番厚い所で正規化）はそのまま 0 で渡す。
+    const float heightMeters = stack.HeightMeters();
+    constants.params[3] = (op.sedimentMask.thicknessMeters > 0.0f && heightMeters > 0.0f)
+                              ? (op.sedimentMask.thicknessMeters / heightMeters)
+                              : 0.0f;
 
     const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(SedimentConstants), 256);
     if (!cb.IsValid()) {
@@ -883,13 +890,16 @@ bool MaterialEvaluator::ApplySedimentMask(rhi::Device& device,
         const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
         commandList->ResourceBarrier(1, &uav);
     };
-    commandList->SetPipelineState(clearPass);
-    commandList->Dispatch(1, 1, 1);
-    barrier();
-    commandList->SetPipelineState(reducePass);
-    commandList->Dispatch(DispatchCount(m_sediment.resolution),
-                          DispatchCount(m_sediment.resolution), 1);
-    barrier();
+    // 実寸で正規化するなら最大値は要らない。集計のパスごと飛ばす。
+    if (constants.params[3] <= 0.0f) {
+        commandList->SetPipelineState(clearPass);
+        commandList->Dispatch(1, 1, 1);
+        barrier();
+        commandList->SetPipelineState(reducePass);
+        commandList->Dispatch(DispatchCount(m_sediment.resolution),
+                              DispatchCount(m_sediment.resolution), 1);
+        barrier();
+    }
 
     // マスクを焼くときだけ、厚みは読み取り専用にする。
     TransitionIfNeeded(commandList, m_sediment.sediment,

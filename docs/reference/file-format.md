@@ -120,7 +120,7 @@ base' = base + 0.5 * gain     ただしソースが constant のときは base �
 （足りないピンには新しい ID が振られ、リンクの無い入力になる）。
 
 レイヤーの `sediment`（`{ emission, emissionTime, detail, iterations, stabilization,
-viscosity, convertTerrain, resolution, maskContrast }`）は
+viscosity, convertTerrain, resolution, maskContrast, maskThicknessMeters }`）は
 `kind` が `sediment` のノードだけが使う。
 
 レイヤーの `blur`（`{ radius, strength, iterations }`）は

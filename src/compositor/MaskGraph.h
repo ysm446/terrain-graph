@@ -67,6 +67,8 @@ struct BlendParams {
 struct SedimentMaskParams {
     // 0 で線形、上げるほど「積もった / 積もっていない」がはっきりする。
     float contrast = 0.0f;
+    // マスクが 1 になる厚み（m）。0 なら一番厚い所で正規化する。
+    float thicknessMeters = 0.5f;
 };
 
 // 演算 1 つ。入力は他の op の添字で、**自分より前**を指す（後方参照はしない）。
