@@ -125,6 +125,10 @@ base' = base + 0.5 * gain     ただしソースが constant のときは base �
 viscosity, convertTerrain, resolution, maskContrast, maskThicknessMeters }`）は
 `kind` が `sediment` のノードだけが使う。
 
+レイヤーの `crumbling`（`{ physicsCount, amount, sizeMin, sizeMax, style,
+gravity, spread, seed }`）は `kind` が `crumbling` のノードだけが使う。
+`style` は `classic` / `polygonal` / `shard`。
+
 レイヤーの `blur`（`{ radius, strength, iterations }`）は
 `kind` が `blur` のノード（Heightmap Blur）だけが使う。無ければ既定値。
 

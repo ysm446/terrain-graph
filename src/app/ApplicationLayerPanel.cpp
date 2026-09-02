@@ -111,6 +111,60 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
         return changed;
     }
 
+    // 崩落も合成レイヤーではなく「下地のハイトへ岩屑を積む加工」。
+    // 発生源は Mask 入力（Emission）で受けるので、マスクの節は出さない。
+    if (layer.kind == compositor::LayerKind::Crumbling) {
+        const compositor::MaterialLayer::CrumblingSettings crumblingDefaults;
+        ui::SectionHeader("基本");
+        if (ui::BeginPropertyTable("crumblingBasicRows")) {
+            char crumblingName[128] = {};
+            std::snprintf(crumblingName, sizeof(crumblingName), "%s", layer.name.c_str());
+            if (ui::PropertyTextInput("名前", crumblingName, sizeof(crumblingName))) {
+                layer.name = crumblingName;
+                changed = true;
+            }
+            ui::EndPropertyTable();
+        }
+        ui::SectionHeader("崩落");
+        if (ui::BeginPropertyTable("crumblingRows")) {
+            changed |= ui::PropertyFloat(
+                "岩屑の量", &layer.crumbling.amount, 0.0f, 1.0f, crumblingDefaults.amount,
+                "生む岩片の数と、盛り上がりの強さに効く", "%.2f");
+            changed |= ui::PropertyFloat("最小サイズ", &layer.crumbling.sizeMinMeters, 0.1f,
+                                         100.0f, crumblingDefaults.sizeMinMeters,
+                                         "岩片の直径の下限", "%.2f m",
+                                         ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat("最大サイズ", &layer.crumbling.sizeMaxMeters, 0.1f,
+                                         100.0f, crumblingDefaults.sizeMaxMeters,
+                                         "岩片の直径の上限", "%.2f m",
+                                         ImGuiSliderFlags_Logarithmic);
+            int style = static_cast<int>(layer.crumbling.style);
+            if (ui::PropertyCombo("形", &style, kRockStyleLabels, IM_ARRAYSIZE(kRockStyleLabels),
+                                  static_cast<int>(crumblingDefaults.style),
+                                  "岩片の輪郭。丸い / 多面体 / 尖った破片")) {
+                layer.crumbling.style = static_cast<compositor::RockStyle>(style);
+                changed = true;
+            }
+            changed |= ui::PropertyInt("歩数", &layer.crumbling.physicsCount, 0, 512,
+                                       crumblingDefaults.physicsCount,
+                                       "岩片を下へ進めるステップ数。"
+                                       "大きいほど斜面の下まで流れる");
+            changed |= ui::PropertyFloat(
+                "重力", &layer.crumbling.gravity, 0.0f, 1.0f, crumblingDefaults.gravity,
+                "低い方へ向かう強さ。高いほど一直線に下る", "%.2f");
+            changed |= ui::PropertyFloat(
+                "散らばり", &layer.crumbling.spread, 0.0f, 1.0f, crumblingDefaults.spread,
+                "進行方向から横へ逸れる強さ。上げると筋状の重なりがほぐれる", "%.2f");
+            changed |= ui::PropertyInt("シード", &layer.crumbling.seed, 0, 9999,
+                                       crumblingDefaults.seed,
+                                       "発生位置とばらつきの種");
+            ui::EndPropertyTable();
+        }
+        ui::HintText("発生源（Emission 入力）の明るい所から岩片を生み、斜面を下らせて積む。"
+                     "**Mask は岩屑の厚み、Unique は岩片ごとの乱数**を出す");
+        return changed;
+    }
+
     // ブラーは合成レイヤーではなく「下地のハイトをぼかす加工」。
     // 色もハイトのソースもマスクも持たないので、専用の行だけを出す。
     if (layer.kind == compositor::LayerKind::Blur) {

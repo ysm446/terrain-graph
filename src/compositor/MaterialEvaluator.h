@@ -55,6 +55,19 @@ struct SedimentResources {
     bool IsValid() const { return sediment.IsValid(); }
 };
 
+// 崩落（Crumbling）の作業リソース。**合成解像度で回す**（岩片は m 単位の
+// 小さな形なので、粗いグリッドでは形にならない）。
+//
+// 積む先は 1 枚の R32_UINT にパックする。上位 20 bit が岩屑の高さ、
+// 下位 12 bit がその岩片ごとの乱数。`InterlockedMax` 1 回で
+// 「一番高い岩片が勝ち、その乱数も一緒に残る」が成り立つ。
+struct CrumblingResources {
+    rhi::GpuTexture packed;  // R32_UINT （高さ 20bit | 乱数 12bit）
+    uint32_t resolution = 0;
+
+    bool IsValid() const { return packed.IsValid(); }
+};
+
 // 評価する出力領域。全体を 1 回で評価するときは矩形に全体を渡す。
 struct TileRect {
     uint32_t x = 0;
@@ -154,6 +167,19 @@ private:
                                   ID3D12GraphicsCommandList* commandList,
                                   const MaterialStack& stack);
 
+    // 崩落レイヤー 1 枚ぶん。発生源のマスクから岩片を生み、斜面を下らせて積む。
+    // emissionIndex は発生源マスクの SRV（無ければ kInvalidTextureIndex 相当）。
+    bool ApplyCrumbling(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                        ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
+                        const MaterialStack& stack, uint32_t emissionIndex);
+    bool EnsureCrumblingResources(rhi::Device& device, uint32_t resolution);
+    void ReleaseCrumblingResources(rhi::Device& device);
+    // 直前の崩落レイヤーが積んだ岩屑を、マスクとして焼く。
+    // **崩落レイヤーの直後にしか使えない**（作業用テクスチャを使い回すため）。
+    bool ApplyCrumblingMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                            ID3D12GraphicsCommandList* commandList, const MaskOp& op,
+                            rhi::GpuTexture& target);
+
     bool ApplyHeightBlur(rhi::Device& device, ID3D12GraphicsCommandList* commandList,
                          ID3D12PipelineState* blurPipeline,
                          ID3D12PipelineState* normalPipeline, const MaterialLayer& layer,
@@ -161,6 +187,7 @@ private:
 
     FluvialResources m_fluvial;
     SedimentResources m_sediment;
+    CrumblingResources m_crumbling;
     // マスクの op の結果。添字は MaskProgram と同じ。
     std::vector<rhi::GpuTexture> m_maskOpTextures;
     std::vector<uint32_t> m_maskOpResolutions;

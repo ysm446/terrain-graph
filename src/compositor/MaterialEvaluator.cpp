@@ -59,6 +59,15 @@ struct LayerConstants {
 };
 
 // GPU 側の SedimentConstants と一致させること。
+struct CrumblingConstants {
+    uint32_t indices0[4];  // 積む先 UAV, Height SRV, 発生マスク SRV, Height UAV
+    uint32_t indices1[4];  // 合成解像度, 粒子の試行回数, 歩数, 岩片の形
+    uint32_t indices2[4];  // マスクの出力 UAV, 出力の種類, 未使用 x2
+    float params0[4];      // 最小サイズ（テクセル）, 最大サイズ, gravity, spread
+    float params1[4];      // 岩片の高さの最大（正規化）, シード, テクセル（m）, 標高差（m）
+    float params2[4];      // 岩屑の量, 未使用 x3
+};
+
 struct SedimentConstants {
     uint32_t indices0[4];  // UAV: 基盤, 土砂, 流出, 元の高さ
     uint32_t indices1[4];  // SRV: 基盤, 土砂, 元の高さ, 合成の Height
@@ -140,6 +149,7 @@ uint64_t HashHeightState(uint64_t seed, const MaterialLayer& layer) {
     hash = HashBytes(hash, &layer.material, sizeof(layer.material));
     hash = HashBytes(hash, &layer.blur, sizeof(layer.blur));
     hash = HashBytes(hash, &layer.sediment, sizeof(layer.sediment));
+    hash = HashBytes(hash, &layer.crumbling, sizeof(layer.crumbling));
     // マスクは「どこに載せるか」を決めるので Height にも効く。
     hash = HashBytes(hash, &layer.mask.source, sizeof(layer.mask.source));
     hash = HashBytes(hash, &layer.mask.constant, sizeof(layer.mask.constant));
@@ -170,6 +180,8 @@ uint64_t HashMaskOpParams(uint64_t seed, const MaskOp& op) {
             return HashBytes(seed, &op.blend, sizeof(op.blend));
         case MaskOpKind::Sediment:
             return HashBytes(seed, &op.sedimentMask, sizeof(op.sedimentMask));
+        case MaskOpKind::Crumbling:
+            return HashBytes(seed, &op.crumblingMask, sizeof(op.crumblingMask));
         default:
             return seed;
     }
@@ -292,6 +304,7 @@ bool MaterialEvaluator::EnsureMaskOpTextures(rhi::Device& device, const MaskProg
 void MaterialEvaluator::Destroy(rhi::Device& device) {
     ReleaseFluvialResources(device);
     ReleaseSedimentResources(device);
+    ReleaseCrumblingResources(device);
     for (rhi::GpuTexture& texture : m_maskOpTextures) {
         device.DeferRelease(texture);
     }
@@ -376,6 +389,10 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
     // 堆積の厚みは、直前に走った堆積レイヤーの作業用テクスチャから焼く。
     if (op.kind == MaskOpKind::Sediment) {
         return ApplySedimentMask(device, pipelineCache, commandList, op, stack, target);
+    }
+    // 崩落も同じく、直前に走った崩落レイヤーの作業用テクスチャから焼く。
+    if (op.kind == MaskOpKind::Crumbling) {
+        return ApplyCrumblingMask(device, pipelineCache, commandList, op, target);
     }
 
     const wchar_t* entry = L"CsImage";
@@ -609,6 +626,25 @@ bool MaterialEvaluator::ApplyFluvialMask(rhi::Device& device,
     TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
     PIXEndEvent(commandList);
+    return true;
+}
+
+void MaterialEvaluator::ReleaseCrumblingResources(rhi::Device& device) {
+    device.DeferRelease(m_crumbling.packed);
+    m_crumbling.resolution = 0;
+}
+
+bool MaterialEvaluator::EnsureCrumblingResources(rhi::Device& device, uint32_t resolution) {
+    if (m_crumbling.IsValid() && m_crumbling.resolution == resolution) {
+        return true;
+    }
+    ReleaseCrumblingResources(device);
+    if (!CreateChannelTexture(device, resolution, DXGI_FORMAT_R32_UINT, L"CrumblingPacked",
+                              m_crumbling.packed)) {
+        ReleaseCrumblingResources(device);
+        return false;
+    }
+    m_crumbling.resolution = resolution;
     return true;
 }
 
@@ -922,6 +958,157 @@ bool MaterialEvaluator::ApplySedimentMask(rhi::Device& device,
     return true;
 }
 
+// 崩落レイヤー 1 枚ぶん。発生源のマスクから岩片を生み、斜面を下らせて積む。
+//
+// **合成解像度でそのまま回す。** 岩片は m 単位の小さな形なので、堆積のように
+// 粗いグリッドで回すと形にならない。歩行は 1 スレッド 1 粒子で、
+// 読むのは合成の Height（この時点までの合成結果）だけ。
+bool MaterialEvaluator::ApplyCrumbling(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                       ID3D12GraphicsCommandList* commandList,
+                                       const MaterialLayer& layer, const MaterialStack& stack,
+                                       uint32_t emissionIndex) {
+    if (!EnsureCrumblingResources(device, m_resolution)) {
+        return false;
+    }
+    const auto pipeline = [&](const wchar_t* entry) {
+        return pipelineCache.GetCompute(L"CompositeCrumbling.hlsl", entry);
+    };
+    ID3D12PipelineState* clearPass = pipeline(L"CsClear");
+    ID3D12PipelineState* scatterPass = pipeline(L"CsScatter");
+    ID3D12PipelineState* resolvePass = pipeline(L"CsResolve");
+    ID3D12PipelineState* normalPass =
+        pipelineCache.GetCompute(L"CompositeBlur.hlsl", L"CsNormalFromHeight");
+    if (clearPass == nullptr || scatterPass == nullptr || resolvePass == nullptr) {
+        return false;
+    }
+
+    const MaterialLayer::CrumblingSettings& params = layer.crumbling;
+    const float sizeMeters = (stack.SizeMeters() > 0.0f) ? stack.SizeMeters() : 1.0f;
+    const float heightMeters = (stack.HeightMeters() > 0.0f) ? stack.HeightMeters() : 1.0f;
+    const float texelMeters = sizeMeters / static_cast<float>(std::max(1u, m_resolution));
+    const float amount = std::clamp(params.amount, 0.0f, 1.0f);
+
+    // 岩片の直径は m で持つ。テクセル数へ直す（1 テクセルより小さい岩は描けない）。
+    const float minMeters = std::clamp(params.sizeMinMeters, 0.01f, 10000.0f);
+    const float maxMeters = std::clamp(std::max(params.sizeMaxMeters, minMeters), 0.01f, 10000.0f);
+    const float minTexels = std::max(0.5f, minMeters / std::max(texelMeters, 1e-6f));
+    const float maxTexels = std::max(minTexels, maxMeters / std::max(texelMeters, 1e-6f));
+
+    // 試行回数。**受け入れるかどうかは発生源マスクの明るさ**で決まる。
+    //
+    // **地形の面積に比例させる。** terrain-editor は解像度によらない固定数だが、
+    // 実寸で地形を扱うここでは、同じ量でも 1km 四方と 4km 四方で岩屑の密度が
+    // 変わってしまう。1km 四方あたりの数として持ち、面積を掛ける。
+    const float areaKm2 = (sizeMeters / 1000.0f) * (sizeMeters / 1000.0f);
+    const int attempts = std::clamp(
+        static_cast<int>(std::round((256.0f + amount * 12000.0f) * areaKm2)), 0, 200000);
+    // 岩片の高さの最大。パックの分母になるので、実際に出る最大と揃えること。
+    const float maxDebrisMeters = maxMeters * (0.10f + 0.18f * amount) * 1.35f;
+
+    CrumblingConstants constants = {};
+    constants.indices0[0] = m_crumbling.packed.UavIndex();
+    constants.indices0[1] = m_textures.height.SrvIndex();
+    constants.indices0[2] = emissionIndex;
+    constants.indices0[3] = m_textures.height.UavIndex();
+    constants.indices1[0] = m_resolution;
+    constants.indices1[1] = static_cast<uint32_t>(attempts);
+    constants.indices1[2] = static_cast<uint32_t>(std::clamp(params.physicsCount, 0, 512));
+    constants.indices1[3] = static_cast<uint32_t>(params.style);
+    constants.params0[0] = minTexels;
+    constants.params0[1] = maxTexels;
+    constants.params0[2] = std::clamp(params.gravity, 0.0f, 1.0f);
+    constants.params0[3] = std::clamp(params.spread, 0.0f, 1.0f);
+    constants.params1[0] = maxDebrisMeters / heightMeters;
+    constants.params1[1] = static_cast<float>(params.seed);
+    constants.params1[2] = texelMeters;
+    constants.params1[3] = heightMeters;
+    constants.params2[0] = amount;
+
+    const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(CrumblingConstants), 256);
+    if (!cb.IsValid()) {
+        return false;
+    }
+    std::memcpy(cb.cpu, &constants, sizeof(constants));
+
+    PIXBeginEvent(commandList, PIX_COLOR(150, 130, 110), "CompositeCrumbling");
+    commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+    const auto barrier = [&]() {
+        const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+        commandList->ResourceBarrier(1, &uav);
+    };
+
+    TransitionIfNeeded(commandList, m_crumbling.packed, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    commandList->SetPipelineState(clearPass);
+    commandList->Dispatch(DispatchCount(m_resolution), DispatchCount(m_resolution), 1);
+    barrier();
+
+    if (attempts > 0 && amount > 0.0f) {
+        // 歩行は Height を読むだけ。読み取り専用にしてから走らせる。
+        TransitionIfNeeded(commandList, m_textures.height,
+                           D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        commandList->SetPipelineState(scatterPass);
+        commandList->Dispatch((static_cast<uint32_t>(attempts) + 63u) / 64u, 1, 1);
+        barrier();
+
+        // 積んだぶんを足し戻す。ここからは Height へ書く。
+        TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        commandList->SetPipelineState(resolvePass);
+        commandList->Dispatch(DispatchCount(m_resolution), DispatchCount(m_resolution), 1);
+        barrier();
+    }
+    PIXEndEvent(commandList);
+
+    // 形が変わったので、法線も作り直す。
+    if (normalPass != nullptr) {
+        RebuildNormalsFromHeight(device, normalPass, commandList, stack);
+    }
+    return true;
+}
+
+// 直前の崩落レイヤーが積んだ岩屑を、マスクとして焼く。
+bool MaterialEvaluator::ApplyCrumblingMask(rhi::Device& device,
+                                           rhi::PipelineCache& pipelineCache,
+                                           ID3D12GraphicsCommandList* commandList,
+                                           const MaskOp& op, rhi::GpuTexture& target) {
+    if (!m_crumbling.IsValid() || !target.IsValid()) {
+        return false;
+    }
+    ID3D12PipelineState* maskPass =
+        pipelineCache.GetCompute(L"CompositeCrumbling.hlsl", L"CsMask");
+    if (maskPass == nullptr) {
+        return false;
+    }
+
+    CrumblingConstants constants = {};
+    constants.indices0[0] = m_crumbling.packed.SrvIndex();
+    constants.indices1[0] = m_crumbling.resolution;
+    constants.indices2[0] = target.UavIndex();
+    constants.indices2[1] = (op.crumblingMask.channel == 0u) ? 0u : 1u;
+
+    const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(CrumblingConstants), 256);
+    if (!cb.IsValid()) {
+        return false;
+    }
+    std::memcpy(cb.cpu, &constants, sizeof(constants));
+
+    PIXBeginEvent(commandList, PIX_COLOR(150, 130, 110), "CompositeCrumblingMask");
+    TransitionIfNeeded(commandList, m_crumbling.packed,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+    commandList->SetPipelineState(maskPass);
+    commandList->Dispatch(DispatchCount(m_crumbling.resolution),
+                          DispatchCount(m_crumbling.resolution), 1);
+    const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+    commandList->ResourceBarrier(1, &uav);
+
+    // 次に使うときは書き込みへ戻す。
+    TransitionIfNeeded(commandList, m_crumbling.packed, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    PIXEndEvent(commandList);
+    return true;
+}
+
 bool MaterialEvaluator::ApplyHeightBlur(rhi::Device& device,
                                        ID3D12GraphicsCommandList* commandList,
                                        ID3D12PipelineState* blurPipeline,
@@ -1094,7 +1281,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             hash = HashBytes(hash, &scaleHash, sizeof(scaleHash));
             hash = HashBytes(hash, &m_maskOpResolutions[i], sizeof(uint32_t));
             if (op.kind == MaskOpKind::Fluvial || op.kind == MaskOpKind::Slope ||
-                op.kind == MaskOpKind::Sediment) {
+                op.kind == MaskOpKind::Sediment || op.kind == MaskOpKind::Crumbling) {
                 after = std::max(after, op.heightSourceLayer);
                 const size_t layerCount = std::min<size_t>(
                     stack.Layers().size(),
@@ -1158,7 +1345,22 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         if (IsHeightOperationKind(layer.kind)) {
             const bool hasUnderlying = (baseIndex != static_cast<size_t>(-1)) &&
                                        (layerIndex > baseIndex);
-            if (layer.enabled && hasUnderlying && layer.kind == LayerKind::Sediment) {
+            // 崩落だけは Mask 入力を**発生源**として使うので、先に引いておく。
+            // 段取り上、ここへ来る時点でその op は焼き終わっている。
+            if (layer.enabled && hasUnderlying && layer.kind == LayerKind::Crumbling) {
+                uint32_t emissionIndex = kInvalidTextureIndex;
+                if (layer.mask.source == MaskSource::Node && layer.mask.maskOp >= 0 &&
+                    static_cast<size_t>(layer.mask.maskOp) < maskOps.size() &&
+                    maskOpDone[static_cast<size_t>(layer.mask.maskOp)]) {
+                    emissionIndex =
+                        m_maskOpTextures[static_cast<size_t>(layer.mask.maskOp)].SrvIndex();
+                }
+                if (!ApplyCrumbling(device, pipelineCache, commandList, layer, stack,
+                                    emissionIndex)) {
+                    complete = false;
+                }
+                ++m_evaluatedLayerCount;
+            } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::Sediment) {
                 if (!ApplySediment(device, pipelineCache, commandList, layer, stack)) {
                     complete = false;
                 }

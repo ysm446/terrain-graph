@@ -27,6 +27,8 @@ enum class MaskOpKind : uint32_t {
     // 堆積レイヤーが積もらせた**土砂の厚み**。厚い所ほど 1 に近い。
     // 堆積した所へ別のマテリアルを乗せるためのもの。
     Sediment = 5,
+    // 崩落レイヤーが積んだ**岩屑**。出力ピンによって厚みか、岩片ごとの乱数になる。
+    Crumbling = 6,
 };
 
 // シェーダの TG_BLEND_* と一致させること。
@@ -71,6 +73,12 @@ struct SedimentMaskParams {
     float thicknessMeters = 0.5f;
 };
 
+// 崩落の出力をマスクにするときの選択。**どの出力ピンから来たか**で決まる。
+struct CrumblingMaskParams {
+    // 0: 岩屑の厚み（形そのもの）、1: 岩片ごとの乱数（色や材質のばらつき用）
+    uint32_t channel = 0;
+};
+
 // 演算 1 つ。入力は他の op の添字で、**自分より前**を指す（後方参照はしない）。
 struct MaskOp {
     MaskOpKind kind = MaskOpKind::Image;
@@ -86,6 +94,7 @@ struct MaskOp {
     LevelsParams levels;
     BlendParams blend;
     SedimentMaskParams sedimentMask;
+    CrumblingMaskParams crumblingMask;
 };
 
 // 評価する順に並んだ op の列。

@@ -100,6 +100,14 @@ inline const compositor::MaterialLayer kDefaultBlurLayer = [] {
     return layer;
 }();
 
+// 崩落ノードの既定値。値は terrain-editor の Crumbling に合わせてある。
+inline const compositor::MaterialLayer kDefaultCrumblingLayer = [] {
+    compositor::MaterialLayer layer;
+    layer.kind = compositor::LayerKind::Crumbling;
+    layer.name = "Crumbling";
+    return layer;
+}();
+
 // 堆積ノードの既定値。値は terrain-editor の Sediment に合わせてある。
 inline const compositor::MaterialLayer kDefaultSedimentLayer = [] {
     compositor::MaterialLayer layer;
@@ -118,14 +126,18 @@ inline const compositor::MaterialLayer& DefaultLayerFor(compositor::LayerKind ki
             return kDefaultBlurLayer;
         case compositor::LayerKind::Sediment:
             return kDefaultSedimentLayer;
+        case compositor::LayerKind::Crumbling:
+            return kDefaultCrumblingLayer;
         default:
             return kDefaultLayer;
     }
 }
 
 // レイヤー一覧のツールチップなどで使う種類の表示名。LayerKind の並びと一致させること。
-inline const char* const kLayerKindLabels[] = {"サーフェス", "シェイプ", "水面", "ブラー",
-                                               "堆積"};
+inline const char* const kLayerKindLabels[] = {"サーフェス", "シェイプ", "水面",
+                                               "ブラー",     "堆積",     "崩落"};
+// 岩片の形。compositor::RockStyle の並びと一致させること。
+inline const char* const kRockStyleLabels[] = {"丸い", "多面体", "尖った破片"};
 // 堆積の計算グリッド。合成解像度とは別に持つ。
 inline const char* const kSedimentResolutionLabels[] = {"256", "512", "1024"};
 inline constexpr uint32_t kSedimentResolutionValues[] = {256, 512, 1024};

@@ -50,6 +50,16 @@ constexpr std::array<PinDefinition, 3> kSedimentPins = {{
     {PinKind::Output, ValueType::Mask, "Mask"},
 }};
 
+// 崩落のピン。発生源のマスクを受け、地形に加えて
+// **岩屑の厚み**と**岩片ごとの乱数**を出す。
+constexpr std::array<PinDefinition, 5> kCrumblingPins = {{
+    {PinKind::Input, ValueType::Material, "Base"},
+    {PinKind::Input, ValueType::Mask, "Emission"},
+    {PinKind::Output, ValueType::Material, "Result"},
+    {PinKind::Output, ValueType::Mask, "Mask"},
+    {PinKind::Output, ValueType::Mask, "Unique"},
+}};
+
 // マスクを 1 枚受けて 1 枚返す加工のピン。
 constexpr std::array<PinDefinition, 2> kMaskFilterPins = {{
     {PinKind::Input, ValueType::Mask, "Mask"},
@@ -72,13 +82,14 @@ constexpr std::array<PinDefinition, 1> kSourceNodePins = {{
     {PinKind::Output, ValueType::Material, "Result"},
 }};
 
-constexpr std::array<NodeDefinition, 12> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 13> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
     {NodeKind::Liquid, "liquid", "Liquid", kLayerNodePins},
     {NodeKind::Blur, "heightmapBlur", "Heightmap Blur", kFilterNodePins},
     {NodeKind::Sediment, "sediment", "Sediment", kSedimentPins},
+    {NodeKind::Crumbling, "crumbling", "Crumbling", kCrumblingPins},
     {NodeKind::MaskImage, "maskImage", "Mask Image", kMaskSourcePins},
     {NodeKind::MaskFluvial, "maskFluvial", "Mask Fluvial", kMaskFromHeightPins},
     {NodeKind::MaskSlope, "maskSlope", "Mask Slope", kMaskFromHeightPins},
@@ -114,7 +125,7 @@ const NodeDefinition* FindNodeDefinitionByName(std::string_view name) {
 bool IsLayerNodeKind(NodeKind kind) {
     return kind == NodeKind::Surface || kind == NodeKind::Shape || kind == NodeKind::Liquid ||
            kind == NodeKind::Heightmap || kind == NodeKind::Blur ||
-           kind == NodeKind::Sediment;
+           kind == NodeKind::Sediment || kind == NodeKind::Crumbling;
 }
 
 bool IsSourceNodeKind(NodeKind kind) {
@@ -150,6 +161,8 @@ compositor::LayerKind LayerKindFor(NodeKind kind) {
             return compositor::LayerKind::Blur;
         case NodeKind::Sediment:
             return compositor::LayerKind::Sediment;
+        case NodeKind::Crumbling:
+            return compositor::LayerKind::Crumbling;
         default:
             return compositor::LayerKind::Surface;
     }
@@ -449,6 +462,46 @@ const TerrainScale* NodeGraph::FindChainScale(GraphId nodeId) const {
     return nullptr;
 }
 
+// Mask 入力の出どころを、上流の**出力ピンの位置**まで含めて返す。
+NodeGraph::MaskSourceRef NodeGraph::UpstreamMaskOf(const Node& node, size_t which) const {
+    MaskSourceRef result;
+    size_t seen = 0;
+    for (const Pin& pin : node.inputs) {
+        if (pin.valueType != ValueType::Mask) {
+            continue;
+        }
+        if (seen++ != which) {
+            continue;
+        }
+        for (const Link& link : m_links) {
+            if (link.endPin != pin.id) {
+                continue;
+            }
+            const Pin* source = FindPin(link.startPin);
+            const Node* sourceNode = (source != nullptr) ? FindNode(source->nodeId) : nullptr;
+            if (sourceNode == nullptr) {
+                return result;
+            }
+            // 何番目の Mask 出力か。崩落は 2 本持つので、ここで見分ける。
+            size_t index = 0;
+            for (const Pin& out : sourceNode->outputs) {
+                if (out.valueType != ValueType::Mask) {
+                    continue;
+                }
+                if (out.id == source->id) {
+                    result.node = sourceNode;
+                    result.outputIndex = index;
+                    return result;
+                }
+                ++index;
+            }
+            return result;
+        }
+        return result;
+    }
+    return result;
+}
+
 const Node* NodeGraph::UpstreamOf(const Node& node, ValueType type, size_t which) const {
     size_t seen = 0;
     for (const Pin& pin : node.inputs) {
@@ -466,54 +519,63 @@ const Node* NodeGraph::UpstreamOf(const Node& node, ValueType type, size_t which
 // マスクのノードを op の列へ落とす（入力が先、出力が後）。
 // **同じノードは 1 つの op を共有する。** Mask Blend で合流したり、
 // 同じマスクを 2 つのレイヤーで使ったりしても、評価は 1 回で済む。
-int NodeGraph::EmitMaskOps(const Node& maskNode, int defaultHeightLayer,
+int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
                            const std::vector<const Node*>& layerNodes,
                            compositor::MaskProgram& ops,
-                           std::vector<std::pair<const Node*, int>>& emitted, int depth) const {
+                           std::vector<EmittedMaskOp>& emitted, int depth) const {
+    if (source.node == nullptr) {
+        return -1;
+    }
+    const Node& maskNode = *source.node;
     // 循環は CanCreateLink が弾いているが、読み込んだファイルが壊れている
     // 可能性もあるので深さでも止める。
     constexpr int kMaxDepth = 32;
-    // 堆積は**レイヤーでもありマスクの出どころでもある**（積もった厚みを出す）。
-    const bool isSedimentMask = (maskNode.kind == NodeKind::Sediment);
-    if (depth > kMaxDepth || (!IsMaskNodeKind(maskNode.kind) && !isSedimentMask)) {
+    // 堆積と崩落は**レイヤーでもありマスクの出どころでもある**
+    // （積もった厚み / 積んだ岩屑を出す）。
+    const bool isLayerMaskSource =
+        (maskNode.kind == NodeKind::Sediment) || (maskNode.kind == NodeKind::Crumbling);
+    if (depth > kMaxDepth || (!IsMaskNodeKind(maskNode.kind) && !isLayerMaskSource)) {
         return -1;
     }
-    for (const auto& [node, heightLayer] : emitted) {
-        if (node == &maskNode && heightLayer == defaultHeightLayer) {
-            // 既に焼いてある。同じ op を共有する。
-            for (size_t i = 0; i < emitted.size(); ++i) {
-                if (emitted[i].first == node && emitted[i].second == heightLayer) {
-                    return static_cast<int>(i);
-                }
-            }
+    for (size_t i = 0; i < emitted.size(); ++i) {
+        // 既に焼いてあれば同じ op を共有する。**出力ピンまで一致していること。**
+        if (emitted[i].node == &maskNode && emitted[i].heightLayer == defaultHeightLayer &&
+            emitted[i].outputIndex == source.outputIndex) {
+            return static_cast<int>(i);
         }
     }
 
-    // 堆積だけはレイヤーの設定を持つ。厚みを出すのはチェーンの中にいるときだけ
-    // （そのレイヤーを合成し終えた時点の土砂を読むため）。
-    if (isSedimentMask) {
+    // 堆積 / 崩落はレイヤーの設定を持つ。作業用テクスチャから焼くので、
+    // **そのレイヤーがこのチェーンの中にいるときだけ**成立する。
+    if (isLayerMaskSource) {
         const auto* layerSettings = std::get_if<LayerNodeSettings>(&maskNode.settings);
         if (layerSettings == nullptr) {
             return -1;
         }
-        compositor::MaskOp sedimentOp;
-        sedimentOp.kind = compositor::MaskOpKind::Sediment;
-        sedimentOp.sedimentMask.contrast = layerSettings->layer.sediment.maskContrast;
-        sedimentOp.sedimentMask.thicknessMeters =
-            layerSettings->layer.sediment.maskThicknessMeters;
-        sedimentOp.heightSourceLayer = -1;
+        compositor::MaskOp layerOp;
+        if (maskNode.kind == NodeKind::Sediment) {
+            layerOp.kind = compositor::MaskOpKind::Sediment;
+            layerOp.sedimentMask.contrast = layerSettings->layer.sediment.maskContrast;
+            layerOp.sedimentMask.thicknessMeters =
+                layerSettings->layer.sediment.maskThicknessMeters;
+        } else {
+            layerOp.kind = compositor::MaskOpKind::Crumbling;
+            // 0 番目の Mask 出力が厚み、1 番目が岩片ごとの乱数。
+            layerOp.crumblingMask.channel = (source.outputIndex == 0) ? 0u : 1u;
+        }
+        layerOp.heightSourceLayer = -1;
         for (size_t i = 0; i < layerNodes.size(); ++i) {
             if (layerNodes[i] == &maskNode) {
-                sedimentOp.heightSourceLayer = static_cast<int>(i);
+                layerOp.heightSourceLayer = static_cast<int>(i);
                 break;
             }
         }
-        if (sedimentOp.heightSourceLayer < 0) {
-            // このチェーンに居ない堆積ノード。厚みは残っていないので繋がない。
+        if (layerOp.heightSourceLayer < 0) {
+            // このチェーンに居ないノード。結果が残っていないので繋がない。
             return -1;
         }
-        ops.push_back(sedimentOp);
-        emitted.emplace_back(&maskNode, defaultHeightLayer);
+        ops.push_back(layerOp);
+        emitted.push_back({&maskNode, defaultHeightLayer, source.outputIndex});
         return static_cast<int>(ops.size() - 1);
     }
 
@@ -557,9 +619,9 @@ int NodeGraph::EmitMaskOps(const Node& maskNode, int defaultHeightLayer,
     // 繋いでいない / このチェーンに居ないノードなら、呼び出し側の既定へ落とす。
     if (IsHeightMaskNodeKind(maskNode.kind)) {
         op.heightSourceLayer = defaultHeightLayer;
-        if (const Node* source = UpstreamOf(maskNode, ValueType::Material)) {
+        if (const Node* heightSource = UpstreamOf(maskNode, ValueType::Material)) {
             for (size_t i = 0; i < layerNodes.size(); ++i) {
-                if (layerNodes[i] == source) {
+                if (layerNodes[i] == heightSource) {
                     op.heightSourceLayer = static_cast<int>(i);
                     break;
                 }
@@ -569,14 +631,12 @@ int NodeGraph::EmitMaskOps(const Node& maskNode, int defaultHeightLayer,
 
     // 入力のマスクを先に焼く。**op は自分より前だけを指す。**
     if (maskNode.kind == NodeKind::MaskLevels || maskNode.kind == NodeKind::MaskBlend) {
-        if (const Node* a = UpstreamOf(maskNode, ValueType::Mask, 0)) {
-            op.inputA = EmitMaskOps(*a, defaultHeightLayer, layerNodes, ops, emitted, depth + 1);
-        }
+        const MaskSourceRef a = UpstreamMaskOf(maskNode, 0);
+        op.inputA = EmitMaskOps(a, defaultHeightLayer, layerNodes, ops, emitted, depth + 1);
     }
     if (maskNode.kind == NodeKind::MaskBlend) {
-        if (const Node* b = UpstreamOf(maskNode, ValueType::Mask, 1)) {
-            op.inputB = EmitMaskOps(*b, defaultHeightLayer, layerNodes, ops, emitted, depth + 1);
-        }
+        const MaskSourceRef b = UpstreamMaskOf(maskNode, 1);
+        op.inputB = EmitMaskOps(b, defaultHeightLayer, layerNodes, ops, emitted, depth + 1);
         // 片方だけ繋いでいるときは繋いだほうを通す（未接続は 0 ではなく「中立」）。
         if (op.inputA < 0 && op.inputB < 0) {
             return -1;
@@ -588,7 +648,7 @@ int NodeGraph::EmitMaskOps(const Node& maskNode, int defaultHeightLayer,
     }
 
     ops.push_back(op);
-    emitted.emplace_back(&maskNode, defaultHeightLayer);
+    emitted.push_back({&maskNode, defaultHeightLayer, source.outputIndex});
     return static_cast<int>(ops.size() - 1);
 }
 
@@ -650,16 +710,16 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace) co
     // Mask 入力に繋がっているマスクのノードを op の列へ落とし、
     // レイヤーからは添字で参照する（同じ意味の値を 2 か所から編集させない）。
     // 効き方（係数 / カーブ / レベル / 反転）はレイヤー側の設定のまま。
-    std::vector<std::pair<const Node*, int>>& emitted = state.emitted;
+    std::vector<EmittedMaskOp>& emitted = state.emitted;
     for (size_t i = 0; i < compiled.layers.size(); ++i) {
-        const Node* maskNode = UpstreamOf(*layerNodes[i], ValueType::Mask);
-        if (maskNode == nullptr) {
+        const MaskSourceRef maskSource = UpstreamMaskOf(*layerNodes[i]);
+        if (maskSource.node == nullptr) {
             continue;
         }
         // 高さ由来のマスクで Base を繋いでいないときは「このレイヤーの直下」。
         const int defaultHeightLayer = (i > 0) ? (static_cast<int>(i) - 1) : 0;
         const int op =
-            EmitMaskOps(*maskNode, defaultHeightLayer, layerNodes, compiled.maskOps, emitted, 0);
+            EmitMaskOps(maskSource, defaultHeightLayer, layerNodes, compiled.maskOps, emitted, 0);
         if (op >= 0) {
             compiled.layers[i].mask.source = compositor::MaskSource::Node;
             compiled.layers[i].mask.maskOp = op;
@@ -705,8 +765,23 @@ CompiledGraph NodeGraph::CompileLayersTo(GraphId nodeId, GraphId outputPin) cons
         // 「いまの一番上」（＝入力に繋いだチェーンの天面）になる。
         const int defaultHeightLayer =
             compiled.layers.empty() ? 0 : (static_cast<int>(compiled.layers.size()) - 1);
-        const int op = EmitMaskOps(*node, defaultHeightLayer, trace.layerNodes, compiled.maskOps,
-                                   trace.emitted, 0);
+        // プレビューで見ている出力ピンが、その何番目の Mask 出力か。
+        size_t previewOutputIndex = 0;
+        {
+            size_t index = 0;
+            for (const Pin& pin : node->outputs) {
+                if (pin.valueType != ValueType::Mask) {
+                    continue;
+                }
+                if (pin.id == outputPin) {
+                    previewOutputIndex = index;
+                    break;
+                }
+                ++index;
+            }
+        }
+        const int op = EmitMaskOps({node, previewOutputIndex}, defaultHeightLayer,
+                                   trace.layerNodes, compiled.maskOps, trace.emitted, 0);
 
         // 下地を黒で覆ってからマスクを白で塗る。マスクの値がそのまま濃淡になる。
         compositor::MaterialLayer cover = MakeMaskPreviewLayer("Mask 0", {0.02f, 0.02f, 0.02f});

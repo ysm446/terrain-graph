@@ -48,11 +48,21 @@ enum class LayerKind : uint32_t {
     Liquid = 2,
     Blur = 3,
     Sediment = 4,
+    // 崩落。発生源から岩屑を斜面下へ流し、止まった所へ積む。
+    Crumbling = 5,
+};
+
+// 岩片の形。terrain-editor の RockStyle と同じ 3 種類。
+enum class RockStyle : uint32_t {
+    Classic = 0,    // 丸いドーム
+    Polygonal = 1,  // 6 角の多面体
+    Shard = 2,      // 4 角で尖った破片
 };
 
 // 合成せずハイトを書き換える加工か。**下地にはなれない**（ならす相手が要る）。
 inline bool IsHeightOperationKind(LayerKind kind) {
-    return kind == LayerKind::Blur || kind == LayerKind::Sediment;
+    return kind == LayerKind::Blur || kind == LayerKind::Sediment ||
+           kind == LayerKind::Crumbling;
 }
 
 // ハイトの基準面。ソースの値がこの値のとき、そのテクセルは「基準の高さ」ちょうどになる。
@@ -274,6 +284,23 @@ struct MaterialLayer {
         int iterations = 1;
     };
     BlurSettings blur;
+
+    // 崩落（kind == LayerKind::Crumbling のときだけ意味を持つ）。
+    //
+    // terrain-editor の Crumbling を移したもの。発生源のマスクが明るい所から
+    // 岩片を生み、地形の低い方へ歩かせ、止まった位置へ岩片の形を積む。
+    // サイズは m で持つ（実寸で地形を扱うため）。
+    struct CrumblingSettings {
+        int physicsCount = 48;         // 岩片を下へ進めるステップ数
+        float amount = 0.65f;          // 岩屑の量。粒子数と盛り上がりの強さに効く
+        float sizeMinMeters = 2.0f;    // 岩片の最小直径
+        float sizeMaxMeters = 8.0f;    // 岩片の最大直径
+        RockStyle style = RockStyle::Shard;
+        float gravity = 0.75f;         // 低い方へ流れる強さ。高いほど直線的に下る
+        float spread = 0.35f;          // 進行方向から横へ逸れる強さ
+        int seed = 0;
+    };
+    CrumblingSettings crumbling;
 
     LayerMask mask;
 

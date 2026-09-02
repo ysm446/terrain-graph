@@ -149,7 +149,10 @@ const char* const kMaskSourceNames[] = {"constant", "noise",     "texture", "hei
 const char* const kFluvialCurveNames[] = {"log", "threshold", "linear"};
 const char* const kMaskBlendModeNames[] = {"add", "multiply", "min", "max"};
 const char* const kChannelNames[] = {"baseColor", "normal", "surface", "height"};
-const char* const kLayerKindNames[] = {"surface", "shape", "liquid", "blur", "sediment"};
+const char* const kLayerKindNames[] = {"surface", "shape",    "liquid",
+                                       "blur",    "sediment", "crumbling"};
+// 岩片の形。compositor::RockStyle の並びと一致させること。
+const char* const kRockStyleNames[] = {"classic", "polygonal", "shard"};
 const char* const kTonemapNames[] = {"none", "reinhard", "aces"};
 const char* const kSkySourceNames[] = {"procedural", "hdri"};
 const char* const kApertureShapeNames[] = {"circle", "triangle", "hexagon", "octagon"};
@@ -490,6 +493,18 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     sediment["maskThicknessMeters"] = layer.sediment.maskThicknessMeters;
     node["sediment"] = std::move(sediment);
 
+    // 崩落（崩落レイヤーだけが使う）。
+    json crumbling;
+    crumbling["physicsCount"] = layer.crumbling.physicsCount;
+    crumbling["amount"] = layer.crumbling.amount;
+    crumbling["sizeMin"] = layer.crumbling.sizeMinMeters;
+    crumbling["sizeMax"] = layer.crumbling.sizeMaxMeters;
+    crumbling["style"] = EnumName(kRockStyleNames, static_cast<uint32_t>(layer.crumbling.style));
+    crumbling["gravity"] = layer.crumbling.gravity;
+    crumbling["spread"] = layer.crumbling.spread;
+    crumbling["seed"] = layer.crumbling.seed;
+    node["crumbling"] = std::move(crumbling);
+
     // ぼかし（ブラーレイヤーだけが使う）。
     json blur;
     blur["radius"] = layer.blur.radiusMeters;
@@ -572,6 +587,23 @@ compositor::MaterialLayer ReadLayer(
             ReadFloat(*sediment, "maskContrast", defaults.sediment.maskContrast);
         layer.sediment.maskThicknessMeters = ReadFloat(*sediment, "maskThicknessMeters",
                                                        defaults.sediment.maskThicknessMeters);
+    }
+
+    if (const json* crumbling = FindMember(node, "crumbling");
+        crumbling != nullptr && crumbling->is_object()) {
+        layer.crumbling.physicsCount =
+            ReadInt(*crumbling, "physicsCount", defaults.crumbling.physicsCount);
+        layer.crumbling.amount = ReadFloat(*crumbling, "amount", defaults.crumbling.amount);
+        layer.crumbling.sizeMinMeters =
+            ReadFloat(*crumbling, "sizeMin", defaults.crumbling.sizeMinMeters);
+        layer.crumbling.sizeMaxMeters =
+            ReadFloat(*crumbling, "sizeMax", defaults.crumbling.sizeMaxMeters);
+        layer.crumbling.style = static_cast<compositor::RockStyle>(EnumValue(
+            kRockStyleNames, *crumbling, "style",
+            static_cast<uint32_t>(defaults.crumbling.style)));
+        layer.crumbling.gravity = ReadFloat(*crumbling, "gravity", defaults.crumbling.gravity);
+        layer.crumbling.spread = ReadFloat(*crumbling, "spread", defaults.crumbling.spread);
+        layer.crumbling.seed = ReadInt(*crumbling, "seed", defaults.crumbling.seed);
     }
 
     if (const json* blur = FindMember(node, "blur"); blur != nullptr && blur->is_object()) {

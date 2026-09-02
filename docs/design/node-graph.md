@@ -1,7 +1,7 @@
 # node-graph — ノードグラフの設計
 
 作成日時: 2026-09-02 12:50
-更新日時: 2026-09-03 17:30
+更新日時: 2026-09-03 21:00
 
 `src/graph/` とグラフパネル（`src/app/ApplicationGraphPanel.cpp`）の設計。
 **ノード 1 つずつの役割・ピン・パラメータは
@@ -43,6 +43,7 @@ terrain-editor から移植したのは**仕組み**であって、ノードの�
 | Liquid | `liquid` | 同上 | `MaterialLayer`（kind=Liquid) |
 | Heightmap Blur | `heightmapBlur` | Base(入力) / Result(出力) | `MaterialLayer`（kind=Blur）の `blur` |
 | Sediment | `sediment` | Base(入力) / Result / Mask(出力) | `MaterialLayer`（kind=Sediment）の `sediment` |
+| Crumbling | `crumbling` | Base / Emission(入力) / Result / Mask / Unique(出力) | `MaterialLayer`（kind=Crumbling）の `crumbling` |
 | Mask Image | `maskImage` | Mask(出力) のみ | `MapSlot`（画像 + 読むチャンネル） |
 | Mask Fluvial | `maskFluvial` | Base(入力) / Mask(出力) | `FluvialParams`（川筋） |
 | Mask Slope | `maskSlope` | Base(入力) / Mask(出力) | `SlopeParams`（傾斜） |
@@ -145,6 +146,19 @@ terrain-editor の Mask Fluvial。**下地の川筋**（水が集まる所）を
 - **Mask ピンをクリックすると、厚みが白黒でビューポートに出る**
   （マスクのノードと同じ見せ方）。Result ピンなら地形そのもの。
   どの出力を見ているかは**ピンの丸の塗り**で分かる。
+
+### 崩落の Mask / Unique 出力
+
+**崩落は Mask 出力を 2 本持つ**（厚みと、岩片ごとの乱数）。そのため
+「どのノードから来たか」だけではどちらの op を作るか決まらない。
+
+- `MaskSourceRef`（ノード + **何番目の Mask 出力か**）でマスクの出どころを表す。
+  `UpstreamMaskOf()` が入力ピンを辿ってこれを返す。
+- `EmitMaskOps()` は出力ピンまで含めて op を共有する
+  （同じノードでも Mask と Unique では別の op になる）。
+- Emission 入力は**レイヤーの Mask 入力そのもの**。コンパイルが
+  `MaskSource::Node` + op の添字を入れ、評価器はそれを発生源として読む。
+  段取り上、崩落レイヤーへ来る時点でその op は焼き終わっている。
 
 ### マスクのノード（傾斜 / レベル / 合成）
 

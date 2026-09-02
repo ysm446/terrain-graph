@@ -60,6 +60,8 @@ enum class NodeKind : uint32_t {
     MaskBlend = 10,
     // 土砂を重力で再分配する加工（terrain-editor の Sediment）。
     Sediment = 11,
+    // 発生源から岩屑を崩し落とす加工（terrain-editor の Crumbling）。
+    Crumbling = 12,
 };
 
 struct PinDefinition {
@@ -207,21 +209,35 @@ private:
     std::vector<const Node*> ChainFrom(const Node* top) const;
     // CompileChainFrom の途中経過。マスクのプレビューで、チェーンと同じ
     // 解決（Height の起点・焼いた op の共有）を続けるために要る。
+    // マスクの出どころ。**どのノードの、何番目の Mask 出力か**まで持つ。
+    // 崩落のように Mask 出力を 2 本持つノードがあるので、ノードだけでは足りない。
+    struct MaskSourceRef {
+        const Node* node = nullptr;
+        size_t outputIndex = 0;  // そのノードの Mask 出力のうち何番目か
+    };
+    // 焼いた op の記録。**添字は ops の添字と一致する**（必ず一緒に push する）。
+    struct EmittedMaskOp {
+        const Node* node = nullptr;
+        int heightLayer = 0;
+        size_t outputIndex = 0;
+    };
     struct ChainTrace {
         // layers と 1 対 1 で並ぶ元ノード。マスクがチェーンのどこを読むかの解決に使う。
         std::vector<const Node*> layerNodes;
-        // 焼いた op（ノードと Height の起点の組が、そのまま op の添字になる）。
-        std::vector<std::pair<const Node*, int>> emitted;
+        // 焼いた op（添字が op の添字と一致する）。
+        std::vector<EmittedMaskOp> emitted;
     };
     // top から「下地」チェーンを遡ってレイヤー列（下から上）にする共通部。
     CompiledGraph CompileChainFrom(const Node* top, ChainTrace* trace = nullptr) const;
     // マスクのノードを op の列へ落とす。返り値は結果の op の添字（-1 は未接続）。
-    // 同じノード（かつ同じ Height の起点）は 1 つの op を共有する。
-    int EmitMaskOps(const Node& maskNode, int defaultHeightLayer,
+    // 同じノード（かつ同じ Height の起点・同じ出力ピン）は 1 つの op を共有する。
+    int EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
                     const std::vector<const Node*>& layerNodes, compositor::MaskProgram& ops,
-                    std::vector<std::pair<const Node*, int>>& emitted, int depth) const;
+                    std::vector<EmittedMaskOp>& emitted, int depth) const;
     // ノードの入力ピン（型を指定）に繋がっている上流ノード。無ければ nullptr。
     const Node* UpstreamOf(const Node& node, ValueType type, size_t which = 0) const;
+    // Mask 入力に繋がっている出どころ。node が nullptr なら未接続。
+    MaskSourceRef UpstreamMaskOf(const Node& node, size_t which = 0) const;
     // 出力ノードへ繋がっている一番上のノード。無ければ nullptr。
     const Node* ChainTop() const;
     // プレビュー対象（nodeId が 0 なら出力チェーン）の一番上のノード。
