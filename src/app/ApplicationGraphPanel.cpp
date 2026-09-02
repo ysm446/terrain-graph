@@ -79,7 +79,8 @@ struct PinGeometry {
 
 // 丸ピンを描いて矩形を返す。**当たり判定（ed::PinRect）は呼び出し側で決める。**
 // ラベルまで含めて掴めるようにするため（出力ピンはクリックでプレビューも切り替える）。
-PinGeometry DrawRoundPin(const graph::Pin& pin) {
+// filled が真なら丸を塗る。**ビューポートに出ている出力**の印に使う。
+PinGeometry DrawRoundPin(const graph::Pin& pin, bool filled = false) {
     const ImVec2 size(14.0f, 20.0f);
     ImGui::Dummy(size);
     PinGeometry geometry;
@@ -89,8 +90,12 @@ PinGeometry DrawRoundPin(const graph::Pin& pin) {
                              (geometry.min.y + geometry.max.y) * 0.5f);
     ed::PinPivotRect(ImVec2(geometry.center.x - 6.0f, geometry.center.y - 6.0f),
                      ImVec2(geometry.center.x + 6.0f, geometry.center.y + 6.0f));
-    ImGui::GetWindowDrawList()->AddCircle(geometry.center, 4.3f,
-                                          ColorToU32(PinTypeColor(pin.valueType)), 16, 1.6f);
+    const ImU32 pinColor = ColorToU32(PinTypeColor(pin.valueType));
+    if (filled) {
+        ImGui::GetWindowDrawList()->AddCircleFilled(geometry.center, 4.3f, pinColor, 16);
+    } else {
+        ImGui::GetWindowDrawList()->AddCircle(geometry.center, 4.3f, pinColor, 16, 1.6f);
+    }
     return geometry;
 }
 
@@ -177,11 +182,21 @@ void Application::RequestGraphNodePlacement(bool navigate) {
 
 // ビューポートに出すノードを決める。**選択とは別**に持つので、
 // 結果を見ながら別のノードのプロパティをいじれる。
-void Application::SetPreviewGraphNode(graph::GraphId nodeId) {
+void Application::SetPreviewGraphNode(graph::GraphId nodeId, graph::GraphId outputPin) {
     const graph::Node* node = m_graph.FindNode(nodeId);
     // 出力ノードと、プレビューできない種類は「出力ノードのチェーン」に落とす。
-    m_previewGraphNode =
-        (node != nullptr && graph::IsPreviewableNodeKind(node->kind)) ? node->id : 0;
+    const bool previewable = (node != nullptr && graph::IsPreviewableNodeKind(node->kind));
+    m_previewGraphNode = previewable ? node->id : 0;
+    // 見る出力。そのノードの出力ピンでなければ 0（＝最初の出力）に落とす。
+    m_previewGraphPin = 0;
+    if (previewable) {
+        for (const graph::Pin& pin : node->outputs) {
+            if (pin.id == outputPin) {
+                m_previewGraphPin = pin.id;
+                break;
+            }
+        }
+    }
 }
 
 void Application::SyncGraphStack() {
@@ -193,6 +208,7 @@ void Application::SyncGraphStack() {
         target = node->id;
     } else {
         m_previewGraphNode = 0;
+        m_previewGraphPin = 0;
     }
     // 地形の実寸はチェーンの根にある Heightmap ノードが持つ。
     // **読み込むときに一度決めたら、以後はプレビュー側で触らない。**
@@ -206,13 +222,16 @@ void Application::SyncGraphStack() {
     // レイヤー列が変わらなくても実寸だけ動くことがあるため、早期 return より前に置く。
     m_graphStack.SetTerrainScale(m_renderer.PlaneSize(), m_renderer.DisplacementScale());
 
-    if (m_compiledGraphRevision == m_graph.Revision() && m_compiledGraphTarget == target) {
+    if (m_compiledGraphRevision == m_graph.Revision() && m_compiledGraphTarget == target &&
+        m_compiledGraphTargetPin == m_previewGraphPin) {
         return;
     }
     m_compiledGraphRevision = m_graph.Revision();
     m_compiledGraphTarget = target;
-    graph::CompiledGraph compiled =
-        (target != 0) ? m_graph.CompileLayersTo(target) : m_graph.CompileLayers();
+    m_compiledGraphTargetPin = m_previewGraphPin;
+    graph::CompiledGraph compiled = (target != 0)
+                                        ? m_graph.CompileLayersTo(target, m_previewGraphPin)
+                                        : m_graph.CompileLayers();
     m_graphStack.Layers() = std::move(compiled.layers);
     m_graphStack.MaskOps() = std::move(compiled.maskOps);
     m_graphStack.MarkDirty();
@@ -406,6 +425,10 @@ void Application::DrawGraphNode(const graph::Node& node) {
 
     for (size_t outputIndex = 0; outputIndex < node.outputs.size(); ++outputIndex) {
         const graph::Pin& output = node.outputs[outputIndex];
+        // **どの出力を見ているか**を丸の塗りで示す。堆積のように出力が 2 つある
+        // ノードでは、Result と Mask のどちらが画面に出ているのかが要る。
+        const bool previewOutput = isPreview && ((output.id == m_previewGraphPin) ||
+                                                 (m_previewGraphPin == 0 && outputIndex == 0));
         const float outputY = rowY + static_cast<float>(outputIndex) * 24.0f;
         const float labelWidth = ImGui::CalcTextSize(output.label.c_str()).x;
         ImGui::SetCursorPos(ImVec2(rowStartX + kNodeWidth - labelWidth - 22.0f, outputY + 2.0f));
@@ -414,7 +437,7 @@ void Application::DrawGraphNode(const graph::Node& node) {
         const ImVec2 labelMin = ImGui::GetItemRectMin();
         ImGui::SameLine();
         ImGui::SetCursorPosY(outputY);
-        const PinGeometry geometry = DrawRoundPin(output);
+        const PinGeometry geometry = DrawRoundPin(output, previewOutput);
         // ラベルの左端から丸まで。
         ed::PinRect(ImVec2(labelMin.x, geometry.min.y), geometry.max);
         ed::EndPin();
@@ -561,6 +584,7 @@ void Application::DrawGraphEditor() {
                     MarkDocumentChanged();
                     if (m_previewGraphNode == nodeId) {
                         m_previewGraphNode = 0;
+                        m_previewGraphPin = 0;
                     }
                     if (m_selectedGraphNode == nodeId) {
                         m_selectedGraphNode = 0;
@@ -667,7 +691,9 @@ void Application::DrawGraphEditor() {
             if (m_graphPressedPin != 0 && hoveredPin == m_graphPressedPin && moved < 6.0f) {
                 if (const graph::Pin* pin = m_graph.FindPin(m_graphPressedPin);
                     pin != nullptr && pin->kind == graph::PinKind::Output) {
-                    SetPreviewGraphNode(pin->nodeId);
+                    // 押したピンそのものを見る（堆積の Mask をクリックすれば
+                    // 積もった厚みが白黒で出る）。
+                    SetPreviewGraphNode(pin->nodeId, pin->id);
                 }
             }
             m_graphPressedPin = 0;
@@ -757,8 +783,16 @@ void Application::DrawGraphPanel() {
         const graph::Node* previewNode = m_graph.FindNode(m_previewGraphNode);
         const char* previewName =
             (previewNode != nullptr) ? NodeDisplayName(*previewNode) : "Output";
+        // 出力が 2 つ以上あるノードは、どちらを見ているのかも出す。
+        const graph::Pin* previewPin = m_graph.FindPin(m_previewGraphPin);
         if (ui::BeginPropertyTable("graphPreviewRow")) {
-            ui::PropertyValue("プレビュー", "%s", previewName);
+            if (previewPin != nullptr && previewNode != nullptr &&
+                previewNode->outputs.size() > 1) {
+                ui::PropertyValue("プレビュー", "%s（%s）", previewName,
+                                  previewPin->label.c_str());
+            } else {
+                ui::PropertyValue("プレビュー", "%s", previewName);
+            }
             ui::EndPropertyTable();
         }
         if (previewNode != nullptr) {
@@ -767,7 +801,8 @@ void Application::DrawGraphPanel() {
             }
         }
         ui::HintText("出力ピンをクリック（またはノードをダブルクリック）で、"
-                     "ビューポートに出すノードを切り替える");
+                     "ビューポートに出す出力を切り替える。"
+                     "Mask の出力を選ぶと、そのマスクが白黒で貼られる");
         ImGui::Spacing();
     }
 

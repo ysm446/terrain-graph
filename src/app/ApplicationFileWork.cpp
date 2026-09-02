@@ -209,6 +209,7 @@ void Application::ResetProject() {
     m_graph = graph::NodeGraph::CreateDefault();
     m_selectedGraphNode = 0;
     m_previewGraphNode = 0;
+    m_previewGraphPin = 0;
     m_compiledGraphRevision = 0;
     m_graphStack.MarkDirty();
     RequestGraphNodePlacement();
@@ -280,6 +281,7 @@ void Application::ProcessPendingFileWork() {
             m_projectPath = path;
             m_selectedGraphNode = 0;
             m_previewGraphNode = 0;
+            m_previewGraphPin = 0;
             m_compiledGraphRevision = 0;
             m_graphStack.MarkDirty();
             RequestGraphNodePlacement();

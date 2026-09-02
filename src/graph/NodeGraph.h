@@ -186,8 +186,10 @@ public:
     // チェーンが空なら下地 1 枚（MaterialStack::MakeBaseLayer と同じもの）を返す。
     CompiledGraph CompileLayers() const;
     // 指定したノード**まで**。ノードを選んでプレビューするときに使う。
-    // マスクのノードを選んだときは、その結果を白黒で貼ったプレビューになる。
-    CompiledGraph CompileLayersTo(GraphId nodeId) const;
+    // outputPin は**どの出力を見ているか**。0 なら最初の出力（レイヤーなら Result）。
+    // マスクの出力を見ているときは、その結果を白黒で貼ったプレビューになる
+    // （堆積のように Result と Mask を両方出すノードは、ピンで見分ける）。
+    CompiledGraph CompileLayersTo(GraphId nodeId, GraphId outputPin = 0) const;
 
     // チェーンの根にあるソース（Heightmap）の実寸。無ければ nullptr。
     // プレビューの平面のサイズと変位量はこれに従う。
@@ -203,8 +205,16 @@ private:
     void RebuildNextGraphId();
     // top から「下地」チェーンを遡る（上から下の順）。
     std::vector<const Node*> ChainFrom(const Node* top) const;
+    // CompileChainFrom の途中経過。マスクのプレビューで、チェーンと同じ
+    // 解決（Height の起点・焼いた op の共有）を続けるために要る。
+    struct ChainTrace {
+        // layers と 1 対 1 で並ぶ元ノード。マスクがチェーンのどこを読むかの解決に使う。
+        std::vector<const Node*> layerNodes;
+        // 焼いた op（ノードと Height の起点の組が、そのまま op の添字になる）。
+        std::vector<std::pair<const Node*, int>> emitted;
+    };
     // top から「下地」チェーンを遡ってレイヤー列（下から上）にする共通部。
-    CompiledGraph CompileChainFrom(const Node* top) const;
+    CompiledGraph CompileChainFrom(const Node* top, ChainTrace* trace = nullptr) const;
     // マスクのノードを op の列へ落とす。返り値は結果の op の添字（-1 は未接続）。
     // 同じノード（かつ同じ Height の起点）は 1 つの op を共有する。
     int EmitMaskOps(const Node& maskNode, int defaultHeightLayer,

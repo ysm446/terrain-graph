@@ -103,7 +103,8 @@ private:
     void PasteGraphNodes();
     // ビューポートに出すノードを決める。出力ノードや無効な ID は
     // 「出力ノードのチェーン」（0）に落とす。
-    void SetPreviewGraphNode(graph::GraphId nodeId);
+    // outputPin は**どの出力を見るか**。0 なら最初の出力（レイヤーなら Result）。
+    void SetPreviewGraphNode(graph::GraphId nodeId, graph::GraphId outputPin = 0);
     void DrawMaterialLibraryPanel();
     // 天球パネル。一覧で選んだものがそのままビューポートの環境になる。
     void DrawSkyLibraryPanel();
@@ -205,6 +206,7 @@ private:
     uint64_t m_compiledGraphRevision = 0;
     // 前回コンパイルしたプレビュー対象。選択が変わっても再コンパイルするために持つ。
     graph::GraphId m_compiledGraphTarget = 0;
+    graph::GraphId m_compiledGraphTargetPin = 0;
     graph::GraphId m_selectedGraphNode = 0;
     // エディタで選ばれているノード全部。コピーはこれを見る
     // （プロパティに出すのは先頭の 1 つ = m_selectedGraphNode）。
@@ -232,6 +234,9 @@ private:
     // 結果を見ながら別のノードのプロパティをいじれるようにするため
     // （terrain-editor と同じ作法）。0 は出力ノードのチェーン。
     graph::GraphId m_previewGraphNode = 0;
+    // プレビューしている出力ピン。0 なら最初の出力。
+    // **堆積は Result と Mask を出す**ので、ノードだけでは決まらない。
+    graph::GraphId m_previewGraphPin = 0;
     // 出力ピンの「クリック」を拾うための押した位置。ドラッグ（リンク作成）と
     // 区別するために、押した / 離したが同じピンで、ほとんど動いていないときだけ
     // クリックとみなす。

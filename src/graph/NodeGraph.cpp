@@ -617,13 +617,18 @@ compositor::MaterialLayer MakeMaskPreviewLayer(const char* name,
 
 }  // namespace
 
-CompiledGraph NodeGraph::CompileChainFrom(const Node* top) const {
+CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace) const {
     const std::vector<const Node*> chain = ChainFrom(top);
+
+    // 途中経過は呼び出し側が要求したときだけ外へ残す。
+    ChainTrace localTrace;
+    ChainTrace& state = (trace != nullptr) ? *trace : localTrace;
+    state.layerNodes.clear();
+    state.emitted.clear();
 
     // 遡った順（上→下）を、レイヤー列の順（下→上）へ反転する。
     CompiledGraph compiled;
-    // layers と 1 対 1 で並ぶ元ノード。マスクがチェーンのどこを読むかの解決に使う。
-    std::vector<const Node*> layerNodes;
+    std::vector<const Node*>& layerNodes = state.layerNodes;
     compiled.layers.reserve(chain.size());
     layerNodes.reserve(chain.size());
     for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
@@ -643,7 +648,7 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top) const {
     // Mask 入力に繋がっているマスクのノードを op の列へ落とし、
     // レイヤーからは添字で参照する（同じ意味の値を 2 か所から編集させない）。
     // 効き方（係数 / カーブ / レベル / 反転）はレイヤー側の設定のまま。
-    std::vector<std::pair<const Node*, int>> emitted;
+    std::vector<std::pair<const Node*, int>>& emitted = state.emitted;
     for (size_t i = 0; i < compiled.layers.size(); ++i) {
         const Node* maskNode = UpstreamOf(*layerNodes[i], ValueType::Mask);
         if (maskNode == nullptr) {
@@ -670,23 +675,36 @@ CompiledGraph NodeGraph::CompileLayers() const {
     return CompileChainFrom(ChainTop());
 }
 
-CompiledGraph NodeGraph::CompileLayersTo(GraphId nodeId) const {
+CompiledGraph NodeGraph::CompileLayersTo(GraphId nodeId, GraphId outputPin) const {
     const Node* node = FindNode(nodeId);
     if (node == nullptr) {
         return CompileLayers();
     }
-    // マスクのノードを選んでいる間は、**そのマスクを白黒で貼って**見せる。
+
+    // **どの出力を見ているか。** 指定が無ければ最初の出力（レイヤーなら Result）。
+    // 堆積は Result と Mask の 2 つを出すので、ノードの種類だけでは決まらない。
+    ValueType previewType =
+        node->outputs.empty() ? ValueType::Material : node->outputs.front().valueType;
+    for (const Pin& pin : node->outputs) {
+        if (pin.id == outputPin) {
+            previewType = pin.valueType;
+            break;
+        }
+    }
+
+    // マスクの出力を見ている間は、**そのマスクを白黒で貼って**見せる。
     // マスクは見ながら調整するものなので、選んだだけで結果が分かるようにする。
-    if (IsMaskNodeKind(node->kind)) {
-        CompiledGraph compiled = CompileChainFrom(PreviewTop(nodeId));
+    if (previewType == ValueType::Mask) {
+        // 堆積のようにレイヤーでもあるノードは、PreviewTop が自分を返す
+        // （＝そのレイヤーまで合成した状態の上にマスクを貼る）。
+        ChainTrace trace;
+        CompiledGraph compiled = CompileChainFrom(PreviewTop(nodeId), &trace);
         // プレビューの塗りレイヤーは列の一番上に積むので、Height の起点は
         // 「いまの一番上」（＝入力に繋いだチェーンの天面）になる。
-        std::vector<const Node*> layerNodes;
-        std::vector<std::pair<const Node*, int>> emitted;
         const int defaultHeightLayer =
             compiled.layers.empty() ? 0 : (static_cast<int>(compiled.layers.size()) - 1);
-        const int op =
-            EmitMaskOps(*node, defaultHeightLayer, layerNodes, compiled.maskOps, emitted, 0);
+        const int op = EmitMaskOps(*node, defaultHeightLayer, trace.layerNodes, compiled.maskOps,
+                                   trace.emitted, 0);
 
         // 下地を黒で覆ってからマスクを白で塗る。マスクの値がそのまま濃淡になる。
         compositor::MaterialLayer cover = MakeMaskPreviewLayer("Mask 0", {0.02f, 0.02f, 0.02f});
