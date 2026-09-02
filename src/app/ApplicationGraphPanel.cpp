@@ -228,6 +228,19 @@ void Application::SyncGraphStack() {
     // レイヤー列が変わらなくても実寸だけ動くことがあるため、早期 return より前に置く。
     m_graphStack.SetTerrainScale(m_renderer.PlaneSize(), m_renderer.DisplacementScale());
 
+    // 描画側は「いまマスクを見ているか」を知らないと斜線を引けない。毎フレーム写す。
+    m_renderer.MaskPreviewActive() = false;
+    if (const graph::Node* node = m_graph.FindNode(target); node != nullptr) {
+        for (const graph::Pin& pin : node->outputs) {
+            const bool isPreviewed =
+                (pin.id == m_previewGraphPin) ||
+                (m_previewGraphPin == 0 && pin.id == node->outputs.front().id);
+            if (isPreviewed && pin.valueType == graph::ValueType::Mask) {
+                m_renderer.MaskPreviewActive() = true;
+            }
+        }
+    }
+
     if (m_compiledGraphRevision == m_graph.Revision() && m_compiledGraphTarget == target &&
         m_compiledGraphTargetPin == m_previewGraphPin) {
         return;

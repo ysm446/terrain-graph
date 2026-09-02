@@ -148,6 +148,8 @@ struct PreviewDefaults {
     bool showSkybox = true;
     bool skyboxBlur = false;
     bool shadowEnabled = true;
+    // マスクのプレビューで、0 か 1 に張り付いた所へ斜線を引くか。
+    bool maskSaturationHatch = false;
 };
 inline constexpr PreviewDefaults kPreviewDefaults{};
 
@@ -228,6 +230,11 @@ public:
     // ハイトの範囲（height 0 / 0.5 / 1 の枠）を描くか。設定は AppSettings が持ち、
     // Application が毎フレーム写す。深度テストするためレンダラ側で描く。
     bool& ShowHeightGuide() { return m_showHeightGuide; }
+    // マスクのプレビューで、0 か 1 に張り付いた所へ斜線を引くか（設定）。
+    bool& MaskSaturationHatch() { return m_maskSaturationHatch; }
+    bool MaskSaturationHatch() const { return m_maskSaturationHatch; }
+    // いまマスクをプレビューしているか。Application が毎フレーム写す。
+    bool& MaskPreviewActive() { return m_maskPreviewActive; }
     const compositor::MaterialEvaluator& Evaluator() const { return m_evaluator; }
     // 直前のフレームの描画の量。
     const RenderStats& Stats() const { return m_stats; }
@@ -304,6 +311,8 @@ private:
     bool m_tessellationEnabled = kPreviewDefaults.tessellationEnabled;
     float m_tessellationFactor = kPreviewDefaults.tessellationFactor;
     bool m_showHeightGuide = false;
+    bool m_maskSaturationHatch = kPreviewDefaults.maskSaturationHatch;
+    bool m_maskPreviewActive = false;
     bool m_skyRebuildRequested = false;
     // Environment がいま持っている HDRI。較正倍率だけを掛け直せるかの判断に使う。
     std::filesystem::path m_loadedHdriPath;

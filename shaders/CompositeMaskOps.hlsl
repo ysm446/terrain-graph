@@ -146,7 +146,10 @@ void CsImage(uint3 dispatchThreadId : SV_DispatchThreadID)
     Texture2D<float4> source = ResourceDescriptorHeap[g_op.indices.w];
 
     const float4 sampled = source.SampleLevel(g_samplerLinearClamp, MaskUv(texel), 0.0f);
-    output[texel] = saturate(ApplyInvert(SelectChannel(sampled, g_op.params0.y)));
+    // **反転の前に 0〜1 へ収める。** EXR のように 0〜1 を外れる画像だと、
+    // 1 - 1.3 = -0.3 のように潰れて、反転したように見えなくなる。
+    // 他の op は saturate 済みの値を反転している。
+    output[texel] = saturate(ApplyInvert(saturate(SelectChannel(sampled, g_op.params0.y))));
 }
 
 // 下地の傾斜。**角度（度）で切る。**

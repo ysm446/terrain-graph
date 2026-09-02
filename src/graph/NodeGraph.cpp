@@ -905,12 +905,17 @@ CompiledGraph NodeGraph::CompileLayersTo(GraphId nodeId, GraphId outputPin) cons
                                    trace.layerNodes, compiled.maskOps, trace.emitted, 0);
 
         // 下地を黒で覆ってからマスクを白で塗る。マスクの値がそのまま濃淡になる。
-        compositor::MaterialLayer cover = MakeMaskPreviewLayer("Mask 0", {0.02f, 0.02f, 0.02f});
+        compositor::MaterialLayer cover =
+            MakeMaskPreviewLayer("Mask 0", {compositor::kMaskPreviewLow,
+                                           compositor::kMaskPreviewLow,
+                                           compositor::kMaskPreviewLow});
         cover.mask.source = compositor::MaskSource::Constant;
         cover.mask.constant = 1.0f;
         compiled.layers.push_back(cover);
 
-        compositor::MaterialLayer paint = MakeMaskPreviewLayer("Mask 1", {0.85f, 0.88f, 0.92f});
+        compositor::MaterialLayer paint = MakeMaskPreviewLayer(
+            "Mask 1", {compositor::kMaskPreviewHigh, compositor::kMaskPreviewHigh,
+                       compositor::kMaskPreviewHigh});
         paint.mask.constant = 1.0f;
         if (op >= 0) {
             paint.mask.source = compositor::MaskSource::Node;

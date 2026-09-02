@@ -64,6 +64,13 @@ struct MeshConstants
     float2 viewportSize;
     float tessellationMaxFactor;
     float pad6;
+
+    // マスクのプレビューで、0 か 1 に張り付いた所へ斜線を引く。
+    // maskPreviewLow / High は、マスク 0 / 1 に対応するベースカラー。
+    uint maskPreviewHatch;
+    float maskPreviewLow;
+    float maskPreviewHigh;
+    float pad7;
 };
 
 // 「ハイト（ローカル）」で周りの平均を取る半径（合成テクセル）と、
@@ -357,6 +364,31 @@ PsOutput PsMain(VsOutput input)
         const float3 bitangent = cross(geometricNormal, tangent) * input.tangentSign;
         normal = normalize(tangent * tangentNormal.x + bitangent * tangentNormal.y +
                            geometricNormal * tangentNormal.z);
+    }
+
+    // --- マスクのプレビューで、飽和した所へ斜線を引く ----------------------
+    //
+    // マスクのプレビューは「0 の色」と「1 の色」の間を塗るだけなので、
+    // ベースカラーから元のマスクへ戻せる。**0 か 1 に張り付いている所**へ
+    // 1px 幅・4px 周期の斜線を中間の灰色で重ね、飽和していることを見せる。
+    // 濃淡が付いている所と、上限に当たって潰れた所は、絵では見分けが付かない。
+    //
+    // 画素の座標は **x と y を別々に切り捨ててから足す**。float のまま足して
+    // 丸めると桁落ちで縞の位相が揺れ、太いバンドに見える（terrain-editor で踏んだ）。
+    if (g_mesh.maskPreviewHatch != 0u)
+    {
+        const float low = g_mesh.maskPreviewLow;
+        const float high = g_mesh.maskPreviewHigh;
+        const float mask = saturate((baseColor.r - low) / max(high - low, 1e-4f));
+        if (mask >= 0.99f || mask <= 0.01f)
+        {
+            const int2 pixel = int2(int(input.clipPosition.x), int(input.clipPosition.y));
+            if (((pixel.x + pixel.y) & 3) == 3)
+            {
+                const float stripe = lerp(low, high, 0.5f);
+                baseColor = float3(stripe, stripe, stripe);
+            }
+        }
     }
 
     // --- デバッグ表示 ------------------------------------------------------

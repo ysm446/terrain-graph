@@ -110,6 +110,12 @@ struct MeshConstants {
     float viewportSize[2];
     float tessellationMaxFactor;
     float pad6;
+
+    // マスクのプレビューで飽和した所へ斜線を引く。**HLSL 側と同じ並びにすること。**
+    uint32_t maskPreviewHatch;
+    float maskPreviewLow;
+    float maskPreviewHigh;
+    float pad7;
 };
 
 // GPU 側の SkyboxConstants と一致させること。
@@ -316,6 +322,7 @@ void PreviewRenderer::ResetSettings() {
     m_showSkybox = defaults.showSkybox;
     m_skyboxBlur = defaults.skyboxBlur;
     m_shadowEnabled = defaults.shadowEnabled;
+    m_maskSaturationHatch = defaults.maskSaturationHatch;
     // 解像度の作り直しは GPU 待機を伴うので、要求だけ積む。
     RequestMaterialResolution(defaults.materialResolution);
     RequestMeshSubdivisions(defaults.meshSubdivisions);
@@ -675,6 +682,11 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     constants.viewportSize[0] = static_cast<float>(m_width);
     constants.viewportSize[1] = static_cast<float>(m_height);
     constants.tessellationMaxFactor = m_tessellationFactor;
+    // マスクをプレビューしているときだけ斜線を引く（設定と両方が入のとき）。
+    constants.maskPreviewHatch =
+        (m_maskSaturationHatch && m_maskPreviewActive) ? 1u : 0u;
+    constants.maskPreviewLow = compositor::kMaskPreviewLow;
+    constants.maskPreviewHigh = compositor::kMaskPreviewHigh;
 
     // --- シャドウマップ ----------------------------------------------------
     // ライトから深度だけを描く。同じ頂点シェーダを通るので、

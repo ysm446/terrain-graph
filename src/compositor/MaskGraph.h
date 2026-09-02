@@ -18,6 +18,13 @@
 
 namespace tg::compositor {
 
+// マスクのプレビューで貼る塗りの明るさ。マスク 0 と 1 に対応する。
+// グラフがこの色で塗り、**描画側（飽和した所の斜線）が同じ値で読み戻す**ので、
+// 1 か所にまとめてある。純黒 / 純白にしないのは、PBR で照らしたときに
+// 潰れて濃淡が読めなくなるため。
+inline constexpr float kMaskPreviewLow = 0.02f;
+inline constexpr float kMaskPreviewHigh = 0.85f;
+
 enum class MaskOpKind : uint32_t {
     Image = 0,    // 画像 1 枚（+ 読むチャンネル）
     Fluvial = 1,  // 下地の川筋（フロー累積）

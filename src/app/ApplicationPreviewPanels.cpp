@@ -32,6 +32,11 @@ void Application::DrawMaterialPanel() {
             ui::PropertyBool("合成結果", &m_renderer.UseMaterialTextures(),
                              defaults.useMaterialTextures,
                              "オフにすると、レイヤー合成を使わず単色マテリアルで表示する");
+            // マスクを見ているときだけ効く。行は常に出す（表示の好みなので）。
+            ui::PropertyBool("マスクの飽和に斜線", &m_renderer.MaskSaturationHatch(),
+                             defaults.maskSaturationHatch,
+                             "マスクのプレビューで、0 か 1 に張り付いた所へ斜線を引く。"
+                             "濃淡が付いている所と、上限に当たって潰れた所を見分けられる");
 
             // 平面の大きさ（m）。**ジオメトリだけがメートル**で、
             // テクスチャは無次元のまま（1 UV が何 m かは決めない）。

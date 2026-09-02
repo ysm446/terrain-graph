@@ -910,6 +910,7 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     json node;
     node["tonemap"] = EnumName(kTonemapNames, static_cast<uint32_t>(renderer.Tonemap()));
     node["useMaterialTextures"] = renderer.UseMaterialTextures();
+    node["maskSaturationHatch"] = renderer.MaskSaturationHatch();
     node["displacementScale"] = renderer.DisplacementScale();
     node["planeSize"] = renderer.PlaneSize();
     node["tessellation"] = renderer.TessellationEnabled();
@@ -977,6 +978,8 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
         EnumValue(kTonemapNames, node, "tonemap", static_cast<uint32_t>(previewDefaults.tonemap)));
     renderer.UseMaterialTextures() =
         ReadBool(node, "useMaterialTextures", previewDefaults.useMaterialTextures);
+    renderer.MaskSaturationHatch() =
+        ReadBool(node, "maskSaturationHatch", previewDefaults.maskSaturationHatch);
     renderer.DisplacementScale() =
         ReadFloat(node, "displacementScale", previewDefaults.displacementScale);
     // 平面のサイズ（m）。**カメラより先に読む。** 軌道の距離の範囲がこれで決まるので、
