@@ -41,18 +41,33 @@ void Application::DrawMaterialPanel() {
                              defaults.useMaterialTextures,
                              "オフにすると、レイヤー合成を使わず単色マテリアルで表示する");
 
+            // 平面の大きさ（m）。**ジオメトリだけがメートル**で、
+            // テクスチャは無次元のまま（1 UV が何 m かは決めない）。
+            // 素材の 2m 角から地形の 2km 角まで、ここ 1 つで切り替える。
+            if (m_renderer.Shape() == renderer::PreviewShape::Plane) {
+                ui::PropertyFloat("平面のサイズ", &m_renderer.PlaneSize(), 0.5f, 8192.0f,
+                                  defaults.planeSize,
+                                  "平面の一辺の長さ（m）。素材は 2m 前後、"
+                                  "地形なら 1000m 以上。カメラと影の範囲もこれに追従する",
+                                  "%.1f m", ImGuiSliderFlags_Logarithmic);
+            }
+
             if (m_renderer.UseMaterialTextures()) {
                 ui::PropertyFloat("UV スケール", &m_renderer.MaterialUvScale(), 0.25f, 8.0f,
                                   defaults.materialUvScale,
                                   "マテリアルをメッシュ上に何回並べるか", "%.2f", 0, 0.25f);
 
-                // 上限 1.0 は「平面の辺（2.0）の半分」。地形スケールの崖や渓谷まで
-                // 作れるようにするため。素材のプレビュー用途では 0.2 前後が普通。
-                ui::PropertyFloat("変位量", &m_renderer.DisplacementScale(), 0.0f, 1.0f,
-                                  defaults.displacementScale,
+                // 上限は「平面の辺の半分」。素材（2m 角）なら 1m、
+                // 地形（2km 角）なら 1000m まで指定できる。
+                // ハイト 0〜1 の全幅がこの高さに対応するので、
+                // 「この地形の標高差は何 m か」をそのまま入れる。
+                const float displacementMax =
+                    std::max(1.0f, m_renderer.PlaneSize() * 0.5f);
+                ui::PropertyFloat("変位量", &m_renderer.DisplacementScale(), 0.0f,
+                                  displacementMax, defaults.displacementScale,
                                   "ハイトを形状に反映する量（ディスプレイスメント）。"
-                                  "0 なら形は変わらない",
-                                  "%.2f", 0, 0.01f);
+                                  "ハイト 0〜1 の全幅がこの高さ（m）になる。0 なら形は変わらない",
+                                  "%.2f m", 0, 0.01f);
 
                 ui::PropertyBool("テセレーション", &m_renderer.TessellationEnabled(),
                                  defaults.tessellationEnabled,

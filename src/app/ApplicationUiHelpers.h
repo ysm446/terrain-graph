@@ -80,6 +80,20 @@ inline const compositor::MaterialLayer kDefaultLiquidLayer = [] {
     return layer;
 }();
 
+// ハイトマップノードの既定値。**ソースとして単体で成立する形**にしておく。
+// 起伏の強さ 1.0 で画像の 0〜1 がそのままハイトの全幅になり、
+// プレビュー設定の「変位量」（m）がその全幅を実寸へ変換する。
+inline const compositor::MaterialLayer kDefaultHeightmapLayer = [] {
+    compositor::MaterialLayer layer;
+    layer.kind = compositor::LayerKind::Shape;
+    layer.name = "ハイトマップ";
+    layer.heightSource = compositor::ValueSource::Texture;
+    layer.heightBase = 0.5f;  // 0.5 で持ち上げなし
+    layer.heightGain = 1.0f;
+    layer.normalStrength = 1.0f;
+    return layer;
+}();
+
 inline const compositor::MaterialLayer& DefaultLayerFor(compositor::LayerKind kind) {
     switch (kind) {
         case compositor::LayerKind::Shape:

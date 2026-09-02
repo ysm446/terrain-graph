@@ -22,7 +22,13 @@ constexpr std::array<PinDefinition, 1> kOutputNodePins = {{
     {PinKind::Input, ValueType::Material, "マテリアル"},
 }};
 
-constexpr std::array<NodeDefinition, 4> kNodeDefinitions = {{
+// ソースノードのピン。**入力を持たない。**
+constexpr std::array<PinDefinition, 1> kSourceNodePins = {{
+    {PinKind::Output, ValueType::Material, "結果"},
+}};
+
+constexpr std::array<NodeDefinition, 5> kNodeDefinitions = {{
+    {NodeKind::Heightmap, "heightmap", "ハイトマップ", kSourceNodePins},
     {NodeKind::Surface, "surface", "サーフェス", kLayerNodePins},
     {NodeKind::Shape, "shape", "シェイプ", kLayerNodePins},
     {NodeKind::Liquid, "liquid", "水面", kLayerNodePins},
@@ -54,11 +60,19 @@ const NodeDefinition* FindNodeDefinitionByName(std::string_view name) {
 }
 
 bool IsLayerNodeKind(NodeKind kind) {
-    return kind == NodeKind::Surface || kind == NodeKind::Shape || kind == NodeKind::Liquid;
+    return kind == NodeKind::Surface || kind == NodeKind::Shape || kind == NodeKind::Liquid ||
+           kind == NodeKind::Heightmap;
+}
+
+bool IsSourceNodeKind(NodeKind kind) {
+    return kind == NodeKind::Heightmap;
 }
 
 compositor::LayerKind LayerKindFor(NodeKind kind) {
     switch (kind) {
+        // ハイトマップは合成規則としてはシェイプ（高さへの加算）。
+        // 先頭に置く前提なので、加算がそのまま地形になる。
+        case NodeKind::Heightmap:
         case NodeKind::Shape:
             return compositor::LayerKind::Shape;
         case NodeKind::Liquid:

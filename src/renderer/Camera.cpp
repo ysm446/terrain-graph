@@ -12,8 +12,22 @@ namespace {
 constexpr float kPitchLimit = 1.55334306f;  // 89 度
 
 // 距離の可動域。Zoom / SetState / Frame で同じ範囲に収める。
+// 軌道の距離とクリップ面は、被写体を包む球の半径に合わせて**広げる**。
+//
+// 基準は素材のプレビュー（2m 平面 = 半径 1.41）で、そのときの値が従来の固定値
+//   下限 0.1m / 上限 100m / 近 0.02m / 遠 200m
+// になる。**基準より小さい被写体では倍率を 1 で止める**ので、
+// 球や 2m 平面の見え方は従来と 1 ピクセルも変わらない。
+// 地形（2km 角 = 半径 1448）では 1024 倍に広がり、全体を引きで見られる。
+constexpr float kReferenceRadius = 1.41421356f;
 constexpr float kMinDistance = 0.1f;
 constexpr float kMaxDistance = 100.0f;
+constexpr float kNearZ = 0.02f;
+constexpr float kFarZ = 200.0f;
+
+// 壊れた値を読み込んだときの歯止め。scene radius に依らない絶対の範囲。
+constexpr float kAbsoluteMinDistance = 0.001f;
+constexpr float kAbsoluteMaxDistance = 1.0e7f;
 
 // 画角の可動域。SetState / SetFovY で同じ範囲に収める。
 constexpr float kMinFovY = 0.2f;
@@ -51,7 +65,7 @@ void Camera::Pan(float deltaX, float deltaY) {
 }
 
 void Camera::Zoom(float delta) {
-    m_distance = std::clamp(m_distance * std::pow(1.1f, -delta), kMinDistance, kMaxDistance);
+    m_distance = std::clamp(m_distance * std::pow(1.1f, -delta), MinDistance(), MaxDistance());
 }
 
 // ズームは距離に対する比で効くので、ホイールと同じ経路へ流す。
@@ -79,7 +93,34 @@ void Camera::Frame(const XMFLOAT3& center, float radius) {
     const float fov = std::min(m_fovY, fovX);
 
     const float distance = radius / std::sin(fov * 0.5f);
-    m_distance = std::clamp(distance * kFrameMargin, kMinDistance, kMaxDistance);
+    m_distance = std::clamp(distance * kFrameMargin, MinDistance(), MaxDistance());
+}
+
+void Camera::SetSceneRadius(float radius) {
+    // 0 や負の半径は距離もクリップ面も潰すので、下限で受け止める。
+    m_sceneRadius = std::max(radius, 0.001f);
+}
+
+// 基準（素材のプレビュー）に対する倍率。**1 を下回らせない。**
+// 小さい被写体で範囲まで狭めると、従来のプロジェクトの見え方が変わってしまう。
+float Camera::SceneScale() const {
+    return std::max(1.0f, m_sceneRadius / kReferenceRadius);
+}
+
+float Camera::MinDistance() const {
+    return kMinDistance * SceneScale();
+}
+
+float Camera::MaxDistance() const {
+    return kMaxDistance * SceneScale();
+}
+
+float Camera::NearZ() const {
+    return kNearZ * SceneScale();
+}
+
+float Camera::FarZ() const {
+    return kFarZ * SceneScale();
 }
 
 void Camera::Reset() {
@@ -95,7 +136,11 @@ CameraState Camera::State() const {
 
 void Camera::SetState(const CameraState& state) {
     m_target = state.target;
-    m_distance = std::clamp(state.distance, kMinDistance, kMaxDistance);
+    // **ここではシーンの大きさで丸めない。** 被写体の大きさ（平面のサイズなど）を
+    // 読み込む前にカメラを復元することがあり、丸めると地形スケールの距離が
+    // 素材スケールの上限へ潰れてしまう。歯止めは絶対値の範囲だけにして、
+    // シーンに対する丸めは次の Dolly / Frame に任せる。
+    m_distance = std::clamp(state.distance, kAbsoluteMinDistance, kAbsoluteMaxDistance);
     m_yaw = state.yaw;
     m_pitch = std::clamp(state.pitch, -kPitchLimit, kPitchLimit);
     m_fovY = std::clamp(state.fovY, kMinFovY, kMaxFovY);
@@ -145,7 +190,7 @@ XMMATRIX Camera::ViewMatrix() const {
 XMMATRIX Camera::ProjectionMatrix() const {
     const float aspect = static_cast<float>(m_width) / static_cast<float>(m_height);
     // ビュー行列と手系を揃える。深度の範囲は LH 版と同じ [0, 1]。
-    return XMMatrixPerspectiveFovRH(m_fovY, aspect, m_nearZ, m_farZ);
+    return XMMatrixPerspectiveFovRH(m_fovY, aspect, NearZ(), FarZ());
 }
 
 }  // namespace tg::renderer

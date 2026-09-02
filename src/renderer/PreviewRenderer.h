@@ -141,6 +141,8 @@ struct PreviewDefaults {
     bool useMaterialTextures = true;
     float materialUvScale = 1.0f;
     float displacementScale = 0.0f;
+    // 平面の一辺（m）。Megascans のサーフェスが 2m 角で作られていることに合わせた既定。
+    float planeSize = 2.0f;
     bool tessellationEnabled = false;
     float tessellationFactor = 8.0f;
     uint32_t materialResolution = 1024;
@@ -152,9 +154,11 @@ inline constexpr PreviewDefaults kPreviewDefaults{};
 
 class PreviewRenderer {
 public:
-    // プレビューの平面メッシュの一辺（XZ 平面、原点中心、Y = 0）。
-    // ハイトの範囲（ビューポートのオーバーレイ）が枠の大きさに使う。
-    static constexpr float kPlaneSize = 2.0f;
+    // 平面メッシュを作るときの一辺（XZ 平面、原点中心、Y = 0）。
+    // **これは頂点データの基準サイズで、表示される大きさではない。**
+    // 実際の大きさは PlaneSize()（m）で、モデル行列の拡大で合わせる。
+    // メッシュを作り直さずに 2m の素材から 2km の地形まで扱えるようにするため。
+    static constexpr float kPlaneMeshSize = 2.0f;
 
     bool Initialize(rhi::Device& device, rhi::PipelineCache& pipelineCache);
     void Shutdown(rhi::Device& device);
@@ -217,8 +221,14 @@ public:
     bool& UseMaterialTextures() { return m_useMaterialTextures; }
     float& MaterialUvScale() { return m_materialUvScale; }
     // ハイトを形状に反映する量（0 で反映しない）。頂点シェーダで押し出す。
+    // **単位は m。** ハイト 0〜1 の全幅がこの高さに対応する。
     float& DisplacementScale() { return m_displacementScale; }
     float DisplacementScale() const { return m_displacementScale; }
+    // 平面の一辺（m）。**ジオメトリだけがメートルで、テクスチャは無次元のまま**
+    // （UV スケールは「何回並べるか」で、1 UV が何 m かは決めない）。
+    // 素材のプレビュー（2m 角）から地形（2km 角）まで、これ 1 つで切り替える。
+    float& PlaneSize() { return m_planeSize; }
+    float PlaneSize() const { return m_planeSize; }
     // ハイトの範囲（height 0 / 0.5 / 1 の枠）を描くか。設定は AppSettings が持ち、
     // Application が毎フレーム写す。深度テストするためレンダラ側で描く。
     bool& ShowHeightGuide() { return m_showHeightGuide; }
@@ -282,6 +292,7 @@ private:
     bool m_skyLuminanceRebuildRequested = false;
     float m_materialUvScale = kPreviewDefaults.materialUvScale;
     float m_displacementScale = kPreviewDefaults.displacementScale;
+    float m_planeSize = kPreviewDefaults.planeSize;
     uint32_t m_materialResolution = kPreviewDefaults.materialResolution;
     uint32_t m_requestedMaterialResolution = kPreviewDefaults.materialResolution;
     bool m_useMaterialTextures = kPreviewDefaults.useMaterialTextures;

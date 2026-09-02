@@ -91,7 +91,8 @@ private:
     void DrawGraphNode(const graph::Node& node);
     // グラフノードのレイヤー設定のプロパティ行。
     // 変更があれば true。isBase はマスクが効かない一番下のレイヤーのとき。
-    bool DrawLayerSettings(compositor::MaterialLayer& layer, bool isBase);
+    // isSource は入力を持たないノード（ハイトマップ）。マスクの節を出さない。
+    bool DrawLayerSettings(compositor::MaterialLayer& layer, bool isBase, bool isSource = false);
     // グラフの変更をコンパイル結果（m_graphStack）へ反映する。フレームの頭で呼ぶ。
     void SyncGraphStack();
     void DrawMaterialLibraryPanel();

@@ -40,6 +40,10 @@ enum class NodeKind : uint32_t {
     Shape = 1,
     Liquid = 2,
     Output = 3,
+    // ハイトマップの読み込み。**入力を持たないソース**で、地形そのものを定義する。
+    // 中身はシェイプと同じ（下地への加算）だが、チェーンの先頭に置く前提なので
+    // 下地が無く、加算はそのまま地形の形になる。
+    Heightmap = 4,
 };
 
 struct PinDefinition {
@@ -156,8 +160,10 @@ private:
 std::span<const NodeDefinition> NodeDefinitions();
 const NodeDefinition* FindNodeDefinition(NodeKind kind);
 const NodeDefinition* FindNodeDefinitionByName(std::string_view name);
-// レイヤー設定を持つ種類か（サーフェス / シェイプ / 水面）。
+// レイヤー設定を持つ種類か（サーフェス / シェイプ / 水面 / ハイトマップ）。
 bool IsLayerNodeKind(NodeKind kind);
+// 入力を持たないソースか。下地が無いのでマスクも効かない。
+bool IsSourceNodeKind(NodeKind kind);
 // 種類に対応するレイヤー種別（レイヤー設定を持つ種類のみ意味を持つ）。
 compositor::LayerKind LayerKindFor(NodeKind kind);
 

@@ -1,7 +1,7 @@
 # node-graph — ノードグラフの設計
 
 作成日時: 2026-09-02 12:50
-更新日時: 2026-09-02 15:05
+更新日時: 2026-09-02 18:41
 
 `src/graph/` とグラフパネル（`src/app/ApplicationGraphPanel.cpp`）の設計。
 terrain-editor から移植したのは**仕組み**であって、ノードの中身ではない
@@ -29,6 +29,7 @@ terrain-editor から移植したのは**仕組み**であって、ノードの�
 
 | 種類 | 保存名 | ピン | 設定 |
 | --- | --- | --- | --- |
+| ハイトマップ | `heightmap` | 結果(出力) のみ | `MaterialLayer`（kind=Shape） |
 | サーフェス | `surface` | 下地(入力) / 結果(出力) | `MaterialLayer`（kind=Surface） |
 | シェイプ | `shape` | 同上 | `MaterialLayer`（kind=Shape） |
 | 水面 | `liquid` | 同上 | `MaterialLayer`（kind=Liquid) |
@@ -39,6 +40,19 @@ terrain-editor から移植したのは**仕組み**であって、ノードの�
 `Application::DrawLayerSettings`（旧レイヤーパネルから切り出したもの）。
 **レイヤーパネルとレイヤースタックは廃止済みで、合成の入口はグラフだけ。**
 旧形式のプロジェクトは読み込み時にチェーンへ移行される（file-format.md の版 4）。
+
+### ハイトマップ（ソース）
+
+terrain-editor の Import Heightmap にあたる。**入力を持たないソース**で、
+画像をそのまま地形の形にする。合成規則としてはシェイプ（高さへの加算）と同じで、
+チェーンの先頭に置く前提なので、下地（0.5）への加算がそのまま地形になる。
+
+- 入力が無いので**マスクの節は出さない**（下地と競合させる相手がいない）。
+- **実寸（m）は持たない。** 高さは 0〜1 で、何メートルかは
+  プレビュー設定の「変位量」が決める（[rendering.md](rendering.md) の
+  「メートルなのはジオメトリだけ」）。terrain-editor は Import Heightmap の
+  `scaleMeters` と PreviewSettings の `terrainSizeMeters` を両方持っていたが、
+  「同じ意味の値を 2 か所に置かない」に反するので真似していない。
 
 ## 評価 — レイヤー列へのコンパイル
 

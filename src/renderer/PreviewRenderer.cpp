@@ -48,9 +48,16 @@ constexpr float kSphereRadius = 1.0f;
 // 平面の一辺は PreviewRenderer::kPlaneSize（ヘッダ。オーバーレイも参照する）。
 constexpr float kCubeSize = 1.4f;   // 一辺の長さ
 
-// 影を落とす範囲。プレビューのメッシュ（最大でも半径 1.5 程度）を囲む。
-constexpr float kShadowRadius = 2.2f;
-constexpr float kShadowDistance = 6.0f;
+// 影を落とす範囲。**被写体を包む球の半径に対する倍率**で持つ。
+// 素材の 2m 角と地形の 2km 角では 1000 倍違うので、m の固定値では片方でしか使えない
+// （地形では 4.4m 角の平行投影から完全にはみ出して影が消える）。
+// 係数は、従来の固定値（半径 1.41 のときに 2.2m / 6.0m）と一致するよう選んである。
+// **基準より小さい被写体では従来の固定値のまま**にする（下限で止める）。
+// 狭めると影の解像度は上がるが、既存のプロジェクトの見え方が変わってしまう。
+constexpr float kShadowRadiusMin = 2.2f;
+constexpr float kShadowDistanceMin = 6.0f;
+constexpr float kShadowRadiusRatio = 2.2f / 1.41421356f;
+constexpr float kShadowDistanceRatio = 6.0f / 1.41421356f;
 // 自己遮蔽（シャドウアクネ）を避けるための下駄。傾きに応じてシェーダ側で増やす。
 constexpr float kShadowBias = 0.0018f;
 // シェーダの「影を落とさない」印。
@@ -205,7 +212,7 @@ bool PreviewRenderer::Initialize(rhi::Device& device, rhi::PipelineCache& pipeli
     if (!m_sphere.Create(device, MakeSphere(256, 128, kSphereRadius), L"SphereMesh")) {
         return false;
     }
-    if (!m_plane.Create(device, MakePlane(kPlaneSize, 256), L"PlaneMesh")) {
+    if (!m_plane.Create(device, MakePlane(kPlaneMeshSize, 256), L"PlaneMesh")) {
         return false;
     }
     if (!m_cube.Create(device, MakeCube(kCubeSize, 96), L"CubeMesh")) {
@@ -238,15 +245,22 @@ bool PreviewRenderer::Initialize(rhi::Device& device, rhi::PipelineCache& pipeli
 
 // ライトから見たビュー×投影。プレビューの被写体を囲む平行投影で足りる。
 XMMATRIX PreviewRenderer::LightViewProjection() const {
+    // 影の範囲は被写体の大きさに追従させる（平面のサイズと変位量で変わる）。
+    const float radius = BoundingRadius();
+    const float shadowRadius = std::max(kShadowRadiusMin, radius * kShadowRadiusRatio);
+    const float shadowDistance = std::max(kShadowDistanceMin, radius * kShadowDistanceRatio);
+
     const XMFLOAT3 direction = m_light.Direction();  // サーフェスから光源へ
     const XMVECTOR lightDirection = XMVector3Normalize(XMLoadFloat3(&direction));
-    const XMVECTOR eye = XMVectorScale(lightDirection, kShadowDistance);
+    const XMVECTOR eye = XMVectorScale(lightDirection, shadowDistance);
     // 真上・真下からのときに上方向が縮退しないよう、軸を入れ替える。
     const XMVECTOR up = (std::abs(direction.y) > 0.99f) ? XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f)
                                                         : XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
     const XMMATRIX view = XMMatrixLookAtRH(eye, XMVectorZero(), up);
-    const XMMATRIX projection = XMMatrixOrthographicRH(kShadowRadius * 2.0f, kShadowRadius * 2.0f,
-                                                       0.05f, kShadowDistance + kShadowRadius);
+    // 手前のクリップも比例させる。固定の 0.05m だと地形スケールで精度を使い切る。
+    const XMMATRIX projection = XMMatrixOrthographicRH(
+        shadowRadius * 2.0f, shadowRadius * 2.0f,
+        std::max(0.05f, radius * 0.035f), shadowDistance + shadowRadius);
     return XMMatrixMultiply(view, projection);
 }
 
@@ -294,6 +308,7 @@ void PreviewRenderer::ResetSettings() {
     m_useMaterialTextures = defaults.useMaterialTextures;
     m_materialUvScale = defaults.materialUvScale;
     m_displacementScale = defaults.displacementScale;
+    m_planeSize = defaults.planeSize;
     m_tessellationEnabled = defaults.tessellationEnabled;
     m_tessellationFactor = defaults.tessellationFactor;
     m_showSkybox = defaults.showSkybox;
@@ -353,7 +368,7 @@ float PreviewRenderer::BoundingRadius() const {
     float radius = kSphereRadius;
     switch (m_shape) {
         // 平面は XZ に広がるので、対角の半分が包む球の半径になる。
-        case PreviewShape::Plane: radius = kPlaneSize * 0.5f * 1.41421356f; break;
+        case PreviewShape::Plane: radius = m_planeSize * 0.5f * 1.41421356f; break;
         case PreviewShape::Cube:  radius = kCubeSize * 0.5f * 1.73205081f; break;
         case PreviewShape::Sphere:
         default:                  radius = kSphereRadius; break;
@@ -574,6 +589,10 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
         return;
     }
 
+    // 軌道の距離とクリップ面を被写体の大きさへ合わせる。**毎フレーム渡してよい。**
+    // 平面のサイズや変位量はいつでも変わるので、描く直前に見るのが確実。
+    m_camera.SetSceneRadius(BoundingRadius());
+
     // 描画の量はフレームごとに数え直す。**描くところで足す**ので、
     // パスを増やしたときに数え漏らしても、増やした本人が気づきやすい。
     m_stats = RenderStats{};
@@ -621,7 +640,14 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     // mul(matrix, vector) が意図どおりの結果になる。転置は入れない。
     const XMMATRIX view = m_camera.ViewMatrix();
     const XMMATRIX projection = m_camera.ProjectionMatrix();
-    const XMMATRIX model = XMMatrixIdentity();
+    // 平面はメッシュを作り直さず、モデル行列で実サイズ（m）へ広げる。
+    // **Y は拡大しない。** 高さはディスプレイスメント（m）が世界空間で足すので、
+    // ここで縦に伸ばすと二重に効く。
+    XMMATRIX model = XMMatrixIdentity();
+    if (m_shape == PreviewShape::Plane) {
+        const float scale = m_planeSize / kPlaneMeshSize;
+        model = XMMatrixScaling(scale, 1.0f, scale);
+    }
 
     const XMMATRIX viewProjection = XMMatrixMultiply(view, projection);
 
@@ -961,7 +987,7 @@ void PreviewRenderer::DrawHeightGuideOverlay(rhi::Device& device,
         constants.positions[count++] = XMFLOAT4{b.x, b.y, b.z, alpha};
     };
 
-    constexpr float kHalf = kPlaneSize * 0.5f;
+    const float kHalf = m_planeSize * 0.5f;
     const XMFLOAT2 corners[4] = {{-kHalf, -kHalf}, {kHalf, -kHalf}, {kHalf, kHalf},
                                  {-kHalf, kHalf}};
 

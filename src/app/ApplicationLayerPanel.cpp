@@ -26,7 +26,8 @@ namespace tg {
 
 // レイヤー 1 枚ぶんのプロパティ行。グラフパネルの下段から使う。
 // 変更の記録（アンドゥ / グラフの再コンパイル）は呼び出し側で行う。
-bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBase) {
+bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBase,
+                                   bool isSource) {
     // 既定値マーカーは種類ごとの既定値を参照する（追加時の初期値と揃える）。
     const compositor::MaterialLayer& defaults = DefaultLayerFor(layer.kind);
     const bool isShape = (layer.kind == compositor::LayerKind::Shape);
@@ -123,67 +124,75 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                                          "ハイトの勾配から作る法線の強さ。0 で平坦", "%.2f");
             ui::EndPropertyTable();
         }
-        if (isShape) {
+        if (isSource) {
+            // ソースは実寸を持たない。**高さのメートルはジオメトリ側の設定**
+            // （プレビュー設定の「変位量」）が決める。
+            ui::HintText("ハイト 0〜1 を作る。実際の高さ（m）はプレビュー設定の変位量で決まる");
+        } else if (isShape) {
             ui::HintText("下地の高さへ加算し、0〜1 に切り詰める。細部は下のレイヤーのまま残る");
         }
     }
 
-    ui::SectionHeader("マスク");
-    if (ui::BeginPropertyTable("layerMaskRows")) {
-        int maskSource = static_cast<int>(layer.mask.source);
-        if (ui::PropertyCombo("ソース", &maskSource, kMaskSourceLabels,
-                              IM_ARRAYSIZE(kMaskSourceLabels),
-                              static_cast<int>(kDefaultLayer.mask.source),
-                              "マスクは不透明度として高さと同じ土俵で競合する。"
-                              "1.0 にすると高さに関係なく全面を覆う")) {
-            layer.mask.source = static_cast<compositor::MaskSource>(maskSource);
-            changed = true;
-        }
-        changed |= ui::PropertyFloat("定数", &layer.mask.constant, 0.0f, 1.0f,
-                                     kDefaultLayer.mask.constant,
-                                     "ソースの値に掛ける係数", "%.2f");
+    // マスクは「下地と競合させるための不透明度」なので、
+    // 入力を持たないソース（ハイトマップ）では意味を持たない。行ごと出さない。
+    if (!isSource) {
+        ui::SectionHeader("マスク");
+        if (ui::BeginPropertyTable("layerMaskRows")) {
+            int maskSource = static_cast<int>(layer.mask.source);
+            if (ui::PropertyCombo("ソース", &maskSource, kMaskSourceLabels,
+                                  IM_ARRAYSIZE(kMaskSourceLabels),
+                                  static_cast<int>(kDefaultLayer.mask.source),
+                                  "マスクは不透明度として高さと同じ土俵で競合する。"
+                                  "1.0 にすると高さに関係なく全面を覆う")) {
+                layer.mask.source = static_cast<compositor::MaskSource>(maskSource);
+                changed = true;
+            }
+            changed |= ui::PropertyFloat("定数", &layer.mask.constant, 0.0f, 1.0f,
+                                         kDefaultLayer.mask.constant,
+                                         "ソースの値に掛ける係数", "%.2f");
 
-        if (layer.mask.source == compositor::MaskSource::Texture) {
-            changed |= DrawMapSlotRow("画像", layer.mask.texture, m_textureLibrary);
-        }
-        if (layer.mask.source == compositor::MaskSource::Noise) {
-            changed |= DrawNoiseRows(layer.mask.noise, kDefaultLayer.mask.noise);
-        }
-        if (compositor::IsDerivedMaskSource(layer.mask.source)) {
-            changed |= ui::PropertyFloat("強調", &layer.mask.derivedScale, 0.0f, 8.0f,
-                                         kDefaultLayer.mask.derivedScale,
-                                         "下地から作った値の効き方", "%.2f");
+            if (layer.mask.source == compositor::MaskSource::Texture) {
+                changed |= DrawMapSlotRow("画像", layer.mask.texture, m_textureLibrary);
+            }
+            if (layer.mask.source == compositor::MaskSource::Noise) {
+                changed |= DrawNoiseRows(layer.mask.noise, kDefaultLayer.mask.noise);
+            }
+            if (compositor::IsDerivedMaskSource(layer.mask.source)) {
+                changed |= ui::PropertyFloat("強調", &layer.mask.derivedScale, 0.0f, 8.0f,
+                                             kDefaultLayer.mask.derivedScale,
+                                             "下地から作った値の効き方", "%.2f");
+            }
+
+            changed |= ui::PropertyFloat("カーブ", &layer.mask.contrast, 0.0f, 4.0f,
+                                         kDefaultLayer.mask.contrast,
+                                         "1 で線形。大きいほど境界がはっきりする", "%.2f");
+            changed |= ui::PropertyFloat("レベル下限", &layer.mask.levelsLow, 0.0f, 1.0f,
+                                         kDefaultLayer.mask.levelsLow, nullptr, "%.2f");
+            changed |= ui::PropertyFloat("レベル上限", &layer.mask.levelsHigh, 0.0f, 1.0f,
+                                         kDefaultLayer.mask.levelsHigh, nullptr, "%.2f");
+            changed |= ui::PropertyBool("反転", &layer.mask.invert, kDefaultLayer.mask.invert);
+            ui::EndPropertyTable();
         }
 
-        changed |= ui::PropertyFloat("カーブ", &layer.mask.contrast, 0.0f, 4.0f,
-                                     kDefaultLayer.mask.contrast,
-                                     "1 で線形。大きいほど境界がはっきりする", "%.2f");
-        changed |= ui::PropertyFloat("レベル下限", &layer.mask.levelsLow, 0.0f, 1.0f,
-                                     kDefaultLayer.mask.levelsLow, nullptr, "%.2f");
-        changed |= ui::PropertyFloat("レベル上限", &layer.mask.levelsHigh, 0.0f, 1.0f,
-                                     kDefaultLayer.mask.levelsHigh, nullptr, "%.2f");
-        changed |= ui::PropertyBool("反転", &layer.mask.invert, kDefaultLayer.mask.invert);
-        ui::EndPropertyTable();
-    }
-
-    if (isBase) {
-        ui::HintText("一番下のレイヤーは下地なのでマスクは効かない");
-    }
-    switch (layer.mask.source) {
-        case compositor::MaskSource::Slope:
-            ui::HintText("急な面ほど 1 に近づく");
-            break;
-        case compositor::MaskSource::Curvature:
-            ui::HintText("0.5 が平坦。凸で大、凹で小");
-            break;
-        case compositor::MaskSource::Cavity:
-            ui::HintText("窪んでいるほど 1 に近づく");
-            break;
-        case compositor::MaskSource::Height:
-            ui::HintText("下地が高いほど 1 に近づく");
-            break;
-        default:
-            break;
+        if (isBase) {
+            ui::HintText("一番下のレイヤーは下地なのでマスクは効かない");
+        }
+        switch (layer.mask.source) {
+            case compositor::MaskSource::Slope:
+                ui::HintText("急な面ほど 1 に近づく");
+                break;
+            case compositor::MaskSource::Curvature:
+                ui::HintText("0.5 が平坦。凸で大、凹で小");
+                break;
+            case compositor::MaskSource::Cavity:
+                ui::HintText("窪んでいるほど 1 に近づく");
+                break;
+            case compositor::MaskSource::Height:
+                ui::HintText("下地が高いほど 1 に近づく");
+                break;
+            default:
+                break;
+        }
     }
 
     if (layer.mask.source == compositor::MaskSource::Paint) {

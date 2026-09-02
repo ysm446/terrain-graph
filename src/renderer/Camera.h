@@ -61,6 +61,14 @@ public:
 
     void SetViewportSize(uint32_t width, uint32_t height);
 
+    // 被写体を包む球の半径（m）を渡す。**毎フレーム呼んでよい。**
+    //
+    // 軌道の距離の下限 / 上限とクリップ面をここから決める。素材の 2m 角と
+    // 地形の 2km 角では 1000 倍違うので、固定値だと片方でしか使えない
+    // （2km の地形は「100m まで」の上限に阻まれて全体が見えない）。
+    // 既定（半径 1.41 = 2m 平面の対角の半分）で従来と同じ値になるようにしてある。
+    void SetSceneRadius(float radius);
+
     DirectX::XMMATRIX ViewMatrix() const;
     DirectX::XMMATRIX ProjectionMatrix() const;
     DirectX::XMFLOAT3 Position() const;
@@ -71,21 +79,28 @@ public:
 
     float FovY() const { return m_fovY; }
     // 被写界深度が深度からカメラ前方距離を戻すのに使う。
-    float NearZ() const { return m_nearZ; }
-    float FarZ() const { return m_farZ; }
+    // **被写体の大きさに比例する。** 近 / 遠の比は一定なので、
+    // 地形スケールでも深度の精度は素材スケールと変わらない。
+    float NearZ() const;
+    float FarZ() const;
     // SetState と同じ範囲に丸める。UI からの直接代入でクランプを迂回させない
     // （0 や負の画角は投影行列と焦点距離換算のゼロ除算を壊す）。
     void SetFovY(float fovY);
     const DirectX::XMFLOAT3& Target() const { return m_target; }
 
 private:
+    // 被写体の大きさから決まる軌道の距離の範囲。
+    float SceneScale() const;
+    float MinDistance() const;
+    float MaxDistance() const;
+
     DirectX::XMFLOAT3 m_target = {0.0f, 0.0f, 0.0f};
     float m_distance = 3.2f;
     float m_yaw = 0.6f;
     float m_pitch = 0.35f;
     float m_fovY = 0.7853981634f;  // 45 度
-    float m_nearZ = 0.02f;
-    float m_farZ = 200.0f;
+    // 被写体の大きさ。SetSceneRadius が入れる。既定は 2m 平面の対角の半分。
+    float m_sceneRadius = 1.41421356f;
     uint32_t m_width = 1;
     uint32_t m_height = 1;
 };

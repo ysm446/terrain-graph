@@ -657,6 +657,7 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     node["useMaterialTextures"] = renderer.UseMaterialTextures();
     node["materialUvScale"] = renderer.MaterialUvScale();
     node["displacementScale"] = renderer.DisplacementScale();
+    node["planeSize"] = renderer.PlaneSize();
     node["tessellation"] = renderer.TessellationEnabled();
     node["tessellationFactor"] = renderer.TessellationFactor();
     node["materialResolution"] = renderer.MaterialResolution();
@@ -726,6 +727,9 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
     renderer.MaterialUvScale() = ReadFloat(node, "materialUvScale", previewDefaults.materialUvScale);
     renderer.DisplacementScale() =
         ReadFloat(node, "displacementScale", previewDefaults.displacementScale);
+    // 平面のサイズ（m）。**カメラより先に読む。** 軌道の距離の範囲がこれで決まるので、
+    // 後に読むと地形スケールのカメラ位置が素材スケールの範囲へ丸められる。
+    renderer.PlaneSize() = ReadFloat(node, "planeSize", previewDefaults.planeSize);
     renderer.TessellationEnabled() =
         ReadBool(node, "tessellation", previewDefaults.tessellationEnabled);
     renderer.TessellationFactor() =

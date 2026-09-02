@@ -33,6 +33,8 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
     switch (kind) {
         case graph::NodeKind::Surface:
             return ImVec4(0.55f, 0.66f, 0.58f, 1.0f);
+        case graph::NodeKind::Heightmap:
+            return ImVec4(0.72f, 0.66f, 0.50f, 1.0f);
         case graph::NodeKind::Shape:
             return ImVec4(0.66f, 0.62f, 0.52f, 1.0f);
         case graph::NodeKind::Liquid:
@@ -402,7 +404,9 @@ void Application::DrawGraphEditor() {
             }
             if (auto* settings = std::get_if<graph::LayerNodeSettings>(&node->settings)) {
                 // 追加時の初期値は旧レイヤーパネルと同じ既定値を使う。
-                settings->layer = DefaultLayerFor(graph::LayerKindFor(kind));
+                settings->layer = (kind == graph::NodeKind::Heightmap)
+                                      ? kDefaultHeightmapLayer
+                                      : DefaultLayerFor(graph::LayerKindFor(kind));
                 settings->layer.name +=
                     " " + std::to_string(m_graph.Nodes().size());
             }
@@ -415,6 +419,8 @@ void Application::DrawGraphEditor() {
             // ステータスバーに残す。追加が効いたかを画面で確かめられるようにする。
             TG_LOG_INFO("ノードを追加しました: %s", NodeDisplayName(*node));
         };
+        addNodeMenuItem(graph::NodeKind::Heightmap, "ハイトマップ — 画像を地形として読み込む");
+        ImGui::Separator();
         addNodeMenuItem(graph::NodeKind::Surface, "サーフェス — 素材を高さで張り合わせる");
         addNodeMenuItem(graph::NodeKind::Shape, "シェイプ — 高さへ起伏を加算する");
         addNodeMenuItem(graph::NodeKind::Liquid, "水面 — 水位より低い所に水を張る");
@@ -497,10 +503,12 @@ void Application::DrawGraphPanel() {
             ui::EndPropertyTable();
         }
         // 「下地」入力が繋がっていないノードは一番下のレイヤー扱い。
+        // ソース（ハイトマップ）はそもそも入力を持たないので常にこちら。
         const bool isBase =
             selected->inputs.empty() ||
             m_graph.FindUpstreamNodeForPin(selected->inputs.front().id) == nullptr;
-        changed |= DrawLayerSettings(settings->layer, isBase);
+        changed |= DrawLayerSettings(settings->layer, isBase,
+                                     graph::IsSourceNodeKind(selected->kind));
         if (changed) {
             m_graph.MarkDirty();
             MarkDocumentChanged();

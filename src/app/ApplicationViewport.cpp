@@ -375,7 +375,7 @@ void Application::DrawHeightGuide(const ImVec2& viewportMin, const ImVec2& viewp
         return;
     }
 
-    const float half = renderer::PreviewRenderer::kPlaneSize * 0.5f;
+    const float half = m_renderer.PlaneSize() * 0.5f;
     const float scale = m_renderer.DisplacementScale();
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
