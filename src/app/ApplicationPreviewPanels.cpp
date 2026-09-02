@@ -39,7 +39,7 @@ void Application::DrawMaterialPanel() {
             // **グラフに Heightmap ノードがあるときは、その実寸に従う。**
             // 地形の大きさは見え方の設定ではなく読み込んだデータの性質なので、
             // 決める場所はノード側の 1 か所だけにする。
-            const bool scaleFromGraph = (m_graph.FindChainScale(m_selectedGraphNode) != nullptr);
+            const bool scaleFromGraph = (m_graph.FindChainScale(m_previewGraphNode) != nullptr);
             if (!scaleFromGraph) {
                 ui::PropertyFloat("平面のサイズ", &m_renderer.PlaneSize(), 0.5f, 8192.0f,
                                   defaults.planeSize,

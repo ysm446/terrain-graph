@@ -98,6 +98,9 @@ private:
                            bool maskFromNode = false);
     // グラフの変更をコンパイル結果（m_graphStack）へ反映する。フレームの頭で呼ぶ。
     void SyncGraphStack();
+    // ビューポートに出すノードを決める。出力ノードや無効な ID は
+    // 「出力ノードのチェーン」（0）に落とす。
+    void SetPreviewGraphNode(graph::GraphId nodeId);
     void DrawMaterialLibraryPanel();
     // 天球パネル。一覧で選んだものがそのままビューポートの環境になる。
     void DrawSkyLibraryPanel();
@@ -200,6 +203,15 @@ private:
     // 前回コンパイルしたプレビュー対象。選択が変わっても再コンパイルするために持つ。
     graph::GraphId m_compiledGraphTarget = 0;
     graph::GraphId m_selectedGraphNode = 0;
+    // ビューポートに出しているノード。**選択とは別に持つ。**
+    // 結果を見ながら別のノードのプロパティをいじれるようにするため
+    // （terrain-editor と同じ作法）。0 は出力ノードのチェーン。
+    graph::GraphId m_previewGraphNode = 0;
+    // 出力ピンの「クリック」を拾うための押した位置。ドラッグ（リンク作成）と
+    // 区別するために、押した / 離したが同じピンで、ほとんど動いていないときだけ
+    // クリックとみなす。
+    graph::GraphId m_graphPressedPin = 0;
+    ImVec2 m_graphPressedPinPos{};
     ax::NodeEditor::EditorContext* m_nodeEditor = nullptr;
     // グラフパネル内の「エディタ / プロパティ」境界の高さ（96 DPI 基準）。
     float m_graphEditorHeight = 380.0f;

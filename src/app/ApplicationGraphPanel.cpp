@@ -163,13 +163,24 @@ void Application::RequestGraphNodePlacement(bool navigate) {
     }
 }
 
+// ビューポートに出すノードを決める。**選択とは別**に持つので、
+// 結果を見ながら別のノードのプロパティをいじれる。
+void Application::SetPreviewGraphNode(graph::GraphId nodeId) {
+    const graph::Node* node = m_graph.FindNode(nodeId);
+    // 出力ノードと、プレビューできない種類は「出力ノードのチェーン」に落とす。
+    m_previewGraphNode =
+        (node != nullptr && graph::IsPreviewableNodeKind(node->kind)) ? node->id : 0;
+}
+
 void Application::SyncGraphStack() {
-    // プレビューの対象。レイヤー系のノードを選んでいる間は**そのノードまで**を
-    // 表示し、選択を外す（または出力ノードを選ぶ）と出力ノードのチェーンに戻る。
+    // プレビューの対象。**出力ピンのクリックで決める**（選択とは別）。
+    // 0 のときは出力ノードのチェーン。
     graph::GraphId target = 0;
-    if (const graph::Node* node = m_graph.FindNode(m_selectedGraphNode);
+    if (const graph::Node* node = m_graph.FindNode(m_previewGraphNode);
         node != nullptr && graph::IsPreviewableNodeKind(node->kind)) {
         target = node->id;
+    } else {
+        m_previewGraphNode = 0;
     }
     // 地形の実寸はチェーンの根にある Heightmap ノードが持つ。
     // **読み込むときに一度決めたら、以後はプレビュー側で触らない。**
@@ -198,11 +209,16 @@ void Application::SyncGraphStack() {
 void Application::DrawGraphNode(const graph::Node& node) {
     constexpr float kNodeWidth = 200.0f;
     const ImVec4 accent = NodeAccentColor(node.kind);
-    const ImVec4 nodeBorderColor(0.22f, 0.22f, 0.22f, 1.0f);
+    // **プレビュー中のノードは枠を明るくする。** 選択（プロパティ）と
+    // プレビューは別なので、どれが画面に出ているのかが分かるようにする。
+    const bool isPreview = (node.id == m_previewGraphNode) ||
+                           (m_previewGraphNode == 0 && node.kind == graph::NodeKind::Output);
+    const ImVec4 nodeBorderColor = isPreview ? ImVec4(0.72f, 0.76f, 0.62f, 1.0f)
+                                             : ImVec4(0.22f, 0.22f, 0.22f, 1.0f);
     const ImVec4 activeNodeBorderColor(0.59f, 0.64f, 0.68f, 1.0f);
     ed::PushStyleVar(ed::StyleVar_NodePadding, ImVec4(12.0f, 10.0f, 12.0f, 10.0f));
     ed::PushStyleVar(ed::StyleVar_NodeRounding, 6.0f);
-    ed::PushStyleVar(ed::StyleVar_NodeBorderWidth, 1.0f);
+    ed::PushStyleVar(ed::StyleVar_NodeBorderWidth, isPreview ? 2.0f : 1.0f);
     ed::PushStyleVar(ed::StyleVar_SelectedNodeBorderWidth, 1.8f);
     ed::PushStyleColor(ed::StyleColor_NodeBg, ImVec4(0.150f, 0.150f, 0.150f, 0.98f));
     ed::PushStyleColor(ed::StyleColor_NodeBorder, nodeBorderColor);
@@ -226,6 +242,11 @@ void Application::DrawGraphNode(const graph::Node& node) {
         const ImVec4 titleColor =
             enabled ? ImVec4(0.88f, 0.88f, 0.88f, 1.0f) : ImVec4(0.55f, 0.55f, 0.55f, 1.0f);
         ImGui::TextColored(titleColor, "%s", NodeDisplayName(node));
+        if (isPreview) {
+            // ビューポートに出ている印。名前の右に小さく添える。
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.72f, 0.76f, 0.62f, 1.0f), "●");
+        }
         // 種類はヘッダの下に小さく添える。名前と種類の両方が分かるようにする。
         if (const graph::NodeDefinition* definition = graph::FindNodeDefinition(node.kind);
             definition != nullptr && layerSettings != nullptr) {
@@ -390,6 +411,9 @@ void Application::DrawGraphEditor() {
                 const int nodeId = ToGraphId(deletedNodeId.Get());
                 if (m_graph.DeleteNode(nodeId)) {
                     MarkDocumentChanged();
+                    if (m_previewGraphNode == nodeId) {
+                        m_previewGraphNode = 0;
+                    }
                     if (m_selectedGraphNode == nodeId) {
                         m_selectedGraphNode = 0;
                     }
@@ -444,6 +468,8 @@ void Application::DrawGraphEditor() {
             node->positionValid = true;
             m_graphNodesToPlace.push_back(nodeId);
             m_selectedGraphNode = nodeId;
+            // 作った直後は、その結果を見たいはず。プレビューも移す。
+            SetPreviewGraphNode(nodeId);
             MarkDocumentChanged();
             // ステータスバーに残す。追加が効いたかを画面で確かめられるようにする。
             TG_LOG_INFO("ノードを追加しました: %s", NodeDisplayName(*node));
@@ -472,8 +498,42 @@ void Application::DrawGraphEditor() {
     }
     ed::Resume();
 
+    // --- プレビュー対象の切り替え -------------------------------------------
+    // **選択とは別。** ノードを選んでプロパティをいじりながら、別のノードの
+    // 出力をビューポートに出しておけるようにする（terrain-editor と同じ作法）。
+    //
+    // 出力ピンは押した瞬間からリンクのドラッグが始まるので、
+    // **同じピンの上でほとんど動かずに離したとき**だけクリックとみなす。
+    {
+        const graph::GraphId hoveredPin = ToGraphId(ed::GetHoveredPin().Get());
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            m_graphPressedPin = hoveredPin;
+            m_graphPressedPinPos = ImGui::GetMousePos();
+        }
+        if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            const ImVec2 released = ImGui::GetMousePos();
+            const float moved = std::abs(released.x - m_graphPressedPinPos.x) +
+                                std::abs(released.y - m_graphPressedPinPos.y);
+            if (m_graphPressedPin != 0 && hoveredPin == m_graphPressedPin && moved < 6.0f) {
+                if (const graph::Pin* pin = m_graph.FindPin(m_graphPressedPin);
+                    pin != nullptr && pin->kind == graph::PinKind::Output) {
+                    SetPreviewGraphNode(pin->nodeId);
+                }
+            }
+            m_graphPressedPin = 0;
+        }
+        // ノードのダブルクリックでも切り替える（ピンが小さいときの逃げ道）。
+        if (const ed::NodeId doubleClicked = ed::GetDoubleClickedNode()) {
+            SetPreviewGraphNode(ToGraphId(doubleClicked.Get()));
+        }
+        // 背景のダブルクリックで出力ノードのチェーンへ戻す。
+        if (ed::IsBackgroundDoubleClicked()) {
+            SetPreviewGraphNode(0);
+        }
+    }
+
     // --- 選択 ---------------------------------------------------------------
-    // 選択はプレビューの対象を兼ねる。外したら 0 に戻す（出力ノードのチェーンへ）。
+    // 選択はプロパティに出すノード。外したら 0 に戻す（プレビューには影響しない）。
     // **配置待ちのノードがある間は消さない。** 追加した直後のフレームは
     // エディタ側の選択がまだ無く、ここで 0 に戻すと「追加 → 選択」が消える
     // （エディタへの選択の反映は次のフレームの流し込みで行う）。
@@ -533,6 +593,27 @@ void Application::DrawGraphPanel() {
     m_graphEditorHeight = editorHeight / std::max(ui::Scaled(1.0f), 0.01f);
 
     ImGui::BeginChild("graphPropertyPane", ImVec2(0.0f, 0.0f));
+
+    // **プレビュー対象は選択とは別。** どれが画面に出ているかをここに出し、
+    // 出力へ戻す手段も置く（出力ピンのクリックで切り替わる、と気づけるように）。
+    {
+        const graph::Node* previewNode = m_graph.FindNode(m_previewGraphNode);
+        const char* previewName =
+            (previewNode != nullptr) ? NodeDisplayName(*previewNode) : "Output";
+        if (ui::BeginPropertyTable("graphPreviewRow")) {
+            ui::PropertyValue("プレビュー", "%s", previewName);
+            ui::EndPropertyTable();
+        }
+        if (previewNode != nullptr) {
+            if (ui::Button("出力へ戻す", ui::kWideButtonWidth)) {
+                SetPreviewGraphNode(0);
+            }
+        }
+        ui::HintText("出力ピンをクリック（またはノードをダブルクリック）で、"
+                     "ビューポートに出すノードを切り替える");
+        ImGui::Spacing();
+    }
+
     graph::Node* selected = m_graph.FindMutableNode(m_selectedGraphNode);
     if (selected == nullptr) {
         ui::HintText("ノードを選ぶと設定が出る。背景の右クリックで追加、"
