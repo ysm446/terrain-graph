@@ -1,6 +1,7 @@
 #pragma once
 
 #include "compositor/MaterialLayer.h"
+#include "compositor/MaskGraph.h"
 
 #include <vector>
 
@@ -20,6 +21,10 @@ public:
 
     std::vector<MaterialLayer>& Layers() { return m_layers; }
     const std::vector<MaterialLayer>& Layers() const { return m_layers; }
+
+    // マスクのノードグラフを落とした op の列。レイヤーは添字で参照する。
+    MaskProgram& MaskOps() { return m_maskOps; }
+    const MaskProgram& MaskOps() const { return m_maskOps; }
 
     MaterialLayer& Add(const MaterialLayer& layer);
     void Remove(size_t index);
@@ -45,6 +50,7 @@ public:
 
 private:
     std::vector<MaterialLayer> m_layers;
+    MaskProgram m_maskOps;
     float m_sizeMeters = 1024.0f;
     float m_heightMeters = 200.0f;
     uint64_t m_revision = 1;

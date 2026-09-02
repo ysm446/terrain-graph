@@ -123,14 +123,15 @@ enum class MaskSource : uint32_t {
     Curvature = 5,  // 下地の曲率（0.5 = 平坦、> 0.5 = 凸、< 0.5 = 凹）
     Cavity = 6,     // 下地の窪み（簡易 AO。1 に近いほど窪んでいる）
     Paint = 7,      // ブラシで描いたマスク（PaintMaskStore が持つテクスチャ）
-    Fluvial = 8,    // 下地の川筋（フロー累積。水が集まる所ほど 1 に近い）
+    // マスクのノードグラフの結果（`MaskProgram` の op）。`maskOp` がどれかを指す。
+    // 中間結果由来と同じく、評価前にマスクを焼くパスが要る。
+    Node = 8,
 };
 
 // 中間結果由来かどうか。真なら評価前にマスク生成パスが要る。
 inline bool IsDerivedMaskSource(MaskSource source) {
     return source == MaskSource::Height || source == MaskSource::Slope ||
-           source == MaskSource::Curvature || source == MaskSource::Cavity ||
-           source == MaskSource::Fluvial;
+           source == MaskSource::Curvature || source == MaskSource::Cavity;
 }
 
 // 川筋マスクの出力カーブ。シェーダの TG_FLUVIAL_CURVE_* と一致させること。
@@ -167,13 +168,9 @@ struct LayerMask {
     NoiseParams noise{NoiseType::Fbm, 4.0f, 1.0f, 4, 37.0f};
     // 中間結果由来のマスクの強調度。傾斜や曲率の効き方を調整する。
     float derivedScale = 1.0f;
-    // 川筋マスクの設定。source が Fluvial のときだけ参照する。
-    FluvialParams fluvial;
-    // 川筋を**レイヤー列のどこまで合成した Height から作るか**。
-    // グラフのコンパイルが Mask Fluvial ノードの入力から決めて入れる。
-    // -1 は「このレイヤーの直下」（入力を繋いでいないときの既定）。
-    // **保存しない。** 繋ぎ方から毎回決まる値なので、ファイルには残さない。
-    int fluvialSourceIndex = -1;
+    // マスクのノードグラフの結果を使うときの op の添字（source == Node）。
+    // **保存しない。** グラフの繋ぎ方からコンパイルのたびに決まる。
+    int maskOp = -1;
     // カーブ。1 で線形、> 1 で中間を締める（コントラストが上がる）。
     float contrast = 1.0f;
     float levelsLow = 0.0f;

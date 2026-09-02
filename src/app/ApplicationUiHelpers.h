@@ -124,11 +124,13 @@ inline const renderer::SkySettings kDefaultSky;
 
 inline const char* const kNoiseTypeLabels[] = {"fBm", "尾根状", "セル状"};
 inline const char* const kValueSourceLabels[] = {"定数", "ノイズ", "テクスチャ"};
+// **「ノード」は選ばせない。** グラフで Mask 入力へ繋ぐと自動でそれになる。
 inline const char* const kMaskSourceLabels[] = {
     "定数",       "ノイズ",     "テクスチャ", "下地の高さ",
     "下地の傾斜", "下地の曲率", "下地の窪み", "ペイント",
-    "下地の川筋",
 };
+// マスクの合成。compositor::MaskBlendMode の並びと一致させること。
+inline const char* const kMaskBlendModeLabels[] = {"加算", "乗算", "小さいほう", "大きいほう"};
 // 川筋マスクの出力カーブ。compositor::FluvialCurve の並びと一致させること。
 inline const char* const kFluvialCurveLabels[] = {"対数", "しきい値", "線形"};
 // 川筋マスクの計算グリッド。合成解像度とは別に持つ。
@@ -378,6 +380,58 @@ inline bool DrawFluvialRows(compositor::FluvialParams& fluvial) {
         fluvial.resolution = kFluvialResolutionValues[resolutionIndex];
         changed = true;
     }
+    return changed;
+}
+
+// 傾斜マスクの設定行。**プロパティテーブルの中で呼ぶこと。**
+inline bool DrawSlopeRows(compositor::SlopeParams& slope) {
+    const compositor::SlopeParams defaults;
+    bool changed = false;
+    changed |= ui::PropertyFloat(
+        "最大ディテール", &slope.detailMeters, 0.0f, 512.0f, defaults.detailMeters,
+        "傾斜を測る距離（m）。大きいほど小さな凹凸を無視して大きな斜面を拾う",
+        "%.1f m", ImGuiSliderFlags_Logarithmic);
+    changed |= ui::PropertyFloat("最小角", &slope.minDegrees, 0.0f, 89.0f, defaults.minDegrees,
+                                 "これ以下の傾斜を 0 にする", "%.1f 度");
+    changed |= ui::PropertyFloat("最大角", &slope.maxDegrees, 1.0f, 90.0f, defaults.maxDegrees,
+                                 "これ以上の傾斜を 1 にする", "%.1f 度");
+    changed |= ui::PropertyFloat("ガンマ", &slope.gamma, 0.05f, 4.0f, defaults.gamma,
+                                 "1 未満で弱い斜面を明るく、1 より大きいと急斜面だけを残す",
+                                 "%.2f");
+    changed |= ui::PropertyBool("反転", &slope.invert, defaults.invert,
+                                "平地のマスクを作るときに使う");
+    return changed;
+}
+
+// レベル調整の設定行。**プロパティテーブルの中で呼ぶこと。**
+inline bool DrawLevelsRows(compositor::LevelsParams& levels) {
+    const compositor::LevelsParams defaults;
+    bool changed = false;
+    changed |= ui::PropertyFloat("黒点", &levels.blackPoint, 0.0f, 1.0f, defaults.blackPoint,
+                                 "これ以下を 0 にする。弱い成分を切り落とす", "%.3f");
+    changed |= ui::PropertyFloat("白点", &levels.whitePoint, 0.0f, 1.0f, defaults.whitePoint,
+                                 "これ以上を 1 にする。下げるほど早く飽和する", "%.3f");
+    changed |= ui::PropertyFloat("ガンマ", &levels.gamma, 0.05f, 4.0f, defaults.gamma,
+                                 "1 未満で暗部を持ち上げ、1 より大きいと強い部分だけを残す",
+                                 "%.2f");
+    changed |= ui::PropertyBool("反転", &levels.invert, defaults.invert, nullptr);
+    return changed;
+}
+
+// マスクの合成の設定行。**プロパティテーブルの中で呼ぶこと。**
+inline bool DrawBlendRows(compositor::BlendParams& blend) {
+    const compositor::BlendParams defaults;
+    bool changed = false;
+    int mode = static_cast<int>(blend.mode);
+    if (ui::PropertyCombo("種類", &mode, kMaskBlendModeLabels,
+                          IM_ARRAYSIZE(kMaskBlendModeLabels), static_cast<int>(defaults.mode),
+                          "乗算は絞り込み（両方が立つ所だけ）、加算は合算、"
+                          "小さいほう / 大きいほうは飽和させずに寄せる")) {
+        blend.mode = static_cast<compositor::MaskBlendMode>(mode);
+        changed = true;
+    }
+    changed |= ui::PropertyFloat("強さ", &blend.intensity, 0.0f, 1.0f, defaults.intensity,
+                                 "前景そのままと合成結果の間の補間。0 で前景のまま", "%.2f");
     return changed;
 }
 

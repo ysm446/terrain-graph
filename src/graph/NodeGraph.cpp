@@ -35,10 +35,23 @@ constexpr std::array<PinDefinition, 1> kMaskSourcePins = {{
     {PinKind::Output, ValueType::Mask, "Mask"},
 }};
 
-// 川筋のピン。**どこのハイトから作るか**を Base 入力で指す。
+// 高さから作るマスクのピン。**どこのハイトから作るか**を Base 入力で指す。
 // 繋がなければ、そのマスクを使うレイヤーの直下のハイトを使う。
-constexpr std::array<PinDefinition, 2> kMaskFluvialPins = {{
+constexpr std::array<PinDefinition, 2> kMaskFromHeightPins = {{
     {PinKind::Input, ValueType::Material, "Base"},
+    {PinKind::Output, ValueType::Mask, "Mask"},
+}};
+
+// マスクを 1 枚受けて 1 枚返す加工のピン。
+constexpr std::array<PinDefinition, 2> kMaskFilterPins = {{
+    {PinKind::Input, ValueType::Mask, "Mask"},
+    {PinKind::Output, ValueType::Mask, "Mask"},
+}};
+
+// マスク 2 枚を合成するピン。**ここでグラフが合流する。**
+constexpr std::array<PinDefinition, 3> kMaskBlendPins = {{
+    {PinKind::Input, ValueType::Mask, "Foreground"},
+    {PinKind::Input, ValueType::Mask, "Background"},
     {PinKind::Output, ValueType::Mask, "Mask"},
 }};
 
@@ -51,14 +64,17 @@ constexpr std::array<PinDefinition, 1> kSourceNodePins = {{
     {PinKind::Output, ValueType::Material, "Result"},
 }};
 
-constexpr std::array<NodeDefinition, 8> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 11> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
     {NodeKind::Liquid, "liquid", "Liquid", kLayerNodePins},
     {NodeKind::Blur, "heightmapBlur", "Heightmap Blur", kFilterNodePins},
     {NodeKind::MaskImage, "maskImage", "Mask Image", kMaskSourcePins},
-    {NodeKind::MaskFluvial, "maskFluvial", "Mask Fluvial", kMaskFluvialPins},
+    {NodeKind::MaskFluvial, "maskFluvial", "Mask Fluvial", kMaskFromHeightPins},
+    {NodeKind::MaskSlope, "maskSlope", "Mask Slope", kMaskFromHeightPins},
+    {NodeKind::MaskLevels, "maskLevels", "Mask Levels", kMaskFilterPins},
+    {NodeKind::MaskBlend, "maskBlend", "Mask Blend", kMaskBlendPins},
     {NodeKind::Output, "output", "Output", kOutputNodePins},
 }};
 
@@ -96,59 +112,20 @@ bool IsSourceNodeKind(NodeKind kind) {
 }
 
 bool IsMaskNodeKind(NodeKind kind) {
-    return kind == NodeKind::MaskImage || kind == NodeKind::MaskFluvial;
+    return kind == NodeKind::MaskImage || kind == NodeKind::MaskFluvial ||
+           kind == NodeKind::MaskSlope || kind == NodeKind::MaskLevels ||
+           kind == NodeKind::MaskBlend;
+}
+
+// 下地の Height を読むマスクか。**チェーンのどこを読むか**を Base 入力で指す。
+bool IsHeightMaskNodeKind(NodeKind kind) {
+    return kind == NodeKind::MaskFluvial || kind == NodeKind::MaskSlope;
 }
 
 bool IsPreviewableNodeKind(NodeKind kind) {
-    return IsLayerNodeKind(kind) || kind == NodeKind::MaskFluvial;
+    // マスクは見ながら調整するものなので、どのマスクノードもプレビューできる。
+    return IsLayerNodeKind(kind) || IsMaskNodeKind(kind);
 }
-
-namespace {
-
-// マスクを見せるための塗りレイヤー。
-//
-// **水面（Liquid）の規則を使う。** 水位を地形より高く取ると
-// `weight = mask * 1` になり、重みがマスクの値そのものになる
-// （サーフェスのハイトブレンドだと、高さで勝った時点で重みが 1 に張り付く）。
-// 色とサーフェスだけを書き、形（Height / Normal）は下地のまま見せる。
-compositor::MaterialLayer MakeMaskPreviewLayer(const char* name,
-                                               const DirectX::XMFLOAT3& color) {
-    compositor::MaterialLayer layer;
-    layer.name = name;
-    layer.kind = compositor::LayerKind::Liquid;
-    layer.channelMask = compositor::ChannelBit(compositor::Channel::BaseColor) |
-                        compositor::ChannelBit(compositor::Channel::Surface);
-    layer.baseColor = color;
-    layer.roughness = 1.0f;
-    layer.metallic = 0.0f;
-    layer.heightSource = compositor::ValueSource::Constant;
-    // 「水位」。地形より高く取ると全面が水中扱いになり、重みはマスクだけで決まる。
-    layer.heightBase = 2.0f;
-    layer.blendRange = 0.001f;
-    return layer;
-}
-
-// 川筋ノードを選んでいる間のプレビュー。
-// **入力のハイトの上に、計算したマスクを白黒で貼る。**
-// 下地を黒で覆ってから川筋を白で塗るので、マスクの値がそのまま濃淡になる。
-void AppendFluvialPreviewLayers(std::vector<compositor::MaterialLayer>& layers,
-                                const compositor::FluvialParams& fluvial) {
-    compositor::MaterialLayer cover = MakeMaskPreviewLayer("Mask 0", {0.02f, 0.02f, 0.02f});
-    cover.mask.source = compositor::MaskSource::Constant;
-    cover.mask.constant = 1.0f;
-    layers.push_back(cover);
-
-    compositor::MaterialLayer paint = MakeMaskPreviewLayer("Mask 1", {0.85f, 0.88f, 0.92f});
-    paint.mask.source = compositor::MaskSource::Fluvial;
-    paint.mask.fluvial = fluvial;
-    paint.mask.constant = 1.0f;
-    // 直下（＝入力に繋いだチェーンの一番上）のハイトから作る。
-    // 黒で覆うレイヤーは Height を書かないので、ここの Height は地形のまま。
-    paint.mask.fluvialSourceIndex = -1;
-    layers.push_back(paint);
-}
-
-}  // namespace
 
 compositor::LayerKind LayerKindFor(NodeKind kind) {
     switch (kind) {
@@ -460,128 +437,231 @@ const TerrainScale* NodeGraph::FindChainScale(GraphId nodeId) const {
     return nullptr;
 }
 
-void NodeGraph::ApplyMaskInput(const Node& node, compositor::LayerMask& mask) const {
+const Node* NodeGraph::UpstreamOf(const Node& node, ValueType type, size_t which) const {
+    size_t seen = 0;
     for (const Pin& pin : node.inputs) {
-        if (pin.valueType != ValueType::Mask) {
+        if (pin.valueType != type) {
             continue;
         }
-        const Node* upstream = FindUpstreamNodeForPin(pin.id);
-        if (upstream == nullptr) {
+        if (seen++ != which) {
             continue;
         }
-        const auto* settings = std::get_if<MaskNodeSettings>(&upstream->settings);
-        if (settings == nullptr) {
-            continue;
-        }
-        if (upstream->kind == NodeKind::MaskFluvial) {
-            mask.source = compositor::MaskSource::Fluvial;
-            mask.fluvial = settings->fluvial;
-            return;
-        }
-        // 画像が入っていないマスクノードは「繋がっていない」のと同じ扱い。
-        // 白 1 枚として全面に効かせると、繋いだ瞬間に絵が変わって驚く。
-        if (settings->map.texture != compositor::kNoTexture) {
-            mask.source = compositor::MaskSource::Texture;
-            mask.texture = settings->map;
-            return;
-        }
+        return FindUpstreamNodeForPin(pin.id);
     }
+    return nullptr;
 }
 
-// レイヤーの Mask 入力に繋がっている Mask Fluvial ノードが、
-// **どのノードのハイトを見ているか**をレイヤー列の添字で返す。
-// 繋いでいない、またはそのノードがこのチェーンに居なければ -1。
-int NodeGraph::FindFluvialSourceIndex(const Node& node,
-                                      const std::vector<const Node*>& layerNodes) const {
-    for (const Pin& pin : node.inputs) {
-        if (pin.valueType != ValueType::Mask) {
-            continue;
-        }
-        const Node* maskNode = FindUpstreamNodeForPin(pin.id);
-        if (maskNode == nullptr || maskNode->kind != NodeKind::MaskFluvial) {
-            continue;
-        }
-        // 川筋ノードの Base 入力。ここに繋いだノードまでのハイトを使う。
-        for (const Pin& maskPin : maskNode->inputs) {
-            if (maskPin.valueType != ValueType::Material) {
-                continue;
-            }
-            const Node* source = FindUpstreamNodeForPin(maskPin.id);
-            if (source == nullptr) {
-                continue;
-            }
-            for (size_t i = 0; i < layerNodes.size(); ++i) {
-                if (layerNodes[i] == source) {
+// マスクのノードを op の列へ落とす（入力が先、出力が後）。
+// **同じノードは 1 つの op を共有する。** Mask Blend で合流したり、
+// 同じマスクを 2 つのレイヤーで使ったりしても、評価は 1 回で済む。
+int NodeGraph::EmitMaskOps(const Node& maskNode, int defaultHeightLayer,
+                           const std::vector<const Node*>& layerNodes,
+                           compositor::MaskProgram& ops,
+                           std::vector<std::pair<const Node*, int>>& emitted, int depth) const {
+    // 循環は CanCreateLink が弾いているが、読み込んだファイルが壊れている
+    // 可能性もあるので深さでも止める。
+    constexpr int kMaxDepth = 32;
+    if (depth > kMaxDepth || !IsMaskNodeKind(maskNode.kind)) {
+        return -1;
+    }
+    for (const auto& [node, heightLayer] : emitted) {
+        if (node == &maskNode && heightLayer == defaultHeightLayer) {
+            // 既に焼いてある。同じ op を共有する。
+            for (size_t i = 0; i < emitted.size(); ++i) {
+                if (emitted[i].first == node && emitted[i].second == heightLayer) {
                     return static_cast<int>(i);
                 }
             }
         }
     }
-    return -1;
+
+    const auto* settings = std::get_if<MaskNodeSettings>(&maskNode.settings);
+    if (settings == nullptr) {
+        return -1;
+    }
+
+    compositor::MaskOp op;
+    switch (maskNode.kind) {
+        case NodeKind::MaskImage:
+            // 画像が入っていないマスクは「繋がっていない」のと同じ扱い。
+            // 白 1 枚として全面に効かせると、繋いだ瞬間に絵が変わって驚く。
+            if (settings->map.texture == compositor::kNoTexture) {
+                return -1;
+            }
+            op.kind = compositor::MaskOpKind::Image;
+            op.map = settings->map;
+            break;
+        case NodeKind::MaskFluvial:
+            op.kind = compositor::MaskOpKind::Fluvial;
+            op.fluvial = settings->fluvial;
+            break;
+        case NodeKind::MaskSlope:
+            op.kind = compositor::MaskOpKind::Slope;
+            op.slope = settings->slope;
+            break;
+        case NodeKind::MaskLevels:
+            op.kind = compositor::MaskOpKind::Levels;
+            op.levels = settings->levels;
+            break;
+        case NodeKind::MaskBlend:
+            op.kind = compositor::MaskOpKind::Blend;
+            op.blend = settings->blend;
+            break;
+        default:
+            return -1;
+    }
+
+    // 高さ由来は「チェーンのどこまで合成した Height を読むか」を Base 入力で指す。
+    // 繋いでいない / このチェーンに居ないノードなら、呼び出し側の既定へ落とす。
+    if (IsHeightMaskNodeKind(maskNode.kind)) {
+        op.heightSourceLayer = defaultHeightLayer;
+        if (const Node* source = UpstreamOf(maskNode, ValueType::Material)) {
+            for (size_t i = 0; i < layerNodes.size(); ++i) {
+                if (layerNodes[i] == source) {
+                    op.heightSourceLayer = static_cast<int>(i);
+                    break;
+                }
+            }
+        }
+    }
+
+    // 入力のマスクを先に焼く。**op は自分より前だけを指す。**
+    if (maskNode.kind == NodeKind::MaskLevels || maskNode.kind == NodeKind::MaskBlend) {
+        if (const Node* a = UpstreamOf(maskNode, ValueType::Mask, 0)) {
+            op.inputA = EmitMaskOps(*a, defaultHeightLayer, layerNodes, ops, emitted, depth + 1);
+        }
+    }
+    if (maskNode.kind == NodeKind::MaskBlend) {
+        if (const Node* b = UpstreamOf(maskNode, ValueType::Mask, 1)) {
+            op.inputB = EmitMaskOps(*b, defaultHeightLayer, layerNodes, ops, emitted, depth + 1);
+        }
+        // 片方だけ繋いでいるときは繋いだほうを通す（未接続は 0 ではなく「中立」）。
+        if (op.inputA < 0 && op.inputB < 0) {
+            return -1;
+        }
+    }
+    if (maskNode.kind == NodeKind::MaskLevels && op.inputA < 0) {
+        // 入力の無いレベル調整は意味を持たない。
+        return -1;
+    }
+
+    ops.push_back(op);
+    emitted.emplace_back(&maskNode, defaultHeightLayer);
+    return static_cast<int>(ops.size() - 1);
 }
 
-std::vector<compositor::MaterialLayer> NodeGraph::CompileChainFrom(const Node* top) const {
+namespace {
+
+// マスクを見せるための塗りレイヤー。
+//
+// **水面（Liquid）の規則を使う。** 水位を地形より高く取ると
+// `weight = mask * 1` になり、重みがマスクの値そのものになる
+// （サーフェスのハイトブレンドだと、高さで勝った時点で重みが 1 に張り付く）。
+// 色とサーフェスだけを書き、形（Height / Normal）は下地のまま見せる。
+compositor::MaterialLayer MakeMaskPreviewLayer(const char* name,
+                                               const DirectX::XMFLOAT3& color) {
+    compositor::MaterialLayer layer;
+    layer.name = name;
+    layer.kind = compositor::LayerKind::Liquid;
+    layer.channelMask = compositor::ChannelBit(compositor::Channel::BaseColor) |
+                        compositor::ChannelBit(compositor::Channel::Surface);
+    layer.baseColor = color;
+    layer.roughness = 1.0f;
+    layer.metallic = 0.0f;
+    layer.heightSource = compositor::ValueSource::Constant;
+    // 「水位」。地形より高く取ると全面が水中扱いになり、重みはマスクだけで決まる。
+    layer.heightBase = 2.0f;
+    layer.blendRange = 0.001f;
+    return layer;
+}
+
+}  // namespace
+
+CompiledGraph NodeGraph::CompileChainFrom(const Node* top) const {
     const std::vector<const Node*> chain = ChainFrom(top);
 
     // 遡った順（上→下）を、レイヤー列の順（下→上）へ反転する。
-    std::vector<compositor::MaterialLayer> layers;
-    // layers と 1 対 1 で並ぶ元ノード。川筋がチェーンのどこを指しているかを
-    // 解決するために、レイヤー列の添字からノードを引けるようにしておく。
+    CompiledGraph compiled;
+    // layers と 1 対 1 で並ぶ元ノード。マスクがチェーンのどこを読むかの解決に使う。
     std::vector<const Node*> layerNodes;
-    layers.reserve(chain.size());
+    compiled.layers.reserve(chain.size());
     layerNodes.reserve(chain.size());
     for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
         if (const auto* settings = std::get_if<LayerNodeSettings>(&(*it)->settings)) {
             compositor::MaterialLayer layer = settings->layer;
-            // Mask 入力に繋がっているマスクノードは、そのレイヤーのマスクを
-            // **上書きする**（同じ意味の値をノード側と 2 か所から編集させない）。
-            // 効き方（カーブ / レベル / 反転 / 係数）はレイヤー側の設定のまま。
-            ApplyMaskInput(**it, layer.mask);
             // ソース（Heightmap）は画像の 0〜1 がそのままハイトの全幅。
             // 振れ幅は標高差（m）が決めるので、起伏の強さは持たない。
             // 古いファイルが別の値を持っていても、ここで 1.0 に正す。
             if (IsSourceNodeKind((*it)->kind)) {
                 layer.heightGain = 1.0f;
             }
-            layers.push_back(layer);
+            compiled.layers.push_back(layer);
             layerNodes.push_back(*it);
         }
     }
 
-    // 川筋マスクが**チェーンのどこの Height を使うか**を解決する。
-    // Mask Fluvial の Base 入力に繋がっているノードの位置（レイヤー列の添字）。
-    // 繋いでいない / このチェーンに居ないノードなら -1（＝そのレイヤーの直下）。
-    for (size_t i = 0; i < layers.size(); ++i) {
-        if (layers[i].mask.source != compositor::MaskSource::Fluvial) {
+    // Mask 入力に繋がっているマスクのノードを op の列へ落とし、
+    // レイヤーからは添字で参照する（同じ意味の値を 2 か所から編集させない）。
+    // 効き方（係数 / カーブ / レベル / 反転）はレイヤー側の設定のまま。
+    std::vector<std::pair<const Node*, int>> emitted;
+    for (size_t i = 0; i < compiled.layers.size(); ++i) {
+        const Node* maskNode = UpstreamOf(*layerNodes[i], ValueType::Mask);
+        if (maskNode == nullptr) {
             continue;
         }
-        layers[i].mask.fluvialSourceIndex = FindFluvialSourceIndex(*layerNodes[i], layerNodes);
+        // 高さ由来のマスクで Base を繋いでいないときは「このレイヤーの直下」。
+        const int defaultHeightLayer = (i > 0) ? (static_cast<int>(i) - 1) : 0;
+        const int op =
+            EmitMaskOps(*maskNode, defaultHeightLayer, layerNodes, compiled.maskOps, emitted, 0);
+        if (op >= 0) {
+            compiled.layers[i].mask.source = compositor::MaskSource::Node;
+            compiled.layers[i].mask.maskOp = op;
+        }
     }
 
-    if (layers.empty()) {
+    if (compiled.layers.empty()) {
         // 空のスタックは操作の起点が無いので、下地 1 枚で補う（読み込み時と同じ方針）。
-        layers.push_back(compositor::MaterialStack::MakeBaseLayer());
+        compiled.layers.push_back(compositor::MaterialStack::MakeBaseLayer());
     }
-    return layers;
+    return compiled;
 }
 
-std::vector<compositor::MaterialLayer> NodeGraph::CompileLayers() const {
+CompiledGraph NodeGraph::CompileLayers() const {
     return CompileChainFrom(ChainTop());
 }
 
-std::vector<compositor::MaterialLayer> NodeGraph::CompileLayersTo(GraphId nodeId) const {
+CompiledGraph NodeGraph::CompileLayersTo(GraphId nodeId) const {
     const Node* node = FindNode(nodeId);
     if (node == nullptr) {
         return CompileLayers();
     }
-    // 川筋ノードを選んでいる間は、**入力のハイトに計算したマスクを貼って**見せる。
+    // マスクのノードを選んでいる間は、**そのマスクを白黒で貼って**見せる。
     // マスクは見ながら調整するものなので、選んだだけで結果が分かるようにする。
-    if (node->kind == NodeKind::MaskFluvial) {
-        std::vector<compositor::MaterialLayer> layers = CompileChainFrom(PreviewTop(nodeId));
-        if (const auto* settings = std::get_if<MaskNodeSettings>(&node->settings)) {
-            AppendFluvialPreviewLayers(layers, settings->fluvial);
+    if (IsMaskNodeKind(node->kind)) {
+        CompiledGraph compiled = CompileChainFrom(PreviewTop(nodeId));
+        // プレビューの塗りレイヤーは列の一番上に積むので、Height の起点は
+        // 「いまの一番上」（＝入力に繋いだチェーンの天面）になる。
+        std::vector<const Node*> layerNodes;
+        std::vector<std::pair<const Node*, int>> emitted;
+        const int defaultHeightLayer =
+            compiled.layers.empty() ? 0 : (static_cast<int>(compiled.layers.size()) - 1);
+        const int op =
+            EmitMaskOps(*node, defaultHeightLayer, layerNodes, compiled.maskOps, emitted, 0);
+
+        // 下地を黒で覆ってからマスクを白で塗る。マスクの値がそのまま濃淡になる。
+        compositor::MaterialLayer cover = MakeMaskPreviewLayer("Mask 0", {0.02f, 0.02f, 0.02f});
+        cover.mask.source = compositor::MaskSource::Constant;
+        cover.mask.constant = 1.0f;
+        compiled.layers.push_back(cover);
+
+        compositor::MaterialLayer paint = MakeMaskPreviewLayer("Mask 1", {0.85f, 0.88f, 0.92f});
+        paint.mask.constant = 1.0f;
+        if (op >= 0) {
+            paint.mask.source = compositor::MaskSource::Node;
+            paint.mask.maskOp = op;
         }
-        return layers;
+        compiled.layers.push_back(paint);
+        return compiled;
     }
     if (!IsLayerNodeKind(node->kind)) {
         return CompileLayers();

@@ -39,12 +39,6 @@ struct FluvialResources {
     rhi::GpuTexture maxScratch;      // R32_UINT 1x1 正規化用の最大値（InterlockedMax）
     uint32_t workResolution = 0;
 
-    // 出力マスクは**使うレイヤーまで残す**必要があるので 1 枚ずつ持つ
-    // （チェーンの途中で作って、上のレイヤーで使う）。UV で引くため、
-    // テクスチャの大きさはその川筋のグリッドちょうどにする。
-    std::vector<rhi::GpuTexture> masks;
-    std::vector<uint32_t> maskResolutions;
-
     bool IsValid() const { return heights.IsValid(); }
 };
 
@@ -116,14 +110,18 @@ private:
     // ブラーレイヤー 1 枚ぶん。Height を分離型ガウスでならし、
     // ぼかした形から法線を作り直す。**1 パスを全タイル終えてから次のパスへ進む**
     // （近傍を読むため、タイル優先で回すと継ぎ目が出る）。
-    // 川筋マスクを作る。**タイルには分けない**（グリッド全体を何度も舐めるため）。
-    // 成否に関わらず、合成パスへ渡す SRV は Textures 側で判断する。
+    // マスクの op を 1 つ焼く。**タイルには分けない**（マスク全体で 1 枚）。
+    bool RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                   ID3D12GraphicsCommandList* commandList, const MaskProgram& ops, size_t index,
+                   const MaterialStack& stack, const TextureLibrary& textures);
+    // 川筋マスクを作る。反復が要るので専用のパイプライン。
     bool ApplyFluvialMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
-                          ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
-                          const MaterialStack& stack, size_t slot);
-    // 作業リソースと、川筋 1 本ごとの出力マスクを用意する。
-    bool EnsureFluvialResources(rhi::Device& device, uint32_t workResolution,
-                                const std::vector<uint32_t>& maskResolutions);
+                          ID3D12GraphicsCommandList* commandList, const MaskOp& op,
+                          const MaterialStack& stack, rhi::GpuTexture& target);
+    // op ごとの結果テクスチャを用意する。数や解像度が変わった枚だけ作り直す。
+    bool EnsureMaskOpTextures(rhi::Device& device, const MaskProgram& ops);
+    // 川筋の作業リソース（1 組を使い回す）。
+    bool EnsureFluvialResources(rhi::Device& device, uint32_t workResolution);
     void ReleaseFluvialResources(rhi::Device& device);
 
     bool ApplyHeightBlur(rhi::Device& device, ID3D12GraphicsCommandList* commandList,
@@ -132,6 +130,12 @@ private:
                          const MaterialStack& stack, const std::vector<TileRect>& tiles);
 
     FluvialResources m_fluvial;
+    // マスクの op の結果。添字は MaskProgram と同じ。
+    std::vector<rhi::GpuTexture> m_maskOpTextures;
+    std::vector<uint32_t> m_maskOpResolutions;
+    // 前回焼いたときの入力ハッシュ。**変わっていない op は焼き直さない。**
+    // 川筋のように重い op を、無関係な編集のたびに走らせないための仕組み。
+    std::vector<uint64_t> m_maskOpHashes;
 
     void ReleaseTextures(rhi::Device& device);
     // レイヤー枚数ぶんのマスクサムネイルを用意する。増減した枚数だけ作る / 捨てる。

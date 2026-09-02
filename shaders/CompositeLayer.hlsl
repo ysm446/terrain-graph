@@ -15,7 +15,6 @@
 // ブラシで描いたマスク。PaintMaskStore が持つテクスチャをそのまま読む。
 #define TG_SOURCE_PAINT    7
 
-static const uint kInvalidTextureIndex = 0xFFFFFFFFu;
 
 #define TG_FLAG_MASK_INVERT 0x1u
 #define TG_FLAG_BASE_LAYER  0x2u

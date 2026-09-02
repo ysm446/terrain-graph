@@ -141,10 +141,13 @@ DirectX::XMFLOAT3 ReadFloat3(const json& node, const char* key,
 const char* const kTextureChannelNames[] = {"r", "g", "b", "a"};
 const char* const kValueSourceNames[] = {"constant", "noise", "texture"};
 const char* const kNoiseTypeNames[] = {"fbm", "ridged", "worley"};
+// マスクのソース。`node` はグラフのマスクノードの結果を指す
+// （どのノードかはグラフの繋ぎ方から決まるので、ここには書かない）。
 const char* const kMaskSourceNames[] = {"constant", "noise",     "texture", "height",
                                         "slope",    "curvature", "cavity",  "paint",
-                                        "fluvial"};
+                                        "node"};
 const char* const kFluvialCurveNames[] = {"log", "threshold", "linear"};
+const char* const kMaskBlendModeNames[] = {"add", "multiply", "min", "max"};
 const char* const kChannelNames[] = {"baseColor", "normal", "surface", "height"};
 const char* const kLayerKindNames[] = {"surface", "shape", "liquid", "blur"};
 const char* const kTonemapNames[] = {"none", "reinhard", "aces"};
@@ -343,6 +346,74 @@ compositor::FluvialParams ReadFluvial(const json& parent, const char* key) {
     return fluvial;
 }
 
+json WriteSlope(const compositor::SlopeParams& slope) {
+    json node;
+    node["detail"] = slope.detailMeters;
+    node["min"] = slope.minDegrees;
+    node["max"] = slope.maxDegrees;
+    node["gamma"] = slope.gamma;
+    node["invert"] = slope.invert;
+    return node;
+}
+
+compositor::SlopeParams ReadSlope(const json& parent, const char* key) {
+    const compositor::SlopeParams defaults;
+    const json* node = FindMember(parent, key);
+    if (node == nullptr || !node->is_object()) {
+        return defaults;
+    }
+    compositor::SlopeParams slope;
+    slope.detailMeters = ReadFloat(*node, "detail", defaults.detailMeters);
+    slope.minDegrees = ReadFloat(*node, "min", defaults.minDegrees);
+    slope.maxDegrees = ReadFloat(*node, "max", defaults.maxDegrees);
+    slope.gamma = ReadFloat(*node, "gamma", defaults.gamma);
+    slope.invert = ReadBool(*node, "invert", defaults.invert);
+    return slope;
+}
+
+json WriteLevels(const compositor::LevelsParams& levels) {
+    json node;
+    node["black"] = levels.blackPoint;
+    node["white"] = levels.whitePoint;
+    node["gamma"] = levels.gamma;
+    node["invert"] = levels.invert;
+    return node;
+}
+
+compositor::LevelsParams ReadLevels(const json& parent, const char* key) {
+    const compositor::LevelsParams defaults;
+    const json* node = FindMember(parent, key);
+    if (node == nullptr || !node->is_object()) {
+        return defaults;
+    }
+    compositor::LevelsParams levels;
+    levels.blackPoint = ReadFloat(*node, "black", defaults.blackPoint);
+    levels.whitePoint = ReadFloat(*node, "white", defaults.whitePoint);
+    levels.gamma = ReadFloat(*node, "gamma", defaults.gamma);
+    levels.invert = ReadBool(*node, "invert", defaults.invert);
+    return levels;
+}
+
+json WriteBlend(const compositor::BlendParams& blend) {
+    json node;
+    node["mode"] = EnumName(kMaskBlendModeNames, static_cast<uint32_t>(blend.mode));
+    node["intensity"] = blend.intensity;
+    return node;
+}
+
+compositor::BlendParams ReadBlend(const json& parent, const char* key) {
+    const compositor::BlendParams defaults;
+    const json* node = FindMember(parent, key);
+    if (node == nullptr || !node->is_object()) {
+        return defaults;
+    }
+    compositor::BlendParams blend;
+    blend.mode = static_cast<compositor::MaskBlendMode>(
+        EnumValue(kMaskBlendModeNames, *node, "mode", static_cast<uint32_t>(defaults.mode)));
+    blend.intensity = ReadFloat(*node, "intensity", defaults.intensity);
+    return blend;
+}
+
 json WriteMask(const compositor::LayerMask& mask, const TextureWriter& writeTexture,
                const std::function<json(compositor::PaintMaskId)>& writePaint) {
     json node;
@@ -350,7 +421,6 @@ json WriteMask(const compositor::LayerMask& mask, const TextureWriter& writeText
     node["constant"] = mask.constant;
     node["noise"] = WriteNoise(mask.noise);
     node["derivedScale"] = mask.derivedScale;
-    node["fluvial"] = WriteFluvial(mask.fluvial);
     node["contrast"] = mask.contrast;
     node["levelsLow"] = mask.levelsLow;
     node["levelsHigh"] = mask.levelsHigh;
@@ -368,7 +438,6 @@ void ReadMask(const json& node, compositor::LayerMask& mask, const TextureReader
     mask.constant = ReadFloat(node, "constant", defaults.constant);
     mask.noise = ReadNoise(node, "noise", defaults.noise);
     mask.derivedScale = ReadFloat(node, "derivedScale", defaults.derivedScale);
-    mask.fluvial = ReadFluvial(node, "fluvial");
     mask.contrast = ReadFloat(node, "contrast", defaults.contrast);
     mask.levelsLow = ReadFloat(node, "levelsLow", defaults.levelsLow);
     mask.levelsHigh = ReadFloat(node, "levelsHigh", defaults.levelsHigh);
@@ -519,8 +588,13 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
                 item["scale"] = std::move(scale);
             }
         } else if (const auto* mask = std::get_if<graph::MaskNodeSettings>(&node.settings)) {
+            // マスクのノードは種類ごとに使う設定が違うが、**全部書く**。
+            // 種類を変えて戻したときに値が消えていると驚くため。
             item["map"] = WriteMapSlot(mask->map, writeTexture);
             item["fluvial"] = WriteFluvial(mask->fluvial);
+            item["slope"] = WriteSlope(mask->slope);
+            item["levels"] = WriteLevels(mask->levels);
+            item["blend"] = WriteBlend(mask->blend);
         }
         nodes.push_back(std::move(item));
     }
@@ -629,6 +703,9 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                 graph::MaskNodeSettings settings;
                 settings.map = ReadMapSlot(item, "map", readTexture);
                 settings.fluvial = ReadFluvial(item, "fluvial");
+                settings.slope = ReadSlope(item, "slope");
+                settings.levels = ReadLevels(item, "levels");
+                settings.blend = ReadBlend(item, "blend");
                 created.settings = std::move(settings);
             } else {
                 created.settings = graph::OutputNodeSettings{};

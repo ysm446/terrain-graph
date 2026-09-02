@@ -9,6 +9,9 @@
 //   Surface   : R8G8B8A8_UNORM    R=Roughness, G=Metallic, B=AO
 //   Height    : R16_FLOAT         高さ（合成の駆動値かつ Displacement）
 
+// 「テクスチャなし」を表す SRV インデックス。C++ 側の kInvalidTextureIndex と揃える。
+static const uint kInvalidTextureIndex = 0xFFFFFFFFu;
+
 // スカラーのマップは「テクスチャ + どのチャンネルを読むか」で指定する。
 // Megascans の _ORD のように 1 枚へ複数のマップを詰めたテクスチャがあるため。
 // C++ 側の TextureChannel と一致させること。

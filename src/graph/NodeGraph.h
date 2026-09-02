@@ -1,6 +1,7 @@
 #pragma once
 
 #include "compositor/MaterialLayer.h"
+#include "compositor/MaskGraph.h"
 
 #include <cstdint>
 #include <span>
@@ -49,9 +50,14 @@ enum class NodeKind : uint32_t {
     Blur = 5,
     // 画像 1 枚をマスクとして出す**マスクのソース**。入力を持たない。
     MaskImage = 6,
-    // 下地の川筋（フロー累積）をマスクとして出す。入力を持たない
-    // （下地はチェーンから決まる。terrain-editor の Mask Fluvial にあたる）。
+    // 下地の川筋（フロー累積）をマスクとして出す。
     MaskFluvial = 7,
+    // 下地の傾斜をマスクとして出す（角度の範囲を 0〜1 へ）。
+    MaskSlope = 8,
+    // マスクの黒点 / 白点 / ガンマ / 反転。
+    MaskLevels = 9,
+    // マスク 2 枚の合成。**グラフが合流する唯一のノード。**
+    MaskBlend = 10,
 };
 
 struct PinDefinition {
@@ -110,6 +116,15 @@ struct LayerNodeSettings {
 struct MaskNodeSettings {
     compositor::MapSlot map;
     compositor::FluvialParams fluvial;
+    compositor::SlopeParams slope;
+    compositor::LevelsParams levels;
+    compositor::BlendParams blend;
+};
+
+// グラフを評価器の入力へ落とした結果。レイヤー列と、マスクの op の列。
+struct CompiledGraph {
+    std::vector<compositor::MaterialLayer> layers;
+    compositor::MaskProgram maskOps;
 };
 
 // 出力。ここに繋いだチェーンがプレビューのマテリアルになる。
@@ -164,12 +179,13 @@ public:
     // 読み込み用。ID はファイルの値をそのまま使い、次の採番を max+1 に合わせる。
     void Replace(std::vector<Node> nodes, std::vector<Link> links);
 
-    // グラフをレイヤー列（下から上）へ落とす。出力ノードの「下地」チェーンを遡る。
+    // グラフをレイヤー列（下から上）とマスクの op の列へ落とす。
+    // 出力ノードの「下地」チェーンを遡る。
     // チェーンが空なら下地 1 枚（MaterialStack::MakeBaseLayer と同じもの）を返す。
-    std::vector<compositor::MaterialLayer> CompileLayers() const;
-    // 指定したノード**まで**のレイヤー列。ノードを選んでプレビューするときに使う。
-    // レイヤー設定を持たないノード（出力など）や無効な ID は出力ノード扱いに落とす。
-    std::vector<compositor::MaterialLayer> CompileLayersTo(GraphId nodeId) const;
+    CompiledGraph CompileLayers() const;
+    // 指定したノード**まで**。ノードを選んでプレビューするときに使う。
+    // マスクのノードを選んだときは、その結果を白黒で貼ったプレビューになる。
+    CompiledGraph CompileLayersTo(GraphId nodeId) const;
 
     // チェーンの根にあるソース（Heightmap）の実寸。無ければ nullptr。
     // プレビューの平面のサイズと変位量はこれに従う。
@@ -183,17 +199,17 @@ public:
 private:
     GraphId AllocateGraphId() { return m_nextGraphId++; }
     void RebuildNextGraphId();
-    // Mask 入力の先にある Mask Fluvial が見ているノードの、レイヤー列での添字。
-    // 繋いでいない / チェーン外なら -1（そのレイヤーの直下のハイトを使う）。
-    int FindFluvialSourceIndex(const Node& node,
-                               const std::vector<const Node*>& layerNodes) const;
-    // ノードの Mask 入力に繋がっているマスクノードの設定を、レイヤーのマスクへ
-    // 写す。繋がっていなければ何もしない（レイヤー側の設定がそのまま効く）。
-    void ApplyMaskInput(const Node& node, compositor::LayerMask& mask) const;
     // top から「下地」チェーンを遡る（上から下の順）。
     std::vector<const Node*> ChainFrom(const Node* top) const;
     // top から「下地」チェーンを遡ってレイヤー列（下から上）にする共通部。
-    std::vector<compositor::MaterialLayer> CompileChainFrom(const Node* top) const;
+    CompiledGraph CompileChainFrom(const Node* top) const;
+    // マスクのノードを op の列へ落とす。返り値は結果の op の添字（-1 は未接続）。
+    // 同じノード（かつ同じ Height の起点）は 1 つの op を共有する。
+    int EmitMaskOps(const Node& maskNode, int defaultHeightLayer,
+                    const std::vector<const Node*>& layerNodes, compositor::MaskProgram& ops,
+                    std::vector<std::pair<const Node*, int>>& emitted, int depth) const;
+    // ノードの入力ピン（型を指定）に繋がっている上流ノード。無ければ nullptr。
+    const Node* UpstreamOf(const Node& node, ValueType type, size_t which = 0) const;
     // 出力ノードへ繋がっている一番上のノード。無ければ nullptr。
     const Node* ChainTop() const;
     // プレビュー対象（nodeId が 0 なら出力チェーン）の一番上のノード。
@@ -216,6 +232,8 @@ bool IsLayerNodeKind(NodeKind kind);
 bool IsSourceNodeKind(NodeKind kind);
 // マスクを出すノードか。
 bool IsMaskNodeKind(NodeKind kind);
+// 下地の Height を読むマスクか（川筋 / 傾斜）。
+bool IsHeightMaskNodeKind(NodeKind kind);
 // 選ぶとプレビューの対象になる種類か。レイヤーに加えて、
 // **川筋（マスクを目で見て調整するもの）**もプレビューできる。
 bool IsPreviewableNodeKind(NodeKind kind);

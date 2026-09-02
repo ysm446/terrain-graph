@@ -45,6 +45,12 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
             return ImVec4(0.72f, 0.72f, 0.72f, 1.0f);
         case graph::NodeKind::MaskFluvial:
             return ImVec4(0.55f, 0.68f, 0.74f, 1.0f);
+        case graph::NodeKind::MaskSlope:
+            return ImVec4(0.60f, 0.70f, 0.66f, 1.0f);
+        case graph::NodeKind::MaskLevels:
+            return ImVec4(0.78f, 0.76f, 0.70f, 1.0f);
+        case graph::NodeKind::MaskBlend:
+            return ImVec4(0.74f, 0.70f, 0.78f, 1.0f);
         case graph::NodeKind::Output:
         default:
             return ImVec4(0.59f, 0.64f, 0.68f, 1.0f);
@@ -182,8 +188,10 @@ void Application::SyncGraphStack() {
     }
     m_compiledGraphRevision = m_graph.Revision();
     m_compiledGraphTarget = target;
-    m_graphStack.Layers() =
+    graph::CompiledGraph compiled =
         (target != 0) ? m_graph.CompileLayersTo(target) : m_graph.CompileLayers();
+    m_graphStack.Layers() = std::move(compiled.layers);
+    m_graphStack.MaskOps() = std::move(compiled.maskOps);
     m_graphStack.MarkDirty();
 }
 
@@ -452,6 +460,12 @@ void Application::DrawGraphEditor() {
                         "Mask Image — 画像をマスクにする（白い所だけ乗る）");
         addNodeMenuItem(graph::NodeKind::MaskFluvial,
                         "Mask Fluvial — 下地の川筋をマスクにする");
+        addNodeMenuItem(graph::NodeKind::MaskSlope,
+                        "Mask Slope — 下地の傾斜（角度）をマスクにする");
+        addNodeMenuItem(graph::NodeKind::MaskLevels,
+                        "Mask Levels — マスクの黒点 / 白点 / ガンマを調整する");
+        addNodeMenuItem(graph::NodeKind::MaskBlend,
+                        "Mask Blend — マスク 2 枚を合成する");
         ImGui::Separator();
         addNodeMenuItem(graph::NodeKind::Output, "Output — ここに繋いだ結果をプレビューする");
         ImGui::EndPopup();
@@ -572,23 +586,54 @@ void Application::DrawGraphPanel() {
         }
     } else if (auto* mask = std::get_if<graph::MaskNodeSettings>(&selected->settings)) {
         bool changed = false;
-        const bool isFluvial = (selected->kind == graph::NodeKind::MaskFluvial);
-        ui::SectionHeader(isFluvial ? "川筋" : "マスク画像");
+        const char* header = "マスク画像";
+        const char* hint =
+            "レイヤーの Mask 入力へ繋ぐと、白い所にだけそのレイヤーが乗る。"
+            "効き方（係数 / カーブ / レベル）はレイヤー側で決める";
+        switch (selected->kind) {
+            case graph::NodeKind::MaskFluvial:
+                header = "川筋";
+                hint = "下地の高さから水の集まる所（川筋）を作る。"
+                       "Base にどこまでのハイトを使うかを繋ぐ";
+                break;
+            case graph::NodeKind::MaskSlope:
+                header = "傾斜";
+                hint = "下地の傾斜（角度）をマスクにする。"
+                       "Base にどこまでのハイトを使うかを繋ぐ";
+                break;
+            case graph::NodeKind::MaskLevels:
+                header = "レベル";
+                hint = "入力のマスクの黒点 / 白点 / ガンマを整える";
+                break;
+            case graph::NodeKind::MaskBlend:
+                header = "合成";
+                hint = "マスク 2 枚を合成する。**片方だけ繋いだときはそれを通す**";
+                break;
+            default:
+                break;
+        }
+        ui::SectionHeader(header);
         if (ui::BeginPropertyTable("graphMaskRows")) {
-            if (isFluvial) {
-                changed |= DrawFluvialRows(mask->fluvial);
-            } else {
-                changed |= DrawMapSlotRow("画像", mask->map, m_textureLibrary);
+            switch (selected->kind) {
+                case graph::NodeKind::MaskFluvial:
+                    changed |= DrawFluvialRows(mask->fluvial);
+                    break;
+                case graph::NodeKind::MaskSlope:
+                    changed |= DrawSlopeRows(mask->slope);
+                    break;
+                case graph::NodeKind::MaskLevels:
+                    changed |= DrawLevelsRows(mask->levels);
+                    break;
+                case graph::NodeKind::MaskBlend:
+                    changed |= DrawBlendRows(mask->blend);
+                    break;
+                default:
+                    changed |= DrawMapSlotRow("画像", mask->map, m_textureLibrary);
+                    break;
             }
             ui::EndPropertyTable();
         }
-        if (isFluvial) {
-            ui::HintText("下地の高さから水の集まる所（川筋）を作る。"
-                         "レイヤーの Mask 入力へ繋ぐと、川筋にだけそのレイヤーが乗る");
-        } else {
-            ui::HintText("レイヤーの Mask 入力へ繋ぐと、白い所にだけそのレイヤーが乗る。"
-                         "効き方（カーブ / レベル / 反転）はレイヤー側で決める");
-        }
+        ui::HintText("%s", hint);
         if (changed) {
             m_graph.MarkDirty();
             MarkDocumentChanged();

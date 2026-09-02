@@ -193,15 +193,10 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
             if (!maskFromNode && layer.mask.source == compositor::MaskSource::Texture) {
                 changed |= DrawMapSlotRow("画像", layer.mask.texture, m_textureLibrary);
             }
-            if (!maskFromNode && layer.mask.source == compositor::MaskSource::Fluvial) {
-                changed |= DrawFluvialRows(layer.mask.fluvial);
-            }
             if (!maskFromNode && layer.mask.source == compositor::MaskSource::Noise) {
                 changed |= DrawNoiseRows(layer.mask.noise, kDefaultLayer.mask.noise);
             }
-            // 川筋は自前のパラメータを持つので、強調（derivedScale）は効かない。
-            if (compositor::IsDerivedMaskSource(layer.mask.source) &&
-                layer.mask.source != compositor::MaskSource::Fluvial) {
+            if (compositor::IsDerivedMaskSource(layer.mask.source)) {
                 changed |= ui::PropertyFloat("強調", &layer.mask.derivedScale, 0.0f, 8.0f,
                                              kDefaultLayer.mask.derivedScale,
                                              "下地から作った値の効き方", "%.2f");

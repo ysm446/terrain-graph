@@ -36,7 +36,6 @@ struct ThumbnailConstants
 
 ConstantBuffer<ThumbnailConstants> g_thumbnail : register(b0);
 
-static const uint kInvalidTextureIndex = 0xFFFFFFFFu;
 
 float4 SampleMap(uint index, float2 uv)
 {
