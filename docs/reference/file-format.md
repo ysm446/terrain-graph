@@ -1,7 +1,7 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-09-02 22:30
+更新日時: 2026-09-02 23:40
 
 実装は [src/io/ProjectIo.cpp](../../src/io/ProjectIo.cpp)。**形式を変えたらこの文書も直す。**
 
@@ -101,7 +101,10 @@ base' = base + 0.5 * gain     ただしソースが constant のときは base �
 そのまま `graph.nodes[].layer` の形として使われ続けている。
 版 2 / 版 3 の移行規則もその中で同じように働く。
 
-`maskImage` ノードは `map`（`{ texture, channel }`）を持つ。
+マスクのノードは `map`（`{ texture, channel }`。`maskImage` が使う）と
+`fluvial`（`{ curve, threshold, gamma, softness, edgePower, detail,
+concentration, resolution }`。`maskFluvial` が使う）を持つ。
+`fluvial` はレイヤーの `mask` の中にも同じ形で入る（ソースが `fluvial` のとき使う）。
 レイヤーノードの `inputs` は Base / Mask の 2 本になったが、**ピンは定義から
 再生成する**ので、Mask ピンを持たない古いファイルもそのまま読める
 （足りないピンには新しい ID が振られ、リンクの無い入力になる）。
@@ -227,7 +230,8 @@ RGB をそのまま使うマップ（ベースカラー / 法線）はテクス�
 - ノード・ピン・リンクは**共通の単一 ID 空間**。`inputs` / `outputs` はピン ID の
   並びで、ピンの型やラベルはノードの定義から再生成する（ファイルには書かない）。
 - `kind` は名前で書く（`surface` / `shape` / `liquid` / `heightmap` /
-  `heightmapBlur` / `maskImage` / `output`）。知らない種類のノードは読み飛ばす。
+  `heightmapBlur` / `maskImage` / `maskFluvial` / `output`）。
+  知らない種類のノードは読み飛ばす。
 - レイヤー設定を持つノード（surface / shape / liquid / heightmap /
   heightmapBlur）は `layer` に
   旧 `layers[]` の要素と同じ形を持つ。テクスチャ / マテリアル / ペイントの参照も
@@ -247,7 +251,8 @@ RGB をそのまま使うマップ（ベースカラー / 法線）はテクス�
 | レイヤーの種類 | `surface` / `shape` / `liquid` / `blur` |
 | ハイトのソース | `constant` / `noise` / `texture` |
 | ノイズ | `fbm` / `ridged` / `worley` |
-| マスクのソース | `constant` / `noise` / `texture` / `height` / `slope` / `curvature` / `cavity` / `paint` |
+| マスクのソース | `constant` / `noise` / `texture` / `height` / `slope` / `curvature` / `cavity` / `paint` / `fluvial` |
+| 川筋の出力カーブ | `log` / `threshold` / `linear` |
 | 書き込むチャンネル | `["baseColor", "normal", "surface", "height"]`（配列） |
 | トーンマップ | `none` / `reinhard` / `aces` |
 

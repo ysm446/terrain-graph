@@ -1,7 +1,7 @@
 # node-graph — ノードグラフの設計
 
 作成日時: 2026-09-02 12:50
-更新日時: 2026-09-02 21:45
+更新日時: 2026-09-02 23:40
 
 `src/graph/` とグラフパネル（`src/app/ApplicationGraphPanel.cpp`）の設計。
 terrain-editor から移植したのは**仕組み**であって、ノードの中身ではない
@@ -41,6 +41,7 @@ terrain-editor から移植したのは**仕組み**であって、ノードの�
 | Liquid | `liquid` | 同上 | `MaterialLayer`（kind=Liquid) |
 | Heightmap Blur | `heightmapBlur` | Base(入力) / Result(出力) | `MaterialLayer`（kind=Blur）の `blur` |
 | Mask Image | `maskImage` | Mask(出力) のみ | `MapSlot`（画像 + 読むチャンネル） |
+| Mask Fluvial | `maskFluvial` | Mask(出力) のみ | `FluvialParams`（川筋） |
 | Output | `output` | Material(入力) | なし |
 
 サーフェス / シェイプ / 水面は**旧レイヤーそのもの**をノード化したもの。
@@ -96,6 +97,18 @@ terrain-editor の Heightmap Blur を移したもの。**合成レイヤーで�
   白 1 枚として全面に効かせると、繋いだ瞬間に絵が変わって驚くため。
 - ノイズや中間結果（傾斜 / 曲率 / 窪み）のマスクはまだノードになっていない。
   レイヤー側のマスク設定から使う。
+
+### マスク川筋（Mask Fluvial）
+
+terrain-editor の Mask Fluvial。**下地の川筋**（水が集まる所）をマスクにする。
+アルゴリズムとコストは [compositing.md](compositing.md) の「川筋マスク」。
+
+- Mask Image と同じくソース（入力なし）。**下地はチェーンから決まる**ので、
+  ハイトフィールド入力ピンは持たない（terrain-editor との違い）。
+  繋いだレイヤーの直下までの合成結果が入力になる。
+- 繋ぐと、そのレイヤーのマスクは `MaskSource::Fluvial` + ノードのパラメータで
+  上書きされる。レイヤー側のマスク設定から直接 `下地の川筋` を選ぶこともできる
+  （ノードは入口を分かりやすくするためのもの）。
 
 ## 評価 — レイヤー列へのコンパイル
 

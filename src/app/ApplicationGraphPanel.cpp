@@ -43,6 +43,8 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
             return ImVec4(0.62f, 0.58f, 0.68f, 1.0f);
         case graph::NodeKind::MaskImage:
             return ImVec4(0.72f, 0.72f, 0.72f, 1.0f);
+        case graph::NodeKind::MaskFluvial:
+            return ImVec4(0.55f, 0.68f, 0.74f, 1.0f);
         case graph::NodeKind::Output:
         default:
             return ImVec4(0.59f, 0.64f, 0.68f, 1.0f);
@@ -448,6 +450,8 @@ void Application::DrawGraphEditor() {
         ImGui::Separator();
         addNodeMenuItem(graph::NodeKind::MaskImage,
                         "Mask Image — 画像をマスクにする（白い所だけ乗る）");
+        addNodeMenuItem(graph::NodeKind::MaskFluvial,
+                        "Mask Fluvial — 下地の川筋をマスクにする");
         ImGui::Separator();
         addNodeMenuItem(graph::NodeKind::Output, "Output — ここに繋いだ結果をプレビューする");
         ImGui::EndPopup();
@@ -568,13 +572,23 @@ void Application::DrawGraphPanel() {
         }
     } else if (auto* mask = std::get_if<graph::MaskNodeSettings>(&selected->settings)) {
         bool changed = false;
-        ui::SectionHeader("マスク画像");
+        const bool isFluvial = (selected->kind == graph::NodeKind::MaskFluvial);
+        ui::SectionHeader(isFluvial ? "川筋" : "マスク画像");
         if (ui::BeginPropertyTable("graphMaskRows")) {
-            changed |= DrawMapSlotRow("画像", mask->map, m_textureLibrary);
+            if (isFluvial) {
+                changed |= DrawFluvialRows(mask->fluvial);
+            } else {
+                changed |= DrawMapSlotRow("画像", mask->map, m_textureLibrary);
+            }
             ui::EndPropertyTable();
         }
-        ui::HintText("レイヤーの Mask 入力へ繋ぐと、白い所にだけそのレイヤーが乗る。"
-                     "効き方（カーブ / レベル / 反転）はレイヤー側で決める");
+        if (isFluvial) {
+            ui::HintText("下地の高さから水の集まる所（川筋）を作る。"
+                         "レイヤーの Mask 入力へ繋ぐと、川筋にだけそのレイヤーが乗る");
+        } else {
+            ui::HintText("レイヤーの Mask 入力へ繋ぐと、白い所にだけそのレイヤーが乗る。"
+                         "効き方（カーブ / レベル / 反転）はレイヤー側で決める");
+        }
         if (changed) {
             m_graph.MarkDirty();
             MarkDocumentChanged();

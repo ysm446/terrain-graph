@@ -142,7 +142,9 @@ const char* const kTextureChannelNames[] = {"r", "g", "b", "a"};
 const char* const kValueSourceNames[] = {"constant", "noise", "texture"};
 const char* const kNoiseTypeNames[] = {"fbm", "ridged", "worley"};
 const char* const kMaskSourceNames[] = {"constant", "noise",     "texture", "height",
-                                        "slope",    "curvature", "cavity",  "paint"};
+                                        "slope",    "curvature", "cavity",  "paint",
+                                        "fluvial"};
+const char* const kFluvialCurveNames[] = {"log", "threshold", "linear"};
 const char* const kChannelNames[] = {"baseColor", "normal", "surface", "height"};
 const char* const kLayerKindNames[] = {"surface", "shape", "liquid", "blur"};
 const char* const kTonemapNames[] = {"none", "reinhard", "aces"};
@@ -308,6 +310,39 @@ uint32_t ReadChannelMask(const json& node, const char* key, uint32_t fallback) {
     return mask;
 }
 
+json WriteFluvial(const compositor::FluvialParams& fluvial) {
+    json node;
+    node["curve"] = EnumName(kFluvialCurveNames, static_cast<uint32_t>(fluvial.curve));
+    node["threshold"] = fluvial.threshold;
+    node["gamma"] = fluvial.gamma;
+    node["softness"] = fluvial.softness;
+    node["edgePower"] = fluvial.edgePower;
+    node["detail"] = fluvial.detailMeters;
+    node["concentration"] = fluvial.concentration;
+    node["resolution"] = fluvial.resolution;
+    return node;
+}
+
+compositor::FluvialParams ReadFluvial(const json& parent, const char* key) {
+    const compositor::FluvialParams defaults;
+    const json* node = FindMember(parent, key);
+    if (node == nullptr || !node->is_object()) {
+        return defaults;
+    }
+    compositor::FluvialParams fluvial;
+    fluvial.curve = static_cast<compositor::FluvialCurve>(
+        EnumValue(kFluvialCurveNames, *node, "curve", static_cast<uint32_t>(defaults.curve)));
+    fluvial.threshold = ReadFloat(*node, "threshold", defaults.threshold);
+    fluvial.gamma = ReadFloat(*node, "gamma", defaults.gamma);
+    fluvial.softness = ReadFloat(*node, "softness", defaults.softness);
+    fluvial.edgePower = ReadFloat(*node, "edgePower", defaults.edgePower);
+    fluvial.detailMeters = ReadFloat(*node, "detail", defaults.detailMeters);
+    fluvial.concentration = ReadFloat(*node, "concentration", defaults.concentration);
+    fluvial.resolution =
+        static_cast<uint32_t>(ReadInt(*node, "resolution", static_cast<int>(defaults.resolution)));
+    return fluvial;
+}
+
 json WriteMask(const compositor::LayerMask& mask, const TextureWriter& writeTexture,
                const std::function<json(compositor::PaintMaskId)>& writePaint) {
     json node;
@@ -315,6 +350,7 @@ json WriteMask(const compositor::LayerMask& mask, const TextureWriter& writeText
     node["constant"] = mask.constant;
     node["noise"] = WriteNoise(mask.noise);
     node["derivedScale"] = mask.derivedScale;
+    node["fluvial"] = WriteFluvial(mask.fluvial);
     node["contrast"] = mask.contrast;
     node["levelsLow"] = mask.levelsLow;
     node["levelsHigh"] = mask.levelsHigh;
@@ -332,6 +368,7 @@ void ReadMask(const json& node, compositor::LayerMask& mask, const TextureReader
     mask.constant = ReadFloat(node, "constant", defaults.constant);
     mask.noise = ReadNoise(node, "noise", defaults.noise);
     mask.derivedScale = ReadFloat(node, "derivedScale", defaults.derivedScale);
+    mask.fluvial = ReadFluvial(node, "fluvial");
     mask.contrast = ReadFloat(node, "contrast", defaults.contrast);
     mask.levelsLow = ReadFloat(node, "levelsLow", defaults.levelsLow);
     mask.levelsHigh = ReadFloat(node, "levelsHigh", defaults.levelsHigh);
@@ -483,6 +520,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             }
         } else if (const auto* mask = std::get_if<graph::MaskNodeSettings>(&node.settings)) {
             item["map"] = WriteMapSlot(mask->map, writeTexture);
+            item["fluvial"] = WriteFluvial(mask->fluvial);
         }
         nodes.push_back(std::move(item));
     }
@@ -590,6 +628,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
             } else if (graph::IsMaskNodeKind(created.kind)) {
                 graph::MaskNodeSettings settings;
                 settings.map = ReadMapSlot(item, "map", readTexture);
+                settings.fluvial = ReadFluvial(item, "fluvial");
                 created.settings = std::move(settings);
             } else {
                 created.settings = graph::OutputNodeSettings{};

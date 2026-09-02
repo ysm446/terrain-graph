@@ -123,13 +123,42 @@ enum class MaskSource : uint32_t {
     Curvature = 5,  // 下地の曲率（0.5 = 平坦、> 0.5 = 凸、< 0.5 = 凹）
     Cavity = 6,     // 下地の窪み（簡易 AO。1 に近いほど窪んでいる）
     Paint = 7,      // ブラシで描いたマスク（PaintMaskStore が持つテクスチャ）
+    Fluvial = 8,    // 下地の川筋（フロー累積。水が集まる所ほど 1 に近い）
 };
 
 // 中間結果由来かどうか。真なら評価前にマスク生成パスが要る。
 inline bool IsDerivedMaskSource(MaskSource source) {
     return source == MaskSource::Height || source == MaskSource::Slope ||
-           source == MaskSource::Curvature || source == MaskSource::Cavity;
+           source == MaskSource::Curvature || source == MaskSource::Cavity ||
+           source == MaskSource::Fluvial;
 }
+
+// 川筋マスクの出力カーブ。シェーダの TG_FLUVIAL_CURVE_* と一致させること。
+enum class FluvialCurve : uint32_t {
+    Log = 0,        // 対数。細い支流から主流まで 1 枚に収まる（既定）
+    Threshold = 1,  // しきい値。川とみなす所だけを二値寄りに抜く
+    Linear = 2,     // 線形。主流が強く出る
+};
+
+// 川筋（フロー累積）マスクのパラメータ。source == MaskSource::Fluvial で使う。
+// 既定値は terrain-editor の Mask Fluvial に合わせてある。
+struct FluvialParams {
+    FluvialCurve curve = FluvialCurve::Log;
+    // Log / 線形ではノイズフロア、しきい値では「川とみなす」境目。
+    // **全セル数に対する割合**で持つ（解像度を変えても効きが変わらない）。
+    float threshold = 0.0f;
+    float gamma = 0.5f;        // Log / 線形のカーブ。下げると細い支流が明るくなる
+    float softness = 0.15f;    // しきい値の遷移幅
+    float edgePower = 1.6f;    // しきい値のときの川縁のテーパー
+    // 流向を読む前にならす最大スケール（m）。大きいほど小さな凹凸を無視して
+    // 大きな谷筋を優先する。
+    float detailMeters = 8.0f;
+    // 下流への配分の集中度（MFD の指数）。大きいほど主流へ集まる。
+    float concentration = 4.0f;
+    // 計算グリッドの一辺。**合成解像度とは別**に持つ。反復回数が解像度に比例して
+    // 効くので、川筋の形が決まる粗さだけあればよい。
+    uint32_t resolution = 512;
+};
 
 // マスク。ソースの値に定数を掛け、カーブ・レベル調整・反転を掛ける。
 struct LayerMask {
@@ -138,6 +167,8 @@ struct LayerMask {
     NoiseParams noise{NoiseType::Fbm, 4.0f, 1.0f, 4, 37.0f};
     // 中間結果由来のマスクの強調度。傾斜や曲率の効き方を調整する。
     float derivedScale = 1.0f;
+    // 川筋マスクの設定。source が Fluvial のときだけ参照する。
+    FluvialParams fluvial;
     // カーブ。1 で線形、> 1 で中間を締める（コントラストが上がる）。
     float contrast = 1.0f;
     float levelsLow = 0.0f;

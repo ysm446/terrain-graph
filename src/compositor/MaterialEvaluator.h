@@ -24,6 +24,23 @@ struct MaterialTextureSet {
     bool IsValid() const { return baseColor.IsValid(); }
 };
 
+// 川筋（フロー累積）マスクの作業リソース。**合成解像度とは別のグリッド**で
+// 計算する（反復回数が解像度に比例するので、川筋の形が決まる粗さで足りる）。
+// 使うレイヤーが 1 枚も無ければ作らない。
+struct FluvialResources {
+    rhi::GpuTexture heights;         // R32_FLOAT 解析用ハイト
+    rhi::GpuTexture heightsScratch;  // R32_FLOAT ぼかし / 窪み埋めの二重バッファ
+    rhi::GpuTexture weights0;        // RGBA32_FLOAT 配分重み k=0..3
+    rhi::GpuTexture weights1;        // RGBA32_FLOAT 配分重み k=4..7
+    rhi::GpuTexture accumA;          // R32_FLOAT 流量（ヤコビ反復の ping-pong）
+    rhi::GpuTexture accumB;
+    rhi::GpuTexture mask;            // R32_FLOAT 出力マスク（合成パスが SRV で読む）
+    rhi::GpuTexture maxScratch;      // R32_UINT 1x1 正規化用の最大値（InterlockedMax）
+    uint32_t resolution = 0;
+
+    bool IsValid() const { return mask.IsValid(); }
+};
+
 // 評価する出力領域。全体を 1 回で評価するときは矩形に全体を渡す。
 struct TileRect {
     uint32_t x = 0;
@@ -92,10 +109,21 @@ private:
     // ブラーレイヤー 1 枚ぶん。Height を分離型ガウスでならし、
     // ぼかした形から法線を作り直す。**1 パスを全タイル終えてから次のパスへ進む**
     // （近傍を読むため、タイル優先で回すと継ぎ目が出る）。
+    // 川筋マスクを作る。**タイルには分けない**（グリッド全体を何度も舐めるため）。
+    // 成否に関わらず、合成パスへ渡す SRV は Textures 側で判断する。
+    bool ApplyFluvialMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                          ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
+                          const MaterialStack& stack);
+    // 指定した解像度の作業リソースを用意する。既にその解像度なら何もしない。
+    bool EnsureFluvialResources(rhi::Device& device, uint32_t resolution);
+    void ReleaseFluvialResources(rhi::Device& device);
+
     bool ApplyHeightBlur(rhi::Device& device, ID3D12GraphicsCommandList* commandList,
                          ID3D12PipelineState* blurPipeline,
                          ID3D12PipelineState* normalPipeline, const MaterialLayer& layer,
                          const MaterialStack& stack, const std::vector<TileRect>& tiles);
+
+    FluvialResources m_fluvial;
 
     void ReleaseTextures(rhi::Device& device);
     // レイヤー枚数ぶんのマスクサムネイルを用意する。増減した枚数だけ作る / 捨てる。

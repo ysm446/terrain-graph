@@ -56,6 +56,15 @@ struct LayerConstants {
     uint32_t mapChannels[4];
 };
 
+// GPU 側の FluvialConstants と一致させること。
+struct FluvialConstants {
+    uint32_t indices0[4];  // heights, heightsScratch, weights0, weights1
+    uint32_t indices1[4];  // accumA, accumB, mask, maxScratch
+    uint32_t indices2[4];  // 入力 Height の SRV, グリッドの一辺, ヤコビの向き, ぼかし半径
+    float params0[4];      // 集中度, しきい値（セル数）, ガンマ, やわらかさ
+    float params1[4];      // 川縁の強さ, 出力カーブ, 未使用 x2
+};
+
 // GPU 側の BlurConstants と一致させること。
 struct BlurConstants {
     uint32_t sourceIndex;
@@ -117,7 +126,54 @@ bool MaterialEvaluator::Create(rhi::Device& device, uint32_t resolution) {
     return true;
 }
 
+void MaterialEvaluator::ReleaseFluvialResources(rhi::Device& device) {
+    device.DeferRelease(m_fluvial.heights);
+    device.DeferRelease(m_fluvial.heightsScratch);
+    device.DeferRelease(m_fluvial.weights0);
+    device.DeferRelease(m_fluvial.weights1);
+    device.DeferRelease(m_fluvial.accumA);
+    device.DeferRelease(m_fluvial.accumB);
+    device.DeferRelease(m_fluvial.mask);
+    device.DeferRelease(m_fluvial.maxScratch);
+    m_fluvial.resolution = 0;
+}
+
+// 川筋の作業リソースは**使うときだけ**作る。解像度は合成解像度と独立で、
+// 変わったら作り直す（GPU がまだ見ているかもしれないので Defer を通す）。
+bool MaterialEvaluator::EnsureFluvialResources(rhi::Device& device, uint32_t resolution) {
+    if (m_fluvial.resolution == resolution && m_fluvial.IsValid()) {
+        return true;
+    }
+    ReleaseFluvialResources(device);
+
+    const bool ok =
+        CreateChannelTexture(device, resolution, DXGI_FORMAT_R32_FLOAT, L"FluvialHeights",
+                             m_fluvial.heights) &&
+        CreateChannelTexture(device, resolution, DXGI_FORMAT_R32_FLOAT, L"FluvialHeightsScratch",
+                             m_fluvial.heightsScratch) &&
+        CreateChannelTexture(device, resolution, DXGI_FORMAT_R32G32B32A32_FLOAT,
+                             L"FluvialWeights0", m_fluvial.weights0) &&
+        CreateChannelTexture(device, resolution, DXGI_FORMAT_R32G32B32A32_FLOAT,
+                             L"FluvialWeights1", m_fluvial.weights1) &&
+        CreateChannelTexture(device, resolution, DXGI_FORMAT_R32_FLOAT, L"FluvialAccumA",
+                             m_fluvial.accumA) &&
+        CreateChannelTexture(device, resolution, DXGI_FORMAT_R32_FLOAT, L"FluvialAccumB",
+                             m_fluvial.accumB) &&
+        CreateChannelTexture(device, resolution, DXGI_FORMAT_R32_FLOAT, L"FluvialMask",
+                             m_fluvial.mask) &&
+        CreateChannelTexture(device, 1, DXGI_FORMAT_R32_UINT, L"FluvialMax",
+                             m_fluvial.maxScratch);
+    if (!ok) {
+        TG_LOG_WARN("川筋マスクの作業リソースを作れませんでした（%u^2）", resolution);
+        ReleaseFluvialResources(device);
+        return false;
+    }
+    m_fluvial.resolution = resolution;
+    return true;
+}
+
 void MaterialEvaluator::Destroy(rhi::Device& device) {
+    ReleaseFluvialResources(device);
     ReleaseTextures(device);
     for (rhi::GpuTexture& thumbnail : m_maskThumbnails) {
         device.DeferRelease(thumbnail);
@@ -177,6 +233,151 @@ bool MaterialEvaluator::Resize(rhi::Device& device, uint32_t resolution) {
     device.WaitForGpu();
     return Create(device, resolution);
 }
+bool MaterialEvaluator::ApplyFluvialMask(rhi::Device& device,
+                                        rhi::PipelineCache& pipelineCache,
+                                        ID3D12GraphicsCommandList* commandList,
+                                        const MaterialLayer& layer,
+                                        const MaterialStack& stack) {
+    const FluvialParams& params = layer.mask.fluvial;
+    const uint32_t resolution = std::clamp(params.resolution, 64u, 2048u);
+    if (!EnsureFluvialResources(device, resolution)) {
+        return false;
+    }
+
+    const auto pipeline = [&](const wchar_t* entry) {
+        return pipelineCache.GetCompute(L"CompositeFluvial.hlsl", entry);
+    };
+    ID3D12PipelineState* samplePass = pipeline(L"CsSampleHeight");
+    ID3D12PipelineState* blurHPass = pipeline(L"CsBlurH");
+    ID3D12PipelineState* blurVPass = pipeline(L"CsBlurV");
+    ID3D12PipelineState* pitFillPass = pipeline(L"CsPitFill");
+    ID3D12PipelineState* commitPass = pipeline(L"CsCommit");
+    ID3D12PipelineState* weightsPass = pipeline(L"CsWeights");
+    ID3D12PipelineState* accumInitPass = pipeline(L"CsAccumInit");
+    ID3D12PipelineState* accumIterPass = pipeline(L"CsAccumIter");
+    ID3D12PipelineState* maxClearPass = pipeline(L"CsMaxClear");
+    ID3D12PipelineState* maxReducePass = pipeline(L"CsMaxReduce");
+    ID3D12PipelineState* toMaskPass = pipeline(L"CsToMask");
+    if (samplePass == nullptr || blurHPass == nullptr || blurVPass == nullptr ||
+        pitFillPass == nullptr || commitPass == nullptr || weightsPass == nullptr ||
+        accumInitPass == nullptr || accumIterPass == nullptr || maxClearPass == nullptr ||
+        maxReducePass == nullptr || toMaskPass == nullptr) {
+        return false;
+    }
+
+    FluvialConstants constants = {};
+    constants.indices0[0] = m_fluvial.heights.UavIndex();
+    constants.indices0[1] = m_fluvial.heightsScratch.UavIndex();
+    constants.indices0[2] = m_fluvial.weights0.UavIndex();
+    constants.indices0[3] = m_fluvial.weights1.UavIndex();
+    constants.indices1[0] = m_fluvial.accumA.UavIndex();
+    constants.indices1[1] = m_fluvial.accumB.UavIndex();
+    constants.indices1[2] = m_fluvial.mask.UavIndex();
+    constants.indices1[3] = m_fluvial.maxScratch.UavIndex();
+    constants.indices2[0] = m_textures.height.SrvIndex();
+    constants.indices2[1] = resolution;
+    constants.indices2[2] = 0;
+
+    // 「最大ディテール」（m）をセル数へ直す。1 セルが何 m かは地形の一辺で決まる。
+    const float sizeMeters = (stack.SizeMeters() > 0.0f) ? stack.SizeMeters() : 1.0f;
+    const float cellMeters = sizeMeters / static_cast<float>(std::max(1u, resolution - 1u));
+    const float detailMeters =
+        std::clamp(params.detailMeters, cellMeters, sizeMeters * 0.5f);
+    constants.indices2[3] = static_cast<uint32_t>(
+        std::clamp(static_cast<int>(std::lround(detailMeters / cellMeters)), 1, 64));
+
+    const float cellCount = static_cast<float>(resolution) * static_cast<float>(resolution);
+    constants.params0[0] = std::clamp(params.concentration, 0.1f, 16.0f);
+    // しきい値は割合で持っているのでセル数へ直す。
+    constants.params0[1] = std::clamp(params.threshold, 0.0f, 1.0f) * cellCount;
+    constants.params0[2] = std::clamp(params.gamma, 0.05f, 8.0f);
+    constants.params0[3] = std::clamp(params.softness, 0.001f, 4.0f);
+    constants.params1[0] = std::clamp(params.edgePower, 0.1f, 8.0f);
+    constants.params1[1] = static_cast<float>(params.curve);
+
+    // 定数はヤコビの向き以外変わらないので、**2 本だけ**確保して使い回す。
+    // 反復のたびに確保すると、アップロードリングを 1 フレームで食い潰す。
+    const auto upload = [&](uint32_t direction, D3D12_GPU_VIRTUAL_ADDRESS& outAddress) {
+        FluvialConstants copy = constants;
+        copy.indices2[2] = direction;
+        const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(FluvialConstants), 256);
+        if (!cb.IsValid()) {
+            return false;
+        }
+        std::memcpy(cb.cpu, &copy, sizeof(copy));
+        outAddress = cb.gpuAddress;
+        return true;
+    };
+    D3D12_GPU_VIRTUAL_ADDRESS constantsA = 0;
+    D3D12_GPU_VIRTUAL_ADDRESS constantsB = 0;
+    if (!upload(0u, constantsA) || !upload(1u, constantsB)) {
+        return false;
+    }
+
+    PIXBeginEvent(commandList, PIX_COLOR(80, 140, 200), "CompositeFluvial");
+
+    // 入力の Height は読み取り専用に、出力のマスクは書き込みに。
+    TransitionIfNeeded(commandList, m_textures.height,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(commandList, m_fluvial.mask, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+    const uint32_t groups = DispatchCount(resolution);
+    const auto barrier = [&]() {
+        const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+        commandList->ResourceBarrier(1, &uav);
+    };
+    const auto run = [&](ID3D12PipelineState* pipelineState, uint32_t groupCount) {
+        commandList->SetPipelineState(pipelineState);
+        commandList->Dispatch(groupCount, groupCount, 1);
+        barrier();
+    };
+
+    commandList->SetComputeRootConstantBufferView(1, constantsA);
+    run(samplePass, groups);
+
+    // 「最大ディテール」が 1 セル以下ならぼかす意味がない。
+    if (constants.indices2[3] > 1u) {
+        run(blurHPass, groups);
+        run(blurVPass, groups);
+    }
+
+    // 窪み埋め。反復回数は固定（terrain-editor と同じ 8 回）。
+    // 上げても消えるのは深い窪みだけで、川筋の形はほとんど変わらない。
+    constexpr int kPitFillIterations = 8;
+    for (int i = 0; i < kPitFillIterations; ++i) {
+        run(pitFillPass, groups);
+        run(commitPass, groups);
+    }
+
+    run(weightsPass, groups);
+    run(accumInitPass, groups);
+
+    // ヤコビ反復。情報は 1 反復につき 1 セルずつ下流へ進むので、
+    // 収束に要るのはおおよそ最長流路長。安全側で 2 × 解像度 回まわす。
+    // **偶数回まわすと結果は AccumA に残る**（マスク変換はそこを読む）。
+    const int accumIterations = static_cast<int>(resolution) * 2;
+    for (int i = 0; i < accumIterations; ++i) {
+        commandList->SetComputeRootConstantBufferView(1, (i % 2 == 0) ? constantsA : constantsB);
+        run(accumIterPass, groups);
+    }
+    commandList->SetComputeRootConstantBufferView(1, constantsA);
+
+    // しきい値カーブは正規化しないので、最大値の集計は要らない。
+    if (params.curve != FluvialCurve::Threshold) {
+        run(maxClearPass, 1);
+        run(maxReducePass, groups);
+    }
+    run(toMaskPass, groups);
+
+    // 合成パスはマスクを SRV で読む。Height は次のレイヤーが書き換える。
+    TransitionIfNeeded(commandList, m_fluvial.mask,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+    PIXEndEvent(commandList);
+    return true;
+}
+
 bool MaterialEvaluator::ApplyHeightBlur(rhi::Device& device,
                                        ID3D12GraphicsCommandList* commandList,
                                        ID3D12PipelineState* blurPipeline,
@@ -340,8 +541,18 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         // 下地のレイヤーには合成する相手がいないので、中間結果由来のマスクは使えない。
         const bool useDerivedMask =
             layer.enabled && !isBaseLayer && IsDerivedMaskSource(layer.mask.source);
+        // 川筋だけは近傍を何度も舐める別のパイプライン。専用の解像度で作る。
+        const bool useFluvialMask = useDerivedMask && layer.mask.source == MaskSource::Fluvial;
+        bool fluvialReady = false;
 
-        if (useDerivedMask) {
+        if (useFluvialMask) {
+            fluvialReady =
+                ApplyFluvialMask(device, pipelineCache, commandList, layer, stack);
+            if (!fluvialReady) {
+                // 作れなければマスクは定数へ落ちる（絵は出るが川筋は出ない）。
+                complete = false;
+            }
+        } else if (useDerivedMask) {
             PIXBeginEvent(commandList, PIX_COLOR(200, 200, 80), "CompositeMask");
 
             // Height を読み取り専用にしてからマスクを計算する。
@@ -496,8 +707,15 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             ((material != nullptr) ? PackMaterialChannels(*material)
                                    : PackChannel(layer.heightTexture.channel, 3)) |
             PackChannel(layer.mask.texture.channel, 4);
-        constants.textureIndices1[3] =
-            useDerivedMask ? m_textures.scratch.SrvIndex() : kInvalidTextureIndex;
+        // 中間結果由来のマスク。川筋だけは専用グリッドのテクスチャを読む。
+        constants.textureIndices1[3] = kInvalidTextureIndex;
+        if (useFluvialMask) {
+            if (fluvialReady) {
+                constants.textureIndices1[3] = m_fluvial.mask.SrvIndex();
+            }
+        } else if (useDerivedMask) {
+            constants.textureIndices1[3] = m_textures.scratch.SrvIndex();
+        }
 
         // derivedScale は CompositeMask 側で適用済み。二重適用しないため渡さない。
         constants.maskCurve[0] = layer.mask.contrast;

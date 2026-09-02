@@ -49,6 +49,9 @@ enum class NodeKind : uint32_t {
     Blur = 5,
     // 画像 1 枚をマスクとして出す**マスクのソース**。入力を持たない。
     MaskImage = 6,
+    // 下地の川筋（フロー累積）をマスクとして出す。入力を持たない
+    // （下地はチェーンから決まる。terrain-editor の Mask Fluvial にあたる）。
+    MaskFluvial = 7,
 };
 
 struct PinDefinition {
@@ -100,10 +103,13 @@ struct LayerNodeSettings {
     TerrainScale scale;
 };
 
-// マスクのソース。画像 1 枚（＋読むチャンネル）をマスクとして出す。
-// レイヤーの Mask 入力へ繋ぐと、そのレイヤーは**白い所にだけ**乗る。
+// マスクのソース。レイヤーの Mask 入力へ繋ぐと、そのレイヤーは
+// **白い所にだけ**乗る。どちらを使うかはノードの種類で決まる。
+//   MaskImage   : map（画像 1 枚 + 読むチャンネル）
+//   MaskFluvial : fluvial（下地の川筋）
 struct MaskNodeSettings {
     compositor::MapSlot map;
+    compositor::FluvialParams fluvial;
 };
 
 // 出力。ここに繋いだチェーンがプレビューのマテリアルになる。
@@ -177,8 +183,9 @@ public:
 private:
     GraphId AllocateGraphId() { return m_nextGraphId++; }
     void RebuildNextGraphId();
-    // ノードの Mask 入力に繋がっているマスク画像。無ければ nullptr。
-    const compositor::MapSlot* FindMaskInput(const Node& node) const;
+    // ノードの Mask 入力に繋がっているマスクノードの設定を、レイヤーのマスクへ
+    // 写す。繋がっていなければ何もしない（レイヤー側の設定がそのまま効く）。
+    void ApplyMaskInput(const Node& node, compositor::LayerMask& mask) const;
     // top から「下地」チェーンを遡る（上から下の順）。
     std::vector<const Node*> ChainFrom(const Node* top) const;
     // top から「下地」チェーンを遡ってレイヤー列（下から上）にする共通部。

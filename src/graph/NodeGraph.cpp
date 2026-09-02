@@ -44,13 +44,14 @@ constexpr std::array<PinDefinition, 1> kSourceNodePins = {{
     {PinKind::Output, ValueType::Material, "Result"},
 }};
 
-constexpr std::array<NodeDefinition, 7> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 8> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
     {NodeKind::Liquid, "liquid", "Liquid", kLayerNodePins},
     {NodeKind::Blur, "heightmapBlur", "Heightmap Blur", kFilterNodePins},
     {NodeKind::MaskImage, "maskImage", "Mask Image", kMaskSourcePins},
+    {NodeKind::MaskFluvial, "maskFluvial", "Mask Fluvial", kMaskSourcePins},
     {NodeKind::Output, "output", "Output", kOutputNodePins},
 }};
 
@@ -88,7 +89,7 @@ bool IsSourceNodeKind(NodeKind kind) {
 }
 
 bool IsMaskNodeKind(NodeKind kind) {
-    return kind == NodeKind::MaskImage;
+    return kind == NodeKind::MaskImage || kind == NodeKind::MaskFluvial;
 }
 
 compositor::LayerKind LayerKindFor(NodeKind kind) {
@@ -390,7 +391,7 @@ const TerrainScale* NodeGraph::FindChainScale(GraphId nodeId) const {
     return nullptr;
 }
 
-const compositor::MapSlot* NodeGraph::FindMaskInput(const Node& node) const {
+void NodeGraph::ApplyMaskInput(const Node& node, compositor::LayerMask& mask) const {
     for (const Pin& pin : node.inputs) {
         if (pin.valueType != ValueType::Mask) {
             continue;
@@ -399,15 +400,23 @@ const compositor::MapSlot* NodeGraph::FindMaskInput(const Node& node) const {
         if (upstream == nullptr) {
             continue;
         }
-        if (const auto* settings = std::get_if<MaskNodeSettings>(&upstream->settings)) {
-            // 画像が入っていないマスクノードは「繋がっていない」のと同じ扱い。
-            // 白 1 枚として全面に効かせると、繋いだ瞬間に絵が変わって驚く。
-            if (settings->map.texture != compositor::kNoTexture) {
-                return &settings->map;
-            }
+        const auto* settings = std::get_if<MaskNodeSettings>(&upstream->settings);
+        if (settings == nullptr) {
+            continue;
+        }
+        if (upstream->kind == NodeKind::MaskFluvial) {
+            mask.source = compositor::MaskSource::Fluvial;
+            mask.fluvial = settings->fluvial;
+            return;
+        }
+        // 画像が入っていないマスクノードは「繋がっていない」のと同じ扱い。
+        // 白 1 枚として全面に効かせると、繋いだ瞬間に絵が変わって驚く。
+        if (settings->map.texture != compositor::kNoTexture) {
+            mask.source = compositor::MaskSource::Texture;
+            mask.texture = settings->map;
+            return;
         }
     }
-    return nullptr;
 }
 
 std::vector<compositor::MaterialLayer> NodeGraph::CompileChainFrom(const Node* top) const {
@@ -422,10 +431,7 @@ std::vector<compositor::MaterialLayer> NodeGraph::CompileChainFrom(const Node* t
             // Mask 入力に繋がっているマスクノードは、そのレイヤーのマスクを
             // **上書きする**（同じ意味の値をノード側と 2 か所から編集させない）。
             // 効き方（カーブ / レベル / 反転 / 係数）はレイヤー側の設定のまま。
-            if (const compositor::MapSlot* map = FindMaskInput(**it); map != nullptr) {
-                layer.mask.source = compositor::MaskSource::Texture;
-                layer.mask.texture = *map;
-            }
+            ApplyMaskInput(**it, layer.mask);
             // ソース（Heightmap）は画像の 0〜1 がそのままハイトの全幅。
             // 振れ幅は標高差（m）が決めるので、起伏の強さは持たない。
             // 古いファイルが別の値を持っていても、ここで 1.0 に正す。

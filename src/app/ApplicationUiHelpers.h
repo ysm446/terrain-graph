@@ -127,7 +127,13 @@ inline const char* const kValueSourceLabels[] = {"定数", "ノイズ", "テク�
 inline const char* const kMaskSourceLabels[] = {
     "定数",       "ノイズ",     "テクスチャ", "下地の高さ",
     "下地の傾斜", "下地の曲率", "下地の窪み", "ペイント",
+    "下地の川筋",
 };
+// 川筋マスクの出力カーブ。compositor::FluvialCurve の並びと一致させること。
+inline const char* const kFluvialCurveLabels[] = {"対数", "しきい値", "線形"};
+// 川筋マスクの計算グリッド。合成解像度とは別に持つ。
+inline const char* const kFluvialResolutionLabels[] = {"256", "512", "1024"};
+inline constexpr uint32_t kFluvialResolutionValues[] = {256, 512, 1024};
 inline const char* const kChannelLabels[] = {"BaseColor", "Normal", "Surface", "Height"};
 
 // ビューポートの表示モード。renderer::DebugView と並びを合わせること。
@@ -310,6 +316,67 @@ inline bool DrawTextureCombo(const char* id, compositor::TextureId& slot,
         } else {
             ImGui::SetTooltip("なし\nテクスチャ一覧からドラッグしても割り当てられる");
         }
+    }
+    return changed;
+}
+
+// 川筋（フロー累積）マスクの設定行。レイヤーのマスクとマスクノードの両方から使う。
+// **プロパティテーブルの中で呼ぶこと。**
+inline bool DrawFluvialRows(compositor::FluvialParams& fluvial) {
+    const compositor::FluvialParams defaults;
+    bool changed = false;
+
+    int curve = static_cast<int>(fluvial.curve);
+    if (ui::PropertyCombo("カーブ", &curve, kFluvialCurveLabels,
+                          IM_ARRAYSIZE(kFluvialCurveLabels),
+                          static_cast<int>(defaults.curve),
+                          "対数は細い支流まで見える連続的な川筋、"
+                          "しきい値は川とみなす所だけを抜く、線形は主流が強く出る")) {
+        fluvial.curve = static_cast<compositor::FluvialCurve>(curve);
+        changed = true;
+    }
+
+    const bool isThreshold = (fluvial.curve == compositor::FluvialCurve::Threshold);
+    changed |= ui::PropertyFloat(
+        "しきい値", &fluvial.threshold, 0.0f, 0.05f, defaults.threshold,
+        isThreshold ? "これより多く水が集まる所を川とみなす（全セル数に対する割合）"
+                    : "これ未満の流量を切り捨てる（全セル数に対する割合）",
+        "%.4f", 0, 0.0005f);
+    if (isThreshold) {
+        changed |= ui::PropertyFloat("やわらかさ", &fluvial.softness, 0.001f, 2.0f,
+                                     defaults.softness,
+                                     "しきい値の前後をどれだけなだらかに繋ぐか", "%.3f");
+        changed |= ui::PropertyFloat("川縁", &fluvial.edgePower, 0.1f, 8.0f,
+                                     defaults.edgePower,
+                                     "1 より大きいと川が細く、小さいと太くなる", "%.2f");
+    } else {
+        changed |= ui::PropertyFloat("ガンマ", &fluvial.gamma, 0.05f, 4.0f, defaults.gamma,
+                                     "下げると細い支流が明るくなり、上げると主流だけが残る",
+                                     "%.2f");
+    }
+
+    changed |= ui::PropertyFloat(
+        "最大ディテール", &fluvial.detailMeters, 1.0f, 512.0f, defaults.detailMeters,
+        "流向を読む前にならす大きさ（m）。大きいほど小さな凹凸を無視して大きな谷筋を追う",
+        "%.1f m", ImGuiSliderFlags_Logarithmic);
+    changed |= ui::PropertyFloat("集中度", &fluvial.concentration, 0.1f, 16.0f,
+                                 defaults.concentration,
+                                 "下流への配分の集中度。大きいほど主流へ集まり、"
+                                 "小さいほど面的に広がる",
+                                 "%.2f");
+
+    int resolutionIndex = 1;
+    for (int i = 0; i < IM_ARRAYSIZE(kFluvialResolutionValues); ++i) {
+        if (kFluvialResolutionValues[i] == fluvial.resolution) {
+            resolutionIndex = i;
+        }
+    }
+    if (ui::PropertyCombo("解像度", &resolutionIndex, kFluvialResolutionLabels,
+                          IM_ARRAYSIZE(kFluvialResolutionLabels), 1,
+                          "川筋を計算するグリッド。**合成解像度とは別**。"
+                          "上げるほど細かい支流が出るが、反復回数も比例して増える")) {
+        fluvial.resolution = kFluvialResolutionValues[resolutionIndex];
+        changed = true;
     }
     return changed;
 }
