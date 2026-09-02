@@ -65,14 +65,19 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
     }
 }
 
+// ピンとリンクの色。**線が何を運んでいるかを色で見分ける。**
+// 値は terrain-editor に合わせてある（あちらの HeightField がこちらの Material）。
+// 緑とオレンジは明度が近く、色相だけが離れているので、
+// 暗い盤面でどちらも同じ強さで読める。
 ImVec4 PinTypeColor(graph::ValueType valueType) {
     switch (valueType) {
-        // マスクは無彩色。マテリアルの線と一目で区別できるようにする。
+        // マスクはオレンジ。0〜1 の 1 チャンネル。
         case graph::ValueType::Mask:
-            return ImVec4(0.80f, 0.80f, 0.80f, 1.0f);
+            return ImVec4(0.82f, 0.64f, 0.36f, 1.0f);
+        // マテリアルは緑。4 チャンネル一式（ハイトを含む）。
         case graph::ValueType::Material:
         default:
-            return ImVec4(0.70f, 0.78f, 0.72f, 1.0f);
+            return ImVec4(0.70f, 0.93f, 0.78f, 1.0f);
     }
 }
 
@@ -372,7 +377,26 @@ void Application::PasteGraphNodes() {
 }
 
 void Application::DrawGraphNode(const graph::Node& node) {
-    constexpr float kNodeWidth = 200.0f;
+    // ノードの幅。**ピンのラベルが重ならない幅まで広げる。**
+    // 入力は左、出力は右へ寄せるので、同じ行に並ぶ 2 つのラベルの合計が要る幅になる。
+    // 200px 固定にしていたときは、Mask Blend の Foreground / Background のような
+    // 長い名前が出力の Mask と重なっていた。
+    constexpr float kNodeMinWidth = 200.0f;
+    // 丸ピン 1 つぶん（丸の幅 + ImGui の項目間隔）。
+    const float pinWidth = 14.0f + ImGui::GetStyle().ItemSpacing.x;
+    float rowWidth = 0.0f;
+    for (size_t row = 0; row < std::max(node.inputs.size(), node.outputs.size()); ++row) {
+        float width = 0.0f;
+        if (row < node.inputs.size()) {
+            width += pinWidth + ImGui::CalcTextSize(node.inputs[row].label.c_str()).x;
+        }
+        if (row < node.outputs.size()) {
+            width += ImGui::CalcTextSize(node.outputs[row].label.c_str()).x + pinWidth;
+        }
+        rowWidth = std::max(rowWidth, width);
+    }
+    // 入力と出力のラベルの間に隙間を空ける。詰まっていると 1 語に見える。
+    const float kNodeWidth = std::max(kNodeMinWidth, rowWidth + 24.0f);
     const ImVec4 accent = NodeAccentColor(node.kind);
     // **プレビュー中のノードは枠を明るくする。** 選択（プロパティ）と
     // プレビューは別なので、どれが画面に出ているのかが分かるようにする。
