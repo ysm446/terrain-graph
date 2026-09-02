@@ -664,6 +664,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             // マスクのノードは種類ごとに使う設定が違うが、**全部書く**。
             // 種類を変えて戻したときに値が消えていると驚くため。
             item["map"] = WriteMapSlot(mask->map, writeTexture);
+            item["noise"] = WriteNoise(mask->noise);
             item["fluvial"] = WriteFluvial(mask->fluvial);
             item["slope"] = WriteSlope(mask->slope);
             item["levels"] = WriteLevels(mask->levels);
@@ -775,6 +776,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
             } else if (graph::IsMaskNodeKind(created.kind)) {
                 graph::MaskNodeSettings settings;
                 settings.map = ReadMapSlot(item, "map", readTexture);
+                settings.noise = ReadNoise(item, "noise", graph::MaskNodeSettings().noise);
                 settings.fluvial = ReadFluvial(item, "fluvial");
                 settings.slope = ReadSlope(item, "slope");
                 settings.levels = ReadLevels(item, "levels");

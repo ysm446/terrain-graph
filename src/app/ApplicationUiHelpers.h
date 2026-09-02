@@ -404,7 +404,7 @@ inline bool DrawFluvialRows(compositor::FluvialParams& fluvial) {
     }
     if (ui::PropertyCombo("解像度", &resolutionIndex, kFluvialResolutionLabels,
                           IM_ARRAYSIZE(kFluvialResolutionLabels), 1,
-                          "川筋を計算するグリッド。**合成解像度とは別**。"
+                          "川筋を計算するグリッド。合成解像度とは別。"
                           "上げるほど細かい支流が出るが、反復回数も比例して増える")) {
         fluvial.resolution = kFluvialResolutionValues[resolutionIndex];
         changed = true;

@@ -29,6 +29,8 @@ enum class MaskOpKind : uint32_t {
     Sediment = 5,
     // 崩落レイヤーが積んだ**岩屑**。出力ピンによって厚みか、岩片ごとの乱数になる。
     Crumbling = 6,
+    // ノイズ 1 枚。入力を持たないマスクのソース。
+    Noise = 7,
 };
 
 // シェーダの TG_BLEND_* と一致させること。
@@ -93,6 +95,7 @@ struct MaskOp {
     SlopeParams slope;
     LevelsParams levels;
     BlendParams blend;
+    NoiseParams noise;
     SedimentMaskParams sedimentMask;
     CrumblingMaskParams crumblingMask;
 };

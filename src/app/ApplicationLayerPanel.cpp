@@ -87,7 +87,7 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
             }
             if (ui::PropertyCombo("解像度", &resolutionIndex, kSedimentResolutionLabels,
                                   IM_ARRAYSIZE(kSedimentResolutionLabels), 1,
-                                  "土砂を動かすグリッド。**合成解像度とは別**。"
+                                  "土砂を動かすグリッド。合成解像度とは別。"
                                   "上げるほど細かい筋が出るが、反復のコストも比例して増える")) {
                 layer.sediment.resolution = kSedimentResolutionValues[resolutionIndex];
                 changed = true;
@@ -95,7 +95,7 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
             changed |= ui::PropertyFloat(
                 "基準の厚み", &layer.sediment.maskThicknessMeters, 0.0f, 20.0f,
                 sedimentDefaults.maskThicknessMeters,
-                "**Mask 出力がこの厚みで 1 になる。** 0 にすると一番厚い所が 1 に"
+                "Mask 出力がこの厚みで 1 になる。0 にすると一番厚い所が 1 に"
                 "なるが、少数の分厚い点が基準になって残りが 0 付近へ潰れる",
                 "%.2f m", ImGuiSliderFlags_Logarithmic);
             changed |= ui::PropertyFloat(
@@ -107,7 +107,7 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
             ui::EndPropertyTable();
         }
         ui::HintText("重力で土砂を再分配する。谷底に厚く積もり、尾根は痩せる。"
-                     "**Mask 出力は積もった厚み**なので、堆積した所へ別のマテリアルを乗せられる");
+                     "Mask 出力は積もった厚みなので、堆積した所へ別のマテリアルを乗せられる");
         return changed;
     }
 
@@ -161,7 +161,7 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
             ui::EndPropertyTable();
         }
         ui::HintText("発生源（Emission 入力）の明るい所から岩片を生み、斜面を下らせて積む。"
-                     "**Mask は岩屑の厚み、Unique は岩片ごとの乱数**を出す");
+                     "Mask は岩屑の厚み、Unique は岩片ごとの乱数を出す");
         return changed;
     }
 

@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-03 21:00
+更新日時: 2026-09-03 22:30
 
 ## 現在の状況
 
@@ -62,6 +62,20 @@ Megascans の ORD（チャンネルパック）と EXR にも対応した。
 UI はグレー基調に整理し、ルールを [design/design-guide.md](../design/design-guide.md) に置いた。
 
 ## 完了済み
+
+- 2026-09-03 22:30 — **Mask Noise ノードを terrain-editor から移植した**。
+  - `NodeKind::MaskNoise`（保存名 `maskNoise`）+ `MaskOpKind::Noise`。
+    入力を持たないマスクのソースで、`CompositeMaskOps.hlsl` に `CsNoise` を足しただけ。
+  - **中身は合成レイヤーの「ノイズ」ソースと同じ `SampleNoise`**（Common.hlsli）を使う。
+    terrain-editor は Perlin fBM 1 種類で `Lacunarity` / `Persistence` を持つが、
+    こちらは種類を 3 つ（fBm / 尾根状 / セル状）持つ代わりに、その 2 つは 2.0 / 0.5 固定。
+    同じノイズを 2 か所で持つほうが後で困る、と判断した。
+  - 検証: マスクを白黒で貼って書き出し、値が 0.000〜0.838（中央値 0.533、平均 0.528）に
+    散っていること、**左右の端の差 0.0001 が内側の隣接画素の差と同程度**
+    （＝継ぎ目なくタイルしている）ことを確認した。
+  - ついでに **UI の文字列に混ざっていた markdown の `**` を 7 か所落とした**。
+    ツールチップ（`TextUnformatted`）もヒント（`TextV`）も markdown を解釈しないので、
+    アスタリスクがそのまま画面へ出ていた。再発防止に design-guide.md へ 1 行足した。
 
 - 2026-09-03 21:00 — **Crumbling（崩落）ノードを terrain-editor から移植した**。
   - `LayerKind::Crumbling` + `MaterialLayer::CrumblingSettings`、

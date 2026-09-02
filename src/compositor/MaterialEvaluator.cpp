@@ -182,6 +182,8 @@ uint64_t HashMaskOpParams(uint64_t seed, const MaskOp& op) {
             return HashBytes(seed, &op.sedimentMask, sizeof(op.sedimentMask));
         case MaskOpKind::Crumbling:
             return HashBytes(seed, &op.crumblingMask, sizeof(op.crumblingMask));
+        case MaskOpKind::Noise:
+            return HashBytes(seed, &op.noise, sizeof(op.noise));
         default:
             return seed;
     }
@@ -397,6 +399,7 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
 
     const wchar_t* entry = L"CsImage";
     switch (op.kind) {
+        case MaskOpKind::Noise:  entry = L"CsNoise"; break;
         case MaskOpKind::Slope:  entry = L"CsSlope"; break;
         case MaskOpKind::Levels: entry = L"CsLevels"; break;
         case MaskOpKind::Blend:  entry = L"CsBlend"; break;
@@ -425,6 +428,14 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
         case MaskOpKind::Image: {
             constants.indices[3] = textures.SrvIndex(op.map.texture, false);
             constants.params0[1] = static_cast<uint32_t>(op.map.channel);
+            break;
+        }
+        case MaskOpKind::Noise: {
+            constants.params0[1] = static_cast<uint32_t>(op.noise.type);
+            constants.params0[3] = static_cast<uint32_t>(std::clamp(op.noise.octaves, 1, 8));
+            constants.params1[0] = op.noise.scale;
+            constants.params1[1] = op.noise.amount;
+            constants.params1[2] = op.noise.offset;
             break;
         }
         case MaskOpKind::Slope: {

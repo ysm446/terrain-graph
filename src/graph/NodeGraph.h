@@ -62,6 +62,8 @@ enum class NodeKind : uint32_t {
     Sediment = 11,
     // 発生源から岩屑を崩し落とす加工（terrain-editor の Crumbling）。
     Crumbling = 12,
+    // ノイズ 1 枚をマスクとして出す**マスクのソース**。入力を持たない。
+    MaskNoise = 13,
 };
 
 struct PinDefinition {
@@ -119,6 +121,7 @@ struct LayerNodeSettings {
 //   MaskFluvial : fluvial（下地の川筋）
 struct MaskNodeSettings {
     compositor::MapSlot map;
+    compositor::NoiseParams noise;
     compositor::FluvialParams fluvial;
     compositor::SlopeParams slope;
     compositor::LevelsParams levels;

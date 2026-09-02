@@ -19,11 +19,13 @@ struct MaskOpConstants
     // x: 出力 UAV、y: 入力 A の SRV、z: 入力 B の SRV、
     // w: 素材の SRV（Image は画像、Slope は合成の Height）
     uint4 indices;
-    // x: 出力の一辺、y: 読むチャンネル（Image）、z: 反転 / ブレンドの種類、w: 未使用
+    // x: 出力の一辺、y: 読むチャンネル（Image）/ 種類（Noise）、
+    // z: 反転 / ブレンドの種類、w: オクターブ（Noise）
     uint4 params0;
     // Slope : 最小角（度）, 最大角（度）, ガンマ, 実寸比（標高差 / 一辺）
     // Levels: 黒点, 白点, ガンマ, 未使用
     // Blend : 強さ, 未使用 x3
+    // Noise : 周波数, 量, オフセット, 未使用
     float4 params1;
     // x: 傾斜を測る距離（テクセル）、yzw: 未使用
     float4 params2;
@@ -54,6 +56,24 @@ float SampleMaskInput(uint index, float2 uv)
 {
     Texture2D<float> mask = ResourceDescriptorHeap[index];
     return mask.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
+}
+
+// ノイズ 1 枚をマスクにする。**入力を持たないマスクのソース。**
+//
+// 使うのは合成レイヤーと同じ `SampleNoise`（Common.hlsli）。周波数は整数へ
+// 丸めて評価されるので、出力は必ずタイルする。
+[numthreads(8, 8, 1)]
+void CsNoise(uint3 dispatchThreadId : SV_DispatchThreadID)
+{
+    const uint2 texel = dispatchThreadId.xy;
+    if (OutsideMask(texel)) { return; }
+
+    RWTexture2D<float> output = ResourceDescriptorHeap[g_op.indices.x];
+    const float noise = SampleNoise(g_op.params0.y, MaskUv(texel), g_op.params1.x,
+                                    g_op.params1.z, int(g_op.params0.w));
+    // 量は 0.5 を中心にした振れ幅。1 でノイズそのもの、0 で一様な 0.5 になる。
+    const float value = saturate(0.5f + (noise - 0.5f) * g_op.params1.y);
+    output[texel] = ApplyInvert(value);
 }
 
 // 画像 1 枚をマスクにする。**タイルしない 1 枚絵**として等倍で貼る

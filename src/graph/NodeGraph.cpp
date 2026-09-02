@@ -82,7 +82,7 @@ constexpr std::array<PinDefinition, 1> kSourceNodePins = {{
     {PinKind::Output, ValueType::Material, "Result"},
 }};
 
-constexpr std::array<NodeDefinition, 13> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 14> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -91,6 +91,7 @@ constexpr std::array<NodeDefinition, 13> kNodeDefinitions = {{
     {NodeKind::Sediment, "sediment", "Sediment", kSedimentPins},
     {NodeKind::Crumbling, "crumbling", "Crumbling", kCrumblingPins},
     {NodeKind::MaskImage, "maskImage", "Mask Image", kMaskSourcePins},
+    {NodeKind::MaskNoise, "maskNoise", "Mask Noise", kMaskSourcePins},
     {NodeKind::MaskFluvial, "maskFluvial", "Mask Fluvial", kMaskFromHeightPins},
     {NodeKind::MaskSlope, "maskSlope", "Mask Slope", kMaskFromHeightPins},
     {NodeKind::MaskLevels, "maskLevels", "Mask Levels", kMaskFilterPins},
@@ -133,9 +134,9 @@ bool IsSourceNodeKind(NodeKind kind) {
 }
 
 bool IsMaskNodeKind(NodeKind kind) {
-    return kind == NodeKind::MaskImage || kind == NodeKind::MaskFluvial ||
-           kind == NodeKind::MaskSlope || kind == NodeKind::MaskLevels ||
-           kind == NodeKind::MaskBlend;
+    return kind == NodeKind::MaskImage || kind == NodeKind::MaskNoise ||
+           kind == NodeKind::MaskFluvial || kind == NodeKind::MaskSlope ||
+           kind == NodeKind::MaskLevels || kind == NodeKind::MaskBlend;
 }
 
 // 下地の Height を読むマスクか。**チェーンのどこを読むか**を Base 入力で指す。
@@ -594,6 +595,10 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
             }
             op.kind = compositor::MaskOpKind::Image;
             op.map = settings->map;
+            break;
+        case NodeKind::MaskNoise:
+            op.kind = compositor::MaskOpKind::Noise;
+            op.noise = settings->noise;
             break;
         case NodeKind::MaskFluvial:
             op.kind = compositor::MaskOpKind::Fluvial;

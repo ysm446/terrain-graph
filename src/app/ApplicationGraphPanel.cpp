@@ -47,6 +47,8 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
             return ImVec4(0.74f, 0.58f, 0.50f, 1.0f);
         case graph::NodeKind::MaskImage:
             return ImVec4(0.72f, 0.72f, 0.72f, 1.0f);
+        case graph::NodeKind::MaskNoise:
+            return ImVec4(0.68f, 0.72f, 0.62f, 1.0f);
         case graph::NodeKind::MaskFluvial:
             return ImVec4(0.55f, 0.68f, 0.74f, 1.0f);
         case graph::NodeKind::MaskSlope:
@@ -662,6 +664,8 @@ void Application::DrawGraphEditor() {
         ImGui::Separator();
         addNodeMenuItem(graph::NodeKind::MaskImage,
                         "Mask Image — 画像をマスクにする（白い所だけ乗る）");
+        addNodeMenuItem(graph::NodeKind::MaskNoise,
+                        "Mask Noise — ノイズをマスクにする（下地に依らない）");
         addNodeMenuItem(graph::NodeKind::MaskFluvial,
                         "Mask Fluvial — 下地の川筋をマスクにする");
         addNodeMenuItem(graph::NodeKind::MaskSlope,
@@ -868,6 +872,11 @@ void Application::DrawGraphPanel() {
             "レイヤーの Mask 入力へ繋ぐと、白い所にだけそのレイヤーが乗る。"
             "効き方（係数 / カーブ / レベル）はレイヤー側で決める";
         switch (selected->kind) {
+            case graph::NodeKind::MaskNoise:
+                header = "ノイズ";
+                hint = "下地に依らないノイズをマスクにする。"
+                       "周波数は整数へ丸めて使うので、出力は必ずタイルする";
+                break;
             case graph::NodeKind::MaskFluvial:
                 header = "川筋";
                 hint = "下地の高さから水の集まる所（川筋）を作る。"
@@ -884,7 +893,7 @@ void Application::DrawGraphPanel() {
                 break;
             case graph::NodeKind::MaskBlend:
                 header = "合成";
-                hint = "マスク 2 枚を合成する。**片方だけ繋いだときはそれを通す**";
+                hint = "マスク 2 枚を合成する。片方だけ繋いだときはそれを通す";
                 break;
             default:
                 break;
@@ -892,6 +901,9 @@ void Application::DrawGraphPanel() {
         ui::SectionHeader(header);
         if (ui::BeginPropertyTable("graphMaskRows")) {
             switch (selected->kind) {
+                case graph::NodeKind::MaskNoise:
+                    changed |= DrawNoiseRows(mask->noise, graph::MaskNodeSettings().noise);
+                    break;
                 case graph::NodeKind::MaskFluvial:
                     changed |= DrawFluvialRows(mask->fluvial);
                     break;
