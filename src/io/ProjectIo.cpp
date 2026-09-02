@@ -810,6 +810,7 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     node["tessellation"] = renderer.TessellationEnabled();
     node["tessellationFactor"] = renderer.TessellationFactor();
     node["materialResolution"] = renderer.MaterialResolution();
+    node["meshSubdivisions"] = renderer.MeshSubdivisions();
     node["showSkybox"] = renderer.ShowSkybox();
     node["skyboxBlur"] = renderer.SkyboxBlur();
     node["shadow"] = renderer.ShadowEnabled();
@@ -882,6 +883,8 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
         ReadFloat(node, "tessellationFactor", previewDefaults.tessellationFactor);
     renderer.RequestMaterialResolution(
         ReadUInt(node, "materialResolution", previewDefaults.materialResolution));
+    renderer.RequestMeshSubdivisions(
+        ReadUInt(node, "meshSubdivisions", previewDefaults.meshSubdivisions));
     renderer.ShowSkybox() = ReadBool(node, "showSkybox", previewDefaults.showSkybox);
     renderer.SkyboxBlur() = ReadBool(node, "skyboxBlur", previewDefaults.skyboxBlur);
     renderer.ShadowEnabled() = ReadBool(node, "shadow", previewDefaults.shadowEnabled);

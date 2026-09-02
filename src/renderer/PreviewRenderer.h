@@ -28,8 +28,12 @@ enum class DebugView : uint32_t {
     Metallic = 5,
     AmbientOcclusion = 6,
     Height = 7,
+    // **地形の大きな高さを引いた「その場の起伏」だけ**の表示。
+    // 素材のハイトマップをそのまま貼ったように見える（Height だと
+    // 標高差 600m の傾きに埋もれて、素材の凹凸が見えないため）。
+    HeightLocal = 8,
     // 形だけを見る表示。ラスタライザをワイヤーフレームにする。
-    Wireframe = 8,
+    Wireframe = 9,
 };
 
 enum class TonemapMode : uint32_t {
@@ -138,6 +142,9 @@ struct PreviewDefaults {
     bool tessellationEnabled = false;
     float tessellationFactor = 8.0f;
     uint32_t materialResolution = 1024;
+    // 平面メッシュの分割数。**形の細かさの上限はここで決まる。**
+    // 地形の一辺 ÷ 分割数 が 1 マスの大きさ（2048m を 256 分割で 8m）。
+    uint32_t meshSubdivisions = 256;
     bool showSkybox = true;
     bool skyboxBlur = false;
     bool shadowEnabled = true;
@@ -226,6 +233,12 @@ public:
     const RenderStats& Stats() const { return m_stats; }
     uint32_t MaterialResolution() const { return m_materialResolution; }
     void RequestMaterialResolution(uint32_t resolution) { m_requestedMaterialResolution = resolution; }
+    // 平面メッシュの分割数。作り直しは GPU 待機を伴うのでフレームの外で行う
+    // （`ProcessPendingWork`）。合成解像度と同じ作法。
+    uint32_t MeshSubdivisions() const { return m_meshSubdivisions; }
+    void RequestMeshSubdivisions(uint32_t subdivisions) {
+        m_requestedMeshSubdivisions = subdivisions;
+    }
 
     // 表示用テクスチャを PNG に書き出す。フレームの外で呼ぶこと。
     bool SaveOutputToPng(rhi::Device& device, const std::filesystem::path& path);
@@ -280,6 +293,8 @@ private:
     float m_planeSize = kPreviewDefaults.planeSize;
     uint32_t m_materialResolution = kPreviewDefaults.materialResolution;
     uint32_t m_requestedMaterialResolution = kPreviewDefaults.materialResolution;
+    uint32_t m_meshSubdivisions = kPreviewDefaults.meshSubdivisions;
+    uint32_t m_requestedMeshSubdivisions = kPreviewDefaults.meshSubdivisions;
     bool m_useMaterialTextures = kPreviewDefaults.useMaterialTextures;
     bool m_showSkybox = kPreviewDefaults.showSkybox;
     bool m_skyboxBlur = kPreviewDefaults.skyboxBlur;

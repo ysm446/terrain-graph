@@ -66,6 +66,11 @@ struct MeshConstants
     float pad6;
 };
 
+// 「ハイト（ローカル）」で周りの平均を取る半径（合成テクセル）と、
+// 引いた差を 0〜1 へ伸ばす倍率。素材の凹凸が見える強さとして選んである。
+static const float kLocalHeightRadiusTexels = 6.0f;
+static const float kLocalHeightGain = 16.0f;
+
 // ビューポートの表示モード。C++ 側の renderer::DebugView と一致させること。
 #define TG_VIEW_SHADED          0
 #define TG_VIEW_BASECOLOR       1
@@ -75,7 +80,8 @@ struct MeshConstants
 #define TG_VIEW_METALLIC        5
 #define TG_VIEW_AO              6
 #define TG_VIEW_HEIGHT          7
-#define TG_VIEW_WIREFRAME       8
+#define TG_VIEW_HEIGHT_LOCAL    8
+#define TG_VIEW_WIREFRAME       9
 
 ConstantBuffer<MeshConstants> g_mesh : register(b1);
 
@@ -407,6 +413,35 @@ PsOutput PsMain(VsOutput input)
                 height = SampleMaterialScalar(heightMap, input.uv);
             }
             debugColor = saturate(height).xxx;
+        }
+        else if (g_mesh.debugView == TG_VIEW_HEIGHT_LOCAL)
+        {
+            // **その場の起伏だけ**を見る。地形の大きな高さ（標高差 600m の傾き）を
+            // 周りの平均として引き、残りを 0.5 中心へ伸ばす。
+            // 素材のハイトマップをそのまま貼ったような見た目になる。
+            float local = 0.5f;
+            if (g_mesh.useMaterialTextures != 0u)
+            {
+                Texture2D<float> heightMap = ResourceDescriptorHeap[g_mesh.materialHeightIndex];
+                const float center = SampleMaterialScalar(heightMap, input.uv);
+
+                // 周りの平均。半径は合成テクセル基準で固定する
+                // （解像度を変えても「どのくらい大きな形を引くか」が変わらない）。
+                float2 size = float2(1.0f, 1.0f);
+                heightMap.GetDimensions(size.x, size.y);
+                const float2 texel = 1.0f / max(size, float2(1.0f, 1.0f));
+                const float radius = kLocalHeightRadiusTexels;
+                float sum = 0.0f;
+                [unroll]
+                for (int i = 0; i < 8; ++i)
+                {
+                    const float angle = (float(i) / 8.0f) * 6.28318530718f;
+                    const float2 offset = float2(cos(angle), sin(angle)) * radius * texel;
+                    sum += SampleMaterialScalar(heightMap, input.uv + offset);
+                }
+                local = 0.5f + (center - sum / 8.0f) * kLocalHeightGain;
+            }
+            debugColor = saturate(local).xxx;
         }
 
         PsOutput debugOutput;

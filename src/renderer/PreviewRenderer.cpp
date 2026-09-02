@@ -206,7 +206,7 @@ XMFLOAT3 LightSettings::Direction() const {
 bool PreviewRenderer::Initialize(rhi::Device& device, rhi::PipelineCache& pipelineCache) {
     // ディスプレイスメントを頂点で押し出すので、プレビューのメッシュは細かく割る。
     // 数万頂点はプレビュー 1 個ぶんとしては軽い。
-    if (!m_plane.Create(device, MakePlane(kPlaneMeshSize, 256), L"PlaneMesh")) {
+    if (!m_plane.Create(device, MakePlane(kPlaneMeshSize, m_meshSubdivisions), L"PlaneMesh")) {
         return false;
     }
     if (!m_environment.Initialize(device, pipelineCache)) {
@@ -265,6 +265,21 @@ void PreviewRenderer::Shutdown(rhi::Device& device) {
 
 void PreviewRenderer::ProcessPendingWork(rhi::Device& device,
                                         rhi::PipelineCache& pipelineCache) {
+    if (m_requestedMeshSubdivisions != m_meshSubdivisions) {
+        // 古い頂点バッファは GPU がまだ見ているかもしれないので、
+        // Release（Defer）を通してから作り直す。
+        Mesh plane;
+        if (plane.Create(device, MakePlane(kPlaneMeshSize, m_requestedMeshSubdivisions),
+                         L"PlaneMesh")) {
+            m_plane.Release(device);
+            m_plane = std::move(plane);
+            m_meshSubdivisions = m_requestedMeshSubdivisions;
+        } else {
+            TG_LOG_WARN("平面メッシュを作れませんでした（%u 分割）", m_requestedMeshSubdivisions);
+            m_requestedMeshSubdivisions = m_meshSubdivisions;
+        }
+    }
+
     if (m_requestedMaterialResolution != m_materialResolution) {
         if (m_evaluator.Resize(device, m_requestedMaterialResolution)) {
             m_materialResolution = m_requestedMaterialResolution;
@@ -303,6 +318,7 @@ void PreviewRenderer::ResetSettings() {
     m_shadowEnabled = defaults.shadowEnabled;
     // 解像度の作り直しは GPU 待機を伴うので、要求だけ積む。
     RequestMaterialResolution(defaults.materialResolution);
+    RequestMeshSubdivisions(defaults.meshSubdivisions);
 
     // 各節の既定値は構造体の初期値。数値を直接書かない。
     m_camera.SetState(CameraState{});

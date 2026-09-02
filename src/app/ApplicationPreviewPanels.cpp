@@ -80,6 +80,26 @@ void Application::DrawMaterialPanel() {
                                       "%.0f", 0, 1.0f);
                 }
 
+                // 形の細かさの上限。地形の一辺 ÷ 分割数 が 1 マスの大きさになる。
+                // テセレーションは「画面上で辺が伸びたときだけ」割るので、
+                // 引きの絵ではこの分割数がそのまま形の限界になる。
+                int subdivisions = 0;
+                for (int i = 0; i < IM_ARRAYSIZE(kMeshSubdivisionValues); ++i) {
+                    if (kMeshSubdivisionValues[i] == m_renderer.MeshSubdivisions()) {
+                        subdivisions = i;
+                    }
+                }
+                char meshHint[128] = {};
+                std::snprintf(meshHint, sizeof(meshHint),
+                              "平面を何分割するか。いまは 1 マス %.1f m。"
+                              "上げるほど細かい形が出るが重くなる",
+                              m_renderer.PlaneSize() /
+                                  static_cast<float>(m_renderer.MeshSubdivisions()));
+                if (ui::PropertyCombo("メッシュ分割", &subdivisions, kMeshSubdivisionLabels,
+                                      IM_ARRAYSIZE(kMeshSubdivisionLabels), 0, meshHint)) {
+                    m_renderer.RequestMeshSubdivisions(kMeshSubdivisionValues[subdivisions]);
+                }
+
                 int resolution = ResolutionIndex(m_renderer.MaterialResolution());
                 if (ui::PropertyCombo("合成解像度", &resolution, kResolutionLabels,
                                       IM_ARRAYSIZE(kResolutionLabels),
