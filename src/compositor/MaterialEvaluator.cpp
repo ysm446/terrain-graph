@@ -27,6 +27,8 @@ constexpr uint32_t kFlagKindShape = 0x4u;
 constexpr uint32_t kFlagKindLiquid = 0x8u;
 // 下地に沿わせる（サーフェスのみ）。シェーダの TG_FLAG_WRAP と一致させること。
 constexpr uint32_t kFlagWrap = 0x10u;
+// 法線マップの緑を反転して読む（OpenGL 規約の素材）。
+constexpr uint32_t kFlagFlipNormalGreen = 0x20u;
 
 // レイヤー一覧に出すマスクサムネイルの一辺。行の高さに対して十分な細かさがあればよい。
 constexpr uint32_t kMaskThumbnailSize = 64;
@@ -1244,9 +1246,13 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         } else if (layer.wrapToUnderlying) {
             constants.flags |= kFlagWrap;
         }
-
         // マップはレイヤーが参照するマテリアルから引く。
         const MaterialAsset* material = materials.Find(layer.material);
+
+        // 法線マップの規約はマテリアルごと。マップが無ければ関係ない。
+        if (material != nullptr && material->flipNormalGreen) {
+            constants.flags |= kFlagFlipNormalGreen;
+        }
 
         // 定数もマテリアルが持っているほうを優先する。
         // マテリアル側とレイヤー側の両方が掛かると、どちらが効いているか分からない。

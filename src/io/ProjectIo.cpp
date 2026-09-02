@@ -249,6 +249,8 @@ json WriteMaterialBody(const compositor::MaterialAsset& asset, const TextureWrit
     json maps;
     maps["baseColor"] = writeTexture(asset.baseColor);
     maps["normal"] = writeTexture(asset.normal);
+    // 法線マップの規約（緑の向き）。既定は OpenGL（反転して読む）。
+    node["flipNormalGreen"] = asset.flipNormalGreen;
     maps["roughness"] = WriteMapSlot(asset.roughness, writeTexture);
     maps["metallic"] = WriteMapSlot(asset.metallic, writeTexture);
     maps["ambientOcclusion"] = WriteMapSlot(asset.ambientOcclusion, writeTexture);
@@ -273,6 +275,7 @@ void ReadMaterialBody(const json& node, compositor::MaterialAsset& asset,
     }
     const json* baseColor = FindMember(*maps, "baseColor");
     asset.baseColor = (baseColor != nullptr) ? readTexture(*baseColor) : compositor::kNoTexture;
+    asset.flipNormalGreen = ReadBool(node, "flipNormalGreen", defaults.flipNormalGreen);
     const json* normal = FindMember(*maps, "normal");
     asset.normal = (normal != nullptr) ? readTexture(*normal) : compositor::kNoTexture;
     asset.roughness = ReadMapSlot(*maps, "roughness", readTexture);

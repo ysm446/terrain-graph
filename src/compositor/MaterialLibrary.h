@@ -39,6 +39,19 @@ struct MaterialAsset {
     float metallicValue = 0.0f;
     float ambientOcclusionValue = 1.0f;
 
+    // **法線マップの緑を反転して読むか。**
+    //
+    // 法線マップには 2 つの規約がある。
+    //   OpenGL 規約 : 緑 = 画像の上向き（−V）。Megascans などの既定
+    //   DirectX 規約: 緑 = 画像の下向き（+V）
+    // このアプリが自分で作る法線（ハイトの勾配）と、平面の接空間は
+    // **DirectX 規約**に揃えてあるので、OpenGL 規約のマップはそのままだと
+    // V 方向（平面では世界の Z）の陰影が反転する。
+    //
+    // **既定は反転する（＝ OpenGL 規約として読む）。** 手元の素材（Megascans）が
+    // そちらで、既定を DirectX にすると読み込んだ素材が軒並み反転して見えるため。
+    bool flipNormalGreen = true;
+
     // 一覧に出すサムネイル。マップかパラメータを変えたら作り直す。
     rhi::GpuTexture thumbnail;
     bool thumbnailDirty = true;

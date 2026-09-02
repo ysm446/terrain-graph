@@ -23,6 +23,8 @@
 #define TG_FLAG_KIND_LIQUID 0x8u
 // 下地に沿わせる（Mixer の Wrap to Underlying。サーフェスのみ）。
 #define TG_FLAG_WRAP        0x10u
+// 法線マップの緑を反転して読む（OpenGL 規約の素材）。
+#define TG_FLAG_FLIP_NORMAL_GREEN 0x20u
 
 struct LayerConstants
 {
@@ -199,7 +201,17 @@ float3 ComputeLayerNormal(float2 uv, float2 texelSize, float uvPerOutputTexel)
     {
         const float3 sampled =
             SampleLayerTexture(g_layer.textureIndices0.y, uv, uvPerOutputTexel).rgb;
-        return normalize(sampled * 2.0f - 1.0f);
+        float3 tangentNormal = sampled * 2.0f - 1.0f;
+        // **法線マップには 2 つの規約がある。**
+        //   OpenGL : 緑 = 画像の上向き（−V）。Megascans などの既定
+        //   DirectX: 緑 = 画像の下向き（+V）
+        // このアプリの接空間と自前の法線は DirectX 規約なので、
+        // OpenGL 規約のマップは緑を反転して読む（V 方向の陰影が逆になるため）。
+        if ((g_layer.flags & TG_FLAG_FLIP_NORMAL_GREEN) != 0u)
+        {
+            tangentNormal.y = -tangentNormal.y;
+        }
+        return normalize(tangentNormal);
     }
 
     // 標高差 0 なら地形は平ら。勾配を取るまでもない。
