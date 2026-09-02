@@ -218,6 +218,121 @@ void Application::SyncGraphStack() {
     m_graphStack.MarkDirty();
 }
 
+// 選択中のノードを控える。**出力ノードは対象外**（1 つだけ繋ぐ前提のノードで、
+// 増やしても迷うだけなので）。
+void Application::CopySelectedGraphNodes() {
+    std::vector<const graph::Node*> nodes;
+    for (const graph::GraphId id : m_selectedGraphNodes) {
+        const graph::Node* node = m_graph.FindNode(id);
+        if (node != nullptr && node->kind != graph::NodeKind::Output) {
+            nodes.push_back(node);
+        }
+    }
+    if (nodes.empty()) {
+        return;
+    }
+
+    m_graphClipboard.clear();
+    m_graphPasteCount = 0;
+    for (const graph::Node* node : nodes) {
+        GraphClipboardNode entry;
+        entry.kind = node->kind;
+        entry.settings = node->settings;
+        entry.posX = node->posX;
+        entry.posY = node->posY;
+        for (const graph::Pin& pin : node->inputs) {
+            GraphClipboardNode::Source source;
+            // この入力へ繋がっているリンクの「出力ピン」を覚える。
+            for (const graph::Link& link : m_graph.Links()) {
+                if (link.endPin != pin.id) {
+                    continue;
+                }
+                const graph::Pin* startPin = m_graph.FindPin(link.startPin);
+                if (startPin == nullptr) {
+                    break;
+                }
+                // コピーした集合の中を指しているなら、貼った側どうしで繋ぎ直す。
+                for (size_t i = 0; i < nodes.size(); ++i) {
+                    if (nodes[i]->id == startPin->nodeId) {
+                        source.copiedIndex = static_cast<int>(i);
+                        break;
+                    }
+                }
+                // 集合の外なら、**元の親へ繋いだまま**にする。
+                if (source.copiedIndex < 0) {
+                    source.externalPin = link.startPin;
+                }
+                break;
+            }
+            entry.inputs.push_back(source);
+        }
+        m_graphClipboard.push_back(std::move(entry));
+    }
+    TG_LOG_INFO("ノードをコピーしました: %zu 個", m_graphClipboard.size());
+}
+
+void Application::PasteGraphNodes() {
+    if (m_graphClipboard.empty()) {
+        return;
+    }
+    // 貼るたびに少しずらす。同じ場所に重ねると、貼れたのかどうか分からない。
+    ++m_graphPasteCount;
+    const float offset = 28.0f * static_cast<float>(m_graphPasteCount);
+
+    std::vector<graph::GraphId> created(m_graphClipboard.size(), 0);
+    for (size_t i = 0; i < m_graphClipboard.size(); ++i) {
+        const GraphClipboardNode& entry = m_graphClipboard[i];
+        const graph::GraphId nodeId = m_graph.CreateNode(entry.kind);
+        graph::Node* node = m_graph.FindMutableNode(nodeId);
+        if (node == nullptr) {
+            continue;
+        }
+        node->settings = entry.settings;
+        node->posX = entry.posX + offset;
+        node->posY = entry.posY + offset;
+        node->positionValid = true;
+        created[i] = nodeId;
+        m_graphNodesToPlace.push_back(nodeId);
+    }
+
+    // 接続を張り直す。集合の中どうしは貼った側で、外は**元の親のまま**繋ぐ。
+    // 出力側（自分を使っていた下流）は繋がない。入力ピンは 1 本しか持てないので、
+    // 繋ぐと元のノードから奪ってしまう。
+    for (size_t i = 0; i < m_graphClipboard.size(); ++i) {
+        const graph::Node* node = m_graph.FindNode(created[i]);
+        if (node == nullptr) {
+            continue;
+        }
+        const GraphClipboardNode& entry = m_graphClipboard[i];
+        for (size_t pinIndex = 0; pinIndex < entry.inputs.size(); ++pinIndex) {
+            if (pinIndex >= node->inputs.size()) {
+                break;
+            }
+            const GraphClipboardNode::Source& source = entry.inputs[pinIndex];
+            const graph::GraphId endPin = node->inputs[pinIndex].id;
+            if (source.copiedIndex >= 0 &&
+                static_cast<size_t>(source.copiedIndex) < created.size()) {
+                const graph::Node* upstream = m_graph.FindNode(created[source.copiedIndex]);
+                if (upstream != nullptr && !upstream->outputs.empty()) {
+                    m_graph.CreateLink(upstream->outputs.front().id, endPin);
+                }
+            } else if (source.externalPin != 0) {
+                // 元のノードが消えていれば CanCreateLink が弾く（何も起きない）。
+                m_graph.CreateLink(source.externalPin, endPin);
+            }
+        }
+    }
+
+    for (const graph::GraphId id : created) {
+        if (id != 0) {
+            m_selectedGraphNode = id;
+            break;
+        }
+    }
+    MarkDocumentChanged();
+    TG_LOG_INFO("ノードを貼り付けました: %zu 個", m_graphClipboard.size());
+}
+
 void Application::DrawGraphNode(const graph::Node& node) {
     constexpr float kNodeWidth = 200.0f;
     const ImVec4 accent = NodeAccentColor(node.kind);
@@ -369,9 +484,21 @@ void Application::DrawGraphEditor() {
 
     // A でグラフ全体を画面に収める（ビューポートの A と同じ作法）。
     // 内容の矩形は live なノードから計算されるため、描画の後に呼ぶ。
-    if (canvasHovered && !ImGui::GetIO().WantTextInput &&
+    const ImGuiIO& io = ImGui::GetIO();
+    if (canvasHovered && !io.WantTextInput && !io.KeyCtrl &&
         ImGui::IsKeyPressed(ImGuiKey_A, false)) {
         ed::NavigateToContent();
+    }
+
+    // Ctrl+C / Ctrl+V でノードをコピーする。**キャンバスの上にいるときだけ**
+    // 拾う（名前の入力中や他のパネルの操作を横取りしない）。
+    if (canvasHovered && !io.WantTextInput && io.KeyCtrl) {
+        if (ImGui::IsKeyPressed(ImGuiKey_C, false)) {
+            CopySelectedGraphNodes();
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_V, false)) {
+            PasteGraphNodes();
+        }
     }
 
     // 位置を流し込んだ後の整列。**ノードを描いた後**でないと内容の矩形が空で
@@ -560,10 +687,17 @@ void Application::DrawGraphEditor() {
     // **配置待ちのノードがある間は消さない。** 追加した直後のフレームは
     // エディタ側の選択がまだ無く、ここで 0 に戻すと「追加 → 選択」が消える
     // （エディタへの選択の反映は次のフレームの流し込みで行う）。
-    ed::NodeId selectedNodes[1];
-    if (ed::GetSelectedNodes(selectedNodes, 1) > 0) {
-        m_selectedGraphNode = ToGraphId(selectedNodes[0].Get());
+    // コピーは複数選択（枠で囲む）にも効かせたいので、全部控えておく。
+    ed::NodeId selectedNodes[64];
+    const int selectedCount = ed::GetSelectedNodes(selectedNodes, IM_ARRAYSIZE(selectedNodes));
+    if (selectedCount > 0) {
+        m_selectedGraphNodes.clear();
+        for (int i = 0; i < selectedCount; ++i) {
+            m_selectedGraphNodes.push_back(ToGraphId(selectedNodes[i].Get()));
+        }
+        m_selectedGraphNode = m_selectedGraphNodes.front();
     } else if (m_graphNodesToPlace.empty()) {
+        m_selectedGraphNodes.clear();
         m_selectedGraphNode = 0;
     }
 
@@ -640,7 +774,7 @@ void Application::DrawGraphPanel() {
     graph::Node* selected = m_graph.FindMutableNode(m_selectedGraphNode);
     if (selected == nullptr) {
         ui::HintText("ノードを選ぶと設定が出る。背景の右クリックで追加、"
-                     "ピンをドラッグして接続");
+                     "ピンをドラッグして接続、Ctrl+C / Ctrl+V でコピー");
     } else if (auto* settings = std::get_if<graph::LayerNodeSettings>(&selected->settings)) {
         bool changed = false;
         if (ui::BeginPropertyTable("graphNodeBasicRows")) {

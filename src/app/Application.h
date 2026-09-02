@@ -98,6 +98,9 @@ private:
                            bool maskFromNode = false);
     // グラフの変更をコンパイル結果（m_graphStack）へ反映する。フレームの頭で呼ぶ。
     void SyncGraphStack();
+    // 選択中のノードを控える / 貼り付ける（Ctrl+C / Ctrl+V）。
+    void CopySelectedGraphNodes();
+    void PasteGraphNodes();
     // ビューポートに出すノードを決める。出力ノードや無効な ID は
     // 「出力ノードのチェーン」（0）に落とす。
     void SetPreviewGraphNode(graph::GraphId nodeId);
@@ -203,6 +206,28 @@ private:
     // 前回コンパイルしたプレビュー対象。選択が変わっても再コンパイルするために持つ。
     graph::GraphId m_compiledGraphTarget = 0;
     graph::GraphId m_selectedGraphNode = 0;
+    // エディタで選ばれているノード全部。コピーはこれを見る
+    // （プロパティに出すのは先頭の 1 つ = m_selectedGraphNode）。
+    std::vector<graph::GraphId> m_selectedGraphNodes;
+
+    // ノードのコピー元。**OS のクリップボードは使わない**（アプリ内だけ）。
+    // 位置と設定に加えて、**入力ピンごとの接続元**を覚える。
+    // コピーした集合の中を指していれば貼った側どうしで繋ぎ直し、
+    // 外を指していれば**元の親へ繋いだまま**にする。
+    struct GraphClipboardNode {
+        graph::NodeKind kind = graph::NodeKind::Surface;
+        graph::NodeSettings settings;
+        float posX = 0.0f;
+        float posY = 0.0f;
+        struct Source {
+            int copiedIndex = -1;              // コピーした集合の中の添字
+            graph::GraphId externalPin = 0;    // 集合の外なら、その出力ピン
+        };
+        std::vector<Source> inputs;
+    };
+    std::vector<GraphClipboardNode> m_graphClipboard;
+    // 貼るたびに位置をずらす回数。コピーし直すと 0 に戻す。
+    int m_graphPasteCount = 0;
     // ビューポートに出しているノード。**選択とは別に持つ。**
     // 結果を見ながら別のノードのプロパティをいじれるようにするため
     // （terrain-editor と同じ作法）。0 は出力ノードのチェーン。
