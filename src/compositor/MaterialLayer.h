@@ -254,6 +254,8 @@ struct MaterialLayer {
         bool convertTerrain = true;
         // 計算グリッド。合成解像度とは別に持つ（反復回数がそのまま効くため）。
         uint32_t resolution = 512;
+        // Mask 出力（土砂の厚み）のコントラスト。0 で線形。
+        float maskContrast = 0.0f;
     };
     SedimentSettings sediment;
 

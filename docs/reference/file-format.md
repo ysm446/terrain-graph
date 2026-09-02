@@ -1,7 +1,7 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-09-03 06:30
+更新日時: 2026-09-03 08:00
 
 実装は [src/io/ProjectIo.cpp](../../src/io/ProjectIo.cpp)。**形式を変えたらこの文書も直す。**
 
@@ -120,7 +120,8 @@ base' = base + 0.5 * gain     ただしソースが constant のときは base �
 （足りないピンには新しい ID が振られ、リンクの無い入力になる）。
 
 レイヤーの `sediment`（`{ emission, emissionTime, detail, iterations, stabilization,
-viscosity, convertTerrain, resolution }`）は `kind` が `sediment` のノードだけが使う。
+viscosity, convertTerrain, resolution, maskContrast }`）は
+`kind` が `sediment` のノードだけが使う。
 
 レイヤーの `blur`（`{ radius, strength, iterations }`）は
 `kind` が `blur` のノード（Heightmap Blur）だけが使う。無ければ既定値。

@@ -42,6 +42,14 @@ constexpr std::array<PinDefinition, 2> kMaskFromHeightPins = {{
     {PinKind::Output, ValueType::Mask, "Mask"},
 }};
 
+// 堆積のピン。ハイトの加工に加えて、**積もった厚みを Mask として出す**。
+// 堆積した所へ別のマテリアルを乗せられるようにするため。
+constexpr std::array<PinDefinition, 3> kSedimentPins = {{
+    {PinKind::Input, ValueType::Material, "Base"},
+    {PinKind::Output, ValueType::Material, "Result"},
+    {PinKind::Output, ValueType::Mask, "Mask"},
+}};
+
 // マスクを 1 枚受けて 1 枚返す加工のピン。
 constexpr std::array<PinDefinition, 2> kMaskFilterPins = {{
     {PinKind::Input, ValueType::Mask, "Mask"},
@@ -70,7 +78,7 @@ constexpr std::array<NodeDefinition, 12> kNodeDefinitions = {{
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
     {NodeKind::Liquid, "liquid", "Liquid", kLayerNodePins},
     {NodeKind::Blur, "heightmapBlur", "Heightmap Blur", kFilterNodePins},
-    {NodeKind::Sediment, "sediment", "Sediment", kFilterNodePins},
+    {NodeKind::Sediment, "sediment", "Sediment", kSedimentPins},
     {NodeKind::MaskImage, "maskImage", "Mask Image", kMaskSourcePins},
     {NodeKind::MaskFluvial, "maskFluvial", "Mask Fluvial", kMaskFromHeightPins},
     {NodeKind::MaskSlope, "maskSlope", "Mask Slope", kMaskFromHeightPins},
@@ -465,7 +473,9 @@ int NodeGraph::EmitMaskOps(const Node& maskNode, int defaultHeightLayer,
     // 循環は CanCreateLink が弾いているが、読み込んだファイルが壊れている
     // 可能性もあるので深さでも止める。
     constexpr int kMaxDepth = 32;
-    if (depth > kMaxDepth || !IsMaskNodeKind(maskNode.kind)) {
+    // 堆積は**レイヤーでもありマスクの出どころでもある**（積もった厚みを出す）。
+    const bool isSedimentMask = (maskNode.kind == NodeKind::Sediment);
+    if (depth > kMaxDepth || (!IsMaskNodeKind(maskNode.kind) && !isSedimentMask)) {
         return -1;
     }
     for (const auto& [node, heightLayer] : emitted) {
@@ -477,6 +487,32 @@ int NodeGraph::EmitMaskOps(const Node& maskNode, int defaultHeightLayer,
                 }
             }
         }
+    }
+
+    // 堆積だけはレイヤーの設定を持つ。厚みを出すのはチェーンの中にいるときだけ
+    // （そのレイヤーを合成し終えた時点の土砂を読むため）。
+    if (isSedimentMask) {
+        const auto* layerSettings = std::get_if<LayerNodeSettings>(&maskNode.settings);
+        if (layerSettings == nullptr) {
+            return -1;
+        }
+        compositor::MaskOp sedimentOp;
+        sedimentOp.kind = compositor::MaskOpKind::Sediment;
+        sedimentOp.sedimentMask.contrast = layerSettings->layer.sediment.maskContrast;
+        sedimentOp.heightSourceLayer = -1;
+        for (size_t i = 0; i < layerNodes.size(); ++i) {
+            if (layerNodes[i] == &maskNode) {
+                sedimentOp.heightSourceLayer = static_cast<int>(i);
+                break;
+            }
+        }
+        if (sedimentOp.heightSourceLayer < 0) {
+            // このチェーンに居ない堆積ノード。厚みは残っていないので繋がない。
+            return -1;
+        }
+        ops.push_back(sedimentOp);
+        emitted.emplace_back(&maskNode, defaultHeightLayer);
+        return static_cast<int>(ops.size() - 1);
     }
 
     const auto* settings = std::get_if<MaskNodeSettings>(&maskNode.settings);

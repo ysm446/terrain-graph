@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-03 07:00
+更新日時: 2026-09-03 08:00
 
 ## 現在の状況
 
@@ -58,6 +58,19 @@ Megascans の ORD（チャンネルパック）と EXR にも対応した。
 UI はグレー基調に整理し、ルールを [design/design-guide.md](../design/design-guide.md) に置いた。
 
 ## 完了済み
+
+- 2026-09-03 08:00 — **Sediment の Mask 出力**と、**起動時のグラフタブ**。
+  - `MaskOpKind::Sediment`。堆積ノードに Mask 出力ピンを足し、
+    `EmitMaskOps` が**レイヤーノードでもマスクの出どころ**として扱う。
+    op の `heightSourceLayer` にそのレイヤーの添字を入れ、
+    **合成し終えた直後**に焼く（作業用テクスチャを次の堆積で上書きするため）。
+  - 厚みは `InterlockedMax` で最大を取って正規化し、締まりを掛ける
+    （`CompositeSediment.hlsl` の CsMaskMaxClear / CsMaskMaxReduce / CsMask）。
+  - `HashHeightState` に堆積の設定を足した（Height に効くため。
+    足さないと、堆積のパラメータを変えてもマスクが焼き直されない）。
+  - `m_focusDefaultTabs` の初期値を 3 にして、**起動のたび**にグラフを前面へ。
+  - 検証: 堆積の Mask を Surface の Mask へ繋いで、積もった所にだけ
+    別マテリアルが乗ることを描画で確認。タブの前面化もスクリーンショットで確認。
 
 - 2026-09-03 07:00 — **ノードのコピー / 貼り付け**（Ctrl+C / Ctrl+V）。
   - アプリ内のクリップボード（`Application::GraphClipboardNode`）に、

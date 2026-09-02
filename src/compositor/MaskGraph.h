@@ -24,6 +24,9 @@ enum class MaskOpKind : uint32_t {
     Slope = 2,    // 下地の傾斜（角度の範囲を 0〜1 へ）
     Levels = 3,   // 黒点 / 白点 / ガンマ / 反転
     Blend = 4,    // 2 枚の合成
+    // 堆積レイヤーが積もらせた**土砂の厚み**。厚い所ほど 1 に近い。
+    // 堆積した所へ別のマテリアルを乗せるためのもの。
+    Sediment = 5,
 };
 
 // シェーダの TG_BLEND_* と一致させること。
@@ -59,6 +62,13 @@ struct BlendParams {
     float intensity = 1.0f;
 };
 
+// 堆積の厚みをマスクにするときの調整。**厚みは一番厚い所で 1 に正規化する**
+// （絶対量ではなく分布を見るため。terrain-editor と同じ）。
+struct SedimentMaskParams {
+    // 0 で線形、上げるほど「積もった / 積もっていない」がはっきりする。
+    float contrast = 0.0f;
+};
+
 // 演算 1 つ。入力は他の op の添字で、**自分より前**を指す（後方参照はしない）。
 struct MaskOp {
     MaskOpKind kind = MaskOpKind::Image;
@@ -73,6 +83,7 @@ struct MaskOp {
     SlopeParams slope;
     LevelsParams levels;
     BlendParams blend;
+    SedimentMaskParams sedimentMask;
 };
 
 // 評価する順に並んだ op の列。

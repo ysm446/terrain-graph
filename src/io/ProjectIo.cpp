@@ -483,6 +483,7 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     sediment["viscosity"] = layer.sediment.viscosity;
     sediment["convertTerrain"] = layer.sediment.convertTerrain;
     sediment["resolution"] = layer.sediment.resolution;
+    sediment["maskContrast"] = layer.sediment.maskContrast;
     node["sediment"] = std::move(sediment);
 
     // ぼかし（ブラーレイヤーだけが使う）。
@@ -563,6 +564,8 @@ compositor::MaterialLayer ReadLayer(
             ReadBool(*sediment, "convertTerrain", defaults.sediment.convertTerrain);
         layer.sediment.resolution = static_cast<uint32_t>(ReadInt(
             *sediment, "resolution", static_cast<int>(defaults.sediment.resolution)));
+        layer.sediment.maskContrast =
+            ReadFloat(*sediment, "maskContrast", defaults.sediment.maskContrast);
     }
 
     if (const json* blur = FindMember(node, "blur"); blur != nullptr && blur->is_object()) {

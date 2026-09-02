@@ -61,7 +61,8 @@ struct SedimentConstants {
     uint32_t indices0[4];  // UAV: 基盤, 土砂, 流出, 元の高さ
     uint32_t indices1[4];  // SRV: 基盤, 土砂, 元の高さ, 合成の Height
     uint32_t indices2[4];  // グリッドの一辺, 地形を土砂として扱うか, Height の UAV, 合成解像度
-    float params[4];       // 安息角ぶんの落差, 1 反復あたりの供給量, 未使用 x2
+    uint32_t indices3[4];  // 最大値の UAV, マスクの UAV, 未使用 x2
+    float params[4];       // 安息角ぶんの落差, 1 反復あたりの供給量, マスクのコントラスト, 未使用
 };
 
 // GPU 側の MaskOpConstants と一致させること。
@@ -136,6 +137,7 @@ uint64_t HashHeightState(uint64_t seed, const MaterialLayer& layer) {
     hash = HashBytes(hash, &layer.uvScale, sizeof(layer.uvScale));
     hash = HashBytes(hash, &layer.material, sizeof(layer.material));
     hash = HashBytes(hash, &layer.blur, sizeof(layer.blur));
+    hash = HashBytes(hash, &layer.sediment, sizeof(layer.sediment));
     // マスクは「どこに載せるか」を決めるので Height にも効く。
     hash = HashBytes(hash, &layer.mask.source, sizeof(layer.mask.source));
     hash = HashBytes(hash, &layer.mask.constant, sizeof(layer.mask.constant));
@@ -164,6 +166,8 @@ uint64_t HashMaskOpParams(uint64_t seed, const MaskOp& op) {
             return HashBytes(seed, &op.levels, sizeof(op.levels));
         case MaskOpKind::Blend:
             return HashBytes(seed, &op.blend, sizeof(op.blend));
+        case MaskOpKind::Sediment:
+            return HashBytes(seed, &op.sedimentMask, sizeof(op.sedimentMask));
         default:
             return seed;
     }
@@ -366,6 +370,10 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
     // 川筋だけは反復が要るので専用のパイプライン。
     if (op.kind == MaskOpKind::Fluvial) {
         return ApplyFluvialMask(device, pipelineCache, commandList, op, stack, target);
+    }
+    // 堆積の厚みは、直前に走った堆積レイヤーの作業用テクスチャから焼く。
+    if (op.kind == MaskOpKind::Sediment) {
+        return ApplySedimentMask(device, pipelineCache, commandList, op, target);
     }
 
     const wchar_t* entry = L"CsImage";
@@ -607,6 +615,7 @@ void MaterialEvaluator::ReleaseSedimentResources(rhi::Device& device) {
     device.DeferRelease(m_sediment.sediment);
     device.DeferRelease(m_sediment.outgoing);
     device.DeferRelease(m_sediment.original);
+    device.DeferRelease(m_sediment.maxScratch);
     m_sediment.resolution = 0;
 }
 
@@ -625,7 +634,9 @@ bool MaterialEvaluator::EnsureSedimentResources(rhi::Device& device, uint32_t re
         CreateChannelTexture(device, resolution, DXGI_FORMAT_R32G32B32A32_FLOAT,
                              L"SedimentOutgoing", m_sediment.outgoing) &&
         CreateChannelTexture(device, resolution, DXGI_FORMAT_R32_FLOAT, L"SedimentOriginal",
-                             m_sediment.original);
+                             m_sediment.original) &&
+        CreateChannelTexture(device, 1, DXGI_FORMAT_R32_UINT, L"SedimentMax",
+                             m_sediment.maxScratch);
     if (!ok) {
         TG_LOG_WARN("堆積の作業リソースを作れませんでした（%u^2）", resolution);
         ReleaseSedimentResources(device);
@@ -747,6 +758,7 @@ bool MaterialEvaluator::ApplySediment(rhi::Device& device, rhi::PipelineCache& p
     constants.indices2[1] = params.convertTerrain ? 1u : 0u;
     constants.indices2[2] = m_textures.height.UavIndex();
     constants.indices2[3] = m_resolution;
+    constants.indices3[0] = m_sediment.maxScratch.UavIndex();
     constants.params[0] = talus;
 
     // 定数は「供給あり / なし」の 2 本だけ確保して使い回す。
@@ -820,6 +832,73 @@ bool MaterialEvaluator::ApplySediment(rhi::Device& device, rhi::PipelineCache& p
 
     // 形が変わったので、法線も作り直す。
     RebuildNormalsFromHeight(device, normalPass, commandList, stack);
+    return true;
+}
+
+// 直前の堆積レイヤーが残した厚みを、マスクとして焼く。
+//
+// **堆積レイヤーを合成し終えた直後にしか呼ばない**（作業用テクスチャは
+// 次の堆積レイヤーで上書きされるため）。段取りは op の heightSourceLayer が
+// 決めていて、ちょうどその位置で走る。
+bool MaterialEvaluator::ApplySedimentMask(rhi::Device& device,
+                                          rhi::PipelineCache& pipelineCache,
+                                          ID3D12GraphicsCommandList* commandList,
+                                          const MaskOp& op, rhi::GpuTexture& target) {
+    if (!m_sediment.IsValid() || !target.IsValid()) {
+        return false;
+    }
+    const auto pipeline = [&](const wchar_t* entry) {
+        return pipelineCache.GetCompute(L"CompositeSediment.hlsl", entry);
+    };
+    ID3D12PipelineState* clearPass = pipeline(L"CsMaskMaxClear");
+    ID3D12PipelineState* reducePass = pipeline(L"CsMaskMaxReduce");
+    ID3D12PipelineState* maskPass = pipeline(L"CsMask");
+    if (clearPass == nullptr || reducePass == nullptr || maskPass == nullptr) {
+        return false;
+    }
+
+    SedimentConstants constants = {};
+    constants.indices0[1] = m_sediment.sediment.UavIndex();
+    constants.indices1[1] = m_sediment.sediment.SrvIndex();
+    constants.indices2[0] = m_sediment.resolution;
+    constants.indices2[3] = m_resolution;
+    constants.indices3[0] = m_sediment.maxScratch.UavIndex();
+    constants.indices3[1] = target.UavIndex();
+    constants.params[2] = std::clamp(op.sedimentMask.contrast, 0.0f, 1.0f);
+
+    const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(SedimentConstants), 256);
+    if (!cb.IsValid()) {
+        return false;
+    }
+    std::memcpy(cb.cpu, &constants, sizeof(constants));
+
+    PIXBeginEvent(commandList, PIX_COLOR(190, 170, 120), "CompositeSedimentMask");
+    TransitionIfNeeded(commandList, m_sediment.sediment, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+
+    const auto barrier = [&]() {
+        const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+        commandList->ResourceBarrier(1, &uav);
+    };
+    commandList->SetPipelineState(clearPass);
+    commandList->Dispatch(1, 1, 1);
+    barrier();
+    commandList->SetPipelineState(reducePass);
+    commandList->Dispatch(DispatchCount(m_sediment.resolution),
+                          DispatchCount(m_sediment.resolution), 1);
+    barrier();
+
+    // マスクを焼くときだけ、厚みは読み取り専用にする。
+    TransitionIfNeeded(commandList, m_sediment.sediment,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    commandList->SetPipelineState(maskPass);
+    commandList->Dispatch(DispatchCount(m_resolution), DispatchCount(m_resolution), 1);
+    barrier();
+
+    TransitionIfNeeded(commandList, m_sediment.sediment, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    PIXEndEvent(commandList);
     return true;
 }
 
@@ -994,7 +1073,8 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             hash = HashMaskOpParams(hash, op);
             hash = HashBytes(hash, &scaleHash, sizeof(scaleHash));
             hash = HashBytes(hash, &m_maskOpResolutions[i], sizeof(uint32_t));
-            if (op.kind == MaskOpKind::Fluvial || op.kind == MaskOpKind::Slope) {
+            if (op.kind == MaskOpKind::Fluvial || op.kind == MaskOpKind::Slope ||
+                op.kind == MaskOpKind::Sediment) {
                 after = std::max(after, op.heightSourceLayer);
                 const size_t layerCount = std::min<size_t>(
                     stack.Layers().size(),

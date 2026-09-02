@@ -1,7 +1,7 @@
 # node-graph — ノードグラフの設計
 
 作成日時: 2026-09-02 12:50
-更新日時: 2026-09-03 07:00
+更新日時: 2026-09-03 08:00
 
 `src/graph/` とグラフパネル（`src/app/ApplicationGraphPanel.cpp`）の設計。
 terrain-editor から移植したのは**仕組み**であって、ノードの中身ではない
@@ -40,7 +40,7 @@ terrain-editor から移植したのは**仕組み**であって、ノードの�
 | Shape | `shape` | 同上 | `MaterialLayer`（kind=Shape） |
 | Liquid | `liquid` | 同上 | `MaterialLayer`（kind=Liquid) |
 | Heightmap Blur | `heightmapBlur` | Base(入力) / Result(出力) | `MaterialLayer`（kind=Blur）の `blur` |
-| Sediment | `sediment` | Base(入力) / Result(出力) | `MaterialLayer`（kind=Sediment）の `sediment` |
+| Sediment | `sediment` | Base(入力) / Result / Mask(出力) | `MaterialLayer`（kind=Sediment）の `sediment` |
 | Mask Image | `maskImage` | Mask(出力) のみ | `MapSlot`（画像 + 読むチャンネル） |
 | Mask Fluvial | `maskFluvial` | Base(入力) / Mask(出力) | `FluvialParams`（川筋） |
 | Mask Slope | `maskSlope` | Base(入力) / Mask(出力) | `SlopeParams`（傾斜） |
@@ -122,6 +122,20 @@ terrain-editor の Mask Fluvial。**下地の川筋**（水が集まる所）を
 - 繋ぐと、そのレイヤーのマスクは `MaskSource::Fluvial` + ノードのパラメータで
   上書きされる。レイヤー側のマスク設定から直接 `下地の川筋` を選ぶこともできる
   （ノードは入口を分かりやすくするためのもの）。
+
+### 堆積の Mask 出力
+
+**Sediment はレイヤーでもありマスクの出どころでもある。** Result（ハイト）に加えて、
+**積もった土砂の厚み**を Mask として出す。堆積した所へ別のマテリアルを乗せる、
+という使い方のためにある（これがこのノードの主な使い道）。
+
+- 厚みは**一番厚い所で 1 に正規化**する（絶対量ではなく分布を見るため）。
+  `マスクの締まり` で 0（線形）〜1（ほぼ二値）に調整する。
+- 評価器は**その堆積レイヤーを合成し終えた直後**に焼く
+  （作業用テクスチャは次の堆積レイヤーで上書きされるため）。
+  op の `heightSourceLayer` にそのレイヤーの添字を入れて段取りする。
+- **同じチェーンの中にある堆積ノードだけ**が繋げる。別ブランチの堆積は
+  厚みが残っていないので、繋いでもマスクにならない（定数へ落ちる）。
 
 ### マスクのノード（傾斜 / レベル / 合成）
 

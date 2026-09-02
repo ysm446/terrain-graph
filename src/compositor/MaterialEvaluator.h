@@ -45,10 +45,11 @@ struct FluvialResources {
 // 堆積（Sediment）の作業リソース。**合成解像度とは別のグリッド**で回し、
 // 結果は差分として合成解像度へ足し戻す（反復回数がそのまま効くため）。
 struct SedimentResources {
-    rhi::GpuTexture bedrock;   // R32_FLOAT 動かない基盤
-    rhi::GpuTexture sediment;  // R32_FLOAT 可動な土砂
-    rhi::GpuTexture outgoing;  // RGBA32_FLOAT 4 方向への流出
-    rhi::GpuTexture original;  // R32_FLOAT 始まりの高さ（差分を出すため）
+    rhi::GpuTexture bedrock;    // R32_FLOAT 動かない基盤
+    rhi::GpuTexture sediment;   // R32_FLOAT 可動な土砂（Mask 出力の元）
+    rhi::GpuTexture outgoing;   // RGBA32_FLOAT 4 方向への流出
+    rhi::GpuTexture original;   // R32_FLOAT 始まりの高さ（差分を出すため）
+    rhi::GpuTexture maxScratch; // R32_UINT 1x1 厚みの最大値（正規化に使う）
     uint32_t resolution = 0;
 
     bool IsValid() const { return sediment.IsValid(); }
@@ -143,6 +144,11 @@ private:
                        const MaterialStack& stack);
     bool EnsureSedimentResources(rhi::Device& device, uint32_t resolution);
     void ReleaseSedimentResources(rhi::Device& device);
+    // 直前の堆積レイヤーが積もらせた厚みを、マスクとして焼く。
+    // **堆積レイヤーの直後にしか使えない**（作業用テクスチャを使い回すため）。
+    bool ApplySedimentMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                           ID3D12GraphicsCommandList* commandList, const MaskOp& op,
+                           rhi::GpuTexture& target);
     // ぼかし / 堆積のあと、Height から法線を作り直す（形と陰影を合わせる）。
     void RebuildNormalsFromHeight(rhi::Device& device, ID3D12PipelineState* pipeline,
                                   ID3D12GraphicsCommandList* commandList,

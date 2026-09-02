@@ -25,7 +25,10 @@ struct SedimentConstants
     // x: グリッドの一辺、y: 地形を土砂として扱うか、
     // z: 合成の Height の UAV、w: 合成解像度
     uint4 indices2;
-    // x: 安息角ぶんの落差（正規化ハイト）、y: 1 反復あたりの供給量、zw: 未使用
+    // x: 最大値をためる R32_UINT の UAV、y: マスクの出力 UAV、zw: 未使用
+    uint4 indices3;
+    // x: 安息角ぶんの落差（正規化ハイト）、y: 1 反復あたりの供給量、
+    // z: マスクのコントラスト、w: 未使用
     float4 params;
 };
 
@@ -203,4 +206,54 @@ void CsApply(uint3 dispatchThreadId : SV_DispatchThreadID)
                         original.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
 
     heightTarget[texel] = saturate(heightTarget[texel] + delta);
+}
+
+// --- 厚みをマスクにする -----------------------------------------------------
+//
+// 積もった土砂の厚みを 0〜1 のマスクにする。**一番厚い所で 1 に正規化**する
+// （絶対量ではなく分布を見るため。terrain-editor と同じ）。
+// 非負の float はビット列の大小が uint と同じ順序なので、そのまま
+// InterlockedMax に掛けられる（川筋の最大値集計と同じ手）。
+
+[numthreads(1, 1, 1)]
+void CsMaskMaxClear(uint3 dispatchThreadId : SV_DispatchThreadID)
+{
+    RWTexture2D<uint> maxScratch = ResourceDescriptorHeap[g_sediment.indices3.x];
+    maxScratch[uint2(0, 0)] = 0u;
+}
+
+[numthreads(8, 8, 1)]
+void CsMaskMaxReduce(uint3 dispatchThreadId : SV_DispatchThreadID)
+{
+    const uint2 cell = dispatchThreadId.xy;
+    if (OutsideSediment(cell)) { return; }
+
+    RWTexture2D<float> sediment = ResourceDescriptorHeap[g_sediment.indices0.y];
+    RWTexture2D<uint> maxScratch = ResourceDescriptorHeap[g_sediment.indices3.x];
+
+    uint previous;
+    InterlockedMax(maxScratch[uint2(0, 0)], asuint(max(sediment[cell], 0.0f)), previous);
+}
+
+[numthreads(8, 8, 1)]
+void CsMask(uint3 dispatchThreadId : SV_DispatchThreadID)
+{
+    // マスクは合成解像度で出す。厚みは大きなスケールの値なので、
+    // 解析グリッドから UV で引いて構わない。
+    const uint2 texel = dispatchThreadId.xy;
+    const uint resolution = g_sediment.indices2.w;
+    if (texel.x >= resolution || texel.y >= resolution) { return; }
+
+    Texture2D<float> sediment = ResourceDescriptorHeap[g_sediment.indices1.y];
+    RWTexture2D<uint> maxScratch = ResourceDescriptorHeap[g_sediment.indices3.x];
+    RWTexture2D<float> mask = ResourceDescriptorHeap[g_sediment.indices3.y];
+
+    const float2 uv = (float2(texel) + 0.5f) / float(resolution);
+    const float thickness = sediment.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
+    const float maxThickness = max(asfloat(maxScratch[uint2(0, 0)]), 1e-6f);
+
+    float value = saturate(thickness / maxThickness);
+    // コントラスト。0 で線形、上げるほど「積もった / 積もっていない」が分かれる。
+    value = ApplyMaskCurve(value, 1.0f + saturate(g_sediment.params.z) * 7.0f);
+    mask[texel] = value;
 }

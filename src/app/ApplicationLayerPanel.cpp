@@ -92,10 +92,16 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                 layer.sediment.resolution = kSedimentResolutionValues[resolutionIndex];
                 changed = true;
             }
+            changed |= ui::PropertyFloat(
+                "マスクの締まり", &layer.sediment.maskContrast, 0.0f, 1.0f,
+                sedimentDefaults.maskContrast,
+                "Mask 出力（積もった厚み）のコントラスト。0 で線形、"
+                "上げるほど「積もった / 積もっていない」がはっきり分かれる",
+                "%.2f");
             ui::EndPropertyTable();
         }
         ui::HintText("重力で土砂を再分配する。谷底に厚く積もり、尾根は痩せる。"
-                     "動いたぶんだけを下地のハイトへ足すので、細部は残る");
+                     "**Mask 出力は積もった厚み**なので、堆積した所へ別のマテリアルを乗せられる");
         return changed;
     }
 
