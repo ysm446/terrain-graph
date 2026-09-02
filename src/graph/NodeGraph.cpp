@@ -449,6 +449,48 @@ const Node* NodeGraph::PreviewTop(GraphId nodeId) const {
     return ChainTop();
 }
 
+bool NodeGraph::MaskDependsOnHeight(const Node& maskNode, int depth) const {
+    constexpr int kMaxDepth = 32;
+    if (depth > kMaxDepth) {
+        return false;
+    }
+    switch (maskNode.kind) {
+        case NodeKind::MaskFluvial:
+        case NodeKind::MaskSlope:
+        case NodeKind::Sediment:
+        case NodeKind::Crumbling:
+            return true;
+        case NodeKind::MaskLevels:
+        case NodeKind::MaskBlend:
+            for (size_t which = 0; which < 2; ++which) {
+                const MaskSourceRef input = UpstreamMaskOf(maskNode, which);
+                if (input.node != nullptr && MaskDependsOnHeight(*input.node, depth + 1)) {
+                    return true;
+                }
+            }
+            return false;
+        default:
+            return false;
+    }
+}
+
+int NodeGraph::FindMaskSpliceIndex(const Node& source,
+                                   const std::vector<const Node*>& layerNodes) const {
+    // 出どころの下地チェーンを下へ辿り、**最初に本流と一致した所**を返す。
+    // 自分自身は（本流に居ないから差し込むので）飛ばす。
+    for (const Node* node : ChainFrom(&source)) {
+        if (node == &source) {
+            continue;
+        }
+        for (size_t i = 0; i < layerNodes.size(); ++i) {
+            if (layerNodes[i] == node) {
+                return static_cast<int>(i);
+            }
+        }
+    }
+    return -1;
+}
+
 bool NodeGraph::MaskSourceResolves(const Node& consumer) const {
     const MaskSourceRef source = UpstreamMaskOf(consumer);
     if (source.node == nullptr) {
@@ -458,12 +500,14 @@ bool NodeGraph::MaskSourceResolves(const Node& consumer) const {
     if (source.node->kind != NodeKind::Sediment && source.node->kind != NodeKind::Crumbling) {
         return true;
     }
-    for (const Node* node : ChainFrom(&consumer)) {
+    const std::vector<const Node*> chain = ChainFrom(&consumer);
+    for (const Node* node : chain) {
         if (node == source.node) {
-            return true;
+            return true;  // チェーンの中にいる。そのまま走る。
         }
     }
-    return false;
+    // チェーンの外でも、下地が本流と合流していれば差し込める（Result は繋がなくてよい）。
+    return FindMaskSpliceIndex(*source.node, chain) >= 0;
 }
 
 const TerrainScale* NodeGraph::FindChainScale(GraphId nodeId) const {
@@ -729,6 +773,43 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace) co
         }
     }
 
+    // **Mask だけを繋いだ堆積 / 崩落を、チェーンへ差し込む。**
+    //
+    // この 2 つの Mask は「そのレイヤーを合成した時点」の作業用テクスチャから焼くので、
+    // チェーンの中で走っていないと結果が残らない。Result を繋がずに Mask だけ使いたい
+    // ことがあるので、**下地が本流と合流する所の直後**へ差し込み、
+    // 代わりに Height へは書き戻さない印（maskOnly）を付ける。
+    // 繋いでいない出力は結果に効かせない、という素直な形になる。
+    for (bool inserted = true; inserted;) {
+        inserted = false;
+        for (size_t i = 0; i < layerNodes.size(); ++i) {
+            const MaskSourceRef source = UpstreamMaskOf(*layerNodes[i]);
+            if (source.node == nullptr || (source.node->kind != NodeKind::Sediment &&
+                                           source.node->kind != NodeKind::Crumbling)) {
+                continue;
+            }
+            if (std::find(layerNodes.begin(), layerNodes.end(), source.node) !=
+                layerNodes.end()) {
+                continue;  // 既にチェーンの中にいる（Result を繋いでいる）。
+            }
+            const auto* settings = std::get_if<LayerNodeSettings>(&source.node->settings);
+            const int join = FindMaskSpliceIndex(*source.node, layerNodes);
+            if (settings == nullptr || join < 0) {
+                continue;  // 本流と合流しない。差し込めないので、そのまま定数へ落ちる。
+            }
+            const size_t at = static_cast<size_t>(join) + 1;
+            if (at > i) {
+                continue;  // 使う側より上には差し込めない（循環は接続時に弾いている）。
+            }
+            compositor::MaterialLayer layer = settings->layer;
+            layer.maskOnly = true;
+            compiled.layers.insert(compiled.layers.begin() + static_cast<ptrdiff_t>(at), layer);
+            layerNodes.insert(layerNodes.begin() + static_cast<ptrdiff_t>(at), source.node);
+            inserted = true;
+            break;
+        }
+    }
+
     // Mask 入力に繋がっているマスクのノードを op の列へ落とし、
     // レイヤーからは添字で参照する（同じ意味の値を 2 か所から編集させない）。
     // 効き方（係数 / カーブ / レベル / 反転）はレイヤー側の設定のまま。
@@ -779,10 +860,20 @@ CompiledGraph NodeGraph::CompileLayersTo(GraphId nodeId, GraphId outputPin) cons
     // マスクの出力を見ている間は、**そのマスクを白黒で貼って**見せる。
     // マスクは見ながら調整するものなので、選んだだけで結果が分かるようにする。
     if (previewType == ValueType::Mask) {
-        // 堆積のようにレイヤーでもあるノードは、PreviewTop が自分を返す
-        // （＝そのレイヤーまで合成した状態の上にマスクを貼る）。
+        // **下地のハイトを見ないマスクは、平らな板に貼る。**
+        // 画像やノイズは地形と無関係なので、地形の上に貼ると起伏の陰影に紛れて
+        // 濃淡が読めない。川筋や傾斜のように下地を見るマスクは地形の上に貼る
+        // （そちらは地形との対応こそが見たいもの）。
+        const bool onTerrain = MaskDependsOnHeight(*node);
         ChainTrace trace;
-        CompiledGraph compiled = CompileChainFrom(PreviewTop(nodeId), &trace);
+        CompiledGraph compiled;
+        if (onTerrain) {
+            // 堆積のようにレイヤーでもあるノードは、PreviewTop が自分を返す
+            // （＝そのレイヤーまで合成した状態の上にマスクを貼る）。
+            compiled = CompileChainFrom(PreviewTop(nodeId), &trace);
+        } else {
+            compiled.layers.push_back(compositor::MaterialStack::MakeBaseLayer());
+        }
         // プレビューの塗りレイヤーは列の一番上に積むので、Height の起点は
         // 「いまの一番上」（＝入力に繋いだチェーンの天面）になる。
         const int defaultHeightLayer =

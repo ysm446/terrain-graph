@@ -302,6 +302,11 @@ struct MaterialLayer {
     };
     CrumblingSettings crumbling;
 
+    // **Height へ書き戻さない。** 加工（堆積 / 崩落）を、マスクを得るためだけに
+    // 走らせるときに立てる。Result を繋がずに Mask だけを使う繋ぎ方のためのもの。
+    // **保存しない。** グラフの繋ぎ方からコンパイルのたびに決まる。
+    bool maskOnly = false;
+
     LayerMask mask;
 
     // このレイヤーが使うマテリアル（PBR のマップ一式）。

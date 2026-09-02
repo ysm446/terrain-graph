@@ -150,6 +150,7 @@ uint64_t HashHeightState(uint64_t seed, const MaterialLayer& layer) {
     hash = HashBytes(hash, &layer.blur, sizeof(layer.blur));
     hash = HashBytes(hash, &layer.sediment, sizeof(layer.sediment));
     hash = HashBytes(hash, &layer.crumbling, sizeof(layer.crumbling));
+    hash = HashBytes(hash, &layer.maskOnly, sizeof(layer.maskOnly));
     // マスクは「どこに載せるか」を決めるので Height にも効く。
     hash = HashBytes(hash, &layer.mask.source, sizeof(layer.mask.source));
     hash = HashBytes(hash, &layer.mask.constant, sizeof(layer.mask.constant));
@@ -863,24 +864,34 @@ bool MaterialEvaluator::ApplySediment(rhi::Device& device, rhi::PipelineCache& p
     }
 
     // 動いたぶんを合成の Height へ足し戻す。ここだけ合成解像度で回す。
-    TransitionIfNeeded(commandList, m_sediment.bedrock,
-                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    TransitionIfNeeded(commandList, m_sediment.sediment,
-                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    TransitionIfNeeded(commandList, m_sediment.original,
-                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    run(applyPass, DispatchCount(m_resolution));
+    // **Mask だけが目的のときは足し戻さない**（Result を繋いでいない）。
+    // 厚みは作業用テクスチャに残るので、マスクはこの後で焼ける。
+    if (!layer.maskOnly) {
+        TransitionIfNeeded(commandList, m_sediment.bedrock,
+                           D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        TransitionIfNeeded(commandList, m_sediment.sediment,
+                           D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        TransitionIfNeeded(commandList, m_sediment.original,
+                           D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        TransitionIfNeeded(commandList, m_textures.height,
+                           D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        run(applyPass, DispatchCount(m_resolution));
 
-    // 次に使うときは書き込みへ戻す。
-    TransitionIfNeeded(commandList, m_sediment.bedrock, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    TransitionIfNeeded(commandList, m_sediment.sediment, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    TransitionIfNeeded(commandList, m_sediment.original, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        // 次に使うときは書き込みへ戻す。
+        TransitionIfNeeded(commandList, m_sediment.bedrock,
+                           D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        TransitionIfNeeded(commandList, m_sediment.sediment,
+                           D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        TransitionIfNeeded(commandList, m_sediment.original,
+                           D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
 
     PIXEndEvent(commandList);
 
-    // 形が変わったので、法線も作り直す。
-    RebuildNormalsFromHeight(device, normalPass, commandList, stack);
+    // 形が変わったので、法線も作り直す。足し戻していないなら形は変わっていない。
+    if (!layer.maskOnly) {
+        RebuildNormalsFromHeight(device, normalPass, commandList, stack);
+    }
     return true;
 }
 
@@ -1062,15 +1073,20 @@ bool MaterialEvaluator::ApplyCrumbling(rhi::Device& device, rhi::PipelineCache& 
         barrier();
 
         // 積んだぶんを足し戻す。ここからは Height へ書く。
-        TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        commandList->SetPipelineState(resolvePass);
-        commandList->Dispatch(DispatchCount(m_resolution), DispatchCount(m_resolution), 1);
-        barrier();
+        // **Mask だけが目的のときは足し戻さない**（Result を繋いでいない）。
+        // 岩屑は作業用テクスチャに残るので、マスクはこの後で焼ける。
+        if (!layer.maskOnly) {
+            TransitionIfNeeded(commandList, m_textures.height,
+                               D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            commandList->SetPipelineState(resolvePass);
+            commandList->Dispatch(DispatchCount(m_resolution), DispatchCount(m_resolution), 1);
+            barrier();
+        }
     }
     PIXEndEvent(commandList);
 
-    // 形が変わったので、法線も作り直す。
-    if (normalPass != nullptr) {
+    // 形が変わったので、法線も作り直す。足し戻していないなら形は変わっていない。
+    if (normalPass != nullptr && !layer.maskOnly) {
         RebuildNormalsFromHeight(device, normalPass, commandList, stack);
     }
     return true;

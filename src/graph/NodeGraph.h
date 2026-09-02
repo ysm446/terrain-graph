@@ -196,6 +196,16 @@ public:
     // （堆積のように Result と Mask を両方出すノードは、ピンで見分ける）。
     CompiledGraph CompileLayersTo(GraphId nodeId, GraphId outputPin = 0) const;
 
+    // そのマスクが下地のハイトを見るか。見るなら地形の上に貼らないと意味が読めない。
+    // 川筋 / 傾斜 / 堆積 / 崩落が真で、画像 / ノイズは偽。
+    // レベルとブレンドは入力を辿る（1 つでも見ていれば真）。
+    bool MaskDependsOnHeight(const Node& maskNode, int depth = 0) const;
+
+    // 出どころ（堆積 / 崩落）をチェーンへ差し込む位置。返り値は layerNodes の添字で、
+    // **その直後**へ差し込む。合流する所が無ければ -1。
+    int FindMaskSpliceIndex(const Node& source,
+                            const std::vector<const Node*>& layerNodes) const;
+
     // Mask 入力に繋いだ出どころが、実際にマスクとして効くか。
     //
     // 堆積 / 崩落の Mask 出力は、**そのレイヤーを合成した時点の作業用テクスチャ**
