@@ -1,4 +1,13 @@
+#pragma code_page(65001)
+
+// **1 行目の code_page は消さないこと。**
+// rc.exe は既定でシステムの ANSI コードページ（日本語環境なら CP932）で読む。
+// このファイルと include するヘッダは UTF-8 なので、指定しないと日本語コメントが
+// 化けて `#define` を取りこぼし、アイコンが数値 ID ではなく**文字列名**で登録される。
+// そうなると `LoadImage(MAKEINTRESOURCE(TG_APP_ICON))` が見つけられず、
+// **ビルドは通るのにアイコンだけ出ない。**
+
 #include "../core/ResourceIds.h"
 
-// Keep the resource ID shared with the Win32 window code.
+// アイコンの ID は Win32 のウィンドウ側（core/Window.cpp）と共有する。
 TG_APP_ICON ICON "../../assets/icons/terrain_graph.ico"
