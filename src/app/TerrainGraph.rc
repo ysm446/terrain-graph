@@ -1,3 +1,4 @@
 #include "../core/ResourceIds.h"
 
+// Keep the resource ID shared with the Win32 window code.
 TG_APP_ICON ICON "../../assets/icons/terrain_graph.ico"

@@ -1,4 +1,6 @@
-#pragma once
+#ifndef TG_RESOURCE_IDS_H
+#define TG_RESOURCE_IDS_H
 
-// C++ と Windows リソーススクリプトで共有する ID。
 #define TG_APP_ICON 101
+
+#endif

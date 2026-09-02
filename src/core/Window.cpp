@@ -20,16 +20,24 @@ Window::~Window() {
 
 bool Window::Create(const wchar_t* title, uint32_t width, uint32_t height) {
     const HINSTANCE instance = ::GetModuleHandleW(nullptr);
+    const UINT systemDpi = ::GetDpiForSystem();
+    const auto loadIcon = [instance, systemDpi](int widthMetric, int heightMetric) {
+        const int iconWidth = ::GetSystemMetricsForDpi(widthMetric, systemDpi);
+        const int iconHeight = ::GetSystemMetricsForDpi(heightMetric, systemDpi);
+        return static_cast<HICON>(::LoadImageW(instance, MAKEINTRESOURCEW(TG_APP_ICON),
+                                               IMAGE_ICON, iconWidth, iconHeight,
+                                               LR_DEFAULTCOLOR | LR_SHARED));
+    };
+    const HICON largeIcon = loadIcon(SM_CXICON, SM_CYICON);
+    const HICON smallIcon = loadIcon(SM_CXSMICON, SM_CYSMICON);
 
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(wc);
     wc.style = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = &Window::WndProcThunk;
     wc.hInstance = instance;
-    wc.hIcon = ::LoadIconW(instance, MAKEINTRESOURCEW(TG_APP_ICON));
-    wc.hIconSm = static_cast<HICON>(::LoadImageW(instance, MAKEINTRESOURCEW(TG_APP_ICON),
-                                                 IMAGE_ICON, 16, 16,
-                                                 LR_DEFAULTCOLOR | LR_SHARED));
+    wc.hIcon = largeIcon;
+    wc.hIconSm = smallIcon;
     wc.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
     wc.lpszClassName = kWindowClassName;
     if (::RegisterClassExW(&wc) == 0 && ::GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
@@ -51,6 +59,11 @@ bool Window::Create(const wchar_t* title, uint32_t width, uint32_t height) {
         TG_LOG_ERROR("CreateWindowExW に失敗しました (0x%08lX)", ::GetLastError());
         return false;
     }
+
+    // クラスアイコンだけではタイトルバーへ反映されない環境があるため、
+    // 作成済みウィンドウにも大小アイコンを明示する。
+    ::SendMessageW(m_hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(largeIcon));
+    ::SendMessageW(m_hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(smallIcon));
 
     // 要求どおりのクライアント領域で開く。**入りきらなくても縮めない。**
     // スクリーンショットや録画の解像度を固定するのが目的なので、
