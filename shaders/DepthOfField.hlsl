@@ -36,8 +36,9 @@ struct DofConstants
     float apertureBlades;
     // 錯乱円に掛ける表示用の倍率。1 で現実どおり。
     float blurScale;
+    // シーンの距離に掛ける縮尺（1 / ミニチュアの縮尺）。1 で実物大。
+    float sceneScale;
     float pad0;
-    float pad1;
 };
 
 ConstantBuffer<DofConstants> g_dof : register(b0);
@@ -68,9 +69,14 @@ float SignedCocPixels(float viewDistance, float imageHeightPixels)
 {
     const float focalLength = max(g_dof.focalLengthMm, 1.0f) * 0.001f;  // m
     const float aperture = focalLength / max(g_dof.fStop, 0.5f);
+    // **シーンの距離だけを縮める。** レンズの側（焦点距離・絞り・センサー）は
+    // 現実のまま。錯乱円は距離に反比例するので、2km の地形を実寸で撮ると
+    // ほぼ無限遠になって 1 画素もボケない。縮尺 1:1000 なら 2m の模型を
+    // 撮る計算になり、素材を撮ったときと同じくらいボケる。
+    const float sceneScale = max(g_dof.sceneScale, 1e-6f);
     // ピント面と物体は、どちらもレンズより手前に来ないようにする（式が発散する）。
-    const float focus = max(g_dof.focusDistance, focalLength + 1e-3f);
-    const float distance = max(viewDistance, focalLength + 1e-3f);
+    const float focus = max(g_dof.focusDistance * sceneScale, focalLength + 1e-3f);
+    const float distance = max(viewDistance * sceneScale, focalLength + 1e-3f);
 
     const float coc = aperture * focalLength * (distance - focus) /
                       max(distance * (focus - focalLength), 1e-6f);

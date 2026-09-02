@@ -136,6 +136,13 @@ void Application::DrawMaterialPanel() {
                                   "%.0f mm", ImGuiSliderFlags_Logarithmic, 1.0f)) {
                 camera.SetFovY(renderer::FovYFromFocalLength(focalLength));
             }
+            // **F 値はレンズの値なのでここに置く。** 露出（絞り）とボケの
+            // どちらも同じ 1 つの値で決まる。EV を直接指定していると露出の節から
+            // 絞りの行が消えるので、レンズ側に置いておかないと触れなくなる。
+            ui::PropertyFloat("F 値", &m_renderer.Exposure().aperture, 1.0f, 32.0f,
+                              renderer::ExposureSettings{}.aperture,
+                              "絞り。小さいほどボケが強く、露出は明るくなる", "F%.1f",
+                              ImGuiSliderFlags_Logarithmic);
             ui::PropertyValue("画角", "%.1f 度（垂直）", RadiansToDegrees(camera.FovY()));
             ui::PropertyLabelEmpty("cameraReset");
             if (ui::Button("視点をリセット", ui::kWideButtonWidth)) {
@@ -145,8 +152,8 @@ void Application::DrawMaterialPanel() {
             ui::EndPropertyTable();
         }
 
-        // **レンズの値はここで増やさない。** 焦点距離はカメラ、F 値は露出から取る。
-        // 同じ意味の値をもう一組持つと、どちらが効いているのか分からなくなる。
+        // **レンズの値はここに出さない。** 焦点距離も F 値もカメラの節が持っていて、
+        // すぐ上に見えている。同じ値を並べると、どちらが効いているのか分からなくなる。
         ui::SectionHeader("被写界深度");
         renderer::DofSettings& dof = m_renderer.Dof();
         const renderer::DofSettings kDefaultDof;
@@ -155,15 +162,6 @@ void Application::DrawMaterialPanel() {
                              "ビューポートの見え方だけに掛かる。合成結果と書き出しには効かない");
 
             ImGui::BeginDisabled(!dof.enabled);
-            ui::PropertyValue("焦点距離", "%.0f mm（カメラ）",
-                              renderer::FocalLengthFromFovY(m_renderer.GetCamera().FovY()));
-            // **露出の絞りをそのまま編集する。** ボケ量を決めるのは同じ F 値なので、
-            // 被写界深度用にもう一つ持たない。EV を直接指定しているときは露出の節に
-            // 絞りの行が出ないため、ここから触れるようにしておく。
-            ui::PropertyFloat("F 値", &m_renderer.Exposure().aperture, 1.0f, 32.0f,
-                              renderer::ExposureSettings{}.aperture,
-                              "露出の絞りと同じ値。小さいほどボケが強くなる", "F%.1f",
-                              ImGuiSliderFlags_Logarithmic);
 
             ui::PropertyBool("注視点に追従", &dof.focusOnTarget, kDefaultDof.focusOnTarget,
                              "軌道カメラなので、見ているものは常に注視点にある。"
@@ -176,6 +174,13 @@ void Application::DrawMaterialPanel() {
             ImGui::EndDisabled();
             ui::PropertyValue("実効ピント距離", "%.2f m", m_renderer.FocusDistance());
 
+            ui::PropertyFloat("ミニチュア", &dof.miniatureScale, 1.0f, 10000.0f,
+                              kDefaultDof.miniatureScale,
+                              "1 で実物大。上げるほど模型を撮った計算になり、"
+                              "同じレンズでもボケが強くなる。実寸のままだと地形は"
+                              "遠すぎて 1 画素もボケない。2km の地形を引きで見るなら "
+                              "3000〜10000 が目安",
+                              "1 : %.0f", ImGuiSliderFlags_Logarithmic);
             ui::PropertyFloat("ボケの強さ", &dof.blurScale, 0.25f, 16.0f, kDefaultDof.blurScale,
                               "1 で現実どおり。2m 角の地面を広角で撮れば現実でも"
                               "全域にピントが合うので、見せたい量まで持ち上げるための誇張。"
@@ -243,8 +248,9 @@ void Application::DrawLightingPanel() {
                 ui::PropertyFloat("EV100", &exposure.manualEv100, -6.0f, 20.0f,
                                   kDefaultExposure.manualEv100, nullptr, "%.2f");
             } else {
-                ui::PropertyFloat("絞り", &exposure.aperture, 1.0f, 32.0f,
-                                  kDefaultExposure.aperture, "F 値。大きいほど暗くなる", "F%.1f");
+                // **編集はカメラの節の「F 値」1 か所だけ。** ここは EV の内訳を
+                // 読むための表示に留める（絞りはレンズの値で、ボケにも効くため）。
+                ui::PropertyValue("絞り", "F%.1f（カメラ）", exposure.aperture);
 
                 float shutterDenominator = 1.0f / exposure.shutterSpeed;
                 if (ui::PropertyFloat("シャッター", &shutterDenominator, 1.0f, 4000.0f,

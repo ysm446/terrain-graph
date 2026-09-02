@@ -122,6 +122,9 @@ base' = base + 0.5 * gain     ただしソースが constant のときは base �
 `preview` の `maskSaturationHatch` は、マスクのプレビューで 0 / 1 に
 張り付いた所へ斜線を引くかどうか（既定は切）。
 
+`preview.depthOfField` の `miniatureScale` は、被写界深度でシーンの距離に掛ける
+縮尺の分母（1 : この値）。既定は 1（実物大）。
+
 ノードごとの設定の意味は [nodes.md](nodes.md) にまとめてある。
 
 マスクのノードは種類ごとに使う設定が違うが、**全部書く**（種類を変えて戻したときに

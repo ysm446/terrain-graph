@@ -149,7 +149,9 @@ struct DofConstants {
 
     float apertureBlades;
     float blurScale;
-    float pad0[2];
+    // シーンの距離に掛ける縮尺（1 / ミニチュアの縮尺）。1 で実物大。
+    float sceneScale;
+    float pad0;
 };
 
 // メッシュ 1 回ぶんの描画を数える。
@@ -881,6 +883,8 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
         dofConstants.width = m_width;
         dofConstants.height = m_height;
         dofConstants.focalLengthMm = FocalLengthFromFovY(m_camera.FovY());
+        // ミニチュアの縮尺は「1 : N」で持つ。シーンの距離を 1/N にして式へ入れる。
+        dofConstants.sceneScale = 1.0f / std::max(m_dof.miniatureScale, 1.0f);
         dofConstants.fStop = m_exposure.aperture;
         dofConstants.focusDistance = FocusDistance();
         dofConstants.nearZ = m_camera.NearZ();

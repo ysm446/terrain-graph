@@ -928,6 +928,7 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     dofNode["focusOnTarget"] = dof.focusOnTarget;
     dofNode["focusDistance"] = dof.focusDistance;
     dofNode["blurScale"] = dof.blurScale;
+    dofNode["miniatureScale"] = dof.miniatureScale;
     dofNode["maxBlurPixels"] = dof.maxBlurPixels;
     dofNode["shape"] = EnumName(kApertureShapeNames, static_cast<uint32_t>(dof.shape));
     dofNode["rotationDegrees"] = dof.rotationDegrees;
@@ -1045,6 +1046,8 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
         target.focusOnTarget = ReadBool(dofNode, "focusOnTarget", defaults.focusOnTarget);
         target.focusDistance = ReadFloat(dofNode, "focusDistance", defaults.focusDistance);
         target.blurScale = ReadFloat(dofNode, "blurScale", defaults.blurScale);
+        target.miniatureScale =
+            ReadFloat(dofNode, "miniatureScale", defaults.miniatureScale);
         target.maxBlurPixels = ReadFloat(dofNode, "maxBlurPixels", defaults.maxBlurPixels);
         target.shape = static_cast<renderer::ApertureShape>(EnumValue(
             kApertureShapeNames, dofNode, "shape", static_cast<uint32_t>(defaults.shape)));
