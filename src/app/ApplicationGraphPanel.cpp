@@ -41,6 +41,8 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
             return ImVec4(0.50f, 0.62f, 0.70f, 1.0f);
         case graph::NodeKind::Blur:
             return ImVec4(0.62f, 0.58f, 0.68f, 1.0f);
+        case graph::NodeKind::Sediment:
+            return ImVec4(0.70f, 0.62f, 0.52f, 1.0f);
         case graph::NodeKind::MaskImage:
             return ImVec4(0.72f, 0.72f, 0.72f, 1.0f);
         case graph::NodeKind::MaskFluvial:
@@ -500,6 +502,8 @@ void Application::DrawGraphEditor() {
         addNodeMenuItem(graph::NodeKind::Liquid, "Liquid — 水位より低い所に水を張る");
         ImGui::Separator();
         addNodeMenuItem(graph::NodeKind::Blur, "Heightmap Blur — ハイトをぼかしてならす");
+        addNodeMenuItem(graph::NodeKind::Sediment,
+                        "Sediment — 土砂を重力で再分配して谷に積もらせる");
         ImGui::Separator();
         addNodeMenuItem(graph::NodeKind::MaskImage,
                         "Mask Image — 画像をマスクにする（白い所だけ乗る）");

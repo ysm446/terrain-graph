@@ -64,12 +64,13 @@ constexpr std::array<PinDefinition, 1> kSourceNodePins = {{
     {PinKind::Output, ValueType::Material, "Result"},
 }};
 
-constexpr std::array<NodeDefinition, 11> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 12> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
     {NodeKind::Liquid, "liquid", "Liquid", kLayerNodePins},
     {NodeKind::Blur, "heightmapBlur", "Heightmap Blur", kFilterNodePins},
+    {NodeKind::Sediment, "sediment", "Sediment", kFilterNodePins},
     {NodeKind::MaskImage, "maskImage", "Mask Image", kMaskSourcePins},
     {NodeKind::MaskFluvial, "maskFluvial", "Mask Fluvial", kMaskFromHeightPins},
     {NodeKind::MaskSlope, "maskSlope", "Mask Slope", kMaskFromHeightPins},
@@ -104,7 +105,8 @@ const NodeDefinition* FindNodeDefinitionByName(std::string_view name) {
 
 bool IsLayerNodeKind(NodeKind kind) {
     return kind == NodeKind::Surface || kind == NodeKind::Shape || kind == NodeKind::Liquid ||
-           kind == NodeKind::Heightmap || kind == NodeKind::Blur;
+           kind == NodeKind::Heightmap || kind == NodeKind::Blur ||
+           kind == NodeKind::Sediment;
 }
 
 bool IsSourceNodeKind(NodeKind kind) {
@@ -138,6 +140,8 @@ compositor::LayerKind LayerKindFor(NodeKind kind) {
             return compositor::LayerKind::Liquid;
         case NodeKind::Blur:
             return compositor::LayerKind::Blur;
+        case NodeKind::Sediment:
+            return compositor::LayerKind::Sediment;
         default:
             return compositor::LayerKind::Surface;
     }

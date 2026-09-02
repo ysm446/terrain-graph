@@ -58,6 +58,8 @@ enum class NodeKind : uint32_t {
     MaskLevels = 9,
     // マスク 2 枚の合成。**グラフが合流する唯一のノード。**
     MaskBlend = 10,
+    // 土砂を重力で再分配する加工（terrain-editor の Sediment）。
+    Sediment = 11,
 };
 
 struct PinDefinition {

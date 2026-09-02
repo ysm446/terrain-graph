@@ -39,14 +39,21 @@ enum class ValueSource : uint32_t {
 //   Liquid:  絶対値の水位。下地が水位より低い所だけ高さを水位へ置き換える。
 //            重みは「水位 − 下地の高さ」だけから決めるので、
 //            水位を動かしても下地は変形しない。
-// Blur   : 合成しない**加工**。下地のハイトをぼかし、法線を作り直す。
-//          色もマスクも持たない（下地と競合する相手ではないため）。
+// Blur     : 合成しない**加工**。下地のハイトをぼかし、法線を作り直す。
+//            色もマスクも持たない（下地と競合する相手ではないため）。
+// Sediment : 同じく加工。重力で土砂を再分配し、谷に厚く積もらせる。
 enum class LayerKind : uint32_t {
     Surface = 0,
     Shape = 1,
     Liquid = 2,
     Blur = 3,
+    Sediment = 4,
 };
+
+// 合成せずハイトを書き換える加工か。**下地にはなれない**（ならす相手が要る）。
+inline bool IsHeightOperationKind(LayerKind kind) {
+    return kind == LayerKind::Blur || kind == LayerKind::Sediment;
+}
 
 // ハイトの基準面。ソースの値がこの値のとき、そのテクセルは「基準の高さ」ちょうどになる。
 //
@@ -225,6 +232,30 @@ struct MaterialLayer {
     // サーフェスのハイトはマテリアルのハイトマップから引く（同じ意味の値を
     // 2 か所に置かない）。マテリアルがあるときは参照しない。
     MapSlot heightTexture;
+
+    // 堆積（kind == LayerKind::Sediment のときだけ意味を持つ）。
+    //
+    // terrain-editor の Sediment を移したもの。**可動な土砂**を重力で再分配し、
+    // 安息角を超えた斜面から低い隣へ滑らせる。谷底に厚く積もり、尾根が痩せる。
+    struct SedimentSettings {
+        // 上乗せする土砂の厚み（m）。「地形を土砂にする」が入のときは追加ぶん。
+        float emissionMeters = 0.5f;
+        // 供給を何割の反復にかけて積むか。0 なら最初の 1 反復で全量。
+        float emissionTime = 0.0f;
+        // 1 反復あたりの沈降距離（m）。大きいほど広い盆地が早く落ち着くが重い。
+        float detailMeters = 8.0f;
+        int iterations = 40;      // 外側の緩和反復
+        int stabilization = 2;    // 1 反復のなかで滑らせる回数
+        // 流動性。0 で完全流体（水平に均される）、1 で 80 度まで粘る。
+        // 角度は viscosity^2 * 80 度（terrain-editor と同じ曲線）。
+        float viscosity = 0.2f;
+        // **入力の地形そのものを可動な土砂として扱う。** 切ると入力は動かない
+        // 基盤になり、供給量で足したぶんだけが流れる。
+        bool convertTerrain = true;
+        // 計算グリッド。合成解像度とは別に持つ（反復回数がそのまま効くため）。
+        uint32_t resolution = 512;
+    };
+    SedimentSettings sediment;
 
     // ハイトのぼかし（kind == LayerKind::Blur のときだけ意味を持つ）。
     // 半径は**メートル**。合成解像度を変えても効きが変わらないようにするため、

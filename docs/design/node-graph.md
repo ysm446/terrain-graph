@@ -1,7 +1,7 @@
 # node-graph — ノードグラフの設計
 
 作成日時: 2026-09-02 12:50
-更新日時: 2026-09-03 04:25
+更新日時: 2026-09-03 06:30
 
 `src/graph/` とグラフパネル（`src/app/ApplicationGraphPanel.cpp`）の設計。
 terrain-editor から移植したのは**仕組み**であって、ノードの中身ではない
@@ -40,6 +40,7 @@ terrain-editor から移植したのは**仕組み**であって、ノードの�
 | Shape | `shape` | 同上 | `MaterialLayer`（kind=Shape） |
 | Liquid | `liquid` | 同上 | `MaterialLayer`（kind=Liquid) |
 | Heightmap Blur | `heightmapBlur` | Base(入力) / Result(出力) | `MaterialLayer`（kind=Blur）の `blur` |
+| Sediment | `sediment` | Base(入力) / Result(出力) | `MaterialLayer`（kind=Sediment）の `sediment` |
 | Mask Image | `maskImage` | Mask(出力) のみ | `MapSlot`（画像 + 読むチャンネル） |
 | Mask Fluvial | `maskFluvial` | Base(入力) / Mask(出力) | `FluvialParams`（川筋） |
 | Mask Slope | `maskSlope` | Base(入力) / Mask(出力) | `SlopeParams`（傾斜） |

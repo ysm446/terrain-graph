@@ -1,7 +1,7 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-09-03 03:10
+更新日時: 2026-09-03 06:30
 
 実装は [src/io/ProjectIo.cpp](../../src/io/ProjectIo.cpp)。**形式を変えたらこの文書も直す。**
 
@@ -118,6 +118,9 @@ base' = base + 0.5 * gain     ただしソースが constant のときは base �
 レイヤーノードの `inputs` は Base / Mask の 2 本になったが、**ピンは定義から
 再生成する**ので、Mask ピンを持たない古いファイルもそのまま読める
 （足りないピンには新しい ID が振られ、リンクの無い入力になる）。
+
+レイヤーの `sediment`（`{ emission, emissionTime, detail, iterations, stabilization,
+viscosity, convertTerrain, resolution }`）は `kind` が `sediment` のノードだけが使う。
 
 レイヤーの `blur`（`{ radius, strength, iterations }`）は
 `kind` が `blur` のノード（Heightmap Blur）だけが使う。無ければ既定値。
@@ -258,7 +261,7 @@ RGB をそのまま使うマップ（ベースカラー / 法線）はテクス�
 | 種別 | 値 |
 | --- | --- |
 | チャンネル指定 | `r` / `g` / `b` / `a` |
-| レイヤーの種類 | `surface` / `shape` / `liquid` / `blur` |
+| レイヤーの種類 | `surface` / `shape` / `liquid` / `blur` / `sediment` |
 | ハイトのソース | `constant` / `noise` / `texture` |
 | ノイズ | `fbm` / `ridged` / `worley` |
 | マスクのソース | `constant` / `noise` / `texture` / `height` / `slope` / `curvature` / `cavity` / `paint` / `fluvial` |

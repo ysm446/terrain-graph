@@ -34,6 +34,71 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
     const bool isLiquid = (layer.kind == compositor::LayerKind::Liquid);
     bool changed = false;
 
+    // 堆積は合成レイヤーではなく「下地のハイトを土砂で作り替える加工」。
+    if (layer.kind == compositor::LayerKind::Sediment) {
+        const compositor::MaterialLayer::SedimentSettings sedimentDefaults;
+        ui::SectionHeader("基本");
+        if (ui::BeginPropertyTable("sedimentBasicRows")) {
+            char sedimentName[128] = {};
+            std::snprintf(sedimentName, sizeof(sedimentName), "%s", layer.name.c_str());
+            if (ui::PropertyTextInput("名前", sedimentName, sizeof(sedimentName))) {
+                layer.name = sedimentName;
+                changed = true;
+            }
+            ui::EndPropertyTable();
+        }
+        ui::SectionHeader("堆積");
+        if (ui::BeginPropertyTable("sedimentRows")) {
+            changed |= ui::PropertyBool(
+                "地形を土砂にする", &layer.sediment.convertTerrain,
+                sedimentDefaults.convertTerrain,
+                "入の間は入力の地形そのものが崩れて谷を埋める。"
+                "切ると入力は動かない基盤になり、供給量で足したぶんだけが流れる");
+            changed |= ui::PropertyFloat("供給量", &layer.sediment.emissionMeters, 0.0f, 20.0f,
+                                         sedimentDefaults.emissionMeters,
+                                         "全体へ上乗せする土砂の厚み（m）", "%.2f m");
+            changed |= ui::PropertyFloat(
+                "供給時間", &layer.sediment.emissionTime, 0.0f, 1.0f,
+                sedimentDefaults.emissionTime,
+                "0 で最初に全量を積む。上げるほど反復に分けて積むので、"
+                "前の反復が彫った河道に流れ込んで筋がはっきりする",
+                "%.2f");
+            changed |= ui::PropertyFloat(
+                "最大ディテール", &layer.sediment.detailMeters, 1.0f, 512.0f,
+                sedimentDefaults.detailMeters,
+                "1 反復でどこまで土砂を運ぶか（m）。大きいほど広い盆地が早く落ち着くが重い",
+                "%.1f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat(
+                "粘性", &layer.sediment.viscosity, 0.0f, 1.0f, sedimentDefaults.viscosity,
+                "安息角。0 で水平に均され、上げるほど急な斜面のまま留まる（1 で 80 度）",
+                "%.2f");
+            changed |= ui::PropertyInt("反復", &layer.sediment.iterations, 1, 200,
+                                       sedimentDefaults.iterations,
+                                       "崩し直す回数。多いほど落ち着くが重い");
+            changed |= ui::PropertyInt("安定化", &layer.sediment.stabilization, 1, 8,
+                                       sedimentDefaults.stabilization,
+                                       "1 反復のなかで何回滑らせるか。"
+                                       "粘性が低いときは上げると暴れにくい");
+            int resolutionIndex = 1;
+            for (int i = 0; i < IM_ARRAYSIZE(kSedimentResolutionValues); ++i) {
+                if (kSedimentResolutionValues[i] == layer.sediment.resolution) {
+                    resolutionIndex = i;
+                }
+            }
+            if (ui::PropertyCombo("解像度", &resolutionIndex, kSedimentResolutionLabels,
+                                  IM_ARRAYSIZE(kSedimentResolutionLabels), 1,
+                                  "土砂を動かすグリッド。**合成解像度とは別**。"
+                                  "上げるほど細かい筋が出るが、反復のコストも比例して増える")) {
+                layer.sediment.resolution = kSedimentResolutionValues[resolutionIndex];
+                changed = true;
+            }
+            ui::EndPropertyTable();
+        }
+        ui::HintText("重力で土砂を再分配する。谷底に厚く積もり、尾根は痩せる。"
+                     "動いたぶんだけを下地のハイトへ足すので、細部は残る");
+        return changed;
+    }
+
     // ブラーは合成レイヤーではなく「下地のハイトをぼかす加工」。
     // 色もハイトのソースもマスクも持たないので、専用の行だけを出す。
     if (layer.kind == compositor::LayerKind::Blur) {

@@ -42,6 +42,18 @@ struct FluvialResources {
     bool IsValid() const { return heights.IsValid(); }
 };
 
+// 堆積（Sediment）の作業リソース。**合成解像度とは別のグリッド**で回し、
+// 結果は差分として合成解像度へ足し戻す（反復回数がそのまま効くため）。
+struct SedimentResources {
+    rhi::GpuTexture bedrock;   // R32_FLOAT 動かない基盤
+    rhi::GpuTexture sediment;  // R32_FLOAT 可動な土砂
+    rhi::GpuTexture outgoing;  // RGBA32_FLOAT 4 方向への流出
+    rhi::GpuTexture original;  // R32_FLOAT 始まりの高さ（差分を出すため）
+    uint32_t resolution = 0;
+
+    bool IsValid() const { return sediment.IsValid(); }
+};
+
 // 評価する出力領域。全体を 1 回で評価するときは矩形に全体を渡す。
 struct TileRect {
     uint32_t x = 0;
@@ -124,12 +136,25 @@ private:
     bool EnsureFluvialResources(rhi::Device& device, uint32_t workResolution);
     void ReleaseFluvialResources(rhi::Device& device);
 
+    // 堆積レイヤー 1 枚ぶん。土砂を重力で再分配し、差分を Height へ足し戻して
+    // 法線を作り直す。**タイルには分けない**（グリッド全体を何度も舐めるため）。
+    bool ApplySediment(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                       ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
+                       const MaterialStack& stack);
+    bool EnsureSedimentResources(rhi::Device& device, uint32_t resolution);
+    void ReleaseSedimentResources(rhi::Device& device);
+    // ぼかし / 堆積のあと、Height から法線を作り直す（形と陰影を合わせる）。
+    void RebuildNormalsFromHeight(rhi::Device& device, ID3D12PipelineState* pipeline,
+                                  ID3D12GraphicsCommandList* commandList,
+                                  const MaterialStack& stack);
+
     bool ApplyHeightBlur(rhi::Device& device, ID3D12GraphicsCommandList* commandList,
                          ID3D12PipelineState* blurPipeline,
                          ID3D12PipelineState* normalPipeline, const MaterialLayer& layer,
                          const MaterialStack& stack, const std::vector<TileRect>& tiles);
 
     FluvialResources m_fluvial;
+    SedimentResources m_sediment;
     // マスクの op の結果。添字は MaskProgram と同じ。
     std::vector<rhi::GpuTexture> m_maskOpTextures;
     std::vector<uint32_t> m_maskOpResolutions;

@@ -100,6 +100,14 @@ inline const compositor::MaterialLayer kDefaultBlurLayer = [] {
     return layer;
 }();
 
+// 堆積ノードの既定値。値は terrain-editor の Sediment に合わせてある。
+inline const compositor::MaterialLayer kDefaultSedimentLayer = [] {
+    compositor::MaterialLayer layer;
+    layer.kind = compositor::LayerKind::Sediment;
+    layer.name = "Sediment";
+    return layer;
+}();
+
 inline const compositor::MaterialLayer& DefaultLayerFor(compositor::LayerKind kind) {
     switch (kind) {
         case compositor::LayerKind::Shape:
@@ -108,13 +116,19 @@ inline const compositor::MaterialLayer& DefaultLayerFor(compositor::LayerKind ki
             return kDefaultLiquidLayer;
         case compositor::LayerKind::Blur:
             return kDefaultBlurLayer;
+        case compositor::LayerKind::Sediment:
+            return kDefaultSedimentLayer;
         default:
             return kDefaultLayer;
     }
 }
 
 // レイヤー一覧のツールチップなどで使う種類の表示名。LayerKind の並びと一致させること。
-inline const char* const kLayerKindLabels[] = {"サーフェス", "シェイプ", "水面", "ブラー"};
+inline const char* const kLayerKindLabels[] = {"サーフェス", "シェイプ", "水面", "ブラー",
+                                               "堆積"};
+// 堆積の計算グリッド。合成解像度とは別に持つ。
+inline const char* const kSedimentResolutionLabels[] = {"256", "512", "1024"};
+inline constexpr uint32_t kSedimentResolutionValues[] = {256, 512, 1024};
 inline const compositor::BrushSettings kDefaultBrush;
 inline const renderer::LightSettings kDefaultLight;
 inline const renderer::ExposureSettings kDefaultExposure;

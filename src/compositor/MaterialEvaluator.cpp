@@ -56,6 +56,14 @@ struct LayerConstants {
     uint32_t mapChannels[4];
 };
 
+// GPU 側の SedimentConstants と一致させること。
+struct SedimentConstants {
+    uint32_t indices0[4];  // UAV: 基盤, 土砂, 流出, 元の高さ
+    uint32_t indices1[4];  // SRV: 基盤, 土砂, 元の高さ, 合成の Height
+    uint32_t indices2[4];  // グリッドの一辺, 地形を土砂として扱うか, Height の UAV, 合成解像度
+    float params[4];       // 安息角ぶんの落差, 1 反復あたりの供給量, 未使用 x2
+};
+
 // GPU 側の MaskOpConstants と一致させること。
 struct MaskOpConstants {
     uint32_t indices[4];  // 出力 UAV, 入力 A SRV, 入力 B SRV, 素材 SRV
@@ -277,6 +285,7 @@ bool MaterialEvaluator::EnsureMaskOpTextures(rhi::Device& device, const MaskProg
 
 void MaterialEvaluator::Destroy(rhi::Device& device) {
     ReleaseFluvialResources(device);
+    ReleaseSedimentResources(device);
     for (rhi::GpuTexture& texture : m_maskOpTextures) {
         device.DeferRelease(texture);
     }
@@ -593,6 +602,227 @@ bool MaterialEvaluator::ApplyFluvialMask(rhi::Device& device,
     return true;
 }
 
+void MaterialEvaluator::ReleaseSedimentResources(rhi::Device& device) {
+    device.DeferRelease(m_sediment.bedrock);
+    device.DeferRelease(m_sediment.sediment);
+    device.DeferRelease(m_sediment.outgoing);
+    device.DeferRelease(m_sediment.original);
+    m_sediment.resolution = 0;
+}
+
+// 堆積の作業リソースは**使うときだけ**作る。グリッドが変わったら作り直す。
+bool MaterialEvaluator::EnsureSedimentResources(rhi::Device& device, uint32_t resolution) {
+    if (m_sediment.resolution == resolution && m_sediment.IsValid()) {
+        return true;
+    }
+    ReleaseSedimentResources(device);
+
+    const bool ok =
+        CreateChannelTexture(device, resolution, DXGI_FORMAT_R32_FLOAT, L"SedimentBedrock",
+                             m_sediment.bedrock) &&
+        CreateChannelTexture(device, resolution, DXGI_FORMAT_R32_FLOAT, L"SedimentSediment",
+                             m_sediment.sediment) &&
+        CreateChannelTexture(device, resolution, DXGI_FORMAT_R32G32B32A32_FLOAT,
+                             L"SedimentOutgoing", m_sediment.outgoing) &&
+        CreateChannelTexture(device, resolution, DXGI_FORMAT_R32_FLOAT, L"SedimentOriginal",
+                             m_sediment.original);
+    if (!ok) {
+        TG_LOG_WARN("堆積の作業リソースを作れませんでした（%u^2）", resolution);
+        ReleaseSedimentResources(device);
+        return false;
+    }
+    m_sediment.resolution = resolution;
+    return true;
+}
+
+// ぼかし / 堆積で Height を書き換えたあと、そこから法線を作り直す。
+// **Height だけを変えると形と陰影が食い違う。**
+void MaterialEvaluator::RebuildNormalsFromHeight(rhi::Device& device,
+                                                 ID3D12PipelineState* pipeline,
+                                                 ID3D12GraphicsCommandList* commandList,
+                                                 const MaterialStack& stack) {
+    if (pipeline == nullptr) {
+        return;
+    }
+    BlurConstants constants = {};
+    constants.sourceIndex = m_textures.height.SrvIndex();
+    constants.outputIndex = m_textures.normal.UavIndex();
+    constants.axis = 0;
+    constants.radiusTexels = 1.0f;
+    constants.tile[0] = 0;
+    constants.tile[1] = 0;
+    constants.tile[2] = m_resolution;
+    constants.tile[3] = m_resolution;
+    constants.resolution[0] = m_resolution;
+    constants.resolution[1] = m_resolution;
+    constants.strength = 1.0f;
+    constants.heightPerSize = (stack.SizeMeters() > 0.0f)
+                                  ? (stack.HeightMeters() / stack.SizeMeters())
+                                  : 0.0f;
+
+    const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(BlurConstants), 256);
+    if (!cb.IsValid()) {
+        return;
+    }
+    std::memcpy(cb.cpu, &constants, sizeof(constants));
+
+    TransitionIfNeeded(commandList, m_textures.height,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    commandList->SetPipelineState(pipeline);
+    commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+    commandList->Dispatch(DispatchCount(m_resolution), DispatchCount(m_resolution), 1);
+    TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+    const D3D12_RESOURCE_BARRIER barriers[] = {
+        CD3DX12_RESOURCE_BARRIER::UAV(m_textures.normal.resource.Get()),
+    };
+    commandList->ResourceBarrier(_countof(barriers), barriers);
+}
+
+// 堆積。terrain-editor の Sediment を移植したもの。
+//
+//   setup →（反復ごとに）供給 → 滑らせ（掃引 1 / 掃引 2）を macro × 安定化 回
+//        → 差分を Height へ足し戻す → 法線を作り直す
+//
+// **合成解像度とは別のグリッド**で回し、動いたぶんだけを足し戻すので、
+// 合成解像度の細部は残る。
+bool MaterialEvaluator::ApplySediment(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                      ID3D12GraphicsCommandList* commandList,
+                                      const MaterialLayer& layer, const MaterialStack& stack) {
+    const MaterialLayer::SedimentSettings& params = layer.sediment;
+    const uint32_t resolution = std::clamp(params.resolution, 64u, 2048u);
+    if (!EnsureSedimentResources(device, resolution)) {
+        return false;
+    }
+
+    const auto pipeline = [&](const wchar_t* entry) {
+        return pipelineCache.GetCompute(L"CompositeSediment.hlsl", entry);
+    };
+    ID3D12PipelineState* setupPass = pipeline(L"CsSetup");
+    ID3D12PipelineState* emitPass = pipeline(L"CsEmit");
+    ID3D12PipelineState* sweep1Pass = pipeline(L"CsSweep1");
+    ID3D12PipelineState* sweep2Pass = pipeline(L"CsSweep2");
+    ID3D12PipelineState* applyPass = pipeline(L"CsApply");
+    ID3D12PipelineState* normalPass =
+        pipelineCache.GetCompute(L"CompositeBlur.hlsl", L"CsNormalFromHeight");
+    if (setupPass == nullptr || emitPass == nullptr || sweep1Pass == nullptr ||
+        sweep2Pass == nullptr || applyPass == nullptr) {
+        return false;
+    }
+
+    // --- パラメータを正規化ハイトの単位へ直す ------------------------------
+    // ハイトは 0〜1 で、その全幅が標高差（m）。安息角も供給量も m で持っているので、
+    // ここで割って正規化ハイトへ揃える。
+    const float sizeMeters = (stack.SizeMeters() > 0.0f) ? stack.SizeMeters() : 1.0f;
+    const float heightMeters = (stack.HeightMeters() > 0.0f) ? stack.HeightMeters() : 1.0f;
+    const float cellMeters = sizeMeters / static_cast<float>(std::max(1u, resolution - 1u));
+
+    // 粘性は角度の二乗カーブ（0% で 0 度、20% で約 3 度、100% で 80 度）。
+    const float viscosity = std::clamp(params.viscosity, 0.0f, 1.0f);
+    const float talusDegrees = viscosity * viscosity * 80.0f;
+    const float talus =
+        std::tan(talusDegrees * 3.14159265358979323846f / 180.0f) * cellMeters / heightMeters;
+
+    const int iterations = std::clamp(params.iterations, 1, 200);
+    const int stabilization = std::clamp(params.stabilization, 1, 8);
+    // 「1 反復あたりの沈降距離」はセル数（＝滑らせる回数）に直す。
+    const int macroPasses = std::clamp(
+        static_cast<int>(std::ceil(params.detailMeters / std::max(cellMeters, 1e-6f))), 1, 64);
+    const int emissionEnd =
+        std::max(1, static_cast<int>(std::ceil(static_cast<float>(iterations) *
+                                               std::clamp(params.emissionTime, 0.0f, 1.0f))));
+    const float emissionPerIteration =
+        (params.emissionMeters / heightMeters) / static_cast<float>(emissionEnd);
+
+    SedimentConstants constants = {};
+    constants.indices0[0] = m_sediment.bedrock.UavIndex();
+    constants.indices0[1] = m_sediment.sediment.UavIndex();
+    constants.indices0[2] = m_sediment.outgoing.UavIndex();
+    constants.indices0[3] = m_sediment.original.UavIndex();
+    constants.indices1[0] = m_sediment.bedrock.SrvIndex();
+    constants.indices1[1] = m_sediment.sediment.SrvIndex();
+    constants.indices1[2] = m_sediment.original.SrvIndex();
+    constants.indices1[3] = m_textures.height.SrvIndex();
+    constants.indices2[0] = resolution;
+    constants.indices2[1] = params.convertTerrain ? 1u : 0u;
+    constants.indices2[2] = m_textures.height.UavIndex();
+    constants.indices2[3] = m_resolution;
+    constants.params[0] = talus;
+
+    // 定数は「供給あり / なし」の 2 本だけ確保して使い回す。
+    // 反復のたびに確保すると、アップロードリングを 1 フレームで食い潰す。
+    const auto upload = [&](float emission, D3D12_GPU_VIRTUAL_ADDRESS& outAddress) {
+        SedimentConstants copy = constants;
+        copy.params[1] = emission;
+        const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(SedimentConstants), 256);
+        if (!cb.IsValid()) {
+            return false;
+        }
+        std::memcpy(cb.cpu, &copy, sizeof(copy));
+        outAddress = cb.gpuAddress;
+        return true;
+    };
+    D3D12_GPU_VIRTUAL_ADDRESS slideConstants = 0;
+    D3D12_GPU_VIRTUAL_ADDRESS emitConstants = 0;
+    if (!upload(0.0f, slideConstants) || !upload(emissionPerIteration, emitConstants)) {
+        return false;
+    }
+
+    PIXBeginEvent(commandList, PIX_COLOR(180, 150, 110), "CompositeSediment");
+
+    // 入力の Height は読み取り専用（setup が読む）。
+    TransitionIfNeeded(commandList, m_textures.height,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+
+    const uint32_t groups = DispatchCount(resolution);
+    const auto barrier = [&]() {
+        const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+        commandList->ResourceBarrier(1, &uav);
+    };
+    const auto run = [&](ID3D12PipelineState* pipelineState, uint32_t groupCount) {
+        commandList->SetPipelineState(pipelineState);
+        commandList->Dispatch(groupCount, groupCount, 1);
+        barrier();
+    };
+
+    commandList->SetComputeRootConstantBufferView(1, slideConstants);
+    run(setupPass, groups);
+
+    for (int iteration = 0; iteration < iterations; ++iteration) {
+        if (iteration < emissionEnd && emissionPerIteration > 0.0f) {
+            commandList->SetComputeRootConstantBufferView(1, emitConstants);
+            run(emitPass, groups);
+            commandList->SetComputeRootConstantBufferView(1, slideConstants);
+        }
+        // 粗いスケールから細かいスケールまで、同じ滑らせを繰り返す。
+        for (int pass = 0; pass < macroPasses * stabilization; ++pass) {
+            run(sweep1Pass, groups);
+            run(sweep2Pass, groups);
+        }
+    }
+
+    // 動いたぶんを合成の Height へ足し戻す。ここだけ合成解像度で回す。
+    TransitionIfNeeded(commandList, m_sediment.bedrock,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(commandList, m_sediment.sediment,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(commandList, m_sediment.original,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    run(applyPass, DispatchCount(m_resolution));
+
+    // 次に使うときは書き込みへ戻す。
+    TransitionIfNeeded(commandList, m_sediment.bedrock, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, m_sediment.sediment, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, m_sediment.original, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+    PIXEndEvent(commandList);
+
+    // 形が変わったので、法線も作り直す。
+    RebuildNormalsFromHeight(device, normalPass, commandList, stack);
+    return true;
+}
+
 bool MaterialEvaluator::ApplyHeightBlur(rhi::Device& device,
                                        ID3D12GraphicsCommandList* commandList,
                                        ID3D12PipelineState* blurPipeline,
@@ -823,13 +1053,18 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         const MaterialLayer& layer = stack.Layers()[layerIndex];
         const bool isBaseLayer = (layerIndex == baseIndex);
 
-        // ブラーは合成しない**加工**。下地のハイトをならして法線を作り直す。
-        // 下に合成済みのレイヤーが無いとぼかす相手がいないので、その場合は素通り。
-        if (layer.kind == LayerKind::Blur) {
+        // ブラーと堆積は合成しない**加工**。下地のハイトを書き換えて法線を作り直す。
+        // 下に合成済みのレイヤーが無いと相手がいないので、その場合は素通り。
+        if (IsHeightOperationKind(layer.kind)) {
             const bool hasUnderlying = (baseIndex != static_cast<size_t>(-1)) &&
                                        (layerIndex > baseIndex);
-            if (layer.enabled && hasUnderlying && blurPipeline != nullptr &&
-                blurNormalPipeline != nullptr) {
+            if (layer.enabled && hasUnderlying && layer.kind == LayerKind::Sediment) {
+                if (!ApplySediment(device, pipelineCache, commandList, layer, stack)) {
+                    complete = false;
+                }
+                ++m_evaluatedLayerCount;
+            } else if (layer.enabled && hasUnderlying && blurPipeline != nullptr &&
+                       blurNormalPipeline != nullptr) {
                 if (!ApplyHeightBlur(device, commandList, blurPipeline, blurNormalPipeline,
                                      layer, stack, tiles)) {
                     complete = false;

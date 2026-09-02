@@ -71,9 +71,9 @@ void MaterialStack::MoveTo(size_t from, size_t to) {
 
 size_t MaterialStack::FirstEnabledIndex() const {
     for (size_t i = 0; i < m_layers.size(); ++i) {
-        // ブラーは下地になれない（下に何も無ければぼかす相手がいない）。
+        // 加工（ブラー / 堆積）は下地になれない（下に何も無ければ相手がいない）。
         // 一番下に来たときは、その上の合成レイヤーを下地として扱う。
-        if (m_layers[i].enabled && m_layers[i].kind != LayerKind::Blur) {
+        if (m_layers[i].enabled && !IsHeightOperationKind(m_layers[i].kind)) {
             return i;
         }
     }

@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-03 05:20
+更新日時: 2026-09-03 06:30
 
 ## 現在の状況
 
@@ -58,6 +58,21 @@ Megascans の ORD（チャンネルパック）と EXR にも対応した。
 UI はグレー基調に整理し、ルールを [design/design-guide.md](../design/design-guide.md) に置いた。
 
 ## 完了済み
+
+- 2026-09-03 06:30 — **Sediment（堆積）ノードを terrain-editor から移植した**。
+  - `LayerKind::Sediment` + `MaterialLayer::SedimentSettings`。
+    グラフは `NodeKind::Sediment`（保存名 `sediment`）。ブラーと同じ「加工」で、
+    `IsHeightOperationKind()` でまとめて扱う（下地にはなれない）。
+  - `shaders/CompositeSediment.hlsl` + `MaterialEvaluator::ApplySediment()`。
+    滑らせは**掃引 2 段**（流出を書く → 差し引く）で競合を避ける。
+    パラメータは m で持ち、評価器が正規化ハイトへ直す。
+  - **計算グリッドは合成解像度と別（既定 512）。足し戻すのは差分だけ**なので、
+    合成解像度で作った細部は残る。
+  - 法線の作り直しはブラーと共通化した（`RebuildNormalsFromHeight`）。
+  - 検証: 「地形を土砂にする」入で山が崩れて低い丘になること、
+    切って供給量 6m にすると尾根を残したまま谷に堆積が溜まることを描画で確認。
+  - **未対応: レイヤーの加工にはキャッシュが無い**（マスクの op だけが持つ）。
+    スタックが変わるたびに 300 回ほどのディスパッチが走る。
 
 - 2026-09-03 05:20 — **メッシュ分割の設定と「ハイト（ローカル）」表示**。
   - `PreviewDefaults::meshSubdivisions`（256 / 512 / 1024）。作り直しは

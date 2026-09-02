@@ -149,7 +149,7 @@ const char* const kMaskSourceNames[] = {"constant", "noise",     "texture", "hei
 const char* const kFluvialCurveNames[] = {"log", "threshold", "linear"};
 const char* const kMaskBlendModeNames[] = {"add", "multiply", "min", "max"};
 const char* const kChannelNames[] = {"baseColor", "normal", "surface", "height"};
-const char* const kLayerKindNames[] = {"surface", "shape", "liquid", "blur"};
+const char* const kLayerKindNames[] = {"surface", "shape", "liquid", "blur", "sediment"};
 const char* const kTonemapNames[] = {"none", "reinhard", "aces"};
 const char* const kSkySourceNames[] = {"procedural", "hdri"};
 const char* const kApertureShapeNames[] = {"circle", "triangle", "hexagon", "octagon"};
@@ -473,6 +473,18 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     height["texture"] = WriteMapSlot(layer.heightTexture, writeTexture);
     node["height"] = std::move(height);
 
+    // 堆積（堆積レイヤーだけが使う）。
+    json sediment;
+    sediment["emission"] = layer.sediment.emissionMeters;
+    sediment["emissionTime"] = layer.sediment.emissionTime;
+    sediment["detail"] = layer.sediment.detailMeters;
+    sediment["iterations"] = layer.sediment.iterations;
+    sediment["stabilization"] = layer.sediment.stabilization;
+    sediment["viscosity"] = layer.sediment.viscosity;
+    sediment["convertTerrain"] = layer.sediment.convertTerrain;
+    sediment["resolution"] = layer.sediment.resolution;
+    node["sediment"] = std::move(sediment);
+
     // ぼかし（ブラーレイヤーだけが使う）。
     json blur;
     blur["radius"] = layer.blur.radiusMeters;
@@ -531,6 +543,26 @@ compositor::MaterialLayer ReadLayer(
                 layer.heightBase += compositor::kHeightPivot * layer.heightGain;
             }
         }
+    }
+
+    if (const json* sediment = FindMember(node, "sediment");
+        sediment != nullptr && sediment->is_object()) {
+        layer.sediment.emissionMeters =
+            ReadFloat(*sediment, "emission", defaults.sediment.emissionMeters);
+        layer.sediment.emissionTime =
+            ReadFloat(*sediment, "emissionTime", defaults.sediment.emissionTime);
+        layer.sediment.detailMeters =
+            ReadFloat(*sediment, "detail", defaults.sediment.detailMeters);
+        layer.sediment.iterations =
+            ReadInt(*sediment, "iterations", defaults.sediment.iterations);
+        layer.sediment.stabilization =
+            ReadInt(*sediment, "stabilization", defaults.sediment.stabilization);
+        layer.sediment.viscosity =
+            ReadFloat(*sediment, "viscosity", defaults.sediment.viscosity);
+        layer.sediment.convertTerrain =
+            ReadBool(*sediment, "convertTerrain", defaults.sediment.convertTerrain);
+        layer.sediment.resolution = static_cast<uint32_t>(ReadInt(
+            *sediment, "resolution", static_cast<int>(defaults.sediment.resolution)));
     }
 
     if (const json* blur = FindMember(node, "blur"); blur != nullptr && blur->is_object()) {
