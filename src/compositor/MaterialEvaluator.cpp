@@ -76,6 +76,16 @@ struct SedimentConstants {
     float params[4];       // 安息角ぶんの落差, 1 反復あたりの供給量, マスクのコントラスト, 未使用
 };
 
+// GPU 側の SnowConstants と一致させること。
+struct SnowConstants {
+    uint32_t indices0[4];  // UAV: 基盤, 積雪厚, 流出, ならしの作業用
+    uint32_t indices1[4];  // SRV: 基盤, 積雪厚, ならしの作業用, 合成の Height
+    uint32_t indices2[4];  // グリッドの一辺, Height の UAV, 合成解像度, マスクの UAV
+    uint32_t indices3[4];  // 歩幅, ならしの向き, ならしの半径, 未使用
+    float params0[4];      // 安息角ぶんの落差, 1 段あたりの供給量, 流動率, ならしの強さ
+    float params1[4];      // マスクのしきい値, マスクのぼかし, 未使用 x2
+};
+
 // GPU 側の MaskOpConstants と一致させること。
 struct MaskOpConstants {
     uint32_t indices[4];  // 出力 UAV, 入力 A SRV, 入力 B SRV, 素材 SRV
@@ -150,6 +160,7 @@ uint64_t HashHeightState(uint64_t seed, const MaterialLayer& layer) {
     hash = HashBytes(hash, &layer.blur, sizeof(layer.blur));
     hash = HashBytes(hash, &layer.sediment, sizeof(layer.sediment));
     hash = HashBytes(hash, &layer.crumbling, sizeof(layer.crumbling));
+    hash = HashBytes(hash, &layer.snow, sizeof(layer.snow));
     hash = HashBytes(hash, &layer.maskOnly, sizeof(layer.maskOnly));
     // マスクは「どこに載せるか」を決めるので Height にも効く。
     hash = HashBytes(hash, &layer.mask.source, sizeof(layer.mask.source));
@@ -187,6 +198,8 @@ uint64_t HashMaskOpParams(uint64_t seed, const MaskOp& op) {
             return HashBytes(seed, &op.noise, sizeof(op.noise));
         case MaskOpKind::Curvature:
             return HashBytes(seed, &op.curvature, sizeof(op.curvature));
+        case MaskOpKind::Snow:
+            return HashBytes(seed, &op.snowMask, sizeof(op.snowMask));
         default:
             return seed;
     }
@@ -310,6 +323,7 @@ void MaterialEvaluator::Destroy(rhi::Device& device) {
     ReleaseFluvialResources(device);
     ReleaseSedimentResources(device);
     ReleaseCrumblingResources(device);
+    ReleaseSnowResources(device);
     for (rhi::GpuTexture& texture : m_maskOpTextures) {
         device.DeferRelease(texture);
     }
@@ -398,6 +412,10 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
     // 崩落も同じく、直前に走った崩落レイヤーの作業用テクスチャから焼く。
     if (op.kind == MaskOpKind::Crumbling) {
         return ApplyCrumblingMask(device, pipelineCache, commandList, op, target);
+    }
+    // 積雪の被覆も、直前に走った積雪レイヤーの積雪厚から焼く。
+    if (op.kind == MaskOpKind::Snow) {
+        return ApplySnowMask(device, pipelineCache, commandList, op, stack, target);
     }
 
     const wchar_t* entry = L"CsImage";
@@ -1000,6 +1018,293 @@ bool MaterialEvaluator::ApplySedimentMask(rhi::Device& device,
     return true;
 }
 
+void MaterialEvaluator::ReleaseSnowResources(rhi::Device& device) {
+    device.DeferRelease(m_snow.base);
+    device.DeferRelease(m_snow.thickness);
+    device.DeferRelease(m_snow.outflow);
+    device.DeferRelease(m_snow.scratch);
+    m_snow.resolution = 0;
+}
+
+// 積雪の作業リソースも**使うときだけ**作る。グリッドが変わったら作り直す。
+bool MaterialEvaluator::EnsureSnowResources(rhi::Device& device, uint32_t resolution) {
+    if (m_snow.resolution == resolution && m_snow.IsValid()) {
+        return true;
+    }
+    ReleaseSnowResources(device);
+
+    const bool ok =
+        CreateChannelTexture(device, resolution, DXGI_FORMAT_R32_FLOAT, L"SnowBase",
+                             m_snow.base) &&
+        CreateChannelTexture(device, resolution, DXGI_FORMAT_R32_FLOAT, L"SnowThickness",
+                             m_snow.thickness) &&
+        CreateChannelTexture(device, resolution, DXGI_FORMAT_R32G32_FLOAT, L"SnowOutflow",
+                             m_snow.outflow) &&
+        CreateChannelTexture(device, resolution, DXGI_FORMAT_R32G32_FLOAT, L"SnowScratch",
+                             m_snow.scratch);
+    if (!ok) {
+        TG_LOG_WARN("積雪の作業リソースを作れませんでした（%u^2）", resolution);
+        ReleaseSnowResources(device);
+        return false;
+    }
+    m_snow.resolution = resolution;
+    return true;
+}
+
+// 積雪。terrain-editor の Snow を移植したもの。
+//
+//   setup →（段ごとに）供給 → 滑らせ（流出 → 流入）を 安定化 回
+//        → 雪面をならす（横 / 縦）→ 積雪厚を Height へ足し戻す → 法線を作り直す
+//
+// **滑らせは歩幅を粗いほうから細かいほうへ落としていく。** 1 セルずつしか
+// 動かさないと、広い斜面で雪が下まで届くのに段数が要る。terrain-editor と
+// 同じく、`最大ディテール` から 1 セルまで半分ずつ縮めながら滑らせる。
+bool MaterialEvaluator::ApplySnow(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                  ID3D12GraphicsCommandList* commandList,
+                                  const MaterialLayer& layer, const MaterialStack& stack) {
+    const MaterialLayer::SnowSettings& params = layer.snow;
+    const uint32_t resolution = std::clamp(params.resolution, 64u, 2048u);
+    if (!EnsureSnowResources(device, resolution)) {
+        return false;
+    }
+
+    const auto pipeline = [&](const wchar_t* entry) {
+        return pipelineCache.GetCompute(L"CompositeSnow.hlsl", entry);
+    };
+    ID3D12PipelineState* setupPass = pipeline(L"CsSetup");
+    ID3D12PipelineState* emitPass = pipeline(L"CsEmit");
+    ID3D12PipelineState* flowPass = pipeline(L"CsFlow");
+    ID3D12PipelineState* gatherPass = pipeline(L"CsGather");
+    ID3D12PipelineState* smoothHorizontalPass = pipeline(L"CsSmoothHorizontal");
+    ID3D12PipelineState* smoothVerticalPass = pipeline(L"CsSmoothVertical");
+    ID3D12PipelineState* applyPass = pipeline(L"CsApply");
+    ID3D12PipelineState* normalPass =
+        pipelineCache.GetCompute(L"CompositeBlur.hlsl", L"CsNormalFromHeight");
+    if (setupPass == nullptr || emitPass == nullptr || flowPass == nullptr ||
+        gatherPass == nullptr || smoothHorizontalPass == nullptr ||
+        smoothVerticalPass == nullptr || applyPass == nullptr) {
+        return false;
+    }
+
+    // --- パラメータを正規化ハイトの単位へ直す ------------------------------
+    // ハイトは 0〜1 で、その全幅が標高差（m）。安息角も積雪量も m で持っているので、
+    // ここで割って正規化ハイトへ揃える（堆積と同じ扱い）。
+    const float sizeMeters = (stack.SizeMeters() > 0.0f) ? stack.SizeMeters() : 1.0f;
+    const float heightMeters = (stack.HeightMeters() > 0.0f) ? stack.HeightMeters() : 1.0f;
+    const float cellMeters = sizeMeters / static_cast<float>(std::max(1u, resolution - 1u));
+
+    // 安息角は**雪面の角度**。1 セル進む間に許す落差へ直す。
+    const float degrees = std::clamp(params.motionSlopeDegrees, 0.0f, 89.9f);
+    const float talus =
+        std::tan(degrees * 3.14159265358979323846f / 180.0f) * cellMeters / heightMeters;
+
+    const int iterations = std::clamp(params.iterations, 1, 256);
+    const int settlingPasses = std::clamp(params.settlingPasses, 1, 16);
+    const float emissionTime = std::clamp(params.emissionTime, 0.0f, 1.0f);
+    const int emissionEnd =
+        (emissionTime <= 0.0f)
+            ? 1
+            : std::clamp(
+                  static_cast<int>(std::ceil(static_cast<float>(iterations) * emissionTime)), 1,
+                  iterations);
+    const float emissionPerIteration = (std::max(0.0f, params.emissionMeters) / heightMeters) /
+                                       static_cast<float>(emissionEnd);
+
+    // 歩幅（雪が移動先を探す距離）はセル数で持つ。1 セルより細かくは探せない。
+    const float detailMeters =
+        std::clamp(params.detailMeters, cellMeters, std::max(cellMeters, sizeMeters * 0.5f));
+    const int maxStride = std::clamp(
+        static_cast<int>(std::round(detailMeters / std::max(cellMeters, 1e-6f))), 1, 64);
+    int strideLevels = 0;
+    for (int stride = maxStride; stride > 1; stride = std::max(1, stride / 2)) {
+        ++strideLevels;
+    }
+
+    SnowConstants constants = {};
+    constants.indices0[0] = m_snow.base.UavIndex();
+    constants.indices0[1] = m_snow.thickness.UavIndex();
+    constants.indices0[2] = m_snow.outflow.UavIndex();
+    constants.indices0[3] = m_snow.scratch.UavIndex();
+    constants.indices1[0] = m_snow.base.SrvIndex();
+    constants.indices1[1] = m_snow.thickness.SrvIndex();
+    constants.indices1[2] = m_snow.scratch.SrvIndex();
+    constants.indices1[3] = m_textures.height.SrvIndex();
+    constants.indices2[0] = resolution;
+    constants.indices2[1] = m_textures.height.UavIndex();
+    constants.indices2[2] = m_resolution;
+    constants.indices3[2] = static_cast<uint32_t>(std::clamp(maxStride, 1, 32));
+    constants.params0[0] = talus;
+    constants.params0[2] = std::clamp(params.transportRate, 0.0f, 1.0f);
+    constants.params0[3] = std::clamp(params.surfaceSmoothing, 0.0f, 1.0f);
+    constants.params1[0] = std::max(0.0f, params.maskThresholdMeters) / heightMeters;
+    constants.params1[1] = std::max(0.0f, params.maskFeatherMeters) / heightMeters;
+
+    // 定数は**段の中で使う組み合わせぶんだけ**確保して使い回す。段ごとに確保すると、
+    // アップロードリングを 1 フレームで食い潰す（堆積で踏んだのと同じ）。
+    const auto upload = [&](float emission, uint32_t stride, uint32_t smoothDirection,
+                            D3D12_GPU_VIRTUAL_ADDRESS& outAddress) {
+        SnowConstants copy = constants;
+        copy.params0[1] = emission;
+        copy.indices3[0] = stride;
+        copy.indices3[1] = smoothDirection;
+        const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(SnowConstants), 256);
+        if (!cb.IsValid()) {
+            return false;
+        }
+        std::memcpy(cb.cpu, &copy, sizeof(copy));
+        outAddress = cb.gpuAddress;
+        return true;
+    };
+    D3D12_GPU_VIRTUAL_ADDRESS setupConstants = 0;
+    D3D12_GPU_VIRTUAL_ADDRESS emitConstants = 0;
+    if (!upload(0.0f, 1u, 0u, setupConstants) ||
+        !upload(emissionPerIteration, 1u, 0u, emitConstants)) {
+        return false;
+    }
+    // 滑らせの歩幅は段の中で粗い順に決まっていて、どの段でも同じ並びになる。
+    std::vector<D3D12_GPU_VIRTUAL_ADDRESS> slideConstants(static_cast<size_t>(settlingPasses));
+    for (int pass = 0; pass < settlingPasses; ++pass) {
+        const int level = (settlingPasses <= 1)
+                              ? strideLevels
+                              : (pass * strideLevels) / std::max(1, settlingPasses - 1);
+        int stride = maxStride;
+        for (int step = 0; step < level; ++step) {
+            stride = std::max(1, stride / 2);
+        }
+        if (!upload(0.0f, static_cast<uint32_t>(std::max(1, stride)), 0u,
+                    slideConstants[static_cast<size_t>(pass)])) {
+            return false;
+        }
+    }
+    D3D12_GPU_VIRTUAL_ADDRESS smoothHorizontalConstants = 0;
+    D3D12_GPU_VIRTUAL_ADDRESS smoothVerticalConstants = 0;
+    if (!upload(0.0f, 1u, 0u, smoothHorizontalConstants) ||
+        !upload(0.0f, 1u, 1u, smoothVerticalConstants)) {
+        return false;
+    }
+
+    PIXBeginEvent(commandList, PIX_COLOR(190, 200, 215), "CompositeSnow");
+
+    // 入力の Height は読み取り専用（setup が読む）。
+    TransitionIfNeeded(commandList, m_textures.height,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+
+    const uint32_t groups = DispatchCount(resolution);
+    const auto barrier = [&]() {
+        const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+        commandList->ResourceBarrier(1, &uav);
+    };
+    const auto run = [&](ID3D12PipelineState* pipelineState, uint32_t groupCount) {
+        commandList->SetPipelineState(pipelineState);
+        commandList->Dispatch(groupCount, groupCount, 1);
+        barrier();
+    };
+
+    commandList->SetComputeRootConstantBufferView(1, setupConstants);
+    run(setupPass, groups);
+
+    const bool transports = constants.params0[2] > 0.0f;
+    for (int iteration = 0; iteration < iterations; ++iteration) {
+        if (iteration < emissionEnd && emissionPerIteration > 0.0f) {
+            commandList->SetComputeRootConstantBufferView(1, emitConstants);
+            run(emitPass, groups);
+        }
+        if (!transports) {
+            continue;
+        }
+        for (int pass = 0; pass < settlingPasses; ++pass) {
+            commandList->SetComputeRootConstantBufferView(
+                1, slideConstants[static_cast<size_t>(pass)]);
+            run(flowPass, groups);
+            run(gatherPass, groups);
+        }
+    }
+
+    // 積もった雪面だけをならす。0 のときは 1 往復ぶん丸ごと省く。
+    if (constants.params0[3] > 0.0f) {
+        commandList->SetComputeRootConstantBufferView(1, smoothHorizontalConstants);
+        run(smoothHorizontalPass, groups);
+        commandList->SetComputeRootConstantBufferView(1, smoothVerticalConstants);
+        run(smoothVerticalPass, groups);
+    }
+
+    // 積雪厚を合成の Height へ足す。ここだけ合成解像度で回す。
+    // **Mask だけが目的のときは足し戻さない**（Result を繋いでいない）。
+    // 厚みは作業用テクスチャに残るので、マスクはこの後で焼ける。
+    if (!layer.maskOnly) {
+        TransitionIfNeeded(commandList, m_snow.base,
+                           D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        TransitionIfNeeded(commandList, m_snow.thickness,
+                           D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        TransitionIfNeeded(commandList, m_textures.height,
+                           D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        commandList->SetComputeRootConstantBufferView(1, setupConstants);
+        run(applyPass, DispatchCount(m_resolution));
+
+        // 次に使うときは書き込みへ戻す。
+        TransitionIfNeeded(commandList, m_snow.base, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        TransitionIfNeeded(commandList, m_snow.thickness,
+                           D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
+
+    PIXEndEvent(commandList);
+
+    // 形が変わったので、法線も作り直す。足し戻していないなら形は変わっていない。
+    if (!layer.maskOnly) {
+        RebuildNormalsFromHeight(device, normalPass, commandList, stack);
+    }
+    return true;
+}
+
+// 直前の積雪レイヤーが残した積雪厚を、被覆のマスクとして焼く。
+//
+// **積雪レイヤーを合成し終えた直後にしか呼ばない**（作業用テクスチャは
+// 次の積雪レイヤーで上書きされるため）。段取りは堆積 / 崩落と同じ。
+bool MaterialEvaluator::ApplySnowMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                      ID3D12GraphicsCommandList* commandList, const MaskOp& op,
+                                      const MaterialStack& stack, rhi::GpuTexture& target) {
+    if (!m_snow.IsValid() || !target.IsValid()) {
+        return false;
+    }
+    ID3D12PipelineState* maskPass = pipelineCache.GetCompute(L"CompositeSnow.hlsl", L"CsMask");
+    if (maskPass == nullptr) {
+        return false;
+    }
+
+    const float heightMeters = (stack.HeightMeters() > 0.0f) ? stack.HeightMeters() : 1.0f;
+
+    SnowConstants constants = {};
+    constants.indices1[1] = m_snow.thickness.SrvIndex();
+    constants.indices2[0] = m_snow.resolution;
+    constants.indices2[2] = m_resolution;
+    constants.indices2[3] = target.UavIndex();
+    // しきい値もぼかしも実寸（m）。ハイト 0〜1 の全幅が標高差なので、その比へ直す。
+    constants.params1[0] = std::max(0.0f, op.snowMask.thresholdMeters) / heightMeters;
+    constants.params1[1] = std::max(0.0f, op.snowMask.featherMeters) / heightMeters;
+
+    const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(SnowConstants), 256);
+    if (!cb.IsValid()) {
+        return false;
+    }
+    std::memcpy(cb.cpu, &constants, sizeof(constants));
+
+    PIXBeginEvent(commandList, PIX_COLOR(200, 210, 225), "CompositeSnowMask");
+    TransitionIfNeeded(commandList, m_snow.thickness,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+    commandList->SetPipelineState(maskPass);
+    commandList->Dispatch(DispatchCount(m_resolution), DispatchCount(m_resolution), 1);
+    const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+    commandList->ResourceBarrier(1, &uav);
+
+    // 次に使うときは書き込みへ戻す。
+    TransitionIfNeeded(commandList, m_snow.thickness, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    PIXEndEvent(commandList);
+    return true;
+}
+
 // 崩落レイヤー 1 枚ぶん。発生源のマスクから岩片を生み、斜面を下らせて積む。
 //
 // **合成解像度でそのまま回す。** 岩片は m 単位の小さな形なので、堆積のように
@@ -1329,7 +1634,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             hash = HashBytes(hash, &m_maskOpResolutions[i], sizeof(uint32_t));
             if (op.kind == MaskOpKind::Fluvial || op.kind == MaskOpKind::Slope ||
                 op.kind == MaskOpKind::Curvature || op.kind == MaskOpKind::Sediment ||
-                op.kind == MaskOpKind::Crumbling) {
+                op.kind == MaskOpKind::Crumbling || op.kind == MaskOpKind::Snow) {
                 after = std::max(after, op.heightSourceLayer);
                 const size_t layerCount = std::min<size_t>(
                     stack.Layers().size(),
@@ -1410,6 +1715,11 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 ++m_evaluatedLayerCount;
             } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::Sediment) {
                 if (!ApplySediment(device, pipelineCache, commandList, layer, stack)) {
+                    complete = false;
+                }
+                ++m_evaluatedLayerCount;
+            } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::Snow) {
+                if (!ApplySnow(device, pipelineCache, commandList, layer, stack)) {
                     complete = false;
                 }
                 ++m_evaluatedLayerCount;

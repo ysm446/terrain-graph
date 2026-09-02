@@ -66,6 +66,9 @@ enum class NodeKind : uint32_t {
     MaskNoise = 13,
     // 下地の曲率（周りより高い / 低い）をマスクとして出す。
     MaskCurvature = 14,
+    // 雪を降らせ、急な雪面から低い所へ滑らせて積もらせる加工
+    // （terrain-editor の Snow）。
+    Snow = 15,
 };
 
 struct PinDefinition {
@@ -286,6 +289,10 @@ bool IsSourceNodeKind(NodeKind kind);
 bool IsMaskNodeKind(NodeKind kind);
 // 下地の Height を読むマスクか（川筋 / 傾斜）。
 bool IsHeightMaskNodeKind(NodeKind kind);
+// **レイヤーでもありマスクの出どころでもある**種類か（堆積 / 崩落 / 積雪）。
+// この 3 つの Mask は「そのレイヤーを合成した時点の作業用テクスチャ」から焼くので、
+// 出どころがチェーンの中で走っていないと結果が残らない。
+bool IsLayerMaskSourceKind(NodeKind kind);
 // 選ぶとプレビューの対象になる種類か。レイヤーに加えて、
 // **川筋（マスクを目で見て調整するもの）**もプレビューできる。
 bool IsPreviewableNodeKind(NodeKind kind);

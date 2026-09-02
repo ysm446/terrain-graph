@@ -55,6 +55,19 @@ struct SedimentResources {
     bool IsValid() const { return sediment.IsValid(); }
 };
 
+// 積雪（Snow）の作業リソース。堆積と同じく**合成解像度とは別のグリッド**で回し、
+// 結果は積雪厚として合成解像度へ足し戻す。雪は下地を削らないので、
+// 「元の高さ」は基盤そのもの（堆積の original に当たる枚は要らない）。
+struct SnowResources {
+    rhi::GpuTexture base;       // R32_FLOAT 下地のハイト（雪を除いた面）
+    rhi::GpuTexture thickness;  // R32_FLOAT 積雪厚（Mask 出力の元）
+    rhi::GpuTexture outflow;    // RG32_FLOAT 流出（x = 量、y = 向き + 1）
+    rhi::GpuTexture scratch;    // RG32_FLOAT ならしの作業用（x = 雪面、y = 元の厚み）
+    uint32_t resolution = 0;
+
+    bool IsValid() const { return thickness.IsValid(); }
+};
+
 // 崩落（Crumbling）の作業リソース。**合成解像度で回す**（岩片は m 単位の
 // 小さな形なので、粗いグリッドでは形にならない）。
 //
@@ -180,6 +193,19 @@ private:
                             ID3D12GraphicsCommandList* commandList, const MaskOp& op,
                             rhi::GpuTexture& target);
 
+    // 積雪レイヤー 1 枚ぶん。雪を降らせて滑らせ、積雪厚を Height へ足し戻して
+    // 法線を作り直す。**タイルには分けない**（堆積と同じ理由）。
+    bool ApplySnow(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                   ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
+                   const MaterialStack& stack);
+    bool EnsureSnowResources(rhi::Device& device, uint32_t resolution);
+    void ReleaseSnowResources(rhi::Device& device);
+    // 直前の積雪レイヤーが積もらせた厚みを、被覆のマスクとして焼く。
+    // **積雪レイヤーの直後にしか使えない**（作業用テクスチャを使い回すため）。
+    bool ApplySnowMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                       ID3D12GraphicsCommandList* commandList, const MaskOp& op,
+                       const MaterialStack& stack, rhi::GpuTexture& target);
+
     bool ApplyHeightBlur(rhi::Device& device, ID3D12GraphicsCommandList* commandList,
                          ID3D12PipelineState* blurPipeline,
                          ID3D12PipelineState* normalPipeline, const MaterialLayer& layer,
@@ -188,6 +214,7 @@ private:
     FluvialResources m_fluvial;
     SedimentResources m_sediment;
     CrumblingResources m_crumbling;
+    SnowResources m_snow;
     // マスクの op の結果。添字は MaskProgram と同じ。
     std::vector<rhi::GpuTexture> m_maskOpTextures;
     std::vector<uint32_t> m_maskOpResolutions;

@@ -50,6 +50,8 @@ enum class LayerKind : uint32_t {
     Sediment = 4,
     // 崩落。発生源から岩屑を斜面下へ流し、止まった所へ積む。
     Crumbling = 5,
+    // 積雪。雪を降らせ、急な雪面から低い所へ滑らせて溜める。
+    Snow = 6,
 };
 
 // 岩片の形。terrain-editor の RockStyle と同じ 3 種類。
@@ -62,7 +64,7 @@ enum class RockStyle : uint32_t {
 // 合成せずハイトを書き換える加工か。**下地にはなれない**（ならす相手が要る）。
 inline bool IsHeightOperationKind(LayerKind kind) {
     return kind == LayerKind::Blur || kind == LayerKind::Sediment ||
-           kind == LayerKind::Crumbling;
+           kind == LayerKind::Crumbling || kind == LayerKind::Snow;
 }
 
 // ハイトの基準面。ソースの値がこの値のとき、そのテクセルは「基準の高さ」ちょうどになる。
@@ -301,6 +303,38 @@ struct MaterialLayer {
         int seed = 0;
     };
     CrumblingSettings crumbling;
+
+    // 積雪（kind == LayerKind::Snow のときだけ意味を持つ）。
+    //
+    // terrain-editor の Snow を移したもの。雪を一様に降らせ、**雪面**
+    // （下地 + 積雪厚）が安息角より急な所から、**一番急な下り 1 方向**へ
+    // 滑らせる。谷・棚・緩い尾根に溜まり、急な岩肌には残らない。
+    //
+    // 堆積との違いは行き先の数（土砂は 4 近傍へ配り、雪は 1 方向へ寄る）と、
+    // 下地を削らないこと（雪は必ず上に乗る）。
+    struct SnowSettings {
+        // 降らせる雪の総量（m）。0 なら入力をそのまま通す。
+        float emissionMeters = 1.0f;
+        // 供給を何割の段にかけて降らせるか。0 なら最初の 1 段で全量。
+        float emissionTime = 0.0f;
+        int iterations = 40;      // シミュレーションの段数
+        int settlingPasses = 4;   // 1 段のなかで滑らせる回数
+        // 雪が動き出す角度。**雪面の角度**で、地形の角度ではない。
+        float motionSlopeDegrees = 35.0f;
+        // 1 回の滑らせで動く割合。高いほど急斜面から早く逃げる。
+        float transportRate = 0.45f;
+        // 積もった雪面だけをならす強さ。0 で切る。
+        float surfaceSmoothing = 0.25f;
+        // 雪が移動先を探す最大スケール（m）。ならしの半径にも使う。
+        float detailMeters = 8.0f;
+        // 計算グリッド。合成解像度とは別に持つ（段数がそのまま効くため）。
+        uint32_t resolution = 512;
+        // **Mask 出力がこの厚みで白へ寄る（m）。**
+        float maskThresholdMeters = 0.02f;
+        // 積雪境界のグレーの幅（m）。小さいほど二値に近くなる。
+        float maskFeatherMeters = 0.015f;
+    };
+    SnowSettings snow;
 
     // **Height へ書き戻さない。** 加工（堆積 / 崩落）を、マスクを得るためだけに
     // 走らせるときに立てる。Result を繋がずに Mask だけを使う繋ぎ方のためのもの。

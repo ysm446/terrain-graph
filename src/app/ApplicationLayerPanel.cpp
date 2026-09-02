@@ -117,6 +117,87 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
         return changed;
     }
 
+    // 積雪も合成レイヤーではなく「下地のハイトへ雪を積む加工」。
+    // 降る量は一様なので、マスクの節は出さない（どこに積もるかは雪面が決める）。
+    if (layer.kind == compositor::LayerKind::Snow) {
+        const compositor::MaterialLayer::SnowSettings snowDefaults;
+        ui::SectionHeader("基本");
+        if (ui::BeginPropertyTable("snowBasicRows")) {
+            char snowName[128] = {};
+            std::snprintf(snowName, sizeof(snowName), "%s", layer.name.c_str());
+            if (ui::PropertyTextInput("名前", snowName, sizeof(snowName))) {
+                layer.name = snowName;
+                changed = true;
+            }
+            ui::EndPropertyTable();
+        }
+        ui::SectionHeader("積雪");
+        if (ui::BeginPropertyTable("snowRows")) {
+            changed |= ui::PropertyFloat("積雪量", &layer.snow.emissionMeters, 0.0f, 50.0f,
+                                         snowDefaults.emissionMeters,
+                                         "地形へ降らせる雪の総量。0 なら入力をそのまま通す",
+                                         "%.2f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat(
+                "供給時間", &layer.snow.emissionTime, 0.0f, 1.0f, snowDefaults.emissionTime,
+                "0 なら最初に全量を置いてから流す。上げるほど段に分けて降らせるので、"
+                "溜まる所がはっきりする",
+                "%.2f");
+            changed |= ui::PropertyFloat(
+                "安息角", &layer.snow.motionSlopeDegrees, 0.0f, 89.0f,
+                snowDefaults.motionSlopeDegrees,
+                "雪面がこれ以下の傾斜なら雪は動かない（地形ではなく雪面の角度）。"
+                "下げるほど急な所に残らなくなる",
+                "%.1f 度");
+            changed |= ui::PropertyFloat(
+                "流動率", &layer.snow.transportRate, 0.0f, 1.0f, snowDefaults.transportRate,
+                "1 回の滑らせで動く割合。高いほど急斜面から早く逃げる", "%.2f");
+            changed |= ui::PropertyFloat(
+                "雪面のならし", &layer.snow.surfaceSmoothing, 0.0f, 1.0f,
+                snowDefaults.surfaceSmoothing,
+                "積もった雪面だけをならす強さ。0 で切る（地形の凹凸がそのまま出る）",
+                "%.2f");
+            changed |= ui::PropertyFloat(
+                "最大ディテール", &layer.snow.detailMeters, 1.0f, 512.0f,
+                snowDefaults.detailMeters,
+                "雪が移動先を探す最大の距離。大きいほど広い斜面の下まで流れるが重い。"
+                "雪面をならす半径にも使う",
+                "%.1f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyInt("反復", &layer.snow.iterations, 1, 256,
+                                       snowDefaults.iterations,
+                                       "シミュレーションの段数。多いほど雪が落ち着く");
+            changed |= ui::PropertyInt("安定化", &layer.snow.settlingPasses, 1, 16,
+                                       snowDefaults.settlingPasses,
+                                       "1 段のなかで雪を滑らせる回数");
+            int snowResolutionIndex = 1;
+            for (int i = 0; i < IM_ARRAYSIZE(kSedimentResolutionValues); ++i) {
+                if (kSedimentResolutionValues[i] == layer.snow.resolution) {
+                    snowResolutionIndex = i;
+                }
+            }
+            if (ui::PropertyCombo("解像度", &snowResolutionIndex, kSedimentResolutionLabels,
+                                  IM_ARRAYSIZE(kSedimentResolutionLabels), 1,
+                                  "雪を動かすグリッド。合成解像度とは別。"
+                                  "上げるほど細かい雪の筋が出るが重い")) {
+                layer.snow.resolution = kSedimentResolutionValues[snowResolutionIndex];
+                changed = true;
+            }
+            changed |= ui::PropertyFloat(
+                "被覆のしきい値", &layer.snow.maskThresholdMeters, 0.0f, 5.0f,
+                snowDefaults.maskThresholdMeters,
+                "Mask 出力がこの積雪厚で白へ寄る", "%.3f m",
+                ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat(
+                "被覆のぼかし", &layer.snow.maskFeatherMeters, 0.0f, 5.0f,
+                snowDefaults.maskFeatherMeters,
+                "積雪境界のグレーの幅。0 に近いほど二値に近いマスクになる", "%.3f m",
+                ImGuiSliderFlags_Logarithmic);
+            ui::EndPropertyTable();
+        }
+        ui::HintText("雪を一様に降らせ、急な雪面から低い所へ滑らせて溜める。"
+                     "Mask 出力は雪の被覆なので、積もった所へ雪のマテリアルを乗せられる");
+        return changed;
+    }
+
     // 崩落も合成レイヤーではなく「下地のハイトへ岩屑を積む加工」。
     // 発生源は Mask 入力（Emission）で受けるので、マスクの節は出さない。
     if (layer.kind == compositor::LayerKind::Crumbling) {

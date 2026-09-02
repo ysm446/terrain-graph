@@ -139,6 +139,11 @@ viscosity, convertTerrain, resolution, maskContrast, maskThicknessMeters }`）�
 gravity, spread, seed }`）は `kind` が `crumbling` のノードだけが使う。
 `style` は `classic` / `polygonal` / `shard`。
 
+レイヤーの `snow`（`{ emission, emissionTime, iterations, settlingPasses,
+motionSlopeDegrees, transportRate, surfaceSmoothing, detail, resolution,
+maskThresholdMeters, maskFeatherMeters }`）は `kind` が `snow` のノードだけが使う。
+無ければ既定値（版は上げない。古いファイルには単に無い）。
+
 レイヤーの `blur`（`{ radius, strength, iterations }`）は
 `kind` が `blur` のノード（Heightmap Blur）だけが使う。無ければ既定値。
 

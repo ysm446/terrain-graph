@@ -40,6 +40,8 @@ enum class MaskOpKind : uint32_t {
     Noise = 7,
     // 下地の曲率（周りより高い / 低い）。
     Curvature = 8,
+    // 積雪レイヤーが積もらせた**雪の被覆**。積雪厚をしきい値とぼかしで 0〜1 にする。
+    Snow = 9,
 };
 
 // 曲率マスクの向き。シェーダの TG_CURVATURE_* と一致させること。
@@ -103,6 +105,13 @@ struct SedimentMaskParams {
     float thicknessMeters = 0.5f;
 };
 
+// 積雪の被覆をマスクにするときの調整。**しきい値もぼかしも実寸（m）**で、
+// 厚みがしきい値を超えた所が白、その前後をぼかし幅ぶんだけなめらかに繋ぐ。
+struct SnowMaskParams {
+    float thresholdMeters = 0.02f;
+    float featherMeters = 0.015f;
+};
+
 // 崩落の出力をマスクにするときの選択。**どの出力ピンから来たか**で決まる。
 struct CrumblingMaskParams {
     // 0: 岩屑の厚み（形そのもの）、1: 岩片ごとの乱数（色や材質のばらつき用）
@@ -127,6 +136,7 @@ struct MaskOp {
     NoiseParams noise;
     SedimentMaskParams sedimentMask;
     CrumblingMaskParams crumblingMask;
+    SnowMaskParams snowMask;
 };
 
 // 評価する順に並んだ op の列。

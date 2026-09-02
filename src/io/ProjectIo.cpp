@@ -151,8 +151,8 @@ const char* const kFluvialCurveNames[] = {"log", "threshold", "linear"};
 const char* const kCurvatureModeNames[] = {"ridges", "valleys", "absolute"};
 const char* const kMaskBlendModeNames[] = {"add", "multiply", "min", "max"};
 const char* const kChannelNames[] = {"baseColor", "normal", "surface", "height"};
-const char* const kLayerKindNames[] = {"surface", "shape",    "liquid",
-                                       "blur",    "sediment", "crumbling"};
+const char* const kLayerKindNames[] = {"surface",   "shape",     "liquid", "blur",
+                                       "sediment", "crumbling", "snow"};
 // 岩片の形。compositor::RockStyle の並びと一致させること。
 const char* const kRockStyleNames[] = {"classic", "polygonal", "shard"};
 const char* const kTonemapNames[] = {"none", "reinhard", "aces"};
@@ -533,6 +533,21 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     crumbling["seed"] = layer.crumbling.seed;
     node["crumbling"] = std::move(crumbling);
 
+    // 積雪（積雪レイヤーだけが使う）。
+    json snow;
+    snow["emission"] = layer.snow.emissionMeters;
+    snow["emissionTime"] = layer.snow.emissionTime;
+    snow["iterations"] = layer.snow.iterations;
+    snow["settlingPasses"] = layer.snow.settlingPasses;
+    snow["motionSlopeDegrees"] = layer.snow.motionSlopeDegrees;
+    snow["transportRate"] = layer.snow.transportRate;
+    snow["surfaceSmoothing"] = layer.snow.surfaceSmoothing;
+    snow["detail"] = layer.snow.detailMeters;
+    snow["resolution"] = layer.snow.resolution;
+    snow["maskThresholdMeters"] = layer.snow.maskThresholdMeters;
+    snow["maskFeatherMeters"] = layer.snow.maskFeatherMeters;
+    node["snow"] = std::move(snow);
+
     // ぼかし（ブラーレイヤーだけが使う）。
     json blur;
     blur["radius"] = layer.blur.radiusMeters;
@@ -615,6 +630,28 @@ compositor::MaterialLayer ReadLayer(
             ReadFloat(*sediment, "maskContrast", defaults.sediment.maskContrast);
         layer.sediment.maskThicknessMeters = ReadFloat(*sediment, "maskThicknessMeters",
                                                        defaults.sediment.maskThicknessMeters);
+    }
+
+    if (const json* snow = FindMember(node, "snow"); snow != nullptr && snow->is_object()) {
+        layer.snow.emissionMeters = ReadFloat(*snow, "emission", defaults.snow.emissionMeters);
+        layer.snow.emissionTime =
+            ReadFloat(*snow, "emissionTime", defaults.snow.emissionTime);
+        layer.snow.iterations = ReadInt(*snow, "iterations", defaults.snow.iterations);
+        layer.snow.settlingPasses =
+            ReadInt(*snow, "settlingPasses", defaults.snow.settlingPasses);
+        layer.snow.motionSlopeDegrees =
+            ReadFloat(*snow, "motionSlopeDegrees", defaults.snow.motionSlopeDegrees);
+        layer.snow.transportRate =
+            ReadFloat(*snow, "transportRate", defaults.snow.transportRate);
+        layer.snow.surfaceSmoothing =
+            ReadFloat(*snow, "surfaceSmoothing", defaults.snow.surfaceSmoothing);
+        layer.snow.detailMeters = ReadFloat(*snow, "detail", defaults.snow.detailMeters);
+        layer.snow.resolution = static_cast<uint32_t>(
+            ReadInt(*snow, "resolution", static_cast<int>(defaults.snow.resolution)));
+        layer.snow.maskThresholdMeters =
+            ReadFloat(*snow, "maskThresholdMeters", defaults.snow.maskThresholdMeters);
+        layer.snow.maskFeatherMeters =
+            ReadFloat(*snow, "maskFeatherMeters", defaults.snow.maskFeatherMeters);
     }
 
     if (const json* crumbling = FindMember(node, "crumbling");

@@ -42,9 +42,9 @@ constexpr std::array<PinDefinition, 2> kMaskFromHeightPins = {{
     {PinKind::Output, ValueType::Mask, "Mask"},
 }};
 
-// 堆積のピン。ハイトの加工に加えて、**積もった厚みを Mask として出す**。
-// 堆積した所へ別のマテリアルを乗せられるようにするため。
-constexpr std::array<PinDefinition, 3> kSedimentPins = {{
+// 堆積 / 積雪のピン。ハイトの加工に加えて、**積もった量を Mask として出す**。
+// 積もった所へ別のマテリアルを乗せられるようにするため。
+constexpr std::array<PinDefinition, 3> kDepositPins = {{
     {PinKind::Input, ValueType::Material, "Base"},
     {PinKind::Output, ValueType::Material, "Result"},
     {PinKind::Output, ValueType::Mask, "Mask"},
@@ -82,14 +82,15 @@ constexpr std::array<PinDefinition, 1> kSourceNodePins = {{
     {PinKind::Output, ValueType::Material, "Result"},
 }};
 
-constexpr std::array<NodeDefinition, 15> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 16> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
     {NodeKind::Liquid, "liquid", "Liquid", kLayerNodePins},
     {NodeKind::Blur, "heightmapBlur", "Heightmap Blur", kFilterNodePins},
-    {NodeKind::Sediment, "sediment", "Sediment", kSedimentPins},
+    {NodeKind::Sediment, "sediment", "Sediment", kDepositPins},
     {NodeKind::Crumbling, "crumbling", "Crumbling", kCrumblingPins},
+    {NodeKind::Snow, "snow", "Snow", kDepositPins},
     {NodeKind::MaskImage, "maskImage", "Mask Image", kMaskSourcePins},
     {NodeKind::MaskNoise, "maskNoise", "Mask Noise", kMaskSourcePins},
     {NodeKind::MaskFluvial, "maskFluvial", "Mask Fluvial", kMaskFromHeightPins},
@@ -127,7 +128,8 @@ const NodeDefinition* FindNodeDefinitionByName(std::string_view name) {
 bool IsLayerNodeKind(NodeKind kind) {
     return kind == NodeKind::Surface || kind == NodeKind::Shape || kind == NodeKind::Liquid ||
            kind == NodeKind::Heightmap || kind == NodeKind::Blur ||
-           kind == NodeKind::Sediment || kind == NodeKind::Crumbling;
+           kind == NodeKind::Sediment || kind == NodeKind::Crumbling ||
+           kind == NodeKind::Snow;
 }
 
 bool IsSourceNodeKind(NodeKind kind) {
@@ -145,6 +147,11 @@ bool IsMaskNodeKind(NodeKind kind) {
 bool IsHeightMaskNodeKind(NodeKind kind) {
     return kind == NodeKind::MaskFluvial || kind == NodeKind::MaskSlope ||
            kind == NodeKind::MaskCurvature;
+}
+
+bool IsLayerMaskSourceKind(NodeKind kind) {
+    return kind == NodeKind::Sediment || kind == NodeKind::Crumbling ||
+           kind == NodeKind::Snow;
 }
 
 bool IsPreviewableNodeKind(NodeKind kind) {
@@ -167,6 +174,8 @@ compositor::LayerKind LayerKindFor(NodeKind kind) {
             return compositor::LayerKind::Sediment;
         case NodeKind::Crumbling:
             return compositor::LayerKind::Crumbling;
+        case NodeKind::Snow:
+            return compositor::LayerKind::Snow;
         default:
             return compositor::LayerKind::Surface;
     }
@@ -463,6 +472,7 @@ bool NodeGraph::MaskDependsOnHeight(const Node& maskNode, int depth) const {
         case NodeKind::MaskCurvature:
         case NodeKind::Sediment:
         case NodeKind::Crumbling:
+        case NodeKind::Snow:
             return true;
         case NodeKind::MaskLevels:
         case NodeKind::MaskBlend:
@@ -500,8 +510,8 @@ bool NodeGraph::MaskSourceResolves(const Node& consumer) const {
     if (source.node == nullptr) {
         return true;  // 繋いでいない。マスクはノード側の設定で決まる。
     }
-    // レイヤーでもあるマスクの出どころ（堆積 / 崩落）だけが、居場所に依存する。
-    if (source.node->kind != NodeKind::Sediment && source.node->kind != NodeKind::Crumbling) {
+    // レイヤーでもあるマスクの出どころ（堆積 / 崩落 / 積雪）だけが、居場所に依存する。
+    if (!IsLayerMaskSourceKind(source.node->kind)) {
         return true;
     }
     const std::vector<const Node*> chain = ChainFrom(&consumer);
@@ -596,10 +606,9 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
     // 循環は CanCreateLink が弾いているが、読み込んだファイルが壊れている
     // 可能性もあるので深さでも止める。
     constexpr int kMaxDepth = 32;
-    // 堆積と崩落は**レイヤーでもありマスクの出どころでもある**
-    // （積もった厚み / 積んだ岩屑を出す）。
-    const bool isLayerMaskSource =
-        (maskNode.kind == NodeKind::Sediment) || (maskNode.kind == NodeKind::Crumbling);
+    // 堆積・崩落・積雪は**レイヤーでもありマスクの出どころでもある**
+    // （積もった厚み / 積んだ岩屑 / 雪の被覆を出す）。
+    const bool isLayerMaskSource = IsLayerMaskSourceKind(maskNode.kind);
     if (depth > kMaxDepth || (!IsMaskNodeKind(maskNode.kind) && !isLayerMaskSource)) {
         return -1;
     }
@@ -611,7 +620,7 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
         }
     }
 
-    // 堆積 / 崩落はレイヤーの設定を持つ。作業用テクスチャから焼くので、
+    // 堆積 / 崩落 / 積雪はレイヤーの設定を持つ。作業用テクスチャから焼くので、
     // **そのレイヤーがこのチェーンの中にいるときだけ**成立する。
     if (isLayerMaskSource) {
         const auto* layerSettings = std::get_if<LayerNodeSettings>(&maskNode.settings);
@@ -624,6 +633,10 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
             layerOp.sedimentMask.contrast = layerSettings->layer.sediment.maskContrast;
             layerOp.sedimentMask.thicknessMeters =
                 layerSettings->layer.sediment.maskThicknessMeters;
+        } else if (maskNode.kind == NodeKind::Snow) {
+            layerOp.kind = compositor::MaskOpKind::Snow;
+            layerOp.snowMask.thresholdMeters = layerSettings->layer.snow.maskThresholdMeters;
+            layerOp.snowMask.featherMeters = layerSettings->layer.snow.maskFeatherMeters;
         } else {
             layerOp.kind = compositor::MaskOpKind::Crumbling;
             // 0 番目の Mask 出力が厚み、1 番目が岩片ごとの乱数。
@@ -781,9 +794,9 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace) co
         }
     }
 
-    // **Mask だけを繋いだ堆積 / 崩落を、チェーンへ差し込む。**
+    // **Mask だけを繋いだ堆積 / 崩落 / 積雪を、チェーンへ差し込む。**
     //
-    // この 2 つの Mask は「そのレイヤーを合成した時点」の作業用テクスチャから焼くので、
+    // この 3 つの Mask は「そのレイヤーを合成した時点」の作業用テクスチャから焼くので、
     // チェーンの中で走っていないと結果が残らない。Result を繋がずに Mask だけ使いたい
     // ことがあるので、**下地が本流と合流する所の直後**へ差し込み、
     // 代わりに Height へは書き戻さない印（maskOnly）を付ける。
@@ -792,8 +805,7 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace) co
         inserted = false;
         for (size_t i = 0; i < layerNodes.size(); ++i) {
             const MaskSourceRef source = UpstreamMaskOf(*layerNodes[i]);
-            if (source.node == nullptr || (source.node->kind != NodeKind::Sediment &&
-                                           source.node->kind != NodeKind::Crumbling)) {
+            if (source.node == nullptr || !IsLayerMaskSourceKind(source.node->kind)) {
                 continue;
             }
             if (std::find(layerNodes.begin(), layerNodes.end(), source.node) !=

@@ -1,7 +1,7 @@
 # node-graph — ノードグラフの設計
 
 作成日時: 2026-09-02 12:50
-更新日時: 2026-09-04 12:00
+更新日時: 2026-09-04 15:00
 
 `src/graph/` とグラフパネル（`src/app/ApplicationGraphPanel.cpp`）の設計。
 **ノード 1 つずつの役割・ピン・パラメータは
@@ -44,6 +44,7 @@ terrain-editor から移植したのは**仕組み**であって、ノードの�
 | Heightmap Blur | `heightmapBlur` | Base(入力) / Result(出力) | `MaterialLayer`（kind=Blur）の `blur` |
 | Sediment | `sediment` | Base(入力) / Result / Mask(出力) | `MaterialLayer`（kind=Sediment）の `sediment` |
 | Crumbling | `crumbling` | Base / Emission(入力) / Result / Mask / Unique(出力) | `MaterialLayer`（kind=Crumbling）の `crumbling` |
+| Snow | `snow` | Base(入力) / Result / Mask(出力) | `MaterialLayer`（kind=Snow）の `snow` |
 | Mask Image | `maskImage` | Mask(出力) のみ | `MapSlot`（画像 + 読むチャンネル） |
 | Mask Fluvial | `maskFluvial` | Base(入力) / Mask(出力) | `FluvialParams`（川筋） |
 | Mask Slope | `maskSlope` | Base(入力) / Mask(出力) | `SlopeParams`（傾斜） |
@@ -89,6 +90,28 @@ terrain-editor の Heightmap Blur を移したもの。**合成レイヤーで�
 - **法線を作り直すので、素材の法線ディテールはこのノードで消える。**
   ハイトの段階（Heightmap の直後）に置き、素材はその後ろに繋ぐ。
 - 下に合成済みのレイヤーが無い（チェーンの一番下に置いた）ときは素通りする。
+
+### 積雪（加工）
+
+terrain-editor の Snow を移したもの。**合成レイヤーではなく加工**で、
+雪を一様に降らせ、雪面が安息角より急な所から一番低い隣へ滑らせる。
+パラメータと使いどころは [reference/nodes.md](../reference/nodes.md)。
+
+- **堆積と同じ段取りで走る。** 合成解像度とは別のグリッドで回し、結果は
+  積雪厚として合成解像度へ足し戻す。Mask（雪の被覆）は作業用テクスチャから
+  焼くので、`Result` を繋がず `Mask` だけ使う繋ぎ方も同じように差し込まれる
+  （`maskOnly`）。
+- **1 回の滑らせを 2 掃引に分けた**（`CsFlow` が「どの向きへどれだけ出すか」を
+  1 枚へ書き、`CsGather` が自分を選んだ近傍から集める）。terrain-editor は
+  1 パスで近傍 8 個ぶんの流出をその場で計算し直していて、1 セルあたり
+  72 回の読み取りが要った。向きを書いておけば 16 回で同じ結果になる。
+- **範囲外の近傍はクランプせずに飛ばす。** terrain-editor は座標をクランプ
+  していたが、それだと縁で斜めと真横が同じセルを指し、「どの向きから来たか」で
+  流入を数え直せなくなる（上の 2 掃引が成り立たない）。
+- **雪面のならしは 2 チャンネルの作業用テクスチャを経由する**（x にならした雪面、
+  y に元の積雪厚）。terrain-editor は縦のパスで積雪厚を読みながら同じ場所へ
+  書いていて、重みが競合していた。
+- CPU バックエンドは移していない（合成そのものが GPU なので落とす先が無い）。
 
 ### マスク画像（マスクのソース）
 
