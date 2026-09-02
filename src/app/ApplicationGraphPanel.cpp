@@ -39,6 +39,10 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
             return ImVec4(0.66f, 0.62f, 0.52f, 1.0f);
         case graph::NodeKind::Liquid:
             return ImVec4(0.50f, 0.62f, 0.70f, 1.0f);
+        case graph::NodeKind::Blur:
+            return ImVec4(0.62f, 0.58f, 0.68f, 1.0f);
+        case graph::NodeKind::MaskImage:
+            return ImVec4(0.72f, 0.72f, 0.72f, 1.0f);
         case graph::NodeKind::Output:
         default:
             return ImVec4(0.59f, 0.64f, 0.68f, 1.0f);
@@ -47,6 +51,9 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
 
 ImVec4 PinTypeColor(graph::ValueType valueType) {
     switch (valueType) {
+        // マスクは無彩色。マテリアルの線と一目で区別できるようにする。
+        case graph::ValueType::Mask:
+            return ImVec4(0.80f, 0.80f, 0.80f, 1.0f);
         case graph::ValueType::Material:
         default:
             return ImVec4(0.70f, 0.78f, 0.72f, 1.0f);
@@ -156,6 +163,18 @@ void Application::SyncGraphStack() {
         node != nullptr && graph::IsLayerNodeKind(node->kind)) {
         target = node->id;
     }
+    // 地形の実寸はチェーンの根にある Heightmap ノードが持つ。
+    // **読み込むときに一度決めたら、以後はプレビュー側で触らない。**
+    if (const graph::TerrainScale* scale = m_graph.FindChainScale(target)) {
+        m_renderer.PlaneSize() = scale->sizeMeters;
+        m_renderer.DisplacementScale() = scale->heightMeters;
+    }
+    // 合成の法線は実寸の勾配から作るので、評価器にも同じ実寸を渡す。
+    // ノードが実寸を持たないときはプレビュー設定がジオメトリを決めるので、
+    // そちらに合わせる（押し出した形と陰影の起伏を一致させる）。
+    // レイヤー列が変わらなくても実寸だけ動くことがあるため、早期 return より前に置く。
+    m_graphStack.SetTerrainScale(m_renderer.PlaneSize(), m_renderer.DisplacementScale());
+
     if (m_compiledGraphRevision == m_graph.Revision() && m_compiledGraphTarget == target) {
         return;
     }
@@ -164,13 +183,6 @@ void Application::SyncGraphStack() {
     m_graphStack.Layers() =
         (target != 0) ? m_graph.CompileLayersTo(target) : m_graph.CompileLayers();
     m_graphStack.MarkDirty();
-
-    // 地形の実寸はチェーンの根にある Heightmap ノードが持つ。
-    // **読み込むときに一度決めたら、以後はプレビュー側で触らない。**
-    if (const graph::TerrainScale* scale = m_graph.FindChainScale(target)) {
-        m_renderer.PlaneSize() = scale->sizeMeters;
-        m_renderer.DisplacementScale() = scale->heightMeters;
-    }
 }
 
 void Application::DrawGraphNode(const graph::Node& node) {
@@ -432,6 +444,11 @@ void Application::DrawGraphEditor() {
         addNodeMenuItem(graph::NodeKind::Shape, "Shape — 高さへ起伏を加算する");
         addNodeMenuItem(graph::NodeKind::Liquid, "Liquid — 水位より低い所に水を張る");
         ImGui::Separator();
+        addNodeMenuItem(graph::NodeKind::Blur, "Heightmap Blur — ハイトをぼかしてならす");
+        ImGui::Separator();
+        addNodeMenuItem(graph::NodeKind::MaskImage,
+                        "Mask Image — 画像をマスクにする（白い所だけ乗る）");
+        ImGui::Separator();
         addNodeMenuItem(graph::NodeKind::Output, "Output — ここに繋いだ結果をプレビューする");
         ImGui::EndPopup();
     }
@@ -515,7 +532,15 @@ void Application::DrawGraphPanel() {
             selected->inputs.empty() ||
             m_graph.FindUpstreamNodeForPin(selected->inputs.front().id) == nullptr;
         const bool isSource = graph::IsSourceNodeKind(selected->kind);
-        changed |= DrawLayerSettings(settings->layer, isBase, isSource);
+        // Mask 入力にノードが繋がっていれば、マスクの出どころはそちら。
+        bool maskFromNode = false;
+        for (const graph::Pin& pin : selected->inputs) {
+            if (pin.valueType == graph::ValueType::Mask &&
+                m_graph.FindUpstreamNodeForPin(pin.id) != nullptr) {
+                maskFromNode = true;
+            }
+        }
+        changed |= DrawLayerSettings(settings->layer, isBase, isSource, maskFromNode);
 
         // 地形の実寸。**ソースだけが持ち、読み込むときに一度だけ決める。**
         // プレビュー設定ではなくここに置くのは、実寸が見え方の設定ではなく
@@ -537,6 +562,19 @@ void Application::DrawGraphPanel() {
             }
             ui::HintText("読み込んだ地形の実寸。プレビュー設定の平面のサイズと変位量はこれに従う");
         }
+        if (changed) {
+            m_graph.MarkDirty();
+            MarkDocumentChanged();
+        }
+    } else if (auto* mask = std::get_if<graph::MaskNodeSettings>(&selected->settings)) {
+        bool changed = false;
+        ui::SectionHeader("マスク画像");
+        if (ui::BeginPropertyTable("graphMaskRows")) {
+            changed |= DrawMapSlotRow("画像", mask->map, m_textureLibrary);
+            ui::EndPropertyTable();
+        }
+        ui::HintText("レイヤーの Mask 入力へ繋ぐと、白い所にだけそのレイヤーが乗る。"
+                     "効き方（カーブ / レベル / 反転）はレイヤー側で決める");
         if (changed) {
             m_graph.MarkDirty();
             MarkDocumentChanged();

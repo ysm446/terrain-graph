@@ -60,7 +60,6 @@ inline const compositor::MaterialLayer kDefaultShapeLayer = [] {
     layer.heightBase = 0.5f;  // 0.5 で持ち上げなし
     layer.heightGain = 0.6f;
     layer.heightNoise = compositor::NoiseParams{compositor::NoiseType::Fbm, 3.0f, 1.0f, 5, 0.0f};
-    layer.normalStrength = 1.0f;
     return layer;
 }();
 
@@ -76,13 +75,12 @@ inline const compositor::MaterialLayer kDefaultLiquidLayer = [] {
     layer.heightSource = compositor::ValueSource::Constant;
     layer.heightBase = 0.35f;   // 水位
     layer.blendRange = 0.01f;   // 汀線のフェザー幅
-    layer.normalStrength = 0.0f;
     return layer;
 }();
 
 // ハイトマップノードの既定値。**ソースとして単体で成立する形**にしておく。
-// 起伏の強さ 1.0 で画像の 0〜1 がそのままハイトの全幅になり、
-// プレビュー設定の「変位量」（m）がその全幅を実寸へ変換する。
+// 画像の 0〜1 がそのままハイトの全幅（起伏の強さは 1.0 固定で UI にも出さない）。
+// その全幅を実寸へ変換するのはノードの「標高差」（m）。
 inline const compositor::MaterialLayer kDefaultHeightmapLayer = [] {
     compositor::MaterialLayer layer;
     layer.kind = compositor::LayerKind::Shape;
@@ -90,7 +88,15 @@ inline const compositor::MaterialLayer kDefaultHeightmapLayer = [] {
     layer.heightSource = compositor::ValueSource::Texture;
     layer.heightBase = 0.5f;  // 0.5 で持ち上げなし
     layer.heightGain = 1.0f;
-    layer.normalStrength = 1.0f;
+    return layer;
+}();
+
+// ブラーノードの既定値。**合成しない加工**なので、色もマスクも使わない。
+// 半径は terrain-editor の既定（3 セル）にならい、1024m / 1024px を想定して 3m。
+inline const compositor::MaterialLayer kDefaultBlurLayer = [] {
+    compositor::MaterialLayer layer;
+    layer.kind = compositor::LayerKind::Blur;
+    layer.name = "Blur";
     return layer;
 }();
 
@@ -100,13 +106,15 @@ inline const compositor::MaterialLayer& DefaultLayerFor(compositor::LayerKind ki
             return kDefaultShapeLayer;
         case compositor::LayerKind::Liquid:
             return kDefaultLiquidLayer;
+        case compositor::LayerKind::Blur:
+            return kDefaultBlurLayer;
         default:
             return kDefaultLayer;
     }
 }
 
 // レイヤー一覧のツールチップなどで使う種類の表示名。LayerKind の並びと一致させること。
-inline const char* const kLayerKindLabels[] = {"サーフェス", "シェイプ", "水面"};
+inline const char* const kLayerKindLabels[] = {"サーフェス", "シェイプ", "水面", "ブラー"};
 inline const compositor::BrushSettings kDefaultBrush;
 inline const renderer::LightSettings kDefaultLight;
 inline const renderer::ExposureSettings kDefaultExposure;

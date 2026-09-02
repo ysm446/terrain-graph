@@ -92,7 +92,10 @@ private:
     // グラフノードのレイヤー設定のプロパティ行。
     // 変更があれば true。isBase はマスクが効かない一番下のレイヤーのとき。
     // isSource は入力を持たないノード（ハイトマップ）。マスクの節を出さない。
-    bool DrawLayerSettings(compositor::MaterialLayer& layer, bool isBase, bool isSource = false);
+    // maskFromNode が真のとき、マスクの出どころは Mask 入力に繋いだノード。
+    // ソースと画像の行は出さない（同じ値を 2 か所から編集させない）。
+    bool DrawLayerSettings(compositor::MaterialLayer& layer, bool isBase, bool isSource = false,
+                           bool maskFromNode = false);
     // グラフの変更をコンパイル結果（m_graphStack）へ反映する。フレームの頭で呼ぶ。
     void SyncGraphStack();
     void DrawMaterialLibraryPanel();

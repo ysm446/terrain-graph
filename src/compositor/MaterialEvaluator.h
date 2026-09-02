@@ -17,8 +17,9 @@ struct MaterialTextureSet {
     rhi::GpuTexture normal;     // R16G16_FLOAT（xy のみ、z は再構成）
     rhi::GpuTexture surface;    // R8G8B8A8_UNORM（R=Roughness, G=Metallic, B=AO）
     rhi::GpuTexture height;     // R16_FLOAT
-    // 中間結果由来マスクの計算結果。合成パスはここを読む。
-    rhi::GpuTexture maskScratch;  // R16_FLOAT
+    // 近傍を読むパスの作業用。マスク生成（合成パスがここを読む）と、
+    // ブラーの水平パスが使う。どちらも Height と同じ形式。
+    rhi::GpuTexture scratch;  // R16_FLOAT
 
     bool IsValid() const { return baseColor.IsValid(); }
 };
@@ -64,6 +65,7 @@ public:
                          const PaintMaskStore& paintMasks);
 
     uint32_t TileSize() const { return m_tileSize; }
+
     void SetTileSize(uint32_t tileSize) { m_tileSize = (tileSize > 0) ? tileSize : 1; }
     uint32_t EvaluatedTileCount() const { return m_evaluatedTileCount; }
 
@@ -87,6 +89,14 @@ public:
     void Invalidate() { m_evaluatedRevision = 0; }
 
 private:
+    // ブラーレイヤー 1 枚ぶん。Height を分離型ガウスでならし、
+    // ぼかした形から法線を作り直す。**1 パスを全タイル終えてから次のパスへ進む**
+    // （近傍を読むため、タイル優先で回すと継ぎ目が出る）。
+    bool ApplyHeightBlur(rhi::Device& device, ID3D12GraphicsCommandList* commandList,
+                         ID3D12PipelineState* blurPipeline,
+                         ID3D12PipelineState* normalPipeline, const MaterialLayer& layer,
+                         const MaterialStack& stack, const std::vector<TileRect>& tiles);
+
     void ReleaseTextures(rhi::Device& device);
     // レイヤー枚数ぶんのマスクサムネイルを用意する。増減した枚数だけ作る / 捨てる。
     void EnsureMaskThumbnails(rhi::Device& device, size_t layerCount);

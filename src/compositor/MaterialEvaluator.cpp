@@ -56,6 +56,19 @@ struct LayerConstants {
     uint32_t mapChannels[4];
 };
 
+// GPU 側の BlurConstants と一致させること。
+struct BlurConstants {
+    uint32_t sourceIndex;
+    uint32_t outputIndex;
+    uint32_t axis;  // 0 = 水平 / 1 = 垂直
+    float radiusTexels;
+
+    uint32_t tile[4];
+    uint32_t resolution[2];
+    float strength;
+    float heightPerSize;
+};
+
 // GPU 側の MaskConstants と一致させること。
 struct MaskConstants {
     uint32_t heightIndex;
@@ -94,8 +107,8 @@ bool MaterialEvaluator::Create(rhi::Device& device, uint32_t resolution) {
                               m_textures.surface) ||
         !CreateChannelTexture(device, resolution, kHeightFormat, L"MaterialHeight",
                               m_textures.height) ||
-        !CreateChannelTexture(device, resolution, kHeightFormat, L"MaterialMaskScratch",
-                              m_textures.maskScratch)) {
+        !CreateChannelTexture(device, resolution, kHeightFormat, L"MaterialScratch",
+                              m_textures.scratch)) {
         return false;
     }
 
@@ -153,7 +166,7 @@ void MaterialEvaluator::ReleaseTextures(rhi::Device& device) {
     device.DeferRelease(m_textures.normal);
     device.DeferRelease(m_textures.surface);
     device.DeferRelease(m_textures.height);
-    device.DeferRelease(m_textures.maskScratch);
+    device.DeferRelease(m_textures.scratch);
 }
 
 bool MaterialEvaluator::Resize(rhi::Device& device, uint32_t resolution) {
@@ -164,6 +177,97 @@ bool MaterialEvaluator::Resize(rhi::Device& device, uint32_t resolution) {
     device.WaitForGpu();
     return Create(device, resolution);
 }
+bool MaterialEvaluator::ApplyHeightBlur(rhi::Device& device,
+                                       ID3D12GraphicsCommandList* commandList,
+                                       ID3D12PipelineState* blurPipeline,
+                                       ID3D12PipelineState* normalPipeline,
+                                       const MaterialLayer& layer, const MaterialStack& stack,
+                                       const std::vector<TileRect>& tiles) {
+    // 半径は実寸（m）で持っている。合成解像度を変えても効きが変わらないように
+    // するため、ここでテクセル数へ直す。
+    const float sizeMeters = (stack.SizeMeters() > 0.0f) ? stack.SizeMeters() : 1.0f;
+    const float radiusTexels =
+        layer.blur.radiusMeters / sizeMeters * static_cast<float>(m_resolution);
+    const float strength = std::clamp(layer.blur.strength, 0.0f, 1.0f);
+    const int iterations = std::clamp(layer.blur.iterations, 1, 16);
+    // テクセル 1 つに満たない半径や強さ 0 は何も変えない。パスごと省く。
+    if (radiusTexels < 0.5f || strength <= 0.0f) {
+        return true;
+    }
+
+    const float heightPerSize = (stack.SizeMeters() > 0.0f)
+                                    ? (stack.HeightMeters() / stack.SizeMeters())
+                                    : 0.0f;
+
+    bool complete = true;
+    PIXBeginEvent(commandList, PIX_COLOR(120, 160, 220), "CompositeBlur");
+
+    // 1 パスぶん。**全タイルを回してから**呼び出し側が次のパスへ進むこと。
+    const auto dispatchPass = [&](ID3D12PipelineState* pipeline, uint32_t sourceIndex,
+                                  uint32_t outputIndex, uint32_t axis, float passStrength) {
+        commandList->SetPipelineState(pipeline);
+        for (const TileRect& tile : tiles) {
+            BlurConstants constants = {};
+            constants.sourceIndex = sourceIndex;
+            constants.outputIndex = outputIndex;
+            constants.axis = axis;
+            constants.radiusTexels = radiusTexels;
+            constants.tile[0] = tile.x;
+            constants.tile[1] = tile.y;
+            constants.tile[2] = tile.width;
+            constants.tile[3] = tile.height;
+            constants.resolution[0] = m_resolution;
+            constants.resolution[1] = m_resolution;
+            constants.strength = passStrength;
+            constants.heightPerSize = heightPerSize;
+
+            const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(BlurConstants), 256);
+            if (!cb.IsValid()) {
+                complete = false;
+                break;
+            }
+            std::memcpy(cb.cpu, &constants, sizeof(constants));
+
+            commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+            commandList->Dispatch(DispatchCount(tile.width), DispatchCount(tile.height), 1);
+        }
+    };
+
+    for (int iteration = 0; iteration < iterations; ++iteration) {
+        // 水平: Height（読み取り）→ 作業用。中間結果なので混ぜない。
+        TransitionIfNeeded(commandList, m_textures.height,
+                           D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        TransitionIfNeeded(commandList, m_textures.scratch,
+                           D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        dispatchPass(blurPipeline, m_textures.height.SrvIndex(), m_textures.scratch.UavIndex(),
+                     0u, 1.0f);
+
+        // 垂直: 作業用（読み取り）→ Height。ここで元の高さと強さで混ぜる。
+        TransitionIfNeeded(commandList, m_textures.scratch,
+                           D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        TransitionIfNeeded(commandList, m_textures.height,
+                           D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        dispatchPass(blurPipeline, m_textures.scratch.SrvIndex(), m_textures.height.UavIndex(),
+                     1u, strength);
+    }
+
+    // ぼかした形から法線を作り直す。**Height だけをぼかすと形と陰影が食い違う。**
+    TransitionIfNeeded(commandList, m_textures.height,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    dispatchPass(normalPipeline, m_textures.height.SrvIndex(), m_textures.normal.UavIndex(), 0u,
+                 1.0f);
+
+    // 次のレイヤーは Height を UAV として書き換えるので、状態を戻しておく。
+    TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    const D3D12_RESOURCE_BARRIER barriers[] = {
+        CD3DX12_RESOURCE_BARRIER::UAV(m_textures.normal.resource.Get()),
+    };
+    commandList->ResourceBarrier(_countof(barriers), barriers);
+
+    PIXEndEvent(commandList);
+    return complete;
+}
+
 bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                                  ID3D12GraphicsCommandList* commandList,
                                  const MaterialStack& stack, const TextureLibrary& textures,
@@ -177,6 +281,11 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
     ID3D12PipelineState* layerPipeline =
         pipelineCache.GetCompute(L"CompositeLayer.hlsl", L"CsMain");
     ID3D12PipelineState* maskPipeline = pipelineCache.GetCompute(L"CompositeMask.hlsl", L"CsMain");
+    // ブラー（分離型ガウス）と、ぼかした後の法線の作り直し。
+    ID3D12PipelineState* blurPipeline =
+        pipelineCache.GetCompute(L"CompositeBlur.hlsl", L"CsBlur");
+    ID3D12PipelineState* blurNormalPipeline =
+        pipelineCache.GetCompute(L"CompositeBlur.hlsl", L"CsNormalFromHeight");
     // マスクのサムネイルは合成と同じ定数を使うので、同じシェーダの別エントリ。
     ID3D12PipelineState* thumbnailPipeline =
         pipelineCache.GetCompute(L"CompositeLayer.hlsl", L"CsMaskThumbnail");
@@ -212,6 +321,22 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
     for (size_t layerIndex = 0; layerIndex < stack.Layers().size(); ++layerIndex) {
         const MaterialLayer& layer = stack.Layers()[layerIndex];
         const bool isBaseLayer = (layerIndex == baseIndex);
+
+        // ブラーは合成しない**加工**。下地のハイトをならして法線を作り直す。
+        // 下に合成済みのレイヤーが無いとぼかす相手がいないので、その場合は素通り。
+        if (layer.kind == LayerKind::Blur) {
+            const bool hasUnderlying = (baseIndex != static_cast<size_t>(-1)) &&
+                                       (layerIndex > baseIndex);
+            if (layer.enabled && hasUnderlying && blurPipeline != nullptr &&
+                blurNormalPipeline != nullptr) {
+                if (!ApplyHeightBlur(device, commandList, blurPipeline, blurNormalPipeline,
+                                     layer, stack, tiles)) {
+                    complete = false;
+                }
+                ++m_evaluatedLayerCount;
+            }
+            continue;
+        }
         // 下地のレイヤーには合成する相手がいないので、中間結果由来のマスクは使えない。
         const bool useDerivedMask =
             layer.enabled && !isBaseLayer && IsDerivedMaskSource(layer.mask.source);
@@ -222,14 +347,14 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             // Height を読み取り専用にしてからマスクを計算する。
             TransitionIfNeeded(commandList, m_textures.height,
                                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-            TransitionIfNeeded(commandList, m_textures.maskScratch,
+            TransitionIfNeeded(commandList, m_textures.scratch,
                                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
             commandList->SetPipelineState(maskPipeline);
             for (const TileRect& tile : tiles) {
                 MaskConstants constants = {};
                 constants.heightIndex = m_textures.height.SrvIndex();
-                constants.outputIndex = m_textures.maskScratch.UavIndex();
+                constants.outputIndex = m_textures.scratch.UavIndex();
                 constants.source = static_cast<uint32_t>(layer.mask.source);
                 constants.derivedScale = layer.mask.derivedScale;
                 constants.tile[0] = tile.x;
@@ -252,7 +377,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             }
 
             // マスクを読み取りに、Height を書き込みに戻す。
-            TransitionIfNeeded(commandList, m_textures.maskScratch,
+            TransitionIfNeeded(commandList, m_textures.scratch,
                                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             TransitionIfNeeded(commandList, m_textures.height,
                                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -317,7 +442,10 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         constants.surfaceParams[3] = layer.heightBase;
 
         constants.blendParams[0] = layer.blendRange;
-        constants.blendParams[1] = layer.normalStrength;
+        // 法線は実寸の勾配から作る。ハイト 0〜1 の全幅が標高差（m）、
+        // 出力 UV 0〜1 が地形の一辺（m）なので、その比を渡す。
+        constants.blendParams[1] =
+            (stack.SizeMeters() > 0.0f) ? (stack.HeightMeters() / stack.SizeMeters()) : 0.0f;
         constants.blendParams[2] = layer.uvScale;
         constants.blendParams[3] = static_cast<float>(layer.heightSource);
 
@@ -369,7 +497,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                                    : PackChannel(layer.heightTexture.channel, 3)) |
             PackChannel(layer.mask.texture.channel, 4);
         constants.textureIndices1[3] =
-            useDerivedMask ? m_textures.maskScratch.SrvIndex() : kInvalidTextureIndex;
+            useDerivedMask ? m_textures.scratch.SrvIndex() : kInvalidTextureIndex;
 
         // derivedScale は CompositeMask 側で適用済み。二重適用しないため渡さない。
         constants.maskCurve[0] = layer.mask.contrast;

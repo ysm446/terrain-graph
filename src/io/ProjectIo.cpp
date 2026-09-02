@@ -144,8 +144,7 @@ const char* const kNoiseTypeNames[] = {"fbm", "ridged", "worley"};
 const char* const kMaskSourceNames[] = {"constant", "noise",     "texture", "height",
                                         "slope",    "curvature", "cavity",  "paint"};
 const char* const kChannelNames[] = {"baseColor", "normal", "surface", "height"};
-const char* const kLayerKindNames[] = {"surface", "shape", "liquid"};
-const char* const kShapeNames[] = {"sphere", "plane", "cube"};
+const char* const kLayerKindNames[] = {"surface", "shape", "liquid", "blur"};
 const char* const kTonemapNames[] = {"none", "reinhard", "aces"};
 const char* const kSkySourceNames[] = {"procedural", "hdri"};
 const char* const kApertureShapeNames[] = {"circle", "triangle", "hexagon", "octagon"};
@@ -368,7 +367,13 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     height["texture"] = WriteMapSlot(layer.heightTexture, writeTexture);
     node["height"] = std::move(height);
 
-    node["normalStrength"] = layer.normalStrength;
+    // ぼかし（ブラーレイヤーだけが使う）。
+    json blur;
+    blur["radius"] = layer.blur.radiusMeters;
+    blur["strength"] = layer.blur.strength;
+    blur["iterations"] = layer.blur.iterations;
+    node["blur"] = std::move(blur);
+
     node["mask"] = WriteMask(layer.mask, writeTexture, writePaint);
     node["blendRange"] = layer.blendRange;
     node["wrapToUnderlying"] = layer.wrapToUnderlying;
@@ -422,7 +427,12 @@ compositor::MaterialLayer ReadLayer(
         }
     }
 
-    layer.normalStrength = ReadFloat(node, "normalStrength", defaults.normalStrength);
+    if (const json* blur = FindMember(node, "blur"); blur != nullptr && blur->is_object()) {
+        layer.blur.radiusMeters = ReadFloat(*blur, "radius", defaults.blur.radiusMeters);
+        layer.blur.strength = ReadFloat(*blur, "strength", defaults.blur.strength);
+        layer.blur.iterations = ReadInt(*blur, "iterations", defaults.blur.iterations);
+    }
+
     if (const json* mask = FindMember(node, "mask"); mask != nullptr && mask->is_object()) {
         ReadMask(*mask, layer.mask, readTexture, readPaint);
     }
@@ -471,6 +481,8 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
                 scale["height"] = settings->scale.heightMeters;
                 item["scale"] = std::move(scale);
             }
+        } else if (const auto* mask = std::get_if<graph::MaskNodeSettings>(&node.settings)) {
+            item["map"] = WriteMapSlot(mask->map, writeTexture);
         }
         nodes.push_back(std::move(item));
     }
@@ -575,6 +587,10 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                 // 種類とレイヤー種別は常に一致させる（ファイルの食い違いは種類を信じる）。
                 settings.layer.kind = graph::LayerKindFor(created.kind);
                 created.settings = std::move(settings);
+            } else if (graph::IsMaskNodeKind(created.kind)) {
+                graph::MaskNodeSettings settings;
+                settings.map = ReadMapSlot(item, "map", readTexture);
+                created.settings = std::move(settings);
             } else {
                 created.settings = graph::OutputNodeSettings{};
             }
@@ -671,10 +687,8 @@ graph::NodeGraph MigrateLayersToGraph(std::vector<compositor::MaterialLayer> lay
 // 天球アセット（M5b-2）で HDRI のパスが preview から抜けたため、パスの解決は不要になった。
 json WritePreview(renderer::PreviewRenderer& renderer) {
     json node;
-    node["shape"] = EnumName(kShapeNames, static_cast<uint32_t>(renderer.Shape()));
     node["tonemap"] = EnumName(kTonemapNames, static_cast<uint32_t>(renderer.Tonemap()));
     node["useMaterialTextures"] = renderer.UseMaterialTextures();
-    node["materialUvScale"] = renderer.MaterialUvScale();
     node["displacementScale"] = renderer.DisplacementScale();
     node["planeSize"] = renderer.PlaneSize();
     node["tessellation"] = renderer.TessellationEnabled();
@@ -737,13 +751,10 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
     // 既定値は renderer::kPreviewDefaults の一択。数値を直接書かない。
     // 名前は各節ローカルの defaults（LightSettings など）と衝突させない。
     const renderer::PreviewDefaults& previewDefaults = renderer::kPreviewDefaults;
-    renderer.Shape() = static_cast<renderer::PreviewShape>(
-        EnumValue(kShapeNames, node, "shape", static_cast<uint32_t>(previewDefaults.shape)));
     renderer.Tonemap() = static_cast<renderer::TonemapMode>(
         EnumValue(kTonemapNames, node, "tonemap", static_cast<uint32_t>(previewDefaults.tonemap)));
     renderer.UseMaterialTextures() =
         ReadBool(node, "useMaterialTextures", previewDefaults.useMaterialTextures);
-    renderer.MaterialUvScale() = ReadFloat(node, "materialUvScale", previewDefaults.materialUvScale);
     renderer.DisplacementScale() =
         ReadFloat(node, "displacementScale", previewDefaults.displacementScale);
     // 平面のサイズ（m）。**カメラより先に読む。** 軌道の距離の範囲がこれで決まるので、

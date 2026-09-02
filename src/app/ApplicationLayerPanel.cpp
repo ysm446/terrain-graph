@@ -26,13 +26,49 @@ namespace tg {
 
 // レイヤー 1 枚ぶんのプロパティ行。グラフパネルの下段から使う。
 // 変更の記録（アンドゥ / グラフの再コンパイル）は呼び出し側で行う。
-bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBase,
-                                   bool isSource) {
+bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBase, bool isSource,
+                                   bool maskFromNode) {
     // 既定値マーカーは種類ごとの既定値を参照する（追加時の初期値と揃える）。
     const compositor::MaterialLayer& defaults = DefaultLayerFor(layer.kind);
     const bool isShape = (layer.kind == compositor::LayerKind::Shape);
     const bool isLiquid = (layer.kind == compositor::LayerKind::Liquid);
     bool changed = false;
+
+    // ブラーは合成レイヤーではなく「下地のハイトをぼかす加工」。
+    // 色もハイトのソースもマスクも持たないので、専用の行だけを出す。
+    if (layer.kind == compositor::LayerKind::Blur) {
+        const compositor::MaterialLayer& blurDefaults = kDefaultBlurLayer;
+        ui::SectionHeader("基本");
+        if (ui::BeginPropertyTable("blurBasicRows")) {
+            char blurName[128] = {};
+            std::snprintf(blurName, sizeof(blurName), "%s", layer.name.c_str());
+            if (ui::PropertyTextInput("名前", blurName, sizeof(blurName))) {
+                layer.name = blurName;
+                changed = true;
+            }
+            ui::EndPropertyTable();
+        }
+        ui::SectionHeader("ぼかし");
+        if (ui::BeginPropertyTable("blurRows")) {
+            // 半径は実寸（m）。合成解像度を変えても効きが変わらない。
+            changed |= ui::PropertyFloat("半径", &layer.blur.radiusMeters, 0.0f, 512.0f,
+                                         blurDefaults.blur.radiusMeters,
+                                         "ぼかす範囲（m）。大きいほど広くならす", "%.2f m",
+                                         ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat("強さ", &layer.blur.strength, 0.0f, 1.0f,
+                                         blurDefaults.blur.strength,
+                                         "元の高さとぼかした高さを混ぜる量。1 で完全なぼかし",
+                                         "%.2f");
+            changed |= ui::PropertyInt("反復", &layer.blur.iterations, 1, 16,
+                                       blurDefaults.blur.iterations,
+                                       "ぼかしを重ねる回数。多いほど広く均される"
+                                       "（実効半径はおよそ 半径 x sqrt(反復)）");
+            ui::EndPropertyTable();
+        }
+        ui::HintText("下地のハイトをぼかし、ぼかした形から法線を作り直す。"
+                     "素材の法線ディテールを載せるなら、このノードより後ろに繋ぐ");
+        return changed;
+    }
 
     ui::SectionHeader("基本");
     if (ui::BeginPropertyTable("layerBasicRows")) {
@@ -110,7 +146,9 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                     "起伏の強さを変えてもここは動かない",
                     "%.2f");
             }
-            if (layer.heightSource != compositor::ValueSource::Constant) {
+            // ソース（Heightmap）は画像の 0〜1 がそのままハイトの全幅（強さ 1.0 固定）。
+            // 振れ幅は下の「スケール」の標高差（m）が決めるので、二重に持たせない。
+            if (layer.heightSource != compositor::ValueSource::Constant && !isSource) {
                 changed |= ui::PropertyFloat("起伏の強さ", &layer.heightGain, 0.0f, 3.0f,
                                              defaults.heightGain,
                                              "基準の高さを中心とした凹凸の振れ幅。0 で平らになる",
@@ -119,15 +157,11 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
             if (layer.heightSource == compositor::ValueSource::Noise) {
                 changed |= DrawNoiseRows(layer.heightNoise, defaults.heightNoise, false);
             }
-            changed |= ui::PropertyFloat("法線の強さ", &layer.normalStrength, 0.0f, 4.0f,
-                                         defaults.normalStrength,
-                                         "ハイトの勾配から作る法線の強さ。0 で平坦", "%.2f");
             ui::EndPropertyTable();
         }
         if (isSource) {
-            // ソースは実寸を持たない。**高さのメートルはジオメトリ側の設定**
-            // （プレビュー設定の「変位量」）が決める。
-            ui::HintText("ハイト 0〜1 を作る。実際の高さ（m）はプレビュー設定の変位量で決まる");
+            // ハイトは 0〜1 の正規化値。**何 m かは下の「スケール」の標高差**が決める。
+            ui::HintText("画像の 0〜1 がハイトの全幅。実際の高さ（m）はスケールの標高差で決まる");
         } else if (isShape) {
             ui::HintText("下地の高さへ加算し、0〜1 に切り詰める。細部は下のレイヤーのまま残る");
         }
@@ -138,23 +172,28 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
     if (!isSource) {
         ui::SectionHeader("マスク");
         if (ui::BeginPropertyTable("layerMaskRows")) {
-            int maskSource = static_cast<int>(layer.mask.source);
-            if (ui::PropertyCombo("ソース", &maskSource, kMaskSourceLabels,
-                                  IM_ARRAYSIZE(kMaskSourceLabels),
-                                  static_cast<int>(kDefaultLayer.mask.source),
-                                  "マスクは不透明度として高さと同じ土俵で競合する。"
-                                  "1.0 にすると高さに関係なく全面を覆う")) {
-                layer.mask.source = static_cast<compositor::MaskSource>(maskSource);
-                changed = true;
+            // Mask 入力にノードが繋がっているときは、そちらが出どころ。
+            if (maskFromNode) {
+                ui::PropertyValue("ソース", "%s", "画像（Mask 入力）");
+            } else {
+                int maskSource = static_cast<int>(layer.mask.source);
+                if (ui::PropertyCombo("ソース", &maskSource, kMaskSourceLabels,
+                                      IM_ARRAYSIZE(kMaskSourceLabels),
+                                      static_cast<int>(kDefaultLayer.mask.source),
+                                      "マスクは不透明度として高さと同じ土俵で競合する。"
+                                      "1.0 にすると高さに関係なく全面を覆う")) {
+                    layer.mask.source = static_cast<compositor::MaskSource>(maskSource);
+                    changed = true;
+                }
             }
             changed |= ui::PropertyFloat("定数", &layer.mask.constant, 0.0f, 1.0f,
                                          kDefaultLayer.mask.constant,
                                          "ソースの値に掛ける係数", "%.2f");
 
-            if (layer.mask.source == compositor::MaskSource::Texture) {
+            if (!maskFromNode && layer.mask.source == compositor::MaskSource::Texture) {
                 changed |= DrawMapSlotRow("画像", layer.mask.texture, m_textureLibrary);
             }
-            if (layer.mask.source == compositor::MaskSource::Noise) {
+            if (!maskFromNode && layer.mask.source == compositor::MaskSource::Noise) {
                 changed |= DrawNoiseRows(layer.mask.noise, kDefaultLayer.mask.noise);
             }
             if (compositor::IsDerivedMaskSource(layer.mask.source)) {

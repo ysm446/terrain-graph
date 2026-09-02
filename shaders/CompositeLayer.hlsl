@@ -35,7 +35,7 @@ struct LayerConstants
 
     float4 baseColor;      // rgb
     float4 surfaceParams;  // roughness, metallic, ao, heightBase
-    float4 blendParams;    // blendRange, normalStrength, uvScale, heightSource
+    float4 blendParams;    // blendRange, heightPerSize, uvScale, heightSource
     float4 maskParams;     // constant, levelsLow, levelsHigh, maskSource
     // ハイトはノイズの amount を使わず、y に heightGain を入れる。
     float4 heightNoise;    // scale, heightGain, octaves, offset
@@ -186,27 +186,26 @@ float SampleLayerMask(float2 uv, float2 paintUv, float2 derivedUv, float uvPerOu
     return ApplyMaskLevels(mask, g_layer.maskParams.y, g_layer.maskParams.z, invert);
 }
 
-// 勾配（高さ / UV 単位）を法線の傾きへ変換する係数。
-// 生の d(height)/d(uv) はノイズ周波数がそのまま出て極端に急になるため、
-// 強さ 1.0 が妥当な見た目になるよう一定倍率で丸める。
-static const float kNormalGradientScale = 0.03f;
-
 // ハイトの勾配からタンジェント空間法線を作る。解像度に依らない値になるよう、
 // テクセル差ではなく UV 単位の微分を取る。
 // 法線テクスチャが指定されている場合はそちらを使う。
+//
+// **勾配は実寸（m）で取る。** 強さのような無次元のつまみは持たない。
+// ハイト 0〜1 の全幅が標高差（m）、出力 UV 0〜1 が地形の一辺（m）なので、
+// blendParams.y = 標高差 / 一辺 を掛ければ d(高さ m) / d(距離 m) になる。
+// UV スケールで模様を並べたぶんは同じだけ勾配が急になるので uvScale も掛ける。
 float3 ComputeLayerNormal(float2 uv, float2 texelSize, float uvPerOutputTexel)
 {
-    const float strength = g_layer.blendParams.y;
-
     if (g_layer.textureIndices0.y != kInvalidTextureIndex)
     {
         const float3 sampled =
             SampleLayerTexture(g_layer.textureIndices0.y, uv, uvPerOutputTexel).rgb;
-        const float3 tangentNormal = normalize(sampled * 2.0f - 1.0f);
-        return FlattenNormal(tangentNormal, strength);
+        return normalize(sampled * 2.0f - 1.0f);
     }
 
-    if (strength <= 0.0f)
+    // 標高差 0 なら地形は平ら。勾配を取るまでもない。
+    const float heightPerSize = g_layer.blendParams.y;
+    if (heightPerSize <= 0.0f)
     {
         return float3(0.0f, 0.0f, 1.0f);
     }
@@ -216,11 +215,12 @@ float3 ComputeLayerNormal(float2 uv, float2 texelSize, float uvPerOutputTexel)
     const float hy0 = SampleLayerHeight(uv - float2(0.0f, texelSize.y), uvPerOutputTexel);
     const float hy1 = SampleLayerHeight(uv + float2(0.0f, texelSize.y), uvPerOutputTexel);
 
-    // テクセル間隔で正規化した勾配。強さで倍率を掛ける。
+    // UV 単位の勾配（合成解像度に依らない）。
     const float dx = (hx1 - hx0) * 0.5f / max(texelSize.x, 1e-6f);
     const float dy = (hy1 - hy0) * 0.5f / max(texelSize.y, 1e-6f);
 
-    const float scale = strength * kNormalGradientScale;
+    // 実寸の勾配へ。tan(傾き) がそのまま法線の xy になる。
+    const float scale = heightPerSize * g_layer.blendParams.z;
     return normalize(float3(-dx * scale, -dy * scale, 1.0f));
 }
 

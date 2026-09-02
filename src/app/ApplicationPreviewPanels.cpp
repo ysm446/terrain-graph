@@ -28,15 +28,7 @@ void Application::DrawMaterialPanel() {
     // 両方が要求すると後から描いたほうが勝ち、既定の前面が定まらない。
     if (ImGui::Begin("プレビュー設定")) {
         if (ui::BeginPropertyTable("previewRows")) {
-            static const char* const kShapeLabels[] = {"球", "平面", "キューブ"};
             const renderer::PreviewDefaults& defaults = renderer::kPreviewDefaults;
-            int shape = static_cast<int>(m_renderer.Shape());
-            if (ui::PropertyCombo("形状", &shape, kShapeLabels, IM_ARRAYSIZE(kShapeLabels),
-                                  static_cast<int>(defaults.shape),
-                                  "マテリアルを貼って確かめるメッシュ")) {
-                m_renderer.Shape() = static_cast<renderer::PreviewShape>(shape);
-            }
-
             ui::PropertyBool("合成結果", &m_renderer.UseMaterialTextures(),
                              defaults.useMaterialTextures,
                              "オフにすると、レイヤー合成を使わず単色マテリアルで表示する");
@@ -48,7 +40,7 @@ void Application::DrawMaterialPanel() {
             // 地形の大きさは見え方の設定ではなく読み込んだデータの性質なので、
             // 決める場所はノード側の 1 か所だけにする。
             const bool scaleFromGraph = (m_graph.FindChainScale(m_selectedGraphNode) != nullptr);
-            if (m_renderer.Shape() == renderer::PreviewShape::Plane && !scaleFromGraph) {
+            if (!scaleFromGraph) {
                 ui::PropertyFloat("平面のサイズ", &m_renderer.PlaneSize(), 0.5f, 8192.0f,
                                   defaults.planeSize,
                                   "平面の一辺の長さ（m）。素材は 2m 前後、"
@@ -57,10 +49,6 @@ void Application::DrawMaterialPanel() {
             }
 
             if (m_renderer.UseMaterialTextures()) {
-                ui::PropertyFloat("UV スケール", &m_renderer.MaterialUvScale(), 0.25f, 8.0f,
-                                  defaults.materialUvScale,
-                                  "マテリアルをメッシュ上に何回並べるか", "%.2f", 0, 0.25f);
-
                 // 上限は「平面の辺の半分」。素材（2m 角）なら 1m、
                 // 地形（2km 角）なら 1000m まで指定できる。
                 // ハイト 0〜1 の全幅がこの高さに対応するので、

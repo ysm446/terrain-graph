@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-02 19:35
+更新日時: 2026-09-02 22:30
 
 ## 現在の状況
 
@@ -53,6 +53,68 @@ Megascans の ORD（チャンネルパック）と EXR にも対応した。
 UI はグレー基調に整理し、ルールを [design/design-guide.md](../design/design-guide.md) に置いた。
 
 ## 完了済み
+
+- 2026-09-02 22:30 — **平面の接空間の符号を修正し、プレビューを平面だけにした**。
+  - `MakePlane` の `tangent.w` を **-1** に。シェーダの
+    `cross(normal, tangent) * w` が `-Z` を返すのに対し、この平面の
+    `dP/dv` は `+Z`（`uv.v = tz`）で、**Z 方向だけ陰影が反転していた**。
+    球とキューブは +1 で一致していたので、平面だけの取り違え。
+    検証はランプ状のハイト（v で 0→1）に方位角 0 / 180 度の光を当てて
+    平均輝度を測る方法（修正前 61 / 44 → 修正後 38 / 90 と逆転）。
+  - `PreviewShape`（球 / 平面 / キューブ）と `materialUvScale` を**削除**。
+    UI の行、`MeshConstants` の `materialUvScale` / `clampMaterialUv`、
+    `MakeSphere` / `MakeCube`、保存の `shape` / `materialUvScale` まで。
+    合成結果は常にクランプで読む（平面 1 枚に等倍で貼るため）。
+  - **注意: `MeshConstants` は float4 の区切りを守ること。** フィールドを
+    2 つ消して詰め物を 1 つしか置かず、`lightViewProjection` 以降が
+    4 バイトずれてシャドウの SRV インデックスが壊れた（GBV が捕捉）。
+
+- 2026-09-02 21:45 — **レイヤーの Mask 入力と Mask Image ノード**（G2 のマスクのノード化・第 1 歩）。
+  - `ValueType::Mask` を足し、レイヤーノードのピンを Base / Mask / Result にした。
+    `NodeKind::MaskImage`（保存名 `maskImage`、設定は `MapSlot`）が出す。
+  - 評価器は触らない。`CompileChainFrom()` の `FindMaskInput()` が、
+    繋がっているマスクノードの画像を `layer.mask`（source=Texture）へ
+    **畳み込む**。効き方（係数 / カーブ / レベル / 反転）はレイヤー側のまま。
+  - 画像未設定のマスクノードは「繋がっていない」扱い（全面白にしない）。
+  - 検証: Debug ビルド、ctest、一時プロジェクト（後で削除）で
+    Mask Image → Surface の Mask に繋ぎ、白い所にだけ素材が乗ることを確認。
+  - 次: ノイズ / 傾斜 / 曲率 / ブラーなど**マスクの加工をノード化**する段階で、
+    レイヤーへ畳み込む今の方式から本当の DAG 評価器へ広げる。
+
+- 2026-09-02 21:05 — **Heightmap Blur ノードを追加した**（terrain-editor から移植）。
+  - `LayerKind::Blur` + `MaterialLayer::BlurSettings`（半径 m / 強さ / 反復）。
+    グラフの `NodeKind::Blur`（保存名 `heightmapBlur`）が対応する。
+  - 評価は `MaterialEvaluator::ApplyHeightBlur()` と `shaders/CompositeBlur.hlsl`。
+    分離型ガウスの水平 / 垂直パスを反復し、最後に**ぼかした Height から
+    法線を作り直す**（Height だけをぼかすと形と陰影が食い違うため）。
+  - **1 パスを全タイル終えてから次のパスへ進む**（近傍を読むため。
+    中間結果由来マスクと同じ制約）。作業用テクスチャはマスク生成と共用し、
+    `MaterialTextureSet::maskScratch` を `scratch` に改名した。
+  - 合成レイヤーではないので、ブラーは下地になれない
+    （`FirstEnabledIndex` が飛ばし、下に合成済みが無ければ素通り）。
+  - 検証: Debug ビルド、ctest、Heightmap → Blur → Surface のチェーンを
+    一時プロジェクト（後で削除）で描画確認。半径 40m / 反復 2 で
+    大きな谷筋がなめらかになり、後段の素材ディテールは残ることを確認。
+  - **未対応: 素材の法線ディテールはブラーより後ろに繋ぐ必要がある**
+    （ブラーが法線を作り直すため）。ノード単位の評価器へ移す段階で見直す。
+
+- 2026-09-02 20:05 — **法線を実寸の勾配から作り、「法線の強さ」を廃止した**。
+  - `d(高さ m)/d(距離 m) = d(height)/d(uv) * uvScale * (標高差 / 一辺)` を
+    法線の xy に入れる（`CompositeLayer.hlsl`）。`kNormalGradientScale`（0.03）と
+    `MaterialLayer::normalStrength` は削除。
+  - 実寸は `MaterialStack::SetTerrainScale()` で評価器へ渡す。出どころは
+    Heightmap ノードの `graph::TerrainScale`。**ノードが無いときは
+    プレビュー設定の平面のサイズ / 変位量**に合わせる（押し出した形と
+    陰影の起伏が食い違わないようにするため）。実寸が変わると合成し直す。
+  - **ソース（Heightmap）の `起伏の強さ` も廃止**（`CompileChainFrom` で 1.0 に固定し、
+    プロパティ行も出さない）。振れ幅は同じノードの「標高差」（m）だけが決める。
+  - 保存形式は据え置き（`normalStrength` は書かず、読み飛ばす。
+    ソースの `height.gain` は書くが読み込み後 1.0 に正す）。
+  - **注意: `起伏の強さ` が「標高差に対する割合」の意味になった。**
+    ディテール素材を強さ 1.0 で載せていた既存プロジェクトは、
+    砂利の粒が数十 m の岩になる。素材側の値を下げる必要がある。
+    UI は 0〜3 の無次元スライダのままなので、
+    **メートル表示にするか、素材の起伏だけ別扱いにするかは今後の検討課題**。
 
 - 2026-09-02 19:35 — **地形の実寸を Heightmap ノードへ移し、ノード名を英語にした**。
   - `graph::TerrainScale`（サイズ / 標高差、m）を `LayerNodeSettings` へ追加。

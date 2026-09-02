@@ -43,13 +43,12 @@ struct MeshConstants
     uint materialSurfaceIndex;
     uint materialHeightIndex;
 
-    float materialUvScale;
     // ビューポートに何を出すか（0 = シェーディング結果）。TG_VIEW_* と一致させる。
     uint debugView;
     // ハイトを形状に反映する量。0 なら押し出さない。
     float displacementScale;
-    // 合成結果をクランプで読むか。平面 + UV スケール 1（タイルしない 1 枚絵）のとき 1。
-    uint clampMaterialUv;
+    float pad3;
+    float pad4;
 
     float4x4 lightViewProjection;
 
@@ -87,41 +86,28 @@ ConstantBuffer<MeshConstants> g_mesh : register(b1);
 // 必要で、UV スケール > 1 は明示的なタイリングなので wrap のまま。
 // サンプラは三項演算子で選べない（unique global resource の制約）ので分岐で書く。
 
+// 合成結果は**タイルしない 1 枚絵**（平面 1 枚に等倍で貼る）なので、常にクランプで読む。
+// wrap だと UV 端のバイリニア補間が反対側の端と混ざり、地形の縁が
+// 反対側の高さへ引っ張られる。
 float4 SampleMaterialColor(Texture2D<float4> map, float2 uv)
 {
-    if (g_mesh.clampMaterialUv != 0u)
-    {
-        return map.Sample(g_samplerAnisoClamp, uv);
-    }
-    return map.Sample(g_samplerAnisoWrap, uv);
+    return map.Sample(g_samplerAnisoClamp, uv);
 }
 
 float2 SampleMaterialNormal(Texture2D<float2> map, float2 uv)
 {
-    if (g_mesh.clampMaterialUv != 0u)
-    {
-        return map.Sample(g_samplerAnisoClamp, uv);
-    }
-    return map.Sample(g_samplerAnisoWrap, uv);
+    return map.Sample(g_samplerAnisoClamp, uv);
 }
 
 float SampleMaterialScalar(Texture2D<float> map, float2 uv)
 {
-    if (g_mesh.clampMaterialUv != 0u)
-    {
-        return map.Sample(g_samplerAnisoClamp, uv);
-    }
-    return map.Sample(g_samplerAnisoWrap, uv);
+    return map.Sample(g_samplerAnisoClamp, uv);
 }
 
 // 頂点 / ドメインシェーダ用（微分が無いので SampleLevel）。
 float SampleMaterialScalarLevel(Texture2D<float> map, float2 uv)
 {
-    if (g_mesh.clampMaterialUv != 0u)
-    {
-        return map.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
-    }
-    return map.SampleLevel(g_samplerLinearWrap, uv, 0.0f);
+    return map.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
 }
 
 struct VsInput
@@ -198,7 +184,7 @@ float3 ApplyDisplacement(float3 worldPosition, float3 worldNormal, float2 uv)
         return worldPosition;
     }
     Texture2D<float> heightMap = ResourceDescriptorHeap[g_mesh.materialHeightIndex];
-    const float height = SampleMaterialScalarLevel(heightMap, uv * g_mesh.materialUvScale);
+    const float height = SampleMaterialScalarLevel(heightMap, uv);
     // 高さの中央（0.5）を基準にする。全体が膨らまないようにするため。
     return worldPosition + worldNormal * ((height - 0.5f) * g_mesh.displacementScale);
 }
@@ -349,7 +335,7 @@ PsOutput PsMain(VsOutput input)
         Texture2D<float2> normalMap    = ResourceDescriptorHeap[g_mesh.materialNormalIndex];
         Texture2D<float4> surfaceMap   = ResourceDescriptorHeap[g_mesh.materialSurfaceIndex];
 
-        const float2 uv = input.uv * g_mesh.materialUvScale;
+        const float2 uv = input.uv;
 
         baseColor = SampleMaterialColor(baseColorMap, uv).rgb;
 
@@ -386,7 +372,7 @@ PsOutput PsMain(VsOutput input)
             {
                 Texture2D<float2> normalMap = ResourceDescriptorHeap[g_mesh.materialNormalIndex];
                 tangentNormal = DecodeTangentNormal(
-                    SampleMaterialNormal(normalMap, input.uv * g_mesh.materialUvScale));
+                    SampleMaterialNormal(normalMap, input.uv));
             }
             debugColor = tangentNormal * 0.5f + 0.5f;
         }
@@ -418,14 +404,14 @@ PsOutput PsMain(VsOutput input)
             if (g_mesh.useMaterialTextures != 0u)
             {
                 Texture2D<float> heightMap = ResourceDescriptorHeap[g_mesh.materialHeightIndex];
-                height = SampleMaterialScalar(heightMap, input.uv * g_mesh.materialUvScale);
+                height = SampleMaterialScalar(heightMap, input.uv);
             }
             debugColor = saturate(height).xxx;
         }
 
         PsOutput debugOutput;
         debugOutput.color = float4(debugColor, 1.0f);
-        debugOutput.materialUv = float4(frac(input.uv * g_mesh.materialUvScale), 1.0f, 0.0f);
+        debugOutput.materialUv = float4(frac(input.uv), 1.0f, 0.0f);
         return debugOutput;
     }
 
@@ -479,6 +465,6 @@ PsOutput PsMain(VsOutput input)
     // トーンマップを経て NaN → ハイライト中心の黒点になる。上限手前でクランプする。
     output.color = float4(min(radiance, 60000.0f), 1.0f);
     // ペイントマスクはタイル 1 枚ぶんのテクスチャなので、UV も畳んで書き出す。
-    output.materialUv = float4(frac(input.uv * g_mesh.materialUvScale), 1.0f, 0.0f);
+    output.materialUv = float4(frac(input.uv), 1.0f, 0.0f);
     return output;
 }

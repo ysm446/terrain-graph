@@ -43,11 +43,9 @@ private:
     uint32_t m_vertexCount = 0;
 };
 
-// プリミティブ生成。マテリアルの見え方を確かめるための最小限。
-MeshData MakeSphere(uint32_t segments, uint32_t rings, float radius);
+// プレビューのジオメトリ。**平面 1 種類だけ。**（このツールが扱うのは地形で、
+// 球やキューブに素材を貼って眺める用途は持たない。）
+// subdivisions はディスプレイスメントを効かせるための分割数。
 MeshData MakePlane(float size, uint32_t subdivisions);
-// subdivisions は 1 面あたりの分割数。ディスプレイスメントを効かせるには
-// 頂点が要るので、プレビューでは細かく割る。
-MeshData MakeCube(float size, uint32_t subdivisions = 1);
 
 }  // namespace tg::renderer

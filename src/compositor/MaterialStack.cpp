@@ -22,6 +22,16 @@ MaterialStack::MaterialStack() {
     m_layers.push_back(MakeBaseLayer());
 }
 
+void MaterialStack::SetTerrainScale(float sizeMeters, float heightMeters) {
+    if (m_sizeMeters == sizeMeters && m_heightMeters == heightMeters) {
+        return;
+    }
+    m_sizeMeters = sizeMeters;
+    m_heightMeters = heightMeters;
+    // 法線が実寸に依るので、実寸が動いたら合成し直す。
+    MarkDirty();
+}
+
 MaterialLayer& MaterialStack::Add(const MaterialLayer& layer) {
     m_layers.push_back(layer);
     MarkDirty();
@@ -61,7 +71,9 @@ void MaterialStack::MoveTo(size_t from, size_t to) {
 
 size_t MaterialStack::FirstEnabledIndex() const {
     for (size_t i = 0; i < m_layers.size(); ++i) {
-        if (m_layers[i].enabled) {
+        // ブラーは下地になれない（下に何も無ければぼかす相手がいない）。
+        // 一番下に来たときは、その上の合成レイヤーを下地として扱う。
+        if (m_layers[i].enabled && m_layers[i].kind != LayerKind::Blur) {
             return i;
         }
     }

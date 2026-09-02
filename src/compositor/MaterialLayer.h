@@ -39,10 +39,13 @@ enum class ValueSource : uint32_t {
 //   Liquid:  絶対値の水位。下地が水位より低い所だけ高さを水位へ置き換える。
 //            重みは「水位 − 下地の高さ」だけから決めるので、
 //            水位を動かしても下地は変形しない。
+// Blur   : 合成しない**加工**。下地のハイトをぼかし、法線を作り直す。
+//          色もマスクも持たない（下地と競合する相手ではないため）。
 enum class LayerKind : uint32_t {
     Surface = 0,
     Shape = 1,
     Liquid = 2,
+    Blur = 3,
 };
 
 // ハイトの基準面。ソースの値がこの値のとき、そのテクセルは「基準の高さ」ちょうどになる。
@@ -190,8 +193,15 @@ struct MaterialLayer {
     // 2 か所に置かない）。マテリアルがあるときは参照しない。
     MapSlot heightTexture;
 
-    // 法線はハイトの勾配から作る。強さ 0 で平坦。
-    float normalStrength = 1.0f;
+    // ハイトのぼかし（kind == LayerKind::Blur のときだけ意味を持つ）。
+    // 半径は**メートル**。合成解像度を変えても効きが変わらないようにするため、
+    // テクセルではなく実寸で持つ（地形の一辺と解像度からテクセル数へ直す）。
+    struct BlurSettings {
+        float radiusMeters = 3.0f;
+        float strength = 1.0f;
+        int iterations = 1;
+    };
+    BlurSettings blur;
 
     LayerMask mask;
 

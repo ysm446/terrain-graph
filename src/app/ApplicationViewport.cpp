@@ -250,8 +250,12 @@ void Application::DrawLightGizmo(const ImVec2& viewportMin, const ImVec2& viewpo
 
     const renderer::LightSettings& light = m_renderer.Light();
     const XMFLOAT3 direction = light.Direction();
-    // プレビューのメッシュ（半径 1）の外側を通す。
-    constexpr float kRadius = 1.5f;
+    // **見ているものの実寸に合わせる。** 素材（2m 角）でも地形（2km 角）でも
+    // 同じ見え方になるよう、平面の一辺（m）から決める。固定値にすると、
+    // 地形では原点の一点に潰れて見えなくなる。
+    // 包む球（対角）ではなく**辺の半分**にしてあるのは、対角だと視界からはみ出して
+    // リングが読めなくなるため。地形の縁に接するくらいがちょうどいい。
+    const float gizmoRadius = m_renderer.PlaneSize() * 0.5f;
     const XMFLOAT3 origin{0.0f, 0.0f, 0.0f};
     const XMFLOAT3 horizontal{std::sin(light.azimuth), 0.0f, std::cos(light.azimuth)};
 
@@ -284,7 +288,7 @@ void Application::DrawLightGizmo(const ImVec2& viewportMin, const ImVec2& viewpo
     for (int i = 0; i <= kRingSegments; ++i) {
         const float t = (static_cast<float>(i) / kRingSegments) * 2.0f * 3.14159265f;
         const ProjectedPoint current =
-            project(XMFLOAT3{std::sin(t) * kRadius, 0.0f, std::cos(t) * kRadius});
+            project(XMFLOAT3{std::sin(t) * gizmoRadius, 0.0f, std::cos(t) * gizmoRadius});
         if (i > 0 && previous.visible && current.visible) {
             drawList->AddLine(previous.screen, current.screen, color(150, 160, 175, 130), 1.6f);
         }
@@ -292,15 +296,15 @@ void Application::DrawLightGizmo(const ImVec2& viewportMin, const ImVec2& viewpo
     }
 
     // 水平方向への投影と、そこから仰角ぶんの弧。
-    drawWorldLine(origin, offset(origin, horizontal, kRadius), color(150, 160, 175, 170), 1.8f);
+    drawWorldLine(origin, offset(origin, horizontal, gizmoRadius), color(150, 160, 175, 170), 1.8f);
 
     constexpr int kArcSegments = 32;
     ProjectedPoint previousArc;
     for (int i = 0; i <= kArcSegments; ++i) {
         const float angle = light.elevation * (static_cast<float>(i) / kArcSegments);
-        const ProjectedPoint current = project(XMFLOAT3{horizontal.x * std::cos(angle) * kRadius,
-                                                        std::sin(angle) * kRadius,
-                                                        horizontal.z * std::cos(angle) * kRadius});
+        const float ring = std::cos(angle) * gizmoRadius;
+        const ProjectedPoint current = project(
+            XMFLOAT3{horizontal.x * ring, std::sin(angle) * gizmoRadius, horizontal.z * ring});
         if (i > 0 && previousArc.visible && current.visible) {
             drawList->AddLine(previousArc.screen, current.screen, color(255, 206, 112, 150), 1.6f);
         }
@@ -308,8 +312,8 @@ void Application::DrawLightGizmo(const ImVec2& viewportMin, const ImVec2& viewpo
     }
 
     // 光が来る向きの矢印。ライトの位置から原点へ向ける。
-    const ProjectedPoint arrowStart = project(offset(origin, direction, kRadius));
-    const ProjectedPoint arrowEnd = project(offset(origin, direction, kRadius * 0.22f));
+    const ProjectedPoint arrowStart = project(offset(origin, direction, gizmoRadius));
+    const ProjectedPoint arrowEnd = project(offset(origin, direction, gizmoRadius * 0.22f));
     if (arrowStart.visible && arrowEnd.visible) {
         const ImU32 lightColor = color(255, 188, 76, 245);
         ImVec2 screenDir(arrowEnd.screen.x - arrowStart.screen.x,
@@ -363,10 +367,6 @@ void Application::DrawHeightGuide(const ImVec2& viewportMin, const ImVec2& viewp
     if (!m_settings.Display().showHeightGuide) {
         return;
     }
-    if (m_renderer.Shape() != renderer::PreviewShape::Plane) {
-        return;
-    }
-
     using namespace DirectX;
     const renderer::Camera& camera = m_renderer.GetCamera();
     const XMMATRIX viewProjection = camera.ViewMatrix() * camera.ProjectionMatrix();

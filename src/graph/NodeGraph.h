@@ -30,9 +30,10 @@ enum class PinKind : uint32_t {
 };
 
 // ピンを流れる値の型。同じ型どうしだけ接続できる。
-// いまはマテリアル（PBR チャンネルセット）だけ。マスクなどはこれから足す。
 enum class ValueType : uint32_t {
     Material = 0,
+    // マスク（0〜1 の 1 チャンネル）。レイヤーの「どこに乗せるか」を外から与える。
+    Mask = 1,
 };
 
 enum class NodeKind : uint32_t {
@@ -44,6 +45,10 @@ enum class NodeKind : uint32_t {
     // 中身はシェイプと同じ（下地への加算）だが、チェーンの先頭に置く前提なので
     // 下地が無く、加算はそのまま地形の形になる。
     Heightmap = 4,
+    // ハイトをぼかす加工。合成せず、下地のハイトを分離型ガウスでならす。
+    Blur = 5,
+    // 画像 1 枚をマスクとして出す**マスクのソース**。入力を持たない。
+    MaskImage = 6,
 };
 
 struct PinDefinition {
@@ -95,10 +100,16 @@ struct LayerNodeSettings {
     TerrainScale scale;
 };
 
+// マスクのソース。画像 1 枚（＋読むチャンネル）をマスクとして出す。
+// レイヤーの Mask 入力へ繋ぐと、そのレイヤーは**白い所にだけ**乗る。
+struct MaskNodeSettings {
+    compositor::MapSlot map;
+};
+
 // 出力。ここに繋いだチェーンがプレビューのマテリアルになる。
 struct OutputNodeSettings {};
 
-using NodeSettings = std::variant<LayerNodeSettings, OutputNodeSettings>;
+using NodeSettings = std::variant<LayerNodeSettings, MaskNodeSettings, OutputNodeSettings>;
 
 struct Node {
     GraphId id = 0;
@@ -166,6 +177,8 @@ public:
 private:
     GraphId AllocateGraphId() { return m_nextGraphId++; }
     void RebuildNextGraphId();
+    // ノードの Mask 入力に繋がっているマスク画像。無ければ nullptr。
+    const compositor::MapSlot* FindMaskInput(const Node& node) const;
     // top から「下地」チェーンを遡る（上から下の順）。
     std::vector<const Node*> ChainFrom(const Node* top) const;
     // top から「下地」チェーンを遡ってレイヤー列（下から上）にする共通部。
@@ -190,6 +203,8 @@ const NodeDefinition* FindNodeDefinitionByName(std::string_view name);
 bool IsLayerNodeKind(NodeKind kind);
 // 入力を持たないソースか。下地が無いのでマスクも効かない。
 bool IsSourceNodeKind(NodeKind kind);
+// マスクを出すノードか（いまは MaskImage だけ）。
+bool IsMaskNodeKind(NodeKind kind);
 // 種類に対応するレイヤー種別（レイヤー設定を持つ種類のみ意味を持つ）。
 compositor::LayerKind LayerKindFor(NodeKind kind);
 

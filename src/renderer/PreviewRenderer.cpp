@@ -42,11 +42,8 @@ constexpr uint32_t kShadowMapSize = 2048;
 // 素材を見比べるときに背景が目移りの原因にならないことを優先している。
 constexpr float kSkyboxBlurMip = 1.6f;
 constexpr DXGI_FORMAT kShadowDsvFormat = DXGI_FORMAT_D32_FLOAT;
-// プレビューのメッシュの大きさ。どれも原点中心（モデル行列は単位行列）。
-// BoundingRadius() がここから包む球の半径を出すので、値を直接書かないこと。
-constexpr float kSphereRadius = 1.0f;
-// 平面の一辺は PreviewRenderer::kPlaneSize（ヘッダ。オーバーレイも参照する）。
-constexpr float kCubeSize = 1.4f;   // 一辺の長さ
+// 平面の一辺は PreviewRenderer::kPlaneMeshSize（ヘッダ。オーバーレイも参照する）。
+// 実際の大きさはモデル行列の拡大で決まる。
 
 // 影を落とす範囲。**被写体を包む球の半径に対する倍率**で持つ。
 // 素材の 2m 角と地形の 2km 角では 1000 倍違うので、m の固定値では片方でしか使えない
@@ -96,11 +93,11 @@ struct MeshConstants {
     uint32_t materialSurfaceIndex;
     uint32_t materialHeightIndex;
 
-    float materialUvScale;
     uint32_t debugView;
     float displacementScale;
-    // 合成結果をクランプで読むか（平面 + UV スケール 1 のとき 1）。
-    uint32_t clampMaterialUv;
+    // float4 の区切りを守るための詰め物。**HLSL 側と必ず同じ数だけ置くこと。**
+    float pad3;
+    float pad4;
 
     XMFLOAT4X4 lightViewProjection;
 
@@ -209,13 +206,7 @@ XMFLOAT3 LightSettings::Direction() const {
 bool PreviewRenderer::Initialize(rhi::Device& device, rhi::PipelineCache& pipelineCache) {
     // ディスプレイスメントを頂点で押し出すので、プレビューのメッシュは細かく割る。
     // 数万頂点はプレビュー 1 個ぶんとしては軽い。
-    if (!m_sphere.Create(device, MakeSphere(256, 128, kSphereRadius), L"SphereMesh")) {
-        return false;
-    }
     if (!m_plane.Create(device, MakePlane(kPlaneMeshSize, 256), L"PlaneMesh")) {
-        return false;
-    }
-    if (!m_cube.Create(device, MakeCube(kCubeSize, 96), L"CubeMesh")) {
         return false;
     }
     if (!m_environment.Initialize(device, pipelineCache)) {
@@ -268,9 +259,7 @@ void PreviewRenderer::Shutdown(rhi::Device& device) {
     device.DeferRelease(m_shadowMap);
     m_evaluator.Destroy(device);
     m_environment.Shutdown(device);
-    m_sphere.Release(device);
     m_plane.Release(device);
-    m_cube.Release(device);
     ReleaseTargets(device);
 }
 
@@ -303,10 +292,8 @@ void PreviewRenderer::ProcessPendingWork(rhi::Device& device,
 
 void PreviewRenderer::ResetSettings() {
     const PreviewDefaults& defaults = kPreviewDefaults;
-    m_shape = defaults.shape;
     m_tonemap = defaults.tonemap;
     m_useMaterialTextures = defaults.useMaterialTextures;
-    m_materialUvScale = defaults.materialUvScale;
     m_displacementScale = defaults.displacementScale;
     m_planeSize = defaults.planeSize;
     m_tessellationEnabled = defaults.tessellationEnabled;
@@ -365,14 +352,8 @@ float PreviewRenderer::FocusDistance() const {
 // ディスプレイスメントは頂点を法線方向へ (height - 0.5) * scale だけ動かすので、
 // 外へ出る最大量 scale * 0.5 を足す。変位量を上げたときにはみ出さないようにするため。
 float PreviewRenderer::BoundingRadius() const {
-    float radius = kSphereRadius;
-    switch (m_shape) {
-        // 平面は XZ に広がるので、対角の半分が包む球の半径になる。
-        case PreviewShape::Plane: radius = m_planeSize * 0.5f * 1.41421356f; break;
-        case PreviewShape::Cube:  radius = kCubeSize * 0.5f * 1.73205081f; break;
-        case PreviewShape::Sphere:
-        default:                  radius = kSphereRadius; break;
-    }
+    // 平面は XZ に広がるので、対角の半分が包む球の半径になる。
+    float radius = m_planeSize * 0.5f * 1.41421356f;
 
     if (m_useMaterialTextures) {
         radius += m_displacementScale * 0.5f;
@@ -381,12 +362,7 @@ float PreviewRenderer::BoundingRadius() const {
 }
 
 const Mesh& PreviewRenderer::CurrentMesh() const {
-    switch (m_shape) {
-        case PreviewShape::Plane: return m_plane;
-        case PreviewShape::Cube:  return m_cube;
-        case PreviewShape::Sphere:
-        default:                  return m_sphere;
-    }
+    return m_plane;
 }
 
 void PreviewRenderer::ReleaseTargets(rhi::Device& device) {
@@ -640,14 +616,11 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     // mul(matrix, vector) が意図どおりの結果になる。転置は入れない。
     const XMMATRIX view = m_camera.ViewMatrix();
     const XMMATRIX projection = m_camera.ProjectionMatrix();
-    // 平面はメッシュを作り直さず、モデル行列で実サイズ（m）へ広げる。
+    // メッシュは作り直さず、モデル行列で実サイズ（m）へ広げる。
     // **Y は拡大しない。** 高さはディスプレイスメント（m）が世界空間で足すので、
     // ここで縦に伸ばすと二重に効く。
-    XMMATRIX model = XMMatrixIdentity();
-    if (m_shape == PreviewShape::Plane) {
-        const float scale = m_planeSize / kPlaneMeshSize;
-        model = XMMatrixScaling(scale, 1.0f, scale);
-    }
+    const float planeScale = m_planeSize / kPlaneMeshSize;
+    const XMMATRIX model = XMMatrixScaling(planeScale, 1.0f, planeScale);
 
     const XMMATRIX viewProjection = XMMatrixMultiply(view, projection);
 
@@ -678,13 +651,6 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     constants.materialNormalIndex = materialTextures.normal.SrvIndex();
     constants.materialSurfaceIndex = materialTextures.surface.SrvIndex();
     constants.materialHeightIndex = materialTextures.height.SrvIndex();
-    constants.materialUvScale = m_materialUvScale;
-    // 平面 + UV スケール 1 は「タイルしない 1 枚絵」のプレビューとみなし、
-    // 合成結果をクランプで読む。wrap だと UV 端のバイリニア補間が反対側の端と
-    // 混ざり、地形の縁が反対側の高さへ引っ張られる。
-    // 球はシーム（経度の 0/1）の連続性に wrap が必要なので対象外。
-    constants.clampMaterialUv =
-        (m_shape == PreviewShape::Plane && m_materialUvScale == 1.0f) ? 1u : 0u;
     constants.debugView = static_cast<uint32_t>(m_debugView);
     constants.displacementScale = m_displacementScale;
     // 分割量はカメラから見た見え方で決める。本描画では viewProjection と同一で、
@@ -943,9 +909,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
 void PreviewRenderer::DrawHeightGuideOverlay(rhi::Device& device,
                                              rhi::PipelineCache& pipelineCache,
                                              ID3D12GraphicsCommandList* commandList) {
-    // 平面のときだけ。球とキューブは法線方向への押し出しなので、
-    // 直方体の枠では高さの範囲を表せない。
-    if (!m_showHeightGuide || m_shape != PreviewShape::Plane) {
+    if (!m_showHeightGuide) {
         return;
     }
 

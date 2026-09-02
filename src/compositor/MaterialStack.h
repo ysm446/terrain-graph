@@ -27,6 +27,15 @@ public:
     // from の位置のレイヤーを抜いて to の位置へ差し込む。一覧のドラッグ移動で使う。
     void MoveTo(size_t from, size_t to);
 
+    // 地形の実寸（m）。法線を実寸の勾配として作るために評価器が使う。
+    // 出どころはグラフの Heightmap ノード（graph::TerrainScale）で、
+    // ノードが無いときはプレビュー設定のジオメトリの値を入れる。
+    // **形（ディスプレイスメント）と同じ値であること。** 食い違うと、
+    // 押し出した形と陰影の起伏が別物になる。
+    float SizeMeters() const { return m_sizeMeters; }
+    float HeightMeters() const { return m_heightMeters; }
+    void SetTerrainScale(float sizeMeters, float heightMeters);
+
     // 変更があったことを記録する。評価器はこれを見て再評価する。
     void MarkDirty() { ++m_revision; }
     uint64_t Revision() const { return m_revision; }
@@ -36,6 +45,8 @@ public:
 
 private:
     std::vector<MaterialLayer> m_layers;
+    float m_sizeMeters = 1024.0f;
+    float m_heightMeters = 200.0f;
     uint64_t m_revision = 1;
 };
 

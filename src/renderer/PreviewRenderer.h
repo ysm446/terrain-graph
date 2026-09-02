@@ -14,12 +14,6 @@
 
 namespace tg::renderer {
 
-enum class PreviewShape {
-    Sphere,
-    Plane,
-    Cube,
-};
-
 // ビューポートに何を出すか。シェーダの TG_VIEW_* と一致させること。
 //
 // シェーディング結果以外は「チャンネルの中身をそのまま見る」ための表示で、
@@ -136,10 +130,8 @@ struct MaterialSettings {
 // 数値を直接書くと、片方だけ変えたときに「既定値マーカーが点いたまま」
 // 「読み込みで別の値に化ける」という食い違いが起きる。
 struct PreviewDefaults {
-    PreviewShape shape = PreviewShape::Sphere;
     TonemapMode tonemap = TonemapMode::Aces;
     bool useMaterialTextures = true;
-    float materialUvScale = 1.0f;
     float displacementScale = 0.0f;
     // 平面の一辺（m）。Megascans のサーフェスが 2m 角で作られていることに合わせた既定。
     float planeSize = 2.0f;
@@ -197,8 +189,7 @@ public:
     ExposureSettings& Exposure() { return m_exposure; }
     LightSettings& Light() { return m_light; }
     MaterialSettings& Material() { return m_material; }
-    PreviewShape& Shape() { return m_shape; }
-    // 現在のメッシュを包む球の半径（原点中心）。カメラの Frame() が使う。
+    // 平面を包む球の半径（原点中心）。カメラの Frame() が使う。
     float BoundingRadius() const;
     TonemapMode& Tonemap() { return m_tonemap; }
     DebugView& Debug() { return m_debugView; }
@@ -219,14 +210,12 @@ public:
     // 1 辺あたりの分割の上限。
     float& TessellationFactor() { return m_tessellationFactor; }
     bool& UseMaterialTextures() { return m_useMaterialTextures; }
-    float& MaterialUvScale() { return m_materialUvScale; }
     // ハイトを形状に反映する量（0 で反映しない）。頂点シェーダで押し出す。
     // **単位は m。** ハイト 0〜1 の全幅がこの高さに対応する。
     float& DisplacementScale() { return m_displacementScale; }
     float DisplacementScale() const { return m_displacementScale; }
     // 平面の一辺（m）。**ジオメトリだけがメートルで、テクスチャは無次元のまま**
-    // （UV スケールは「何回並べるか」で、1 UV が何 m かは決めない）。
-    // 素材のプレビュー（2m 角）から地形（2km 角）まで、これ 1 つで切り替える。
+    // （1 UV が何 m かは決めない）。地形の実寸はここで決まる。
     float& PlaneSize() { return m_planeSize; }
     float PlaneSize() const { return m_planeSize; }
     // ハイトの範囲（height 0 / 0.5 / 1 の枠）を描くか。設定は AppSettings が持ち、
@@ -260,9 +249,7 @@ private:
     void DrawHeightGuideOverlay(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                                 ID3D12GraphicsCommandList* commandList);
 
-    Mesh m_sphere;
     Mesh m_plane;
-    Mesh m_cube;
 
     rhi::GpuTexture m_sceneColor;  // 線形 HDR
     // 被写界深度を掛けた結果。**トーンマップはこちらを読む。**
@@ -286,11 +273,9 @@ private:
     // 既定値は Environment::Initialize が作る環境と一致させてあるので、
     // 起動直後は作り直しが要らない。
     SkyDefinition m_activeSky;
-    PreviewShape m_shape = kPreviewDefaults.shape;
     TonemapMode m_tonemap = kPreviewDefaults.tonemap;
     DebugView m_debugView = DebugView::Shaded;
     bool m_skyLuminanceRebuildRequested = false;
-    float m_materialUvScale = kPreviewDefaults.materialUvScale;
     float m_displacementScale = kPreviewDefaults.displacementScale;
     float m_planeSize = kPreviewDefaults.planeSize;
     uint32_t m_materialResolution = kPreviewDefaults.materialResolution;

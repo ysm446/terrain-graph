@@ -1,7 +1,7 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-09-02 13:57
+更新日時: 2026-09-02 22:30
 
 実装は [src/io/ProjectIo.cpp](../../src/io/ProjectIo.cpp)。**形式を変えたらこの文書も直す。**
 
@@ -100,6 +100,23 @@ base' = base + 0.5 * gain     ただしソースが constant のときは base �
 レイヤー 1 枚ぶんの形（`name` / `kind` / `height` / `mask` など）は
 そのまま `graph.nodes[].layer` の形として使われ続けている。
 版 2 / 版 3 の移行規則もその中で同じように働く。
+
+`maskImage` ノードは `map`（`{ texture, channel }`）を持つ。
+レイヤーノードの `inputs` は Base / Mask の 2 本になったが、**ピンは定義から
+再生成する**ので、Mask ピンを持たない古いファイルもそのまま読める
+（足りないピンには新しい ID が振られ、リンクの無い入力になる）。
+
+レイヤーの `blur`（`{ radius, strength, iterations }`）は
+`kind` が `blur` のノード（Heightmap Blur）だけが使う。無ければ既定値。
+
+プレビュー設定の `shape`（形状）と `materialUvScale`（UV スケール）は**廃止した**。
+ジオメトリは平面 1 種類、合成結果は等倍で貼るだけになったため。
+古いファイルのキーは読み飛ばす（版は上げない）。
+
+`normalStrength`（法線の強さ）は**廃止した**。法線は地形の実寸から作るので、
+無次元の強さを持つ意味が無くなった。読み込み時は無視し、保存でも書かない。
+**版は上げない。** キーが消えるだけで既存のキーの意味は変わらず、
+古いビルドが新しいファイルを読んでも既定値 1.0 として従来どおり動く。
 
 ## `.tgproj`
 
@@ -209,9 +226,10 @@ RGB をそのまま使うマップ（ベースカラー / 法線）はテクス�
 
 - ノード・ピン・リンクは**共通の単一 ID 空間**。`inputs` / `outputs` はピン ID の
   並びで、ピンの型やラベルはノードの定義から再生成する（ファイルには書かない）。
-- `kind` は名前で書く（`surface` / `shape` / `liquid` / `output`）。
-  知らない種類のノードは読み飛ばす。
-- レイヤー設定を持つノード（surface / shape / liquid）は `layer` に
+- `kind` は名前で書く（`surface` / `shape` / `liquid` / `heightmap` /
+  `heightmapBlur` / `maskImage` / `output`）。知らない種類のノードは読み飛ばす。
+- レイヤー設定を持つノード（surface / shape / liquid / heightmap /
+  heightmapBlur）は `layer` に
   旧 `layers[]` の要素と同じ形を持つ。テクスチャ / マテリアル / ペイントの参照も
   同じ対応表で解決する。
 - `links` の `start` は出力ピン、`end` は入力ピン。ピンが無い・型が合わない
@@ -226,12 +244,11 @@ RGB をそのまま使うマップ（ベースカラー / 法線）はテクス�
 | 種別 | 値 |
 | --- | --- |
 | チャンネル指定 | `r` / `g` / `b` / `a` |
-| レイヤーの種類 | `surface` / `shape` / `liquid` |
+| レイヤーの種類 | `surface` / `shape` / `liquid` / `blur` |
 | ハイトのソース | `constant` / `noise` / `texture` |
 | ノイズ | `fbm` / `ridged` / `worley` |
 | マスクのソース | `constant` / `noise` / `texture` / `height` / `slope` / `curvature` / `cavity` / `paint` |
 | 書き込むチャンネル | `["baseColor", "normal", "surface", "height"]`（配列） |
-| プレビュー形状 | `sphere` / `plane` / `cube` |
 | トーンマップ | `none` / `reinhard` / `aces` |
 
 知らない名前が来たら既定値に落とす。
