@@ -254,6 +254,9 @@ void Application::DrawGraphEditor() {
     const ImVec2 canvasMin = ImGui::GetCursorScreenPos();
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const ImVec2 canvasMax(canvasMin.x + avail.x, canvasMin.y + avail.y);
+    // ホバー判定は ed::Begin より前に取る。フレーム内では io.MousePos が
+    // キャンバス座標に差し替えられていて、スクリーン座標の矩形と比べられない。
+    const bool canvasHovered = ImGui::IsMouseHoveringRect(canvasMin, canvasMax);
 
     ed::SetCurrentEditor(m_nodeEditor);
     ed::PushStyleColor(ed::StyleColor_Bg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
@@ -289,6 +292,13 @@ void Application::DrawGraphEditor() {
 
     for (const graph::Node& node : m_graph.Nodes()) {
         DrawGraphNode(node);
+    }
+
+    // A でグラフ全体を画面に収める（ビューポートの A と同じ作法）。
+    // 内容の矩形は live なノードから計算されるため、描画の後に呼ぶ。
+    if (canvasHovered && !ImGui::GetIO().WantTextInput &&
+        ImGui::IsKeyPressed(ImGuiKey_A, false)) {
+        ed::NavigateToContent();
     }
 
     // 位置を流し込んだ後の整列。**ノードを描いた後**でないと内容の矩形が空で
@@ -360,9 +370,18 @@ void Application::DrawGraphEditor() {
 
     // --- 背景の右クリックでノードを追加 -------------------------------------
     if (ed::ShowBackgroundContextMenu()) {
-        // キャンバス座標はメニューを開いた時点で確定させる。
-        // Suspend 中の座標変換に頼らない。
-        addNodePosition = ed::ScreenToCanvas(ImGui::GetMousePos());
+        // エディタのフレーム内では io.MousePos が**キャンバス座標に差し替えられている**
+        // （imgui_canvas が Begin で変換する）。そのまま使う。ScreenToCanvas を
+        // 重ねると二重変換になり、ノードが視界の外へ飛ぶ（実際に踏んだ）。
+        addNodePosition = ImGui::GetMousePos();
+        // 念のため現在の視界へ収める。視界の外に生まれると見失う。
+        // 深いズームでは上限が下限を割り得るので、max で順序を保証する。
+        const ImVec2 viewMin = ed::ScreenToCanvas(canvasMin);
+        const ImVec2 viewMax = ed::ScreenToCanvas(canvasMax);
+        const float loX = viewMin.x + 16.0f;
+        const float loY = viewMin.y + 16.0f;
+        addNodePosition.x = std::clamp(addNodePosition.x, loX, std::max(loX, viewMax.x - 240.0f));
+        addNodePosition.y = std::clamp(addNodePosition.y, loY, std::max(loY, viewMax.y - 120.0f));
         ed::Suspend();
         ImGui::OpenPopup("addGraphNode");
         ed::Resume();
@@ -378,10 +397,11 @@ void Application::DrawGraphEditor() {
             const graph::GraphId nodeId = m_graph.CreateNode(kind);
             graph::Node* node = m_graph.FindMutableNode(nodeId);
             if (node == nullptr) {
+                TG_LOG_WARN("ノードを追加できませんでした（種類の定義が見つかりません）");
                 return;
             }
             if (auto* settings = std::get_if<graph::LayerNodeSettings>(&node->settings)) {
-                // 追加時の初期値はレイヤーパネルと同じ既定値を使う。
+                // 追加時の初期値は旧レイヤーパネルと同じ既定値を使う。
                 settings->layer = DefaultLayerFor(graph::LayerKindFor(kind));
                 settings->layer.name +=
                     " " + std::to_string(m_graph.Nodes().size());
@@ -392,6 +412,8 @@ void Application::DrawGraphEditor() {
             m_graphNodesToPlace.push_back(nodeId);
             m_selectedGraphNode = nodeId;
             MarkDocumentChanged();
+            // ステータスバーに残す。追加が効いたかを画面で確かめられるようにする。
+            TG_LOG_INFO("ノードを追加しました: %s", NodeDisplayName(*node));
         };
         addNodeMenuItem(graph::NodeKind::Surface, "サーフェス — 素材を高さで張り合わせる");
         addNodeMenuItem(graph::NodeKind::Shape, "シェイプ — 高さへ起伏を加算する");
@@ -404,10 +426,13 @@ void Application::DrawGraphEditor() {
 
     // --- 選択 ---------------------------------------------------------------
     // 選択はプレビューの対象を兼ねる。外したら 0 に戻す（出力ノードのチェーンへ）。
+    // **配置待ちのノードがある間は消さない。** 追加した直後のフレームは
+    // エディタ側の選択がまだ無く、ここで 0 に戻すと「追加 → 選択」が消える
+    // （エディタへの選択の反映は次のフレームの流し込みで行う）。
     ed::NodeId selectedNodes[1];
     if (ed::GetSelectedNodes(selectedNodes, 1) > 0) {
         m_selectedGraphNode = ToGraphId(selectedNodes[0].Get());
-    } else {
+    } else if (m_graphNodesToPlace.empty()) {
         m_selectedGraphNode = 0;
     }
 
