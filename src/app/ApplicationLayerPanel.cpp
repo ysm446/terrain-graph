@@ -257,8 +257,8 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                 if (ui::PropertyCombo("ソース", &maskSource, kMaskSourceLabels,
                                       IM_ARRAYSIZE(kMaskSourceLabels),
                                       static_cast<int>(kDefaultLayer.mask.source),
-                                      "マスクは不透明度として高さと同じ土俵で競合する。"
-                                      "1.0 にすると高さに関係なく全面を覆う")) {
+                                      "マスクは被覆率。1.0 で全面を覆い、"
+                                      "中間はこのレイヤーの起伏の高い所から順に出る")) {
                     layer.mask.source = static_cast<compositor::MaskSource>(maskSource);
                     changed = true;
                 }

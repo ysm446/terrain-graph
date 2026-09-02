@@ -1,9 +1,11 @@
 # node-graph — ノードグラフの設計
 
 作成日時: 2026-09-02 12:50
-更新日時: 2026-09-03 16:00
+更新日時: 2026-09-03 17:30
 
 `src/graph/` とグラフパネル（`src/app/ApplicationGraphPanel.cpp`）の設計。
+**ノード 1 つずつの役割・ピン・パラメータは
+[reference/nodes.md](../reference/nodes.md)** にまとめてある。
 terrain-editor から移植したのは**仕組み**であって、ノードの中身ではない
 （[plan.md](../plan/plan.md) の「方針の転換」を参照）。
 
@@ -215,6 +217,7 @@ terrain-editor の Mask Slope / Mask Levels / Mask Blend を移したもの。
 4. `app/ApplicationGraphPanel.cpp` — 追加メニューの項目と、
    プロパティペインの設定 UI を足す。
 5. 評価に関わるなら `CompileLayers`（または将来の評価器）へ意味を足す。
+6. [reference/nodes.md](../reference/nodes.md) に節を足す。
 
 ## UI（グラフパネル）
 

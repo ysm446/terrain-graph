@@ -1,7 +1,7 @@
 # plan — 実装方針と優先順位
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-03 14:00
+更新日時: 2026-09-03 17:30
 
 進捗管理の入口。実装の詳細な設計は [docs/design/](../design/) に置く。
 
@@ -10,6 +10,7 @@
 - [design/compositing.md](../design/compositing.md) — チャンネル定義、ハイトブレンド、RNM、タイル評価
 - [design/design-guide.md](../design/design-guide.md) — UI のレイアウト、配色、プロパティ行
 - [design/node-graph.md](../design/node-graph.md) — ノードグラフのデータモデル、評価、エディタ UI
+- [reference/nodes.md](../reference/nodes.md) — ノード 1 つずつの役割・ピン・パラメータ
 - [reference/file-format.md](../reference/file-format.md) — `.tgproj` / `.tgmat` の形式
 
 ## 決定済みの技術選定

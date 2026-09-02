@@ -119,6 +119,8 @@ base' = base + 0.5 * gain     ただしソースが constant のときは base �
 再生成する**ので、Mask ピンを持たない古いファイルもそのまま読める
 （足りないピンには新しい ID が振られ、リンクの無い入力になる）。
 
+ノードごとの設定の意味は [nodes.md](nodes.md) にまとめてある。
+
 レイヤーの `sediment`（`{ emission, emissionTime, detail, iterations, stabilization,
 viscosity, convertTerrain, resolution, maskContrast, maskThicknessMeters }`）は
 `kind` が `sediment` のノードだけが使う。
