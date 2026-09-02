@@ -1,0 +1,3 @@
+#include "../core/ResourceIds.h"
+
+TG_APP_ICON ICON "../../assets/icons/terrain_graph.ico"

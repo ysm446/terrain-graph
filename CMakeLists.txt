@@ -80,6 +80,7 @@ find_package(unofficial-imgui-node-editor CONFIG REQUIRED)
 
 set(tg_sources
     src/app/Main.cpp
+    src/app/TerrainGraph.rc
     src/app/Application.cpp
     src/app/Application.h
     src/app/ApplicationDocument.cpp
@@ -120,6 +121,7 @@ set(tg_sources
     src/core/Shell.cpp
     src/core/Shell.h
     src/core/PathUtf8.h
+    src/core/ResourceIds.h
     src/core/Window.cpp
     src/core/Window.h
     src/io/AppSettings.cpp
@@ -189,9 +191,10 @@ target_compile_definitions(terrain_graph PRIVATE
     TG_APP_VERSION="${PROJECT_VERSION}"
     # シェーダはホットリロードのためソースツリーを直接参照する。
     TG_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/shaders"
-    # スクリーンショットの既定の置き場所。assets/ は .gitignore で外してあるので、
-    # 撮ったものがリポジトリに混ざらない。
-    TG_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
+    # 手元のデータ置き場（スクリーンショットの既定の保存先もここ）。
+    # data/ は .gitignore で外してあるので、撮ったものがリポジトリに混ざらない。
+    # コミットするアセットは assets/ で、こちらとは別。
+    TG_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
     $<$<CONFIG:Debug>:TG_DEBUG=1>
 )
 

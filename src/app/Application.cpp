@@ -1,5 +1,5 @@
 // アプリ本体のコア。初期化と終了、フレームループ、ドックレイアウト、
-// ステータスバー、設定ウィンドウ、情報パネル。
+// ステータスバー、設定ウィンドウ、情報ウィンドウ。
 // パネルの描画と入出力は Application*.cpp に分かれている。
 
 #include "app/Application.h"
@@ -55,22 +55,21 @@ std::filesystem::path ResolveShaderRoot() {
     return std::filesystem::path(TG_SHADER_DIR);
 }
 
-// スクリーンショットの置き場所。環境変数 TG_ASSETS_DIR で差し替えられる。
-// **仮の置き場所。** assets/ は .gitignore で外してあるので、
-// 撮ったものがリポジトリに混ざらない。
+// スクリーンショットの置き場所。環境変数 TG_DATA_DIR で差し替えられる。
+// data/ は .gitignore で外してあるので、撮ったものがリポジトリに混ざらない。
 std::filesystem::path ResolveScreenshotDirectory() {
-    std::filesystem::path assets(TG_ASSETS_DIR);
-    const DWORD needed = ::GetEnvironmentVariableW(L"TG_ASSETS_DIR", nullptr, 0);
+    std::filesystem::path dataDir(TG_DATA_DIR);
+    const DWORD needed = ::GetEnvironmentVariableW(L"TG_DATA_DIR", nullptr, 0);
     if (needed > 0) {
         std::wstring value;
         value.resize(needed);
-        const DWORD written = ::GetEnvironmentVariableW(L"TG_ASSETS_DIR", value.data(), needed);
+        const DWORD written = ::GetEnvironmentVariableW(L"TG_DATA_DIR", value.data(), needed);
         if (written > 0) {
             value.resize(written);
-            assets = std::filesystem::path(value);
+            dataDir = std::filesystem::path(value);
         }
     }
-    return assets / L"screenshots";
+    return dataDir / L"screenshots";
 }
 
 // 撮った時刻をそのままファイル名にする。連番だと前回の続きが分からない。
@@ -450,6 +449,7 @@ void Application::DrawUi() {
                 m_rebuildLayout = true;
             }
             ImGui::Separator();
+            ImGui::MenuItem("情報", nullptr, &m_showInfo);
             ImGui::MenuItem("設定", nullptr, &m_showSettings);
             ImGui::EndMenu();
         }
@@ -461,7 +461,7 @@ void Application::DrawUi() {
     // ドックスペースの ID には版を付ける。**パネルを増減したら版を上げること。**
     // ID が変われば ini に配置が無い状態になり、既定レイアウトが組み直される。
     // 上げないと、新しいパネルがどこにも入らず浮いたままになる。
-    const ImGuiID dockspaceId = ImGui::GetID("TerrainGraphDockSpace_v15");
+    const ImGuiID dockspaceId = ImGui::GetID("TerrainGraphDockSpace_v16");
 
     // ステータスバーもメニューバーと同じく、先に作って作業領域を狭めておく。
     DrawStatusBar();
@@ -489,8 +489,8 @@ void Application::DrawUi() {
     DrawTextureLibraryPanel();
     DrawMaterialPanel();
     DrawLightingPanel();
-    DrawInfoPanel();
 
+    DrawInfoWindow();
     DrawSettingsWindow();
     DrawExportWindow();
 
@@ -529,7 +529,7 @@ void Application::DrawUi() {
 //   +--------------------------------+------------------+
 //   | ビューポート                    | グラフ            |
 //   |                                | プレビュー設定     |
-//   |                                | ライティング / 情報 |
+//   |                                | ライティング         |
 //   +---------------+----------------+                  |
 //   | テクスチャ     | マテリアル / 天球 |                  |
 //   +---------------+----------------+------------------+
@@ -574,7 +574,6 @@ void Application::BuildDefaultLayout(ImGuiID dockspaceId) {
     ImGui::DockBuilderDockWindow("グラフ", right);
     ImGui::DockBuilderDockWindow("プレビュー設定", right);
     ImGui::DockBuilderDockWindow("ライティング", right);
-    ImGui::DockBuilderDockWindow("情報", right);
 
     ImGui::DockBuilderFinish(dockspaceId);
 
@@ -834,35 +833,43 @@ void Application::DrawSettingsWindow() {
     ImGui::End();
 }
 
-void Application::DrawInfoPanel() {
-    if (ImGui::Begin("情報")) {
-        const ImGuiIO& io = ImGui::GetIO();
-
-        if (ui::BeginPropertyTable("infoRows")) {
-            ui::PropertyValue("バージョン", "%s", TG_APP_VERSION);
-            ui::PropertyValue("フレーム", "%.1f FPS (%.3f ms)", io.Framerate,
-                              1000.0f / io.Framerate);
-            ui::PropertyValue("バックバッファ", "%u x %u", m_device.Width(), m_device.Height());
-            ui::PropertyValue("ビューポート", "%u x %u", m_renderer.Width(),
-                              m_renderer.Height());
-            ui::PropertyValue("合成", "%u^2 / %u レイヤー / %u タイル",
-                              m_renderer.MaterialResolution(),
-                              m_renderer.Evaluator().EvaluatedLayerCount(),
-                              m_renderer.Evaluator().EvaluatedTileCount());
-            ui::PropertyValue("ペイント", "%zu 枚 / %u^2 / 履歴 %zu 段", m_paintMasks.Count(),
-                              m_paintMasks.Resolution(), m_paintMasks.UndoCount());
-            ui::PropertyValue("アンドゥ", "%zu 段 / やり直し %zu 段",
-                              m_undoHistory.UndoCount(), m_undoHistory.RedoCount());
-            ui::PropertyValue("PSO", "%zu 件", m_pipelineCache.PipelineCount());
-            ui::PropertyValue("解放待ち", "%zu 件", m_device.PendingDeletionCount());
-            ui::PropertyValue("アップロード", "%llu / %llu KB",
-                              static_cast<unsigned long long>(m_device.Upload().PeakBytes() / 1024),
-                              static_cast<unsigned long long>(m_device.Upload().BytesPerFrame() /
-                                                              1024));
-            ui::EndPropertyTable();
-        }
-
+// 実行状況の情報。常設ドックの面積を使わず、必要なときだけメニューから開く。
+void Application::DrawInfoWindow() {
+    if (!m_showInfo) {
+        return;
     }
+
+    ImGui::SetNextWindowSize(ImVec2(ui::Scaled(460.0f), ui::Scaled(360.0f)),
+                             ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("情報", &m_showInfo)) {
+        ImGui::End();
+        return;
+    }
+
+    const ImGuiIO& io = ImGui::GetIO();
+
+    if (ui::BeginPropertyTable("infoRows")) {
+        ui::PropertyValue("バージョン", "%s", TG_APP_VERSION);
+        ui::PropertyValue("フレーム", "%.1f FPS (%.3f ms)", io.Framerate,
+                          1000.0f / io.Framerate);
+        ui::PropertyValue("バックバッファ", "%u x %u", m_device.Width(), m_device.Height());
+        ui::PropertyValue("ビューポート", "%u x %u", m_renderer.Width(), m_renderer.Height());
+        ui::PropertyValue("合成", "%u^2 / %u レイヤー / %u タイル",
+                          m_renderer.MaterialResolution(),
+                          m_renderer.Evaluator().EvaluatedLayerCount(),
+                          m_renderer.Evaluator().EvaluatedTileCount());
+        ui::PropertyValue("ペイント", "%zu 枚 / %u^2 / 履歴 %zu 段", m_paintMasks.Count(),
+                          m_paintMasks.Resolution(), m_paintMasks.UndoCount());
+        ui::PropertyValue("アンドゥ", "%zu 段 / やり直し %zu 段", m_undoHistory.UndoCount(),
+                          m_undoHistory.RedoCount());
+        ui::PropertyValue("PSO", "%zu 件", m_pipelineCache.PipelineCount());
+        ui::PropertyValue("解放待ち", "%zu 件", m_device.PendingDeletionCount());
+        ui::PropertyValue("アップロード", "%llu / %llu KB",
+                          static_cast<unsigned long long>(m_device.Upload().PeakBytes() / 1024),
+                          static_cast<unsigned long long>(m_device.Upload().BytesPerFrame() / 1024));
+        ui::EndPropertyTable();
+    }
+
     ImGui::End();
 }
 

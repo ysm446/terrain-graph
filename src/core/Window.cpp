@@ -1,6 +1,7 @@
 #include "core/Window.h"
 
 #include "core/Log.h"
+#include "core/ResourceIds.h"
 
 #include <shellapi.h>
 
@@ -25,6 +26,10 @@ bool Window::Create(const wchar_t* title, uint32_t width, uint32_t height) {
     wc.style = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = &Window::WndProcThunk;
     wc.hInstance = instance;
+    wc.hIcon = ::LoadIconW(instance, MAKEINTRESOURCEW(TG_APP_ICON));
+    wc.hIconSm = static_cast<HICON>(::LoadImageW(instance, MAKEINTRESOURCEW(TG_APP_ICON),
+                                                 IMAGE_ICON, 16, 16,
+                                                 LR_DEFAULTCOLOR | LR_SHARED));
     wc.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
     wc.lpszClassName = kWindowClassName;
     if (::RegisterClassExW(&wc) == 0 && ::GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {

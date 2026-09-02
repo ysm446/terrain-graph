@@ -74,7 +74,8 @@ private:
     void DrawViewportPanel();
     void DrawMaterialPanel();
     void DrawLightingPanel();
-    void DrawInfoPanel();
+    // 実行状況の情報ウィンドウ（ウィンドウ > 情報）。常設ドックには置かない。
+    void DrawInfoWindow();
     // ノードグラフパネル。サーフェス / シェイプ / 水面をノードとして繋ぎ、
     // 出力ノードへ届いたチェーンをレイヤー列へコンパイルしてプレビューに使う。
     void DrawGraphPanel();
@@ -258,6 +259,8 @@ private:
     io::AppSettings m_settings;
     // 設定ウィンドウを出しているか。ドックへは収めない補助ウィンドウ。
     bool m_showSettings = false;
+    // 情報ウィンドウ。必要なときだけウィンドウメニューから開く。
+    bool m_showInfo = false;
     // 書き出しウィンドウ。設定ウィンドウと同じくドックへは収めない。
     bool m_showExport = false;
     io::ExportSettings m_exportSettings;

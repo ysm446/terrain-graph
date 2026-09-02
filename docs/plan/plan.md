@@ -86,7 +86,8 @@ src/
   ui/           Dear ImGui の統合、テーマとプロパティ行
   terrain/      ハイトマップ地形（G5 で追加）
 shaders/        HLSL
-assets/         同梱アセット
+assets/         同梱アセット（コミットする）
+data/           手元のデータ置き場（コミットしない）
 docs/
 tests/
 ```
