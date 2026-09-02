@@ -71,12 +71,20 @@ float3 FlattenNormal(float3 normal, float amount)
 //   マスクによる従来の合成に近づく。
 float HeightBlendWeight(float baseHeight, float layerHeight, float mask, float range)
 {
-    const float a = baseHeight + (1.0f - mask);
-    const float b = layerHeight + mask;
-    const float m = max(a, b) - max(range, 1e-4f);
-    const float ca = max(a - m, 0.0f);
-    const float cb = max(b - m, 0.0f);
-    return saturate(cb / max(ca + cb, 1e-5f));
+    // **高さだけで決めた重み。** 起伏が拮抗する所で 0.5、レイヤーが range 分
+    // 勝てば 1、負ければ 0。境界を材質の凹凸なりにぎざぎざさせるのがこの項の役目。
+    const float t = saturate(0.5f + (layerHeight - baseHeight) / (2.0f * max(range, 1e-4f)));
+
+    // **マスクは被覆率。** t を上下にずらすことで、高い所から順に出る。
+    // mask = 0 なら必ず 0、mask = 1 なら必ず 1（t は 0〜1 なので端は必ず飽和する）。
+    //
+    // 以前はマスクを高さと同じ土俵（`下地 + (1 - mask)` と `レイヤー + mask`）で
+    // 競合させていた。端の値は同じだが、**中間はマスク 0.5 付近の
+    // 狭いしきい値として振る舞う**（沿わせたレイヤーでは概ね 0.43〜0.58）。
+    // 0〜0.4 しか持たないマスク（堆積の厚みなど）がまったく絵に出ず、
+    // 「マスクが効かない」と見えるため、被覆率として素直に効く形へ変えた。
+    // シェイプが `weight = mask` なのとも揃う。
+    return saturate(t + (mask * 2.0f - 1.0f));
 }
 
 // マスクのカーブ。
