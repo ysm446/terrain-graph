@@ -1,0 +1,746 @@
+# progress — 進捗と注意点
+
+作成日時: 2026-08-31 05:46
+更新日時: 2026-09-02 14:19
+
+## 現在の状況
+
+**レイヤー廃止（G2 前半）完了。合成の入口はノードグラフだけになった。**
+レイヤーパネルとレイヤースタックは撤去し、アンドゥ（Ctrl+Z）はグラフ編集
+（ノード / リンク / 設定 / 位置）とマテリアルを対象にした。
+ファイル形式は版 4（`layers[]` 廃止。旧ファイルは同じ見た目のまま
+グラフへ移行して読む）。設計は [design/node-graph.md](../design/node-graph.md)。
+次は G2 の残り（コピー / ペースト、マスク生成のノード化）。
+
+---
+
+以下は material-mixer 時代の記録（フォーク時点の到達点）。
+
+**M6（レイヤーの種類）完了。**
+レイヤーがサーフェス / シェイプ / 水面の 3 種類になり、高さの合成規則が
+種類ごとに分かれた。シェイプは加算なので下のレイヤーの細部を保ったまま
+地形スケールの形を作れ、水面は水位を動かしても地形が変形しない。
+ファイル形式は版 3（`kind` 追加）。次は M5d（配布形態）か M7（地形）。
+
+**M5c（フル解像度エクスポート）完了。**
+合成結果を画像として書き出せるようになり、**書き出しだけ解像度を上げられる**。
+書き出し専用の評価器を指定解像度で作ってタイル評価するので、
+プレビューの合成解像度には触らない。次は M5d（配布形態）か M6（レイヤーの種類）か
+M7（地形）。
+
+**M5b-2（天球アセット）完了。**
+環境が「素材と並ぶアセット」になり、手続き的な空と HDRI を名前付きで何枚でも持って
+切り替えられる。**空の輝度（HDRI の較正）と環境光の強さは天球ごと**に持つので、
+差し替えても前のファイル用の値が残らない。次は M5c（フル解像度エクスポート）。
+
+**M5b（テクスチャ一覧とファイル形式）完了。**
+素材が「テクスチャ → マテリアル → レイヤー」の順に積み上がる形になり、
+それぞれに一覧の置き場ができた。作った状態はプロジェクト (`.mmproj`) に保存でき、
+マテリアルは単体ファイル (`.mmmat`) として持ち出せる。
+形式は [reference/file-format.md](../reference/file-format.md) にまとめた。
+次は M5c（フル解像度エクスポート）。
+
+**M5a（マテリアルライブラリ）完了。**
+マップ一式に名前を付けた「マテリアル」を持てるようになり、レイヤーはそれを 1 つ参照する。
+サムネイル付きの一覧から選べ、テクスチャはファイル選択ダイアログで読み込む。
+Megascans の ORD（チャンネルパック）と EXR にも対応した。
+
+**M4（マスク生成）完了。**
+マスクの出どころが「定数 / ノイズ / テクスチャ / 中間結果 / ペイント」の 5 系統そろった。
+下地の高さ・傾斜・曲率・窪みからマスクを自動生成でき（M4a）、
+さらにビューポート上でブラシを引いて直接描ける（M4b）。次は M5（入出力）。
+
+UI はグレー基調に整理し、ルールを [design/design-guide.md](../design/design-guide.md) に置いた。
+
+## 完了済み
+
+- 2026-09-02 14:19 — **グラフ: ノード追加でキャンバスが操作不能になる不具合を修正**。
+  - 原因: `ed::GetNodePosition` は**知らないノードに FLT_MAX を返す**。
+    右クリックで作った直後のノード（未登録）にフレーム末尾の位置書き戻しが
+    これを保存し、次フレームの流し込みでノードが無限遠へ飛んで
+    キャンバスの座標計算が壊れていた。
+  - 書き戻し / 流し込み / 読み込みの 3 か所に座標検証（`IsValidNodePosition`）を
+    入れ、壊れた座標はビュー中央へ置き直す。追加位置の座標変換も
+    `ed::Suspend` の外（メニューを開いた時点）で確定させた。
+  - あわせて、追加したノードを `ed::SelectNode` でエディタ側でも選択状態にした
+    （これまで選択同期に消され、設定も部分プレビューも出なかった）。
+  - 検証: Debug ビルド、ctest、壊れた座標（3.4e38 / ±1e12）を仕込んだ
+    プロジェクトの読み込みで、盤面が生きたまま置き直されることを目視。
+    右クリック追加そのものの操作は headless で自動化できないため、
+    要実機確認（同じ検証関数を通る経路であることはコードで確認済み）。
+
+- 2026-09-02 14:00 — **レイヤー廃止（G2 前半）。合成の入口をグラフに一本化**。
+  - レイヤーパネル・レイヤー一覧・`Application` の `m_materialStack` /
+    `m_selectedLayer` を撤去。プロパティ行（`DrawLayerSettings`）と
+    ペイントの節は残し、グラフパネルの下段から使う。
+  - **アンドゥをグラフへ対応**。`DocumentSnapshot` は `graphNodes` / `graphLinks` を
+    持ち、`ApplyDocument` が `NodeGraph::Replace` + 参照の検証 + 位置の流し込み
+    （視点は動かさない）で書き戻す。リンク作成 / 削除、ノード追加 / 削除、
+    設定の編集で段が積まれる。**ノードの移動だけでは段を積まない**
+    （位置は毎フレーム返ってくるため。他の変更の段に相乗りする）。
+  - ファイル形式を**版 4** へ（`layers[]` 廃止）。読み込みは
+    「版 4 以降 = graph が唯一 / 版 3 以前 = apply がオンなら graph、
+    そうでなければ layers を移行」（`MigrateLayersToGraph`）。
+    .tgmat は変更なしのため版 3 のまま（版の定数を分離した）。
+  - 検証: Debug ビルド、ctest、**v3 レイヤーのみ / v3 グラフ / v4 往復の 3 経路で
+    描画 PNG が移行前と MD5 一致**、`--screenshot-ui` で新レイアウト
+    （右カラム: グラフ / プレビュー設定 / ライティング / 情報）を目視。
+    ステータスバーは「ノード n」表示に変更。ドックスペース ID は `_v15`。
+  - あわせて `TexturePreview`（EXR の表示用焼き直し）を
+    「RTV フラグ + Discard で初期化 → UAV へ遷移」に直した（下の注意点も参照）。
+
+- 2026-09-02 13:22 — **グラフ: 選択ノードのプレビューと右カラムへの移動**。
+  - ノードを選ぶと `CompileLayersTo()` でそのノードまでをコンパイルして
+    プレビューする（選択解除で出力チェーンへ戻る）。書き出しも同じ対象。
+  - 「グラフ」パネルの既定を右カラムの前面タブに変更（ビューポートと同時に
+    見えるように）。ドックスペース ID は `_v14`。
+  - **`ed::NavigateToContent` はノード描画の後に呼ぶ**（描画前は内容の矩形が
+    空で無視される）。さらにキャンバスサイズが変わるフレームでは
+    `ed::Begin` が前の表示領域を復元して上書きするため、サイズが安定してから
+    呼ぶ（詳細は [design/node-graph.md](../design/node-graph.md)）。
+  - 検証: Debug ビルド、ctest、レイヤー方式との PNG 一致（変わらず一致）、
+    `--screenshot-ui` で新レイアウトと全ノードの収まりを目視。
+    選択→部分プレビューの操作は headless で確認できないため、コードレビューのみ。
+
+- 2026-09-02 12:40 — **G1 完了。ノードグラフ基盤の移植（レイヤーのノード化）**。
+  - `src/graph/NodeGraph`（データモデル。UI / D3D12 非依存）と
+    「グラフ」パネル（`ApplicationGraphPanel.cpp`、imgui-node-editor）。
+    vcpkg に `imgui-node-editor` を追加。
+  - ノードはサーフェス / シェイプ / 水面（設定は `MaterialLayer` そのまま）と出力。
+    プロパティ UI はレイヤーパネルから切り出した
+    `Application::DrawLayerSettings()` を共有する。
+  - 評価は `NodeGraph::CompileLayers()` で出力ノードの「下地」チェーンを
+    レイヤー列へ落とし、既存の評価器で評価（`Application::ActiveStack()`）。
+    「プレビューに適用」がオフの間は従来どおりレイヤーパネルが効く。
+  - `.tgproj` に `graph` 節（キー追加のみ。版は据え置き）。
+    ペイントマスクの保存とスイープ、テクスチャ / マテリアル削除時の参照掃除も
+    グラフのノードを対象に含めた。
+  - **検証**: Debug ビルド、ctest、同一構成（ベース + シェイプ + 水面）を
+    レイヤー方式とグラフ方式で描いて **PNG が MD5 一致**、
+    保存 → 読み込みの往復、`--screenshot-ui` でパネルの目視。
+  - 注意: **リンク作成時に循環を弾く**（`CanCreateLink` が下流を DFS）。
+    imgui-node-editor の `ed::Config::SettingsFile` は nullptr にして、
+    ノード位置は `Node` が持って `.tgproj` に保存する。
+  - 未対応: グラフ編集のアンドゥ、コピー / ペースト（G2）。
+
+- 2026-09-02 12:20 — **terrain-graph へフォーク・改名**。
+  - リポジトリを `d:/GitHub/terrain-graph` としてフォークし、方針を
+    「レイヤースタック廃止 → ノードグラフ」へ転換。goals / plan / README /
+    CLAUDE.md / AGENTS.md を書き換え、terrain-editor の調査結果を
+    [reference/terrain-editor-node-graph.md](../reference/terrain-editor-node-graph.md) に記録。
+  - 内部識別子も改名: `namespace mm` → `tg`、`MM_*` → `TG_*`（HLSL 含む）、
+    exe は `terrain_graph.exe`、ウィンドウタイトルは `Terrain Graph`、
+    設定は `%LOCALAPPDATA%/terrain-graph/`、ini は `terrain_graph_imgui.ini`。
+  - ファイル拡張子は `.tgproj` / `.tgmat`。**旧 `.mmproj` / `.mmmat` は読み込みのみ対応**
+    （形式名 `material-mixer.*` を `terrain-graph.*` へ読み替え。書き出しは新形式のみ）。
+  - `build/` は旧フォルダの絶対パス（シェーダディレクトリ）が焼かれていたため作り直した。
+  - 検証: Debug ビルド、ctest（ui-interaction）、`--screenshot-ui` で起動確認。
+  - `assets/*.mmproj`（同梱サンプル）は旧拡張子のまま（読み込み互換で開ける）。
+
+- 2026-09-02 09:56 — **ハイトの範囲の枠を深度テスト付きに**。
+  線を ImGui から `PreviewRenderer::DrawHeightGuideOverlay`（`OverlayLines.hlsl`、
+  トーンマップ後・深度読み取りのラインパス）へ移した。ラベルは ImGui のまま。
+  - PSO に `lineTopology` / `alphaBlend` を追加。**サンプラと同じく、
+    トポロジやブレンドも PSO の一部**なので desc とキーに含める。
+  - `PreviewOutput` に RTV フラグを付けたら「Clear / Discard で初期化してから
+    使え」というデバッグレイヤーのエラーが出た（NOT_ZEROED ヒープの規則）。
+    生成直後に `DiscardResource` を 1 回入れて解決。
+  - 線がレンダーターゲットに入ったので、`--screenshot` にも写る
+    （08:50 の「写らない」は解消）。
+
+- 2026-09-02 09:11 — **メニューの整理**。`表示` → `ウィンドウ`（レイアウトのリセットと
+  設定だけ）。FPS / 統計 / ハイトの範囲（「高さの目安」から改名）は
+  ビューポート左上の `表示` ボタンへ。`ImGui デモ` は削除。
+  変位量の上限も 0.5 → 1.0 に拡大（地形スケールの起伏用）。
+
+- 2026-09-02 08:50 — **高さの目安**（`表示 > 高さの目安`、`DrawHeightGuide`）。
+  height 0 / 0.5 / 1 の位置をワイヤーフレームの枠で示す。平面のときだけ。
+  設定は `DisplaySettings::showHeightGuide`。
+  `--screenshot` には写らない（ImGui のオーバーレイなので UI 込みの
+  `--screenshot-ui` で確認する）。
+
+- 2026-09-02 08:42 — **シェイプのハイトマップをクランプで読む**。
+  タイルしない 1 枚絵の縁が wrap のバイリニア補間で反対側と混ざっていた。
+  マテリアルのハイトマップ（タイル素材）は wrap のまま。
+  **サンプラは三項演算子で選べない**（DXC の
+  「local resource not guaranteed to map to unique global resource」）。分岐で書く。
+
+- 2026-09-02 08:27 — **サーフェスの「下地に沿わせる」（Wrap to Underlying）**。
+  - `MaterialLayer::wrapToUnderlying`。シェーダへは `MM_FLAG_WRAP`。
+  - 高さを「下地 + 相対的な起伏」へ読み替えてから通常の競合に流す
+    （専用の重み計算は持たない）。Normal は下地を平坦化せず RNM で重ねる。
+  - Mixer の `preserve details` / `blur underlying` は未対応（近傍参照のパスが要る。
+    必要になったら別途）。設計は [design/compositing.md](../design/compositing.md) の
+    「サーフェスの『下地に沿わせる』」。
+
+- 2026-09-02 08:10 — **M6 の続き（アイコン / ハイトマップ読み込み / ノイズのタイル化）**。
+  - レイヤー一覧の種類アイコン（`ui::MountainIcon` / `ui::WavesIcon`。
+    図形で描く。design-guide の「記号を使うとき」に追記）。
+  - シェイプ用のレイヤー直結ハイトマップ（`MaterialLayer::heightTexture`、
+    ファイルでは `height.texture`）。マテリアルがあればそちらを優先。
+  - **ノイズの周期化**（`Common.hlsli` の `WrapCell`）。合成はタイリング前提なのに
+    ノイズだけ周期が無く、UV 境界で反対側の端の高さと混ざっていた。
+    周波数は整数へ丸めて評価し、UI のスライダーも整数刻みへ変更。
+    **既存プロジェクトのノイズ模様は変わる。**
+
+- 2026-09-02 07:49 — **M6 完了。レイヤーの種類（サーフェス / シェイプ / 水面）**。
+  - `MaterialLayer::kind`（`LayerKind`）を追加。シェーダへは `MM_FLAG_KIND_*` で渡す。
+  - シェイプ: Height へ `(src - 0.5) × 起伏の強さ × マスク` を**加算**して 0〜1 へ
+    切り詰め。法線は**下地を平坦化せずに** RNM で重ねる。書くチャンネルは
+    Normal / Height に固定（評価器が強制）。`heightBase` は「持ち上げ」（0.5 で変化なし）。
+  - 水面: `weight = マスク × smoothstep(0, フェザー, 水位 − 下地の高さ)`。
+    `HeightBlendWeight` を通さないので、**水位を動かしても下地は変形しない**。
+    `heightBase` が水位、`blendRange` がフェザーの読み替え（フィールドは増やさない）。
+  - 「追加」は種類を選ぶポップアップに。プロパティと既定値
+    （`kDefaultShapeLayer` / `kDefaultLiquidLayer`）は種類ごとに出し分ける。
+  - ファイル形式を版 3 へ（`kind` 追加。無ければサーフェスとして読む）。
+  - 検証: Debug ビルド、DXC 単体コンパイル（CsMain / CsMaskThumbnail）、
+    テストプロジェクト（岩 + シェイプ + 水面）を `--project` + `--screenshot` で
+    目視。水位 0.5 → 0.62 で水上の地形が不変であることを確認。
+  - **注意: `.mmproj` は BOM 無し UTF-8 で書くこと。** nlohmann-json は BOM 付きを
+    パースエラーにする（PowerShell 5.1 の `Set-Content -Encoding utf8` は BOM 付き）。
+
+- 2026-09-02 07:35 — **レイヤーの種類（サーフェス / シェイプ / リキッド）の方針を合意**し、
+  [plan.md](plan.md) へ **M6** として追加（従来の M6 地形は M7 へ繰り下げ）。
+  高さの合成規則を種類ごとに分ける: サーフェス = 競合（現状のまま）、
+  シェイプ = 加算（0〜1 へクランプ。起伏の実寸はディスプレイスメントの強さが担う）、
+  リキッド = 絶対値の水位（`HeightBlendWeight` を通さないので、
+  水位を動かしても下地が変形しない）。
+  背景: 水位レイヤーを高さ競合で作るとブレンドの遷移帯が下地の Height / Normal を
+  水平面へ引っ張り、水位の変更で地形がうねる。また大きな起伏を競合で勝たせると
+  下のレイヤーの細部が消える。どちらも合成規則の分離で解決する。
+
+- 2026-09-02 01:37 — **FPS 上限**（`core::FrameLimiter`）。背面では既定 10fps。
+  （当初 09:30 と記録していたが、コミット時刻 01:37 に基づき訂正。）
+  最小化のときしか止まっておらず、背面でも全開で回り続けていた。
+  設計は [design/rendering.md](../design/rendering.md) の「フレームレートの上限」を参照。
+
+- 2026-09-01 18:10 — **被写界深度を追加**（`DepthOfField.hlsl`）。
+  トーンマップの前、線形 HDR のシーンカラーに掛ける。
+  焦点距離はカメラ、F 値は露出から取り、レンズの指定を二重にしない。
+  ボケの強さの倍率（既定 1）を持つ。設計は
+  [design/rendering.md](../design/rendering.md) の「被写界深度」を参照。
+
+- 2026-09-01 16:50 — **M5c 完了。フル解像度エクスポート**（`io::ExportMaterialTextures`）。
+  - 書き出し専用の `MaterialEvaluator` を指定解像度で作り、512 のタイルで評価する。
+    **プレビュー側の評価器には触らない。**
+  - 形式変換とチャンネルの詰め替えは `ExportPack.hlsl`（GPU）。
+    CPU は RGBA8 を読み戻して詰め直すだけ。
+  - ハイトは R16_FLOAT を float へ広げて EXR で書く（`SaveExr`）。
+    **stb は 16bit PNG を書けない**ので、PNG では段差を避けられない。
+  - パッキングは 個別 / ORD / ORM。`ファイル > テクスチャを書き出す…` で設定する。
+  - 開発用オプション `--export <dir>`。2048 と 4096、個別と ORD で動作を確認した。
+
+- 2026-09-01 15:40 — **テクスチャは 1 枚のスクロールに戻し、レイヤーの行を広げた。**
+  帯は縦に狭いので割らず、詳細はスクロールした先に置く。
+  レイヤーの行は部品どうしに間隔（12）を空け、サムネイルを 32 → 40 にした。
+
+- 2026-09-01 15:05 — **テクスチャの一覧が全幅を使えるようになり、背景のぼかしを強めた。**
+  同じ帯で枡が 3 列 → 9 列に増えた。
+  `背景をぼかす` はプリフィルタ済みキューブのミップ 0.6 → 1.6。
+
+- 2026-09-01 14:20 — **画面の割り方を見直した。**
+  レイヤーは「上に一覧、下にプロパティ」の 2 段（`ui::HorizontalSplitter()`）。
+  右カラムは細く（0.42 → 0.26）。アセットの帯は左右に割り、
+  左にテクスチャ、右にマテリアルと天球を置いた。
+  **アセットの一覧はどれもサムネイルの格子なので、縦長のカラムより
+  横に広い帯のほうが枡が多く入る。** ドックスペース ID は `_v9`。
+
+- 2026-09-01 13:30 — **天球アセットを追加**（`renderer::SkyLibrary`）。
+  - 一覧・追加・複製・削除・サムネイルはマテリアルと同じ作法。
+    **サムネイルは裏返した球**（`shaders/SkyThumbnail.hlsl`）。
+  - HDRI は**テクスチャライブラリに入れない**。天球がファイルを直接参照する。
+    equirect はマテリアルのマップとして使わないので、
+    sRGB/リニアの 2 SRV・チャンネル SRV・ミップを作る意味がない。
+  - サムネイルは **1 フレームに 1 枚だけ**作る（HDR を 1 枚読むのに数百 ms かかる）。
+    equirect は CPU で 256x128 に落としてから上げるので、一時テクスチャは 1 MB 未満。
+  - レンダラは `SetActiveSky()` を毎フレーム受け取り、
+    中身の差分から「環境マップの作り直し」「較正倍率だけの掛け直し」を選ぶ。
+  - `.mmproj` に `skies[]` / `activeSky` を追加。天球が無い旧形式は
+    `preview` の `hdri` / `hdriSkyLuminance` / `iblIntensity` / `sky` から 1 つ作る。
+  - **アンドゥの対象には入れていない。** 環境は作っているマテリアルそのものではなく、
+    見え方の設定に近い（プレビュー設定を履歴に載せないのと同じ理由）。
+  - 併せて `ui::ThumbnailButton` が `ImTextureID` 0 を `AddImage` へ渡さないようにした。
+    0 は `ImTextureID_Invalid` で、**デバッグビルドの ImGui がアサートで落ちる**。
+    マテリアルは全枚数を 1 回で作るので露出していなかった。
+
+- 2026-09-01 08:11 — **レビューで挙がった改善候補の残りを全て消化。**
+  - 共通ヘルパ（`DispatchCount` / `TransitionIfNeeded` / `TransitionMip`）を
+    `rhi/GpuResource.h` へ集約。`ReleaseTexture` ラッパは削除して
+    `Device::DeferRelease` を直接呼ぶ。
+  - パスの UTF-8 変換を `core/PathUtf8.h` へ一本化
+    （表示用 `ToUtf8Display` / 保存用 `ToUtf8Portable` / `FromUtf8`）。
+  - プレビュー設定の既定値を `renderer::kPreviewDefaults` へ集約
+    （メンバ初期化子・UI マーカー・読み込みフォールバックの 3 か所を統一）。
+  - `MeshPbr` の VS / DS ディスプレイスメントを共通関数 `ApplyDisplacement`
+    （ワールド空間）へ統一。[design/rendering.md](../design/rendering.md) も更新。
+
+- 2026-09-01 08:02 — **ラフネスの下限を 0.045 に統一。**
+  `Brdf.hlsli` の `kMinPerceptualRoughness` に集約し、直接光 / サムネイル /
+  BRDF LUT で同じ値を使う。根拠は [design/rendering.md](../design/rendering.md)
+  の「ラフネスの下限」に記録した。
+
+- 2026-09-01 07:43 — **Application.cpp（約 3,000 行）を責務別に分割。**
+  クラス定義（Application.h）は変えず、メンバ関数の定義の置き場所だけを移した。
+  - コア（初期化 / フレームループ / レイアウト / ステータスバー / 設定 / 情報）は
+    `Application.cpp`（約 700 行）に残し、以下を新設:
+    `ApplicationViewport.cpp`（ビューポートと入力・ギズモ）、
+    `ApplicationPreviewPanels.cpp`（プレビュー設定 / ライティングと露出）、
+    `ApplicationLayerPanel.cpp` / `ApplicationMaterialPanel.cpp` /
+    `ApplicationTexturePanel.cpp`（各パネル）、
+    `ApplicationDocument.cpp`（アンドゥ文書）、
+    `ApplicationFileWork.cpp`（メニューと保留ファイル作業）。
+  - 匿名名前空間の共有ヘルパは `ApplicationUiHelpers.h`（内部ヘッダ、inline 化）へ集約。
+    コア専用の定数（ウィンドウ初期サイズなど）はコア側の匿名名前空間に残した。
+
+- 2026-09-01 07:28 — **コードレビューと不具合修正（全域）。**
+  rhi / compositor / renderer / app・io・ui をレビューし、critical と bug を中心に修正。
+  詳細は [changelog](../changelog.md) の同日時の項を参照。
+  - ディスクリプタの遅延解放（`Device::DeferRelease`）を導入し、
+    手動の `WaitForGpu` に頼る解放を全廃した。
+  - 上記の改善候補は全て対応済み（後続の項を参照）。
+
+- 2026-08-31 05:46 — 方針の合意と [goals.md](goals.md) / [plan.md](plan.md) の作成。
+  - 合成モデル: レイヤースタック（Quixel Mixer 風）
+  - 優先順位: コア基盤のあと、地形よりマテリアル合成を先に厚くする
+  - ビルド: C++20 + CMake + vcpkg
+  - UI: Dear ImGui（docking ブランチ）
+
+- 2026-08-31 05:51 — [AGENTS.md](../../AGENTS.md) / [CLAUDE.md](../../CLAUDE.md) を
+  本プロジェクト（C++ / CMake / DX12）向けに書き換え。
+  Web スタック前提の記述を削除し、バージョン基準を `CMakeLists.txt` の
+  `project(... VERSION ...)`、検証手順を CMake ビルドに変更。
+
+- 2026-08-31 06:18 — **M0 完了**。
+  - `CMakeLists.txt` / `CMakePresets.json` / `vcpkg.json` / `.gitignore`
+  - `src/core/`（Log, Window）、`src/rhi/`（Common, DescriptorHeap, Device）、
+    `src/ui/`（ImGuiLayer）、`src/app/`（Application, Main）
+  - DX12 デバイス / DIRECT キュー / スワップチェーン（FLIP_DISCARD, 3 バッファ）/
+    フレーム同期 / RTV・SRV ディスクリプタアロケータ
+  - Dear ImGui docking 統合（DX12 + Win32 バックエンド、日本語フォント読み込み）
+  - デバッグレイヤー + GPU ベースバリデーション、PIX マーカー（`Frame`）
+  - Agility SDK の DLL を `D3D12/` へポストビルドコピー
+
+- 2026-08-31 10:12 — **M1 完了**。
+  - `rhi/GpuResource`（D3D12MemoryAllocator によるテクスチャ / バッファ生成とディスクリプタ確保）
+  - `rhi/UploadRing`（フレームごとに巻き戻る線形アロケータ、既定 16 MB/フレーム）
+  - `rhi/DeletionQueue`（フレーム同期後に解放する遅延破棄キュー）
+  - `rhi/ShaderCompiler`（DXC によるランタイムコンパイル、`shaders/` の更新検出）
+  - `rhi/PipelineCache`（グローバルルートシグネチャ + コンピュート PSO のキャッシュ）
+  - bindless を全面採用。起動時に Resource Binding Tier 3 を要求する
+  - 疎通確認として `shaders/SmokeTest.hlsl`（fBm + 傾斜マスク）をコンピュートで評価し、
+    ImGui のプレビューウィンドウへ表示
+
+- 2026-08-31 10:46 — **M2a 完了**。
+  - `rhi/PipelineCache` にグラフィックス PSO を追加（入力レイアウトは頂点構造体ごとの列挙で管理）
+  - `rhi/GpuResource` を RTV / DSV と DEFAULT ヒープバッファに対応
+  - `rhi/Device` に DSV ヒープ、`BindBackBuffer`、`ExecuteImmediate` を追加
+  - `renderer/Camera`（軌道カメラ）、`renderer/Mesh`（球 / 平面 / キューブ生成と GPU 転送）
+  - `renderer/PreviewRenderer`（HDR シーンカラー + 深度 → トーンマップ → 表示用テクスチャ）
+  - `shaders/Brdf.hlsli`、`shaders/Tonemap.hlsli`、`shaders/MeshPbr.hlsl`、
+    `shaders/TonemapPass.hlsl`
+  - EV100 ベースの露出（絞り / シャッター / ISO、または EV 直接指定）と
+    Reinhard / ACES の切り替え
+  - 高 DPI 対応（DPI 認識の有効化、フォントとスタイルのスケール、
+    ウィンドウをモニタの作業領域に収める）
+  - M1 の疎通確認用 `shaders/SmokeTest.hlsl` は役目を終えたため削除
+    （同じ経路をトーンマップパスが通る）
+
+- 2026-08-31 11:13 — **M2b 完了**。
+  - `renderer/Environment`: equirect → キューブ → irradiance / プリフィルタ / BRDF LUT
+  - `core/ImageIo`: stb による Radiance HDR (.hdr) の読み込みと PNG 書き出し
+  - `rhi/GpuResource` をキューブマップ、配列、ミップ別 UAV / SRV に対応
+  - `rhi/ResourceAllocator` に READBACK バッファを追加
+  - シェーダ: `EnvCommon.hlsli`、`EnvSky`、`EnvEquirectToCube`、`EnvDownsample`、
+    `EnvIrradiance`、`EnvPrefilter`、`EnvBrdfLut`、`Skybox`
+  - `MeshPbr.hlsl` の暫定環境光を分割和近似の IBL に差し替え
+  - グローバルルートシグネチャに equirect 用サンプラ（U ラップ / V クランプ）を追加
+  - 開発用コマンドライン `--hdri` / `--screenshot` / `--screenshot-frame` を追加
+
+- 2026-08-31 11:37 — **M3a 完了**。
+  - `compositor/MaterialLayer`（レイヤー定義）、`compositor/MaterialStack`（スタック）
+  - `compositor/MaterialEvaluator`（GPU 評価器。タイル矩形と解像度を引数に取る）
+  - 出力 4 枚: BaseColor (R11G11B10F) / Normal (RG16F) / Surface (RGBA8) / Height (R16F)
+  - `shaders/CompositeCommon.hlsli`（RNM、ハイトブレンド、マスクのレベル調整）
+  - `shaders/CompositeLayer.hlsl`（レイヤー 1 枚ぶんの合成）
+  - ハイトとマスクの出どころに fBm ノイズを用意し、法線はハイトの勾配から作る
+  - `MeshPbr.hlsl` を合成結果のサンプリングに対応（タンジェント空間法線を適用）
+  - レイヤー UI（追加 / 複製 / 削除 / 並べ替え / 有効切り替え / 各パラメータ）
+  - パネル配置を組み直し（左: レイヤー、中央: ビューポート、右: 設定と情報）
+
+- 2026-08-31 12:02 — **M3b 完了**。
+  - `core/ImageIo` に LDR 画像（PNG / TGA / JPG）の読み込みを追加
+  - `compositor/TextureLibrary`: 読み込み済みテクスチャの保持と bindless インデックスの払い出し。
+    リソースは TYPELESS で作り、UNORM と UNORM_SRGB の 2 つの SRV を張る
+  - `shaders/TextureMips.hlsl`: 読み込み時のミップ生成
+  - レイヤーに 7 つのテクスチャスロット
+    （ベースカラー / 法線 / ラフネス / メタルネス / AO / ハイト / マスク）
+  - `CompositeLayer.hlsl` をテクスチャサンプリングに対応。
+    コンピュートでは暗黙の LOD が使えないため、出力テクセルが張る UV 幅から
+    ミップレベルを計算して `SampleLevel` する
+  - `TextureDesc` に `uavFormat` を追加（TYPELESS リソース用）
+  - 起動オプション `--texture <path>`（繰り返し可）
+
+- 2026-08-31 12:09 — **ドキュメント整理**。
+  - `README.md` を新規作成（概要 / ビルド / 実行 / 操作 / 構成 / ドキュメント一覧）
+  - `docs/design/` を新設し、`plan.md` に溜まっていた実装設計を切り出した
+    （`rhi.md` / `rendering.md` / `compositing.md`）
+  - `plan.md` を計画の入口として整理（技術選定 / 構成 / マイルストーン / 保留事項）
+  - `plan.md` のハイトブレンドの式が実装と食い違っていたので design 側で修正
+  - 本ファイルの注意点を分類し、重複と矛盾（既定レイアウトの適用条件）を解消
+
+- 2026-08-31 12:34 — **M4a 完了**。
+  - `MaskSource` に中間結果由来のマスクを追加（下地の高さ / 傾斜 / 曲率 / 窪み）
+  - `shaders/CompositeMask.hlsl`: 下地の Height からマスクを作る専用パス
+  - 評価のループを**レイヤー優先**に変更（外側レイヤー、内側タイル）。
+    近傍参照を伴うマスクはタイル優先だと境界に継ぎ目が出る
+  - `Evaluate` の引数をタイル 1 個からタイル群へ変更
+  - ノイズの種類を追加（尾根状 / セル状 Worley）。ハイトとマスクの双方で選べる
+  - マスクにカーブ（コントラスト）を追加
+  - 既定スタックに「窪みに苔が生える」レイヤーを追加
+
+- 2026-08-31 13:32 — **M4b 完了**（ペイントマスク）。
+  - `compositor/PaintMask`（`PaintMaskStore`）: ペイントマスク（R8_UNORM）の管理、
+    ブラシ適用、塗りつぶし、アンドゥ / リドゥ、解像度変更のリサンプル
+  - `MaskSource::Paint` を追加。`LayerMask::paint` がマスクの ID を持つ
+  - `shaders/PaintBrush.hlsl`: 線分ストロークのブラシ。標本化は groupshared で共有
+  - `shaders/PaintFill.hlsl`: 一様な値での塗りつぶし
+  - `MeshPbr.hlsl` を MRT 化し、2 枚目へマテリアル UV と被覆を書き出す。
+    `rhi::GraphicsPipelineDesc` に `rtvFormat1` を追加
+  - `PreviewRenderer` に UV バッファ（`m_materialUv`）と
+    `PrepareUvBufferForRead`（ブラシへ渡す SRV とビューポートサイズ）を追加
+  - レイヤー UI にペイント欄（作成 / モード切替 / 半径・強さ・減衰 / 消しゴム /
+    全消去・全塗り / アンドゥ・リドゥ / 解像度 / 破棄）
+  - ビューポート: ペイントモード中は左ドラッグで塗り、右ドラッグで消す。
+    軌道は Alt + 左ドラッグへ退避。カーソルにブラシ半径の円を重ねる
+  - レイヤーの複製ではペイントマスクを中身ごと複製し、削除では破棄する
+  - `kInvalidTextureIndex` を `TextureLibrary.h` から `MaterialLayer.h` へ移した
+
+- 2026-08-31 14:36 — **UI の整理**（グレー基調 / プロパティ行の統一）。
+  - `src/ui/UiStyle`: テーマ（`ApplyTheme`）と、プロパティ行のヘルパー（`Property*`）
+  - 配色をグレー基調に作り直した。アクセントは 1 色（`#96A3AD`）だけ
+  - 全パネルの設定値を「パラメータ名：値」の 2 列テーブルへ揃えた
+  - 既定値マーカー（`ResetDot`）を追加。既定値は設定構造体の初期値を渡す
+  - レイヤーの並べ替えをドラッグ＆ドロップにし、`MaterialStack::MoveTo` を追加。
+    「上へ」「下へ」ボタンは役目が重なるので廃止
+  - ウィンドウのクライアント領域を 1920x1080 に固定
+    （`AdjustWindowRectExForDpi`）。UI スケールは 1.0 固定
+  - `Device::RequestBackBufferCapture` と起動オプション `--screenshot-ui` を追加
+  - [design/design-guide.md](../design/design-guide.md) を新規作成し、
+    `CLAUDE.md` / `AGENTS.md` に「UI 実装」の節を足して参照させた
+
+- 2026-08-31 15:24 — **座標系を右手系へ統一し、座標軸ギズモを追加**。
+  - `Camera` のビュー / 投影を `XMMatrixLookAtRH` / `XMMatrixPerspectiveFovRH` へ変更。
+    ラスタライザを `FrontCounterClockwise = TRUE` に固定
+  - `Camera::Basis()`（ビュー行列と同じ基底をワールド座標で返す）を追加
+  - `Camera::Orbit` の引数を画面のドラッグ量として整理し、ヨーの符号を反転
+  - ビューポート左下に座標軸ギズモ（`DrawAxisGizmo`）
+
+- 2026-08-31 16:02 — **パネルをドックレイアウトへ移行**。
+  - `Application::BuildDefaultLayout`（`DockBuilder` で既定配置を組む）を追加し、
+    絶対座標で置く `SetDefaultWindowRect` を廃止
+  - `表示 > レイアウトをリセット` を追加
+  - 右のパネルが画面外へはみ出して見切れる問題の修正
+
+- 2026-08-31 17:12 — **M5a 完了**（マテリアルライブラリ）。
+  - `compositor/MaterialLibrary`: マテリアル（マップ一式 + 定数 + サムネイル）の管理
+  - `shaders/MaterialThumbnail.hlsl`: 正面を向いた球を解析的に解いて描くサムネイル
+  - `MaterialLayer` から `LayerTextures` を廃し、`MaterialAssetId material` を持たせた。
+    マスク用テクスチャは `LayerMask::texture` へ移動
+  - 評価器はマテリアルからマップと定数を引く。マテリアルがあればレイヤー側の
+    色・サーフェスの値は使わない
+  - `core/FileDialog`（IFileDialog）。テクスチャ（複数可）と HDRI をダイアログで開く。
+    パスの手入力欄は廃止
+  - マテリアルパネル（レイヤーのとなりのタブ）。サムネイルの一覧、マップの割り当て
+  - M5b に向けた土台も入れた（`nlohmann-json`、`SaveGray8Png`、
+    `PaintMaskStore::ReadPixels/AddFromPixels/Clear`、`CameraState`、`Window::RequestClose`）
+
+- 2026-08-31 18:04 — **チャンネルパックと EXR**（M5a への追加）。
+  - スカラーのマップを `MapSlot`（テクスチャ + `TextureChannel`）に変更。
+    Megascans の `_ORD`（O=AO / R=Roughness / D=Displacement）を 1 枚のまま使える
+  - `MaterialLibrary::AssignOrdTexture` と、マテリアルパネルの `ORD` 行
+  - チャンネル指定は 4bit ずつ 1 つの uint へ詰めてシェーダへ渡す
+    （`MM_CHANNEL_SLOT_*` / `PackChannel`）
+  - `core/ImageIo` に `LoadExrImage`（tinyexr）を追加
+  - `TextureLibrary` が EXR を `R16G16B16A16_FLOAT` のまま保持する
+
+- 2026-08-31 18:52 — **プロジェクト名を material-mixer へ変更**。
+  - 表に出る名前（実行ファイル、ウィンドウタイトル、vcpkg.json、ini、ドキュメント）と
+    内部の識別子（`namespace mm`、`MM_*` マクロ、HLSL の `MM_*`）をまとめて変更
+  - プロジェクトファイルの拡張子も `.mmproj` にした（M5b で使う）
+  - **リポジトリのフォルダ名は未変更**。`d:/GitHub/heightmap-mixer` のまま。
+    フォルダを変えたら `build/` を作り直すこと（`MM_SHADER_DIR` に絶対パスが焼かれている）
+
+- 2026-08-31 15:12 — **M5b 完了**（テクスチャ一覧 / プロジェクトとマテリアルの保存）。
+  - **テクスチャパネル**（レイヤー・マテリアルと同じ枠の 3 つめのタブ）。
+    サムネイル一覧、解像度 / ミップ / 形式 / 参照数 / 場所、名前の変更、削除。
+    サムネイルからマテリアルのマップ欄へ**ドラッグ＆ドロップ**で割り当てられる
+    （ペイロード `MM_TEXTURE`）。画像の読み込み口はマテリアルパネルからここへ移した。
+  - `io/ProjectIo`: `.mmproj` と `.mmmat` の読み書き（nlohmann-json）。
+    仕様は [reference/file-format.md](../reference/file-format.md)。
+    - **プロジェクトにはマテリアルの構造を丸ごと埋め込む。** 開くのに `.mmmat` は要らない。
+    - 画像は参照だけ持ち、パスはファイルからの相対で書く。
+    - ペイントマスクは `<名前>.assets/paint_NNNN.png` へ書き出す。
+    - 例外は使わないので、パースは `json::parse(..., allow_exceptions=false)` で受け、
+      型が合わない項目は既定値へ落とす。
+  - ファイルメニュー（新規 / 開く / 保存 / 名前を付けて保存 / 終了）と、
+    マテリアルパネルの書き出し / 読み込み。要求は積むだけで、
+    実処理は `Application::ProcessPendingFileWork()` がフレームの外で行う。
+  - `TextureLibrary`: 同じパスの画像は読み直さず既存の ID を返すようにした。
+    `FindByPath` / `FindMutable` / `Clear` を追加。
+  - `Window::SetTitle`。タイトルバーに開いているプロジェクト名を出す。
+  - 起動オプション `--project`（開く）と `--save-project`（開発用の保存して終了）。
+  - **未保存の変更があるまま閉じたときの確認は入れていない**（下の注意点を参照）。
+
+- 2026-08-31 15:49 — **ステータスバーとドロップ、EXR 表示の修正**。
+  - **ステータスバー**（画面下端）。左に直近の通知とモード、右に
+    プロジェクト名 / レイヤー・マテリアル・テクスチャの数 / 合成解像度 / FPS。
+    `core/Log` に出力先（`SetLogSink`）を足し、ログをそのまま通知として出す。
+    **これまで警告やエラーはデバッグ出力にしか出ておらず、GUI からは見えなかった。**
+  - **エクスプローラからのドロップ**（`WM_DROPFILES`）。拡張子で行き先を振り分ける
+    （画像 → テクスチャ / `.mmproj` → プロジェクト / `.mmmat` → マテリアル /
+    `.hdr` → 環境）。扱えない拡張子は警告を出す。
+  - **EXR のサムネイルが暗すぎた問題の修正。** `shaders/TexturePreview.hlsl` を追加し、
+    リニアなテクスチャは読み込み時に sRGB へ焼いた 128^2 の表示用テクスチャを作る。
+  - 読み込んだテクスチャを選択して一覧の枠内へ送るようにした（`SetScrollHereY`）。
+  - 既定レイアウトを組んだあと「レイヤー」を前面にする（タブ 3 枚の並びが
+    組んだ順に左右されないようにするため）。
+
+- 2026-09-01 00:30 — **ハイトの基準面と「起伏の強さ」**。
+  - ハイトの式を `heightBase + (src - kHeightPivot) * heightGain` に変更した
+    （`kHeightPivot = 0.5`）。**基準の高さと起伏の強さが直交する。**
+    起伏を変えても平均の高さが動かないので、勝敗と凹凸を別々に決められる。
+  - `MaterialLayer::heightGain` を `NoiseParams` の外に出した。
+    **これまで寄与の量はノイズの `amount` が兼ねていて、ソースがテクスチャのときは
+    UI に出ていなかった**（マテリアルのハイトマップの強さを調整できなかった）。
+    ノイズの行からは「量」を外し、`起伏の強さ` に一本化した。
+  - **基準面はマップの平均ではなく 0.5 固定。** ディスプレイスメントマップは
+    「中間グレーが変位ゼロ」の慣習で作られるため。判断の経緯は
+    [compositing.md](../design/compositing.md) の「ハイトの基準面を 0.5 に固定する理由」。
+  - **ファイル形式を版 2 へ。** `gain` の有無で旧形式を判定し、
+    `base' = base + 0.5 * gain` で移行する（定数ソースは対象外）。厳密に同じ値になる。
+    版を上げたのは、`base` の意味が変わり古いビルドが黙って違う絵を出すため。
+  - UI の `出どころ` を `ソース` に変更（ハイト / マスク）。
+  - 既定レイヤーの `heightBase` を 0.5 にした。追加したてのレイヤーが
+    既存のレイヤーより極端に低く沈まないようにするため。
+
+## 環境の実測値（2026-08-31 時点）
+
+- Visual Studio Community 2026 (18.7.11925.98) / MSVC 14.51.36231
+- Windows SDK 10.0.26100.0
+- CMake 4.3.1-msvc1
+- vcpkg: `C:/vcpkg`（2026-03-04）。**`VCPKG_ROOT` は未設定、PATH にも入っていない。**
+  `CMakeLists.txt` 側で `VCPKG_ROOT` → `C:/vcpkg` の順にフォールバックして解決している。
+- ジェネレータは **Visual Studio 18 2026（マルチコンフィグ）**。
+  Ninja は VS 同梱のものしかなく、素のシェルからは開発環境変数が必要なため採用していない。
+  そのため構成プリセットは `x64` の 1 つ、ビルドプリセットが `x64-debug` / `x64-release`。
+
+## 次にやること
+
+M5d（配布形態）か M7（地形）。水の透け（深さベースの吸収）と汀線の濡れは、
+水面レイヤーの重み計算で深さが手に入るようになったので、必要になったら
+`CompositeLayer.hlsl` のリキッド分岐の延長に足せる。
+
+- **未保存の変更があるまま閉じたときの確認**は M5b でも入れなかった。
+  変更フラグを持つ場所（レイヤー / マテリアル / テクスチャ / ペイント）が分かれているので、
+  `MaterialStack::Revision()` のような通し番号を全体に広げるかを先に決める。
+
+## 注意点
+
+実装の設計そのものは [design/](../design/) にまとめてある。
+ここには「踏んだ罠」と環境固有の事情を残す。
+
+### 未解決（既知の問題）
+
+- **EXR を含むプロジェクトの読み込みで、GPU ベースバリデーションが
+  `TexturePreview` のディスパッチを不定期に報告する**
+  （"Incompatible texture barrier layout … Layout COMMON"、Debug ビルドのみ）。
+  - 再現は確率的（`assets/mountain.mmproj` の読み込みで 5 回中 0〜2 回程度）。
+  - コードはフォーク元 material-mixer と同一の経路だが、あちらのビルドでは
+    再現しなかった。Agility SDK / デバッグレイヤーの版は両者で同一（1.619.1）。
+  - 明示バリア + Discard 初期化 + `ExecuteImmediate`（内部で GPU 待機）まで
+    確認済みで、アプリ側の遷移漏れは見つかっていない。GBV の
+    ディスクリプタ再利用まわりの追跡が濡れ衣を着せている可能性を疑っている。
+  - 再発して困るようなら PIX / DRED で追う。実描画の破綻は観測されていない。
+
+### ビルドと構成
+
+- **Windows SDK の `d3d12.lib` 解決**: Visual Studio ジェネレータでは SDK の lib パスが
+  `find_library` の探索対象に入らず、`directx12-agility` の config が
+  「D3D12.LIB import library from the Windows SDK is required」で落ちる。
+  `CMakeLists.txt` でレジストリ（`KitsRoot10`）から SDK を引き、`D3D12_LIB` を
+  先にキャッシュへ入れて回避している。**この処理を消すと構成が通らなくなる。**
+
+- **`USE_PIX` は常時定義する**: 未定義だと `pix3.h` の呼び出しがコンパイル時に消え、
+  WinPixEventRuntime.dll への依存も消えて配置されなくなる。
+  性能は Release で測るものなので、Release で計測できないと意味がない。
+
+- **文字列リテラル**: `/utf-8` を指定しているのでソースは UTF-8。
+  ImGui へ渡す日本語は `u8"..."` ではなく素の `"..."` を使う
+  （C++20 では `u8""` が `const char8_t*` になり `const char*` へ渡せない）。
+
+- **シェーダの参照先**: 実行ファイル横へコピーせず、`MM_SHADER_DIR`
+  （CMake が定義。環境変数で上書き可）でソースツリーの `shaders/` を直接読む。
+  exe 単体を別マシンへ持っていっても動かない。配布形態は M5 で見直す。
+
+### DirectX 12（詳細は [design/rhi.md](../design/rhi.md)）
+
+- **フェンス同期**: スロットの初期値に 1 を入れると、誰も Signal していない値を
+  初回フレームで待って**確実にデッドロックする**（M0 中に実際に踏んだ）。
+- **ルートシグネチャに `ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT` が必須**。
+  無いとグラフィックス PSO 作成が `E_INVALIDARG` で落ちる。原因が表に出にくい。
+- **PSO の生成失敗もキャッシュする**。しないと毎フレーム再コンパイルでログが埋まる。
+- **ミップ連鎖の生成はサブリソース単位で遷移させる**。
+  リソース全体を覆う SRV では状態が混在する。
+- **`Device::ExecuteImmediate` はフレームの外でしか呼べない**。
+  UI からの要求はフラグに積み、次フレームの頭で `ProcessPendingWork` が処理する。
+- **`SetBreakOnSeverity`**: デバッガ未接続で有効にすると警告のたびにプロセスが落ちるため、
+  `IsDebuggerPresent()` が真のときだけ設定している。
+- **リソース状態はリソース全体で 1 つ**（ミップ連鎖の生成だけ例外）。
+
+### 描画（詳細は [design/rendering.md](../design/rendering.md)）
+
+- **座標系は右手系 Y-up**。LH の行列を使うと画面が左右反転し、+X が画面左に出る。
+  対称なプリミティブでは気づきにくいので、規約側で固定しておく。
+- **右手系ではラスタライザを `FrontCounterClockwise = TRUE` にする**。
+  LH のままの設定を残すと、外向きの面がすべて裏面判定になって消える。
+- **右手系にすると画面の右が +X になる**。軌道のヨーは符号を反転しないと、
+  ドラッグした向きと逆に内容が回る。
+
+- **irradiance マップの中身は `E / pi`**。pi を二重に割らないこと。
+- **環境マップに太陽を入れない**。ディレクショナルライトと二重計上になる。
+- **球の巻き順は平面・キューブと逆**。誤ると遠側の内面が見える。
+- **ウィンドウは作業領域に入りきらなくても縮めない**（`Window::ResizeClient`）。
+  縮めるとクライアント領域を実ピクセルで固定した意味が無くなる。位置だけ寄せる。
+  スナップや最大化のあとは `設定 > ウィンドウ > 既定の大きさに戻す` で戻す。
+- **高 DPI 対応はウィンドウ生成前に有効化する**。忘れると OS がウィンドウごと
+  ビットマップ拡大し、描画解像度が落ちてぼやける。
+  **UI の拡大率は既定ではモニタの DPI に追従させない**（100% 固定）。
+  クライアント領域を実ピクセルで固定しているので、
+  追従させると作業面積がモニタ設定で変わってしまう。
+  高 DPI では文字が小さくなるため、`設定 > UI` で使う人が選べるようにしてある。
+- **拡大率の変更でフォントアトラスを作り直さない。** ImGui 1.92 では
+  `style.FontScaleDpi` で動的に拡縮されるので、フォントは基準サイズ(17px)で
+  1 回だけ読む。作り直すと GPU 待機とディスクリプタの張り替えが要る。
+- **`ImGui::Image` は入力を消費しない**。`InvisibleButton` を重ねること。
+- **パネルを絶対座標で置かない**。ウィンドウの大きさが変わったときや、
+  別の大きさで保存された ini を読んだときに画面外へはみ出す。
+  ドックに収めれば、ウィンドウの大きさに必ず追従する。
+- **既定のドックレイアウトを組むかの判定は `DockSpaceOverViewport` より前に行う**。
+  後だとノードが作られてしまい、`DockBuilderGetNode` が必ず非 null になる。
+- **`DockBuilderSplitNode` の前に `DockBuilderSetNodeSize` を呼ぶ**。
+  呼ばないと分割比が当てにならない。
+- **ドックのノードサイズは ini に絶対値で残る**。小さいウィンドウで開くと
+  釣り合いが崩れることがあるので、`ウィンドウ > レイアウトをリセット` で組み直せるようにしてある。
+
+### 合成（詳細は [design/compositing.md](../design/compositing.md)）
+
+- **マスクは高さと同じ土俵で競合する**。マスク 1.0 は高さを無視して全面を覆う。
+  高さで勝敗を決めたいときは双方 0.5 付近にする。
+- **Normal は lerp すると必ず破綻する**。RNM を経由すること。
+- **法線の勾配スケール**: 生の `d(height)/d(uv)` は極端に急な法線になる。
+  `kNormalGradientScale` で丸めている。
+- **コンピュートシェーダでは暗黙の LOD が使えない**。`SampleLevel` を使う。
+- **タイル評価は常用する**。使わない経路は壊れたままになる。
+- **評価のループはレイヤー優先**。中間結果由来のマスクは近傍を参照するため、
+  タイル優先で回すと未評価の隣タイルを読んで境界に継ぎ目が出る。
+- **中間結果由来のマスクは別パスで計算する**。合成パスは Height を UAV として
+  書き換えるので、同じディスパッチで近傍を読むと競合する。
+- **VRAM の見積もり**: 8K × 4 チャンネルは 1 レイヤーあたり数百 MB 規模。
+  フル解像度バッファを常駐させない方針を必ず守る。
+
+### ペイント
+
+- **ペイントマスクはレイヤーの UV スケールを掛けない座標で引く**。
+  掛けると、描いた場所と出る場所がずれる。
+- **UV バッファは 1 フレーム前の内容を読む**。ブラシは合成の評価より前に流すため。
+  描き味に出るほどの差はないので、そのために同期を入れない。
+- **UV の距離は 0 / 1 の境界をまたぐ**。マスクはメッシュ上でタイリングするので、
+  `min(d, 1 - d)` で巻き戻して測らないと継ぎ目でストロークが切れる。
+- **スカイボックスの前にレンダーターゲットを束ね直す**。
+  メッシュは MRT（シーンカラー + UV）だが、スカイボックスの PSO は 1 枚しか持たない。
+- **UV バッファのクリア値はリソース生成時の値と揃える**。
+  被覆 0 でクリアするので `clearColor` のアルファも 0 にしてある。
+- **ペイントの要求はフレーム内の 1 か所でまとめて記録する**。
+  UI から直接コマンドリストへ積まない。テクスチャ生成やアンドゥの
+  履歴確保は UI（フレームの外）で済ませ、コピーとディスパッチだけを frame 内で流す。
+- **ペイントマスクを破棄するときは GPU 待機する**。
+  ディスクリプタを解放するため、`PaintMaskStore::Remove` はフレームの外で呼ぶ。
+
+### UI（詳細は [design/design-guide.md](../design/design-guide.md)）
+
+- **UI の確認は `--screenshot-ui` を使う**。OS の画面キャプチャは
+  前面化に失敗して別ウィンドウを掴むことがあり、
+  DPI 非対応のプロセスから撮ると縮んだ絵になる。
+- **プロパティ行の ID はラベル文字列から作る**。同じラベルを同じテーブルへ 2 回置くと
+  ID が衝突して片方が動かなくなる。節ごとにテーブルを分けること。
+- **`SectionHeader` はプロパティテーブルの外で呼ぶ**。テーブルの行として呼ぶと
+  列の幅計算が崩れる。
+- **レイヤー一覧のドラッグ結果はループの外で反映する**。
+  走査中に `MoveTo` を呼ぶと、その場で並びが変わって描画と食い違う。
+- **バックバッファのコピーはフレームの中で record する**。
+  フリップモデルでは Present 後の内容が破棄されうる。
+
+### アセット（詳細は [design/compositing.md](../design/compositing.md)）
+
+- **同じ意味の値を 2 か所に置かない**。マテリアルを割り当てたレイヤーでは、
+  レイヤー側の色とサーフェスの値は使わない（UI からも隠す）。
+  掛け合わせにすると、どちらが効いているのか分からなくなる。
+- **マテリアルを削除したら、参照していたレイヤーを「なし」へ戻す**。
+  無効な ID を残すと、次に同じ番号が払い出されたときに別のマテリアルが付く。
+- **サムネイルは変更があったときだけ作り直す**。生成は `ExecuteImmediate` を使うので
+  フレームの外。毎フレーム作ると GPU 待機が入って描画が止まる。
+- **`CreateDialog` という名前は使えない**。Windows のマクロ（`CreateDialogW`）と衝突する。
+- **EXR は 8bit へ落とさない**。ハイトに階段が出る。`R16G16B16A16_FLOAT` のまま持つ。
+- **float テクスチャは sRGB 用の SRV を別に張らない**（中身がすでにリニアなので）。
+  linear と同じインデックスを返しているので、破棄のときに二重解放しないよう
+  `isFloat` で分岐する。
+
+### ファイル入出力（詳細は [reference/file-format.md](../reference/file-format.md)）
+
+- **`std::filesystem::relative` はドライブが違うと空を返す。** 相対にできないときは
+  絶対パスのまま書く。落とさずに書き切ることを優先する。
+- **`path::string()` はロケール依存**（Windows では ACP）。JSON も ImGui も UTF-8 なので、
+  `u8string()` を経由して変換する。日本語のパスやマテリアル名で化ける。
+- **nlohmann-json は既定で例外を投げる。** 例外を使わない方針なので、
+  `json::parse(..., allow_exceptions=false)` で受けて `is_discarded()` を見る。
+  値を取り出すときも `is_number()` などで型を確かめてから。
+- **読み込みのあとは `PaintMaskStore::RequestResolution` も揃える。**
+  揃えないと、次の `ProcessPendingWork` が読み込む前の解像度へ戻そうとして
+  全マスクをリサンプルする。
+- **保存するのはレイヤーが参照しているペイントマスクだけ。**
+  `PaintMaskStore` は一覧を公開していないので、レイヤーから辿って集めている。
+- **ファイル内の ID は保存のたびに 1 から振り直す。** 実行中の ID をそのまま書くと、
+  削除で番号が飛んだ読みにくいファイルになる。読み込み側で対応表を作って解決する。
+- **同じパスの画像は読み直さない**（`TextureLibrary::Load` が既存の ID を返す）。
+  `_ORD` のように複数のマップが 1 枚を指すのが普通なので、これが無いと重複する。
+- **読み書きはフレームの外で行う。** ダイアログはフレームの中で出してよいが、
+  選ばれたパスは保留し、`ProcessPendingFileWork()` が次のフレームの頭で処理する。
+  テクスチャの削除も同じ（ディスクリプタを返すので `WaitForGpu` してから）。
+
+### UI の通知とドロップ
+
+- **ImGui はテクスチャの値をそのままバックバッファへ書く。** リニアな内容（EXR）を
+  `ImGui::Image` に渡すと極端に暗くなる。一覧に出すものは sRGB へ焼いてから渡す。
+- **`DROPFILES` は `shellapi.h` ではなく `ShlObj_core.h` にある**（現行 SDK）。
+  `DragQueryFileW` / `DragAcceptFiles` / `DragFinish` は `shellapi.h`。
+- **`DragQueryFileW` が返す長さは終端を含まない。** バッファには +1 して渡す。
+- **ログのシンクは持ち主より先に外す**（`SetLogSink({})`）。
+  `Application` を掴んだままだと、破棄後のログで壊れたポインタを呼ぶ。
+- **タブの並びと前面は submit した順で決まる**（ini に配置が無いとき）。
+  `ImGui::SetWindowFocus` / `SetNextWindowFocus` や `DockBuilder` のドック順では動かない。
+  リポジトリ直下の `material_mixer_imgui.ini` は古い配置を持っているので、
+  **そこを作業ディレクトリにして起動すると既定レイアウトの見え方が変わる**。
+  既定の確認は ini の無いディレクトリで行うこと。
+- **ステータスバーはドックスペースより前に描く。** `BeginViewportSideBar` は
+  メニューバーと同じく作業領域を狭めるので、後に置くとドックがバーの下へ潜る。
+
+### 開発環境（リモートデスクトップ）
+
+- **描画結果の確認は `--screenshot` を使う**: 画面キャプチャが失敗することがある。
+  アプリ側でビューポートを PNG に書き出せるので、そちらが確実。
+- **32 FPS 上限は正常**: リモート経由だと表示アダプタのリフレッシュレートが 32 Hz。
+  垂直同期が効いていれば 32 FPS で頭打ちになる。実機の性能はローカルセッションで見る。
+- **Debug 実行時のフレームレート**: GPU ベースバリデーションが有効なため負荷が上がる。
+  性能を見るときは Release で確認する。
+- **ビルド前に起動中のインスタンスを閉じる**: exe がロックされてリンクに失敗する。

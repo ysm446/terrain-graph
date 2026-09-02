@@ -1,0 +1,26 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "terrain-graph",
+  "version": "0.1.0",
+  "description": "ハイトマップとマスクをノードグラフで合成するマテリアル / 地形オーサリングツール",
+  "builtin-baseline": "b5d1a94fb7f88fd835e360fd23a45a09ceedbf48",
+  "dependencies": [
+    "directx-headers",
+    "directx12-agility",
+    "winpixevent",
+    "d3d12-memory-allocator",
+    "directx-dxc",
+    "stb",
+    "nlohmann-json",
+    "tinyexr",
+    "imgui-node-editor",
+    {
+      "name": "imgui",
+      "features": [
+        "dx12-binding",
+        "win32-binding",
+        "docking-experimental"
+      ]
+    }
+  ]
+}

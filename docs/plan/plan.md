@@ -1,0 +1,204 @@
+# plan — 実装方針と優先順位
+
+作成日時: 2026-08-31 05:46
+更新日時: 2026-09-02 13:57
+
+進捗管理の入口。実装の詳細な設計は [docs/design/](../design/) に置く。
+
+- [design/rhi.md](../design/rhi.md) — bindless、ルートシグネチャ、リソース管理、シェーダ
+- [design/rendering.md](../design/rendering.md) — 描画の流れ、露出とトーンマップ、IBL、行列の規約
+- [design/compositing.md](../design/compositing.md) — チャンネル定義、ハイトブレンド、RNM、タイル評価
+- [design/design-guide.md](../design/design-guide.md) — UI のレイアウト、配色、プロパティ行
+- [design/node-graph.md](../design/node-graph.md) — ノードグラフのデータモデル、評価、エディタ UI
+- [reference/file-format.md](../reference/file-format.md) — `.tgproj` / `.tgmat` の形式
+
+## 決定済みの技術選定
+
+| 項目 | 選択 |
+| --- | --- |
+| 言語 | C++20 |
+| ビルド | CMake + vcpkg（manifest モード） |
+| グラフィックス API | DirectX 12（SM 6.6、bindless） |
+| シェーダ | HLSL / DXC（実行時コンパイル、ホットリロード） |
+| UI | Dear ImGui（docking ブランチ）+ imgui-node-editor |
+| 合成モデル | **ノードグラフ**（ハイトマップとマスクを中心のデータとして流す） |
+| 対象 OS | Windows のみ |
+
+導入済みの依存: DirectX-Headers, DirectX-Agility-SDK, D3D12MemoryAllocator,
+WinPixEventRuntime, DirectXShaderCompiler, stb, Dear ImGui, tinyexr, nlohmann-json。
+ノードグラフ用に imgui-node-editor を追加する。
+
+## 方針の転換（2026-09-02）
+
+material-mixer（レイヤースタック方式）からフォークし、terrain-graph へ改名した。
+**レイヤースタックは廃止し、合成の組み立てをノードグラフへ置き換える。**
+グラフの仕組みは terrain-editor（`D:/GitHub/terrain-editor`）から移植する。
+
+### 移植するのは「仕組み」であって、ノードそのものではない
+
+terrain-editor から持ってくるのはノードグラフの**フレームワーク**で、
+ノード（侵食などの中身）はコピーしない。ノードは terrain-graph の目的に合わせて
+**独自に設計・実装していく**。terrain-editor のノード実装は、
+似た機能を作るときの参考資料として扱う。
+調査の詳細は [reference/terrain-editor-node-graph.md](../reference/terrain-editor-node-graph.md)。
+
+仕組みとして持ってくるもの:
+
+- グラフのデータモデル: ノード / ピン / リンク、ノード・ピン・リンク共通の単一 ID 空間
+  （imgui-node-editor の ID にそのまま流用できる）。
+- ノード単位のキャッシュ: `outputHash = Hash(inputHash, parameterHash, nodeId)` を
+  次段へ伝播する増分ハッシュ連鎖。実データのハッシュは取らないので安価。
+- imgui-node-editor によるノードエディタ UI（ノードのカード描画、ピン、リンク、
+  右クリックの追加メニュー、コピー / ペースト）。
+
+作り替えるもの（そのまま持ってこない）:
+
+- **評価器**: terrain-editor は「第 1 入力だけを辿る線形チェーン（最大 16 段）+
+  マスクは再帰 pull」で、DAG の合流を扱えない。全入力を再帰 pull する
+  汎用評価（キャッシュは増分ハッシュのまま）に作り替える。リンク作成時に循環を弾く。
+- **ノードの表現**: 全ノード種の設定を 1 構造体に持つ「ファット構造体」はやめ、
+  設定を `std::variant` で持つ。terrain-editor はノードを 1 つ増やすのに
+  7 か所の同時修正が必要だったが、**「設定構造体 + 登録テーブル + visitor の
+  オーバーロード（評価 / ハッシュ / 保存 / プロパティ UI）」だけで増やせる形**にする。
+- **シリアライズの kind**: enum の生 int ではなく名前（文字列）で書く
+  （file-format.md の「列挙は名前で書く」に合わせる）。
+- **GPU 評価**: terrain-editor は FXC (cs_5_0) + 生 D3D12 で毎回リードバックする。
+  こちらは既存 RHI（DXC / SM6.6 / bindless / PipelineCache）へ載せ替える。
+  まずは CPU カーネルで動かし、GPU 化は後続マイルストーンで行う。
+- **プロパティ UI**: terrain-editor の PropertyWidgets ではなく、
+  既存の `ui/UiStyle.h` の `Property*` ヘルパーに合わせる。
+- **単位系**: terrain-editor はメートル前提（terrainSizeMeters）。
+  こちらは既存コンポジタに合わせ、高さ 0〜1 の正規化グリッドを基本にする。
+  実寸が要る表現（傾斜角など）はノードのパラメータ側で吸収し、地形（G5）で再検討。
+
+## ディレクトリ構成
+
+```
+CMakeLists.txt / CMakePresets.json / vcpkg.json
+src/
+  app/          アプリ本体、エントリポイント、UI パネル
+  graph/        ノードグラフ（データモデル、評価器、CPU カーネル、シリアライズ）
+  compositor/   GPU 評価器（レイヤー列を合成）、テクスチャ / マテリアル / ペイントマスク
+  core/         ログ、Win32 ウィンドウ、画像入出力、ファイル選択ダイアログ
+  io/           プロジェクト (.tgproj) とマテリアル (.tgmat) の読み書き
+  renderer/     PBR プレビュー描画、カメラ、メッシュ、IBL 環境
+  rhi/          DX12 ラッパ
+  ui/           Dear ImGui の統合、テーマとプロパティ行
+  terrain/      ハイトマップ地形（G5 で追加）
+shaders/        HLSL
+assets/         同梱アセット
+docs/
+tests/
+```
+
+## マイルストーン
+
+### 引き継いだ土台（material-mixer M0〜M6、完了）
+
+- **M0〜M1**: CMake + vcpkg、Win32 + DX12、フレームループ、ImGui docking、
+  RHI（D3D12MA、ディスクリプタ、アップロードリング、遅延破棄、PSO キャッシュ、
+  DXC ホットリロード、bindless）。
+- **M2**: PBR プレビュー（GGX 直接光 + IBL、EV100 露出、ACES、被写界深度、
+  テセレーション、影、ディスプレイスメント）。
+- **M3〜M4**: レイヤー合成（ハイトブレンド、RNM）、マスク生成
+  （ノイズ / 中間結果 / テクスチャ / ペイント）。
+- **M5**: マテリアル / テクスチャ / 天球のライブラリ、プロジェクト保存、
+  フル解像度エクスポート（ORD / ORM パッキング）。
+- **M6**: レイヤーの種類（サーフェス / シェイプ / 水面）。
+
+このうちレイヤースタック（M3〜M4、M6 の大半）はノードグラフに置き換えられて消える。
+プレビュー、ライブラリ、入出力、RHI は残る。
+
+### G1 — ノードグラフ基盤の移植（2026-09-02 完了）
+
+グラフが「動く仕組み」として立ち上がり、**いまのレイヤーと同じ見た目を
+ノードで再現できる**ところまで。レイヤーパネルはまだ残す。
+設計は [design/node-graph.md](../design/node-graph.md)。
+
+- `src/graph/`: データモデル（Node / Pin / Link、単一 ID 空間）、
+  ノード定義テーブル、循環を弾くリンク検証。
+- 最初のノードは**既存のレイヤーのノード化**: サーフェス / シェイプ / 水面
+  （設定は `MaterialLayer` そのまま）と出力。評価はグラフをレイヤー列へ
+  コンパイルして既存の GPU 評価器へ流す。**描画結果はレイヤー方式と
+  ピクセル単位で一致することを確認済み。**
+- ノードエディタパネル（imgui-node-editor）: ノード描画、リンクの作成 / 削除、
+  右クリックの追加メニュー、選択ノードのプロパティ（レイヤーパネルと共有）。
+- グラフの保存: `.tgproj` に `graph` 節を追加（キーの追加のみなので版は上げない）。
+- 未対応（G2 以降）: グラフ編集のアンドゥ、コピー / ペースト、
+  マスク生成のノード化（合流のある DAG と、ノード単位の評価器はここで入れる）。
+
+### G2 — グラフ中心の編集体験とレイヤー廃止（前半 2026-09-02 完了）
+
+完了:
+
+- **レイヤーパネルとレイヤースタックを撤去**し、合成の入口をグラフに一本化した。
+- **アンドゥをグラフ編集に対応**（ノード / リンク / 設定 / 位置のスナップショット。
+  移動だけでは段を積まない）。
+- 形式を版 4 へ（`layers[]` 廃止。旧ファイルは同じ見た目のままグラフへ移行して読む）。
+
+残り:
+
+- コピー / ペースト、複製など編集操作を揃える。
+- マスク生成をノード化する（ノイズ / 下地由来 / テクスチャ / ペイントを
+  マスク型のピンで繋ぐ）。ここで合流のある DAG と、ノード単位の評価器
+  （terrain-editor の増分ハッシュキャッシュ方式）を入れる。
+
+### G3 — 侵食・地形系ノードの移植
+
+terrain-editor の売りのノード群。まず CPU 実装をそのまま移植する。
+
+- Multi-Scale Erosion / Fluvial Erosion / Droplet Erosion / Mask Fluvial。
+- Sediment / Snow / Soil / Crumbling / Rock / Scatter。
+- 評価の非同期化（terrain-editor の「グラフを丸ごとコピーして `std::async`、
+  毎フレームポーリング、評価中バッジ」の方式を踏襲）。
+
+### G4 — GPU 評価
+
+- 重いカーネルから順に、既存 RHI（DXC / SM6.6 / bindless）でコンピュート化する。
+  terrain-editor の cs_5_0 シェーダは書式を SM6.6 へ直して `shaders/` に置く。
+- ノード間を GPU 常駐テクスチャで繋ぎ、毎回のリードバックをやめる
+  （terrain-editor は毎ノード読み戻していた）。
+
+### G5 — 地形
+
+ハイトマップインポート（16bit PNG / RAW / EXR）、LOD 付き地形描画、
+マテリアルのスプラット適用、地形属性をグラフのマスク入力へ接続、地形ペイント。
+
+## 開発用のコマンドライン
+
+```
+terrain_graph.exe [--project <path>] [--save-project <path>]
+                   [--hdri <path>] [--texture <path>]...
+                   [--export <dir>]
+                   [--screenshot <path>] [--screenshot-ui <path>]
+                   [--screenshot-frame <n>]
+```
+
+`--texture` は繰り返し指定でき、起動時にテクスチャライブラリへ読み込む。
+
+`--project` は起動時にプロジェクトを開く。`--save-project` は数フレーム描いてから
+プロジェクトを保存して終了する。対話せずに保存と読み込みを往復させて確かめるための開発用。
+
+`--export` は数フレーム描いてから合成結果を画像へ書き出して終了する。
+書き出しの設定は書き出しウィンドウの既定値（2048、個別、全マップ）を使う。
+
+`--screenshot` はビューポートの内容を、`--screenshot-ui` は UI 込みの
+ウィンドウ全体を PNG に書き出して終了する。
+画面キャプチャに頼らず結果を確認できるため、リモート環境や自動確認で使う。
+
+## 判断を保留している点
+
+- グラフ評価の解像度の持ち方。terrain-editor はグローバル 1 つ
+  （プレビュー解像度）だった。ノードごとに持つか、当面グローバルのままにするかは
+  G2 で決める。
+- 評価の非同期化のタイミング。G1 は同期評価（軽いカーネルのみ）で始め、
+  侵食系（G3）が入る前に非同期化する。
+- Path ノード（3D ビューポートでの線編集）。terrain-editor では main.cpp の
+  グローバル状態と密結合しており、移植優先度は低い。必要になったら設計し直す。
+- 地形 LOD の方式（CDLOD / ジオメトリクリップマップ / GPU 駆動クアッドツリー）は
+  G5 着手時に決める。
+- リソース状態の管理単位。現在はリソース全体で 1 つしか持たない
+  （ミップ連鎖の生成だけ例外的にサブリソース単位）。
+  ミップごとに別状態へ遷移させたい場面が増えたら本格対応する。
+- 自動露出と AgX トーンマップ。必要になった時点で追加する。
+- 配布形態（シェーダの同梱方法）の見直し（旧 M5d）。グラフ移行後に再検討する。
