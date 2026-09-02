@@ -13,6 +13,7 @@ SamplerState g_samplerLinearWrap  : register(s2);
 SamplerState g_samplerAnisoWrap   : register(s3);
 // equirectangular 用。経度方向はラップ、天頂方向はクランプ。
 SamplerState g_samplerEquirect    : register(s4);
+SamplerState g_samplerAnisoClamp  : register(s5);
 
 static const float kPi = 3.14159265358979323846f;
 

@@ -116,6 +116,9 @@ bool PipelineCache::CreateGlobalRootSignature() {
         // equirectangular 用。経度方向はラップ、天頂方向はクランプ。
         MakeStaticSampler(4, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_WRAP,
                           D3D12_TEXTURE_ADDRESS_MODE_CLAMP),
+        // タイルしない合成結果（平面 + UV スケール 1）用。
+        MakeStaticSampler(5, D3D12_FILTER_ANISOTROPIC, D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+                          D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 16),
     };
 
     D3D12_VERSIONED_ROOT_SIGNATURE_DESC desc = {};

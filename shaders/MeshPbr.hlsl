@@ -48,7 +48,8 @@ struct MeshConstants
     uint debugView;
     // ハイトを形状に反映する量。0 なら押し出さない。
     float displacementScale;
-    float pad4;
+    // 合成結果をクランプで読むか。平面 + UV スケール 1（タイルしない 1 枚絵）のとき 1。
+    uint clampMaterialUv;
 
     float4x4 lightViewProjection;
 
@@ -78,6 +79,50 @@ struct MeshConstants
 #define TG_VIEW_WIREFRAME       8
 
 ConstantBuffer<MeshConstants> g_mesh : register(b1);
+
+// --- 合成結果のサンプリング ------------------------------------------------
+// 平面 + UV スケール 1（タイルしない 1 枚絵のプレビュー）ではクランプで読む。
+// wrap だと UV 端のバイリニア補間が反対側の端と混ざり、地形の縁が
+// 反対側の高さへ引っ張られる。球はシーム（経度の 0/1）の連続性に wrap が
+// 必要で、UV スケール > 1 は明示的なタイリングなので wrap のまま。
+// サンプラは三項演算子で選べない（unique global resource の制約）ので分岐で書く。
+
+float4 SampleMaterialColor(Texture2D<float4> map, float2 uv)
+{
+    if (g_mesh.clampMaterialUv != 0u)
+    {
+        return map.Sample(g_samplerAnisoClamp, uv);
+    }
+    return map.Sample(g_samplerAnisoWrap, uv);
+}
+
+float2 SampleMaterialNormal(Texture2D<float2> map, float2 uv)
+{
+    if (g_mesh.clampMaterialUv != 0u)
+    {
+        return map.Sample(g_samplerAnisoClamp, uv);
+    }
+    return map.Sample(g_samplerAnisoWrap, uv);
+}
+
+float SampleMaterialScalar(Texture2D<float> map, float2 uv)
+{
+    if (g_mesh.clampMaterialUv != 0u)
+    {
+        return map.Sample(g_samplerAnisoClamp, uv);
+    }
+    return map.Sample(g_samplerAnisoWrap, uv);
+}
+
+// 頂点 / ドメインシェーダ用（微分が無いので SampleLevel）。
+float SampleMaterialScalarLevel(Texture2D<float> map, float2 uv)
+{
+    if (g_mesh.clampMaterialUv != 0u)
+    {
+        return map.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
+    }
+    return map.SampleLevel(g_samplerLinearWrap, uv, 0.0f);
+}
 
 struct VsInput
 {
@@ -153,8 +198,7 @@ float3 ApplyDisplacement(float3 worldPosition, float3 worldNormal, float2 uv)
         return worldPosition;
     }
     Texture2D<float> heightMap = ResourceDescriptorHeap[g_mesh.materialHeightIndex];
-    const float height =
-        heightMap.SampleLevel(g_samplerLinearWrap, uv * g_mesh.materialUvScale, 0.0f);
+    const float height = SampleMaterialScalarLevel(heightMap, uv * g_mesh.materialUvScale);
     // 高さの中央（0.5）を基準にする。全体が膨らまないようにするため。
     return worldPosition + worldNormal * ((height - 0.5f) * g_mesh.displacementScale);
 }
@@ -307,15 +351,15 @@ PsOutput PsMain(VsOutput input)
 
         const float2 uv = input.uv * g_mesh.materialUvScale;
 
-        baseColor = baseColorMap.Sample(g_samplerAnisoWrap, uv).rgb;
+        baseColor = SampleMaterialColor(baseColorMap, uv).rgb;
 
-        const float3 surface = surfaceMap.Sample(g_samplerAnisoWrap, uv).rgb;
+        const float3 surface = SampleMaterialColor(surfaceMap, uv).rgb;
         roughnessValue = surface.r;
         metallicValue = surface.g;
         ambientOcclusion = surface.b;
 
         // タンジェント空間法線をワールド空間へ移す。
-        const float3 tangentNormal = DecodeTangentNormal(normalMap.Sample(g_samplerAnisoWrap, uv));
+        const float3 tangentNormal = DecodeTangentNormal(SampleMaterialNormal(normalMap, uv));
         const float3 tangent =
             normalize(input.worldTangent - geometricNormal * dot(geometricNormal, input.worldTangent));
         const float3 bitangent = cross(geometricNormal, tangent) * input.tangentSign;
@@ -342,7 +386,7 @@ PsOutput PsMain(VsOutput input)
             {
                 Texture2D<float2> normalMap = ResourceDescriptorHeap[g_mesh.materialNormalIndex];
                 tangentNormal = DecodeTangentNormal(
-                    normalMap.Sample(g_samplerAnisoWrap, input.uv * g_mesh.materialUvScale));
+                    SampleMaterialNormal(normalMap, input.uv * g_mesh.materialUvScale));
             }
             debugColor = tangentNormal * 0.5f + 0.5f;
         }
@@ -374,7 +418,7 @@ PsOutput PsMain(VsOutput input)
             if (g_mesh.useMaterialTextures != 0u)
             {
                 Texture2D<float> heightMap = ResourceDescriptorHeap[g_mesh.materialHeightIndex];
-                height = heightMap.Sample(g_samplerAnisoWrap, input.uv * g_mesh.materialUvScale);
+                height = SampleMaterialScalar(heightMap, input.uv * g_mesh.materialUvScale);
             }
             debugColor = saturate(height).xxx;
         }

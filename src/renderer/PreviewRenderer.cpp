@@ -92,7 +92,8 @@ struct MeshConstants {
     float materialUvScale;
     uint32_t debugView;
     float displacementScale;
-    float pad4;
+    // 合成結果をクランプで読むか（平面 + UV スケール 1 のとき 1）。
+    uint32_t clampMaterialUv;
 
     XMFLOAT4X4 lightViewProjection;
 
@@ -652,6 +653,12 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     constants.materialSurfaceIndex = materialTextures.surface.SrvIndex();
     constants.materialHeightIndex = materialTextures.height.SrvIndex();
     constants.materialUvScale = m_materialUvScale;
+    // 平面 + UV スケール 1 は「タイルしない 1 枚絵」のプレビューとみなし、
+    // 合成結果をクランプで読む。wrap だと UV 端のバイリニア補間が反対側の端と
+    // 混ざり、地形の縁が反対側の高さへ引っ張られる。
+    // 球はシーム（経度の 0/1）の連続性に wrap が必要なので対象外。
+    constants.clampMaterialUv =
+        (m_shape == PreviewShape::Plane && m_materialUvScale == 1.0f) ? 1u : 0u;
     constants.debugView = static_cast<uint32_t>(m_debugView);
     constants.displacementScale = m_displacementScale;
     // 分割量はカメラから見た見え方で決める。本描画では viewProjection と同一で、
