@@ -35,6 +35,13 @@ constexpr std::array<PinDefinition, 1> kMaskSourcePins = {{
     {PinKind::Output, ValueType::Mask, "Mask"},
 }};
 
+// 川筋のピン。**どこのハイトから作るか**を Base 入力で指す。
+// 繋がなければ、そのマスクを使うレイヤーの直下のハイトを使う。
+constexpr std::array<PinDefinition, 2> kMaskFluvialPins = {{
+    {PinKind::Input, ValueType::Material, "Base"},
+    {PinKind::Output, ValueType::Mask, "Mask"},
+}};
+
 constexpr std::array<PinDefinition, 1> kOutputNodePins = {{
     {PinKind::Input, ValueType::Material, "Material"},
 }};
@@ -51,7 +58,7 @@ constexpr std::array<NodeDefinition, 8> kNodeDefinitions = {{
     {NodeKind::Liquid, "liquid", "Liquid", kLayerNodePins},
     {NodeKind::Blur, "heightmapBlur", "Heightmap Blur", kFilterNodePins},
     {NodeKind::MaskImage, "maskImage", "Mask Image", kMaskSourcePins},
-    {NodeKind::MaskFluvial, "maskFluvial", "Mask Fluvial", kMaskSourcePins},
+    {NodeKind::MaskFluvial, "maskFluvial", "Mask Fluvial", kMaskFluvialPins},
     {NodeKind::Output, "output", "Output", kOutputNodePins},
 }};
 
@@ -91,6 +98,57 @@ bool IsSourceNodeKind(NodeKind kind) {
 bool IsMaskNodeKind(NodeKind kind) {
     return kind == NodeKind::MaskImage || kind == NodeKind::MaskFluvial;
 }
+
+bool IsPreviewableNodeKind(NodeKind kind) {
+    return IsLayerNodeKind(kind) || kind == NodeKind::MaskFluvial;
+}
+
+namespace {
+
+// マスクを見せるための塗りレイヤー。
+//
+// **水面（Liquid）の規則を使う。** 水位を地形より高く取ると
+// `weight = mask * 1` になり、重みがマスクの値そのものになる
+// （サーフェスのハイトブレンドだと、高さで勝った時点で重みが 1 に張り付く）。
+// 色とサーフェスだけを書き、形（Height / Normal）は下地のまま見せる。
+compositor::MaterialLayer MakeMaskPreviewLayer(const char* name,
+                                               const DirectX::XMFLOAT3& color) {
+    compositor::MaterialLayer layer;
+    layer.name = name;
+    layer.kind = compositor::LayerKind::Liquid;
+    layer.channelMask = compositor::ChannelBit(compositor::Channel::BaseColor) |
+                        compositor::ChannelBit(compositor::Channel::Surface);
+    layer.baseColor = color;
+    layer.roughness = 1.0f;
+    layer.metallic = 0.0f;
+    layer.heightSource = compositor::ValueSource::Constant;
+    // 「水位」。地形より高く取ると全面が水中扱いになり、重みはマスクだけで決まる。
+    layer.heightBase = 2.0f;
+    layer.blendRange = 0.001f;
+    return layer;
+}
+
+// 川筋ノードを選んでいる間のプレビュー。
+// **入力のハイトの上に、計算したマスクを白黒で貼る。**
+// 下地を黒で覆ってから川筋を白で塗るので、マスクの値がそのまま濃淡になる。
+void AppendFluvialPreviewLayers(std::vector<compositor::MaterialLayer>& layers,
+                                const compositor::FluvialParams& fluvial) {
+    compositor::MaterialLayer cover = MakeMaskPreviewLayer("Mask 0", {0.02f, 0.02f, 0.02f});
+    cover.mask.source = compositor::MaskSource::Constant;
+    cover.mask.constant = 1.0f;
+    layers.push_back(cover);
+
+    compositor::MaterialLayer paint = MakeMaskPreviewLayer("Mask 1", {0.85f, 0.88f, 0.92f});
+    paint.mask.source = compositor::MaskSource::Fluvial;
+    paint.mask.fluvial = fluvial;
+    paint.mask.constant = 1.0f;
+    // 直下（＝入力に繋いだチェーンの一番上）のハイトから作る。
+    // 黒で覆うレイヤーは Height を書かないので、ここの Height は地形のまま。
+    paint.mask.fluvialSourceIndex = -1;
+    layers.push_back(paint);
+}
+
+}  // namespace
 
 compositor::LayerKind LayerKindFor(NodeKind kind) {
     switch (kind) {
@@ -374,6 +432,17 @@ const Node* NodeGraph::PreviewTop(GraphId nodeId) const {
     if (node != nullptr && IsLayerNodeKind(node->kind)) {
         return node;
     }
+    // 川筋ノードは自分ではハイトを作らない。入力に繋いだチェーンを見る。
+    if (node != nullptr && node->kind == NodeKind::MaskFluvial) {
+        for (const Pin& pin : node->inputs) {
+            if (pin.valueType != ValueType::Material) {
+                continue;
+            }
+            if (const Node* source = FindUpstreamNodeForPin(pin.id); source != nullptr) {
+                return source;
+            }
+        }
+    }
     return ChainTop();
 }
 
@@ -419,12 +488,48 @@ void NodeGraph::ApplyMaskInput(const Node& node, compositor::LayerMask& mask) co
     }
 }
 
+// レイヤーの Mask 入力に繋がっている Mask Fluvial ノードが、
+// **どのノードのハイトを見ているか**をレイヤー列の添字で返す。
+// 繋いでいない、またはそのノードがこのチェーンに居なければ -1。
+int NodeGraph::FindFluvialSourceIndex(const Node& node,
+                                      const std::vector<const Node*>& layerNodes) const {
+    for (const Pin& pin : node.inputs) {
+        if (pin.valueType != ValueType::Mask) {
+            continue;
+        }
+        const Node* maskNode = FindUpstreamNodeForPin(pin.id);
+        if (maskNode == nullptr || maskNode->kind != NodeKind::MaskFluvial) {
+            continue;
+        }
+        // 川筋ノードの Base 入力。ここに繋いだノードまでのハイトを使う。
+        for (const Pin& maskPin : maskNode->inputs) {
+            if (maskPin.valueType != ValueType::Material) {
+                continue;
+            }
+            const Node* source = FindUpstreamNodeForPin(maskPin.id);
+            if (source == nullptr) {
+                continue;
+            }
+            for (size_t i = 0; i < layerNodes.size(); ++i) {
+                if (layerNodes[i] == source) {
+                    return static_cast<int>(i);
+                }
+            }
+        }
+    }
+    return -1;
+}
+
 std::vector<compositor::MaterialLayer> NodeGraph::CompileChainFrom(const Node* top) const {
     const std::vector<const Node*> chain = ChainFrom(top);
 
     // 遡った順（上→下）を、レイヤー列の順（下→上）へ反転する。
     std::vector<compositor::MaterialLayer> layers;
+    // layers と 1 対 1 で並ぶ元ノード。川筋がチェーンのどこを指しているかを
+    // 解決するために、レイヤー列の添字からノードを引けるようにしておく。
+    std::vector<const Node*> layerNodes;
     layers.reserve(chain.size());
+    layerNodes.reserve(chain.size());
     for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
         if (const auto* settings = std::get_if<LayerNodeSettings>(&(*it)->settings)) {
             compositor::MaterialLayer layer = settings->layer;
@@ -439,8 +544,20 @@ std::vector<compositor::MaterialLayer> NodeGraph::CompileChainFrom(const Node* t
                 layer.heightGain = 1.0f;
             }
             layers.push_back(layer);
+            layerNodes.push_back(*it);
         }
     }
+
+    // 川筋マスクが**チェーンのどこの Height を使うか**を解決する。
+    // Mask Fluvial の Base 入力に繋がっているノードの位置（レイヤー列の添字）。
+    // 繋いでいない / このチェーンに居ないノードなら -1（＝そのレイヤーの直下）。
+    for (size_t i = 0; i < layers.size(); ++i) {
+        if (layers[i].mask.source != compositor::MaskSource::Fluvial) {
+            continue;
+        }
+        layers[i].mask.fluvialSourceIndex = FindFluvialSourceIndex(*layerNodes[i], layerNodes);
+    }
+
     if (layers.empty()) {
         // 空のスタックは操作の起点が無いので、下地 1 枚で補う（読み込み時と同じ方針）。
         layers.push_back(compositor::MaterialStack::MakeBaseLayer());
@@ -454,7 +571,19 @@ std::vector<compositor::MaterialLayer> NodeGraph::CompileLayers() const {
 
 std::vector<compositor::MaterialLayer> NodeGraph::CompileLayersTo(GraphId nodeId) const {
     const Node* node = FindNode(nodeId);
-    if (node == nullptr || !IsLayerNodeKind(node->kind)) {
+    if (node == nullptr) {
+        return CompileLayers();
+    }
+    // 川筋ノードを選んでいる間は、**入力のハイトに計算したマスクを貼って**見せる。
+    // マスクは見ながら調整するものなので、選んだだけで結果が分かるようにする。
+    if (node->kind == NodeKind::MaskFluvial) {
+        std::vector<compositor::MaterialLayer> layers = CompileChainFrom(PreviewTop(nodeId));
+        if (const auto* settings = std::get_if<MaskNodeSettings>(&node->settings)) {
+            AppendFluvialPreviewLayers(layers, settings->fluvial);
+        }
+        return layers;
+    }
+    if (!IsLayerNodeKind(node->kind)) {
         return CompileLayers();
     }
     return CompileChainFrom(node);

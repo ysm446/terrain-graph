@@ -1,7 +1,7 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-09-02 23:40
+更新日時: 2026-09-03 01:10
 
 実装は [src/io/ProjectIo.cpp](../../src/io/ProjectIo.cpp)。**形式を変えたらこの文書も直す。**
 
@@ -105,6 +105,8 @@ base' = base + 0.5 * gain     ただしソースが constant のときは base �
 `fluvial`（`{ curve, threshold, gamma, softness, edgePower, detail,
 concentration, resolution }`。`maskFluvial` が使う）を持つ。
 `fluvial` はレイヤーの `mask` の中にも同じ形で入る（ソースが `fluvial` のとき使う）。
+**どのハイトから作るかは保存しない**（`fluvialSourceIndex` は Mask Fluvial の
+Base 入力の繋ぎ方からコンパイルのたびに決まる）。
 レイヤーノードの `inputs` は Base / Mask の 2 本になったが、**ピンは定義から
 再生成する**ので、Mask ピンを持たない古いファイルもそのまま読める
 （足りないピンには新しい ID が振られ、リンクの無い入力になる）。

@@ -28,17 +28,24 @@ struct MaterialTextureSet {
 // 計算する（反復回数が解像度に比例するので、川筋の形が決まる粗さで足りる）。
 // 使うレイヤーが 1 枚も無ければ作らない。
 struct FluvialResources {
+    // 作業用。**川筋 1 本ずつ順に使い回す**（同時に 2 本は走らない）ので 1 組でよい。
+    // 一番大きいグリッドに合わせて作り、小さい川筋はその左上だけを使う。
     rhi::GpuTexture heights;         // R32_FLOAT 解析用ハイト
     rhi::GpuTexture heightsScratch;  // R32_FLOAT ぼかし / 窪み埋めの二重バッファ
     rhi::GpuTexture weights0;        // RGBA32_FLOAT 配分重み k=0..3
     rhi::GpuTexture weights1;        // RGBA32_FLOAT 配分重み k=4..7
     rhi::GpuTexture accumA;          // R32_FLOAT 流量（ヤコビ反復の ping-pong）
     rhi::GpuTexture accumB;
-    rhi::GpuTexture mask;            // R32_FLOAT 出力マスク（合成パスが SRV で読む）
     rhi::GpuTexture maxScratch;      // R32_UINT 1x1 正規化用の最大値（InterlockedMax）
-    uint32_t resolution = 0;
+    uint32_t workResolution = 0;
 
-    bool IsValid() const { return mask.IsValid(); }
+    // 出力マスクは**使うレイヤーまで残す**必要があるので 1 枚ずつ持つ
+    // （チェーンの途中で作って、上のレイヤーで使う）。UV で引くため、
+    // テクスチャの大きさはその川筋のグリッドちょうどにする。
+    std::vector<rhi::GpuTexture> masks;
+    std::vector<uint32_t> maskResolutions;
+
+    bool IsValid() const { return heights.IsValid(); }
 };
 
 // 評価する出力領域。全体を 1 回で評価するときは矩形に全体を渡す。
@@ -113,9 +120,10 @@ private:
     // 成否に関わらず、合成パスへ渡す SRV は Textures 側で判断する。
     bool ApplyFluvialMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                           ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
-                          const MaterialStack& stack);
-    // 指定した解像度の作業リソースを用意する。既にその解像度なら何もしない。
-    bool EnsureFluvialResources(rhi::Device& device, uint32_t resolution);
+                          const MaterialStack& stack, size_t slot);
+    // 作業リソースと、川筋 1 本ごとの出力マスクを用意する。
+    bool EnsureFluvialResources(rhi::Device& device, uint32_t workResolution,
+                                const std::vector<uint32_t>& maskResolutions);
     void ReleaseFluvialResources(rhi::Device& device);
 
     bool ApplyHeightBlur(rhi::Device& device, ID3D12GraphicsCommandList* commandList,

@@ -1,7 +1,7 @@
 # node-graph — ノードグラフの設計
 
 作成日時: 2026-09-02 12:50
-更新日時: 2026-09-02 23:40
+更新日時: 2026-09-03 01:10
 
 `src/graph/` とグラフパネル（`src/app/ApplicationGraphPanel.cpp`）の設計。
 terrain-editor から移植したのは**仕組み**であって、ノードの中身ではない
@@ -41,7 +41,7 @@ terrain-editor から移植したのは**仕組み**であって、ノードの�
 | Liquid | `liquid` | 同上 | `MaterialLayer`（kind=Liquid) |
 | Heightmap Blur | `heightmapBlur` | Base(入力) / Result(出力) | `MaterialLayer`（kind=Blur）の `blur` |
 | Mask Image | `maskImage` | Mask(出力) のみ | `MapSlot`（画像 + 読むチャンネル） |
-| Mask Fluvial | `maskFluvial` | Mask(出力) のみ | `FluvialParams`（川筋） |
+| Mask Fluvial | `maskFluvial` | Base(入力) / Mask(出力) | `FluvialParams`（川筋） |
 | Output | `output` | Material(入力) | なし |
 
 サーフェス / シェイプ / 水面は**旧レイヤーそのもの**をノード化したもの。
@@ -103,9 +103,18 @@ terrain-editor の Heightmap Blur を移したもの。**合成レイヤーで�
 terrain-editor の Mask Fluvial。**下地の川筋**（水が集まる所）をマスクにする。
 アルゴリズムとコストは [compositing.md](compositing.md) の「川筋マスク」。
 
-- Mask Image と同じくソース（入力なし）。**下地はチェーンから決まる**ので、
-  ハイトフィールド入力ピンは持たない（terrain-editor との違い）。
-  繋いだレイヤーの直下までの合成結果が入力になる。
+- **Base 入力で「どこのハイトから作るか」を指す。** 繋いだノードまで合成した
+  Height を使う。繋がなければ、そのマスクを使うレイヤーの直下のハイトを使う。
+  - 実体はレイヤー列の添字（`LayerMask::fluvialSourceIndex`。コンパイルが入れる、
+    保存しない値）で、評価器は**その位置まで合成し終えた時点で川筋を作る**。
+    使うレイヤーはそれより上にあるので、順番は必ず間に合う。
+  - **同じチェーンの上にあるノードだけ**を指せる。別ブランチのハイトを
+    入力にするには、ノード単位の評価器（DAG）が要る。
+    チェーン外のノードを繋いだときは「直下」に落ちる。
+- **このノードを選ぶとマスクのプレビューになる。** 入力のハイトの上に、
+  計算した川筋を白黒で貼って見せる（黒で覆ってから川筋を白で塗る 2 枚。
+  形は下地のまま）。マスクは見ながら調整するものなので、選んだだけで
+  結果が分かるようにしてある（terrain-editor と同じ作法）。
 - 繋ぐと、そのレイヤーのマスクは `MaskSource::Fluvial` + ノードのパラメータで
   上書きされる。レイヤー側のマスク設定から直接 `下地の川筋` を選ぶこともできる
   （ノードは入口を分かりやすくするためのもの）。

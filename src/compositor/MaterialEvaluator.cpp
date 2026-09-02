@@ -133,42 +133,70 @@ void MaterialEvaluator::ReleaseFluvialResources(rhi::Device& device) {
     device.DeferRelease(m_fluvial.weights1);
     device.DeferRelease(m_fluvial.accumA);
     device.DeferRelease(m_fluvial.accumB);
-    device.DeferRelease(m_fluvial.mask);
     device.DeferRelease(m_fluvial.maxScratch);
-    m_fluvial.resolution = 0;
+    for (rhi::GpuTexture& mask : m_fluvial.masks) {
+        device.DeferRelease(mask);
+    }
+    m_fluvial.masks.clear();
+    m_fluvial.maskResolutions.clear();
+    m_fluvial.workResolution = 0;
 }
 
-// 川筋の作業リソースは**使うときだけ**作る。解像度は合成解像度と独立で、
+// 川筋のリソースは**使うときだけ**作る。解像度は合成解像度と独立で、
 // 変わったら作り直す（GPU がまだ見ているかもしれないので Defer を通す）。
-bool MaterialEvaluator::EnsureFluvialResources(rhi::Device& device, uint32_t resolution) {
-    if (m_fluvial.resolution == resolution && m_fluvial.IsValid()) {
-        return true;
+bool MaterialEvaluator::EnsureFluvialResources(rhi::Device& device, uint32_t workResolution,
+                                               const std::vector<uint32_t>& maskResolutions) {
+    if (m_fluvial.workResolution < workResolution || !m_fluvial.IsValid()) {
+        // 作業用は一番大きいグリッドに合わせる。小さい川筋は左上だけを使う。
+        for (rhi::GpuTexture* texture :
+             {&m_fluvial.heights, &m_fluvial.heightsScratch, &m_fluvial.weights0,
+              &m_fluvial.weights1, &m_fluvial.accumA, &m_fluvial.accumB,
+              &m_fluvial.maxScratch}) {
+            device.DeferRelease(*texture);
+        }
+        const bool ok =
+            CreateChannelTexture(device, workResolution, DXGI_FORMAT_R32_FLOAT, L"FluvialHeights",
+                                 m_fluvial.heights) &&
+            CreateChannelTexture(device, workResolution, DXGI_FORMAT_R32_FLOAT,
+                                 L"FluvialHeightsScratch", m_fluvial.heightsScratch) &&
+            CreateChannelTexture(device, workResolution, DXGI_FORMAT_R32G32B32A32_FLOAT,
+                                 L"FluvialWeights0", m_fluvial.weights0) &&
+            CreateChannelTexture(device, workResolution, DXGI_FORMAT_R32G32B32A32_FLOAT,
+                                 L"FluvialWeights1", m_fluvial.weights1) &&
+            CreateChannelTexture(device, workResolution, DXGI_FORMAT_R32_FLOAT, L"FluvialAccumA",
+                                 m_fluvial.accumA) &&
+            CreateChannelTexture(device, workResolution, DXGI_FORMAT_R32_FLOAT, L"FluvialAccumB",
+                                 m_fluvial.accumB) &&
+            CreateChannelTexture(device, 1, DXGI_FORMAT_R32_UINT, L"FluvialMax",
+                                 m_fluvial.maxScratch);
+        if (!ok) {
+            TG_LOG_WARN("川筋マスクの作業リソースを作れませんでした（%u^2）", workResolution);
+            ReleaseFluvialResources(device);
+            return false;
+        }
+        m_fluvial.workResolution = workResolution;
     }
-    ReleaseFluvialResources(device);
 
-    const bool ok =
-        CreateChannelTexture(device, resolution, DXGI_FORMAT_R32_FLOAT, L"FluvialHeights",
-                             m_fluvial.heights) &&
-        CreateChannelTexture(device, resolution, DXGI_FORMAT_R32_FLOAT, L"FluvialHeightsScratch",
-                             m_fluvial.heightsScratch) &&
-        CreateChannelTexture(device, resolution, DXGI_FORMAT_R32G32B32A32_FLOAT,
-                             L"FluvialWeights0", m_fluvial.weights0) &&
-        CreateChannelTexture(device, resolution, DXGI_FORMAT_R32G32B32A32_FLOAT,
-                             L"FluvialWeights1", m_fluvial.weights1) &&
-        CreateChannelTexture(device, resolution, DXGI_FORMAT_R32_FLOAT, L"FluvialAccumA",
-                             m_fluvial.accumA) &&
-        CreateChannelTexture(device, resolution, DXGI_FORMAT_R32_FLOAT, L"FluvialAccumB",
-                             m_fluvial.accumB) &&
-        CreateChannelTexture(device, resolution, DXGI_FORMAT_R32_FLOAT, L"FluvialMask",
-                             m_fluvial.mask) &&
-        CreateChannelTexture(device, 1, DXGI_FORMAT_R32_UINT, L"FluvialMax",
-                             m_fluvial.maxScratch);
-    if (!ok) {
-        TG_LOG_WARN("川筋マスクの作業リソースを作れませんでした（%u^2）", resolution);
-        ReleaseFluvialResources(device);
-        return false;
+    // 出力マスクは川筋 1 本につき 1 枚。解像度が変わった枚だけ作り直す。
+    while (m_fluvial.masks.size() > maskResolutions.size()) {
+        device.DeferRelease(m_fluvial.masks.back());
+        m_fluvial.masks.pop_back();
+        m_fluvial.maskResolutions.pop_back();
     }
-    m_fluvial.resolution = resolution;
+    m_fluvial.masks.resize(maskResolutions.size());
+    m_fluvial.maskResolutions.resize(maskResolutions.size(), 0);
+    for (size_t i = 0; i < maskResolutions.size(); ++i) {
+        if (m_fluvial.masks[i].IsValid() && m_fluvial.maskResolutions[i] == maskResolutions[i]) {
+            continue;
+        }
+        device.DeferRelease(m_fluvial.masks[i]);
+        if (!CreateChannelTexture(device, maskResolutions[i], DXGI_FORMAT_R32_FLOAT,
+                                  L"FluvialMask", m_fluvial.masks[i])) {
+            TG_LOG_WARN("川筋マスクを作れませんでした（%u^2）", maskResolutions[i]);
+            return false;
+        }
+        m_fluvial.maskResolutions[i] = maskResolutions[i];
+    }
     return true;
 }
 
@@ -237,10 +265,11 @@ bool MaterialEvaluator::ApplyFluvialMask(rhi::Device& device,
                                         rhi::PipelineCache& pipelineCache,
                                         ID3D12GraphicsCommandList* commandList,
                                         const MaterialLayer& layer,
-                                        const MaterialStack& stack) {
+                                        const MaterialStack& stack, size_t slot) {
     const FluvialParams& params = layer.mask.fluvial;
     const uint32_t resolution = std::clamp(params.resolution, 64u, 2048u);
-    if (!EnsureFluvialResources(device, resolution)) {
+    if (slot >= m_fluvial.masks.size() || !m_fluvial.masks[slot].IsValid() ||
+        m_fluvial.workResolution < resolution) {
         return false;
     }
 
@@ -272,7 +301,7 @@ bool MaterialEvaluator::ApplyFluvialMask(rhi::Device& device,
     constants.indices0[3] = m_fluvial.weights1.UavIndex();
     constants.indices1[0] = m_fluvial.accumA.UavIndex();
     constants.indices1[1] = m_fluvial.accumB.UavIndex();
-    constants.indices1[2] = m_fluvial.mask.UavIndex();
+    constants.indices1[2] = m_fluvial.masks[slot].UavIndex();
     constants.indices1[3] = m_fluvial.maxScratch.UavIndex();
     constants.indices2[0] = m_textures.height.SrvIndex();
     constants.indices2[1] = resolution;
@@ -319,7 +348,8 @@ bool MaterialEvaluator::ApplyFluvialMask(rhi::Device& device,
     // 入力の Height は読み取り専用に、出力のマスクは書き込みに。
     TransitionIfNeeded(commandList, m_textures.height,
                        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    TransitionIfNeeded(commandList, m_fluvial.mask, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, m_fluvial.masks[slot],
+                       D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
     const uint32_t groups = DispatchCount(resolution);
     const auto barrier = [&]() {
@@ -370,7 +400,7 @@ bool MaterialEvaluator::ApplyFluvialMask(rhi::Device& device,
     run(toMaskPass, groups);
 
     // 合成パスはマスクを SRV で読む。Height は次のレイヤーが書き換える。
-    TransitionIfNeeded(commandList, m_fluvial.mask,
+    TransitionIfNeeded(commandList, m_fluvial.masks[slot],
                        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
@@ -514,6 +544,64 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         TransitionIfNeeded(commandList, thumbnail, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     }
 
+    // --- 川筋マスクの段取り -------------------------------------------------
+    // 川筋は**チェーンのどこまで合成した Height から作るか**が決まっている
+    // （Mask Fluvial の Base 入力。繋いでいなければ、使うレイヤーの直下）。
+    // 使うレイヤーより前に作らないといけないので、先に予定を組む。
+    struct FluvialJob {
+        size_t layerIndex = 0;    // このマスクを使うレイヤー
+        size_t computeAfter = 0;  // このレイヤーまで合成し終えた時点で作る
+    };
+    std::vector<FluvialJob> fluvialJobs;
+    std::vector<uint32_t> fluvialMaskResolutions;
+    if (baseIndex != static_cast<size_t>(-1)) {
+        for (size_t i = baseIndex + 1; i < stack.Layers().size(); ++i) {
+            const MaterialLayer& candidate = stack.Layers()[i];
+            if (!candidate.enabled || candidate.mask.source != MaskSource::Fluvial) {
+                continue;
+            }
+            size_t computeAfter = i - 1;
+            const int requested = candidate.mask.fluvialSourceIndex;
+            if (requested >= 0 && static_cast<size_t>(requested) < i) {
+                computeAfter = static_cast<size_t>(requested);
+            }
+            // 下地より前は何も合成されていない。そこまで戻ることはできない。
+            computeAfter = std::max(computeAfter, baseIndex);
+            fluvialJobs.push_back({i, computeAfter});
+            fluvialMaskResolutions.push_back(
+                std::clamp(candidate.mask.fluvial.resolution, 64u, 2048u));
+        }
+    }
+    bool fluvialReady = false;
+    if (!fluvialJobs.empty()) {
+        const uint32_t workResolution = *std::max_element(fluvialMaskResolutions.begin(),
+                                                          fluvialMaskResolutions.end());
+        fluvialReady = EnsureFluvialResources(device, workResolution, fluvialMaskResolutions);
+        if (!fluvialReady) {
+            complete = false;
+        }
+    }
+    std::vector<bool> fluvialDone(fluvialJobs.size(), false);
+
+    // 指定したレイヤーまで合成し終えた時点で作る川筋を、まとめて走らせる。
+    const auto runFluvialJobs = [&](size_t afterLayerIndex) {
+        if (!fluvialReady) {
+            return;
+        }
+        for (size_t job = 0; job < fluvialJobs.size(); ++job) {
+            if (fluvialDone[job] || fluvialJobs[job].computeAfter != afterLayerIndex) {
+                continue;
+            }
+            if (ApplyFluvialMask(device, pipelineCache, commandList,
+                                 stack.Layers()[fluvialJobs[job].layerIndex], stack, job)) {
+                fluvialDone[job] = true;
+            } else {
+                // 作れなければマスクは定数へ落ちる（絵は出るが川筋は出ない）。
+                complete = false;
+            }
+        }
+    };
+
     m_evaluatedLayerCount = 0;
     m_evaluatedTileCount = static_cast<uint32_t>(tiles.size());
 
@@ -536,23 +624,26 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 }
                 ++m_evaluatedLayerCount;
             }
+            // ぼかした後の Height を見る川筋があれば、ここで作る。
+            runFluvialJobs(layerIndex);
             continue;
         }
         // 下地のレイヤーには合成する相手がいないので、中間結果由来のマスクは使えない。
         const bool useDerivedMask =
             layer.enabled && !isBaseLayer && IsDerivedMaskSource(layer.mask.source);
-        // 川筋だけは近傍を何度も舐める別のパイプライン。専用の解像度で作る。
+        // 川筋は近傍を何度も舐める別のパイプライン。**このループより前の
+        // 段取りで、指定された位置まで合成し終えた時点に作ってある。**
         const bool useFluvialMask = useDerivedMask && layer.mask.source == MaskSource::Fluvial;
-        bool fluvialReady = false;
-
+        size_t fluvialSlot = fluvialJobs.size();
         if (useFluvialMask) {
-            fluvialReady =
-                ApplyFluvialMask(device, pipelineCache, commandList, layer, stack);
-            if (!fluvialReady) {
-                // 作れなければマスクは定数へ落ちる（絵は出るが川筋は出ない）。
-                complete = false;
+            for (size_t job = 0; job < fluvialJobs.size(); ++job) {
+                if (fluvialJobs[job].layerIndex == layerIndex) {
+                    fluvialSlot = job;
+                }
             }
-        } else if (useDerivedMask) {
+        }
+
+        if (!useFluvialMask && useDerivedMask) {
             PIXBeginEvent(commandList, PIX_COLOR(200, 200, 80), "CompositeMask");
 
             // Height を読み取り専用にしてからマスクを計算する。
@@ -710,8 +801,8 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         // 中間結果由来のマスク。川筋だけは専用グリッドのテクスチャを読む。
         constants.textureIndices1[3] = kInvalidTextureIndex;
         if (useFluvialMask) {
-            if (fluvialReady) {
-                constants.textureIndices1[3] = m_fluvial.mask.SrvIndex();
+            if (fluvialSlot < fluvialJobs.size() && fluvialDone[fluvialSlot]) {
+                constants.textureIndices1[3] = m_fluvial.masks[fluvialSlot].SrvIndex();
             }
         } else if (useDerivedMask) {
             constants.textureIndices1[3] = m_textures.scratch.SrvIndex();
@@ -788,6 +879,10 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                                       DispatchCount(kMaskThumbnailSize), 1);
             }
         }
+
+        // このレイヤーまで合成し終えた Height を見る川筋を作る。
+        // **上のレイヤーが使うので、ここで作っておかないと間に合わない。**
+        runFluvialJobs(layerIndex);
     }
 
     // メッシュの描画から読めるようにする。Height は頂点 / ドメインシェーダ

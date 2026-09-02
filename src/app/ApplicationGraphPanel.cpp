@@ -162,7 +162,7 @@ void Application::SyncGraphStack() {
     // 表示し、選択を外す（または出力ノードを選ぶ）と出力ノードのチェーンに戻る。
     graph::GraphId target = 0;
     if (const graph::Node* node = m_graph.FindNode(m_selectedGraphNode);
-        node != nullptr && graph::IsLayerNodeKind(node->kind)) {
+        node != nullptr && graph::IsPreviewableNodeKind(node->kind)) {
         target = node->id;
     }
     // 地形の実寸はチェーンの根にある Heightmap ノードが持つ。

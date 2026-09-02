@@ -169,6 +169,11 @@ struct LayerMask {
     float derivedScale = 1.0f;
     // 川筋マスクの設定。source が Fluvial のときだけ参照する。
     FluvialParams fluvial;
+    // 川筋を**レイヤー列のどこまで合成した Height から作るか**。
+    // グラフのコンパイルが Mask Fluvial ノードの入力から決めて入れる。
+    // -1 は「このレイヤーの直下」（入力を繋いでいないときの既定）。
+    // **保存しない。** 繋ぎ方から毎回決まる値なので、ファイルには残さない。
+    int fluvialSourceIndex = -1;
     // カーブ。1 で線形、> 1 で中間を締める（コントラストが上がる）。
     float contrast = 1.0f;
     float levelsLow = 0.0f;

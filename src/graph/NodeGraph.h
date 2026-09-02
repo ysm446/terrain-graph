@@ -183,6 +183,10 @@ public:
 private:
     GraphId AllocateGraphId() { return m_nextGraphId++; }
     void RebuildNextGraphId();
+    // Mask 入力の先にある Mask Fluvial が見ているノードの、レイヤー列での添字。
+    // 繋いでいない / チェーン外なら -1（そのレイヤーの直下のハイトを使う）。
+    int FindFluvialSourceIndex(const Node& node,
+                               const std::vector<const Node*>& layerNodes) const;
     // ノードの Mask 入力に繋がっているマスクノードの設定を、レイヤーのマスクへ
     // 写す。繋がっていなければ何もしない（レイヤー側の設定がそのまま効く）。
     void ApplyMaskInput(const Node& node, compositor::LayerMask& mask) const;
@@ -210,8 +214,11 @@ const NodeDefinition* FindNodeDefinitionByName(std::string_view name);
 bool IsLayerNodeKind(NodeKind kind);
 // 入力を持たないソースか。下地が無いのでマスクも効かない。
 bool IsSourceNodeKind(NodeKind kind);
-// マスクを出すノードか（いまは MaskImage だけ）。
+// マスクを出すノードか。
 bool IsMaskNodeKind(NodeKind kind);
+// 選ぶとプレビューの対象になる種類か。レイヤーに加えて、
+// **川筋（マスクを目で見て調整するもの）**もプレビューできる。
+bool IsPreviewableNodeKind(NodeKind kind);
 // 種類に対応するレイヤー種別（レイヤー設定を持つ種類のみ意味を持つ）。
 compositor::LayerKind LayerKindFor(NodeKind kind);
 
