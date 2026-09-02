@@ -68,18 +68,28 @@ ImVec4 PinTypeColor(graph::ValueType valueType) {
     }
 }
 
-// 丸ピン。ed::PinRect / PinPivotRect で当たり判定と接続点を指定する。
-void DrawRoundPin(const graph::Pin& pin) {
+// ピンの矩形。当たり判定をラベルまで広げるので、丸の位置は別に持つ。
+struct PinGeometry {
+    ImVec2 min;     // 丸の矩形
+    ImVec2 max;
+    ImVec2 center;  // 接続点（リンクの端）
+};
+
+// 丸ピンを描いて矩形を返す。**当たり判定（ed::PinRect）は呼び出し側で決める。**
+// ラベルまで含めて掴めるようにするため（出力ピンはクリックでプレビューも切り替える）。
+PinGeometry DrawRoundPin(const graph::Pin& pin) {
     const ImVec2 size(14.0f, 20.0f);
     ImGui::Dummy(size);
-    const ImVec2 min = ImGui::GetItemRectMin();
-    const ImVec2 max = ImGui::GetItemRectMax();
-    const ImVec2 center((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
-    ed::PinRect(min, max);
-    ed::PinPivotRect(ImVec2(center.x - 6.0f, center.y - 6.0f),
-                     ImVec2(center.x + 6.0f, center.y + 6.0f));
-    ImGui::GetWindowDrawList()->AddCircle(center, 4.3f, ColorToU32(PinTypeColor(pin.valueType)),
-                                          16, 1.6f);
+    PinGeometry geometry;
+    geometry.min = ImGui::GetItemRectMin();
+    geometry.max = ImGui::GetItemRectMax();
+    geometry.center = ImVec2((geometry.min.x + geometry.max.x) * 0.5f,
+                             (geometry.min.y + geometry.max.y) * 0.5f);
+    ed::PinPivotRect(ImVec2(geometry.center.x - 6.0f, geometry.center.y - 6.0f),
+                     ImVec2(geometry.center.x + 6.0f, geometry.center.y + 6.0f));
+    ImGui::GetWindowDrawList()->AddCircle(geometry.center, 4.3f,
+                                          ColorToU32(PinTypeColor(pin.valueType)), 16, 1.6f);
+    return geometry;
 }
 
 // ドットグリッドの背景。既定のグリッド線は消して自前で描く。
@@ -259,16 +269,22 @@ void Application::DrawGraphNode(const graph::Node& node) {
     const float rowStartX = ImGui::GetCursorPosX();
     const float rowY = ImGui::GetCursorPosY();
 
+    // **ラベルもピンの当たり判定に入れる。** 丸だけだと小さく、
+    // 出力ピンのクリック（プレビューの切り替え）も接続も狙いにくい。
+    const ImVec4 pinLabelColor(0.62f, 0.64f, 0.62f, 1.0f);
+
     for (size_t inputIndex = 0; inputIndex < node.inputs.size(); ++inputIndex) {
         const graph::Pin& input = node.inputs[inputIndex];
         const float inputY = rowY + static_cast<float>(inputIndex) * 24.0f;
         ImGui::SetCursorPos(ImVec2(rowStartX, inputY));
         ed::BeginPin(ed::PinId(input.id), ed::PinKind::Input);
-        DrawRoundPin(input);
-        ed::EndPin();
+        const PinGeometry geometry = DrawRoundPin(input);
         ImGui::SameLine();
         ImGui::SetCursorPosY(inputY + 2.0f);
-        ImGui::TextColored(ImVec4(0.62f, 0.64f, 0.62f, 1.0f), "%s", input.label.c_str());
+        ImGui::TextColored(pinLabelColor, "%s", input.label.c_str());
+        // 丸からラベルの右端まで。**縦は丸の高さに揃える**（行が重ならないように）。
+        ed::PinRect(geometry.min, ImVec2(ImGui::GetItemRectMax().x, geometry.max.y));
+        ed::EndPin();
     }
 
     for (size_t outputIndex = 0; outputIndex < node.outputs.size(); ++outputIndex) {
@@ -276,11 +292,14 @@ void Application::DrawGraphNode(const graph::Node& node) {
         const float outputY = rowY + static_cast<float>(outputIndex) * 24.0f;
         const float labelWidth = ImGui::CalcTextSize(output.label.c_str()).x;
         ImGui::SetCursorPos(ImVec2(rowStartX + kNodeWidth - labelWidth - 22.0f, outputY + 2.0f));
-        ImGui::TextColored(ImVec4(0.62f, 0.64f, 0.62f, 1.0f), "%s", output.label.c_str());
+        ed::BeginPin(ed::PinId(output.id), ed::PinKind::Output);
+        ImGui::TextColored(pinLabelColor, "%s", output.label.c_str());
+        const ImVec2 labelMin = ImGui::GetItemRectMin();
         ImGui::SameLine();
         ImGui::SetCursorPosY(outputY);
-        ed::BeginPin(ed::PinId(output.id), ed::PinKind::Output);
-        DrawRoundPin(output);
+        const PinGeometry geometry = DrawRoundPin(output);
+        // ラベルの左端から丸まで。
+        ed::PinRect(ImVec2(labelMin.x, geometry.min.y), geometry.max);
         ed::EndPin();
     }
     const size_t pinRowCount = std::max(node.inputs.size(), node.outputs.size());
