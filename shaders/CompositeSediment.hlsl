@@ -187,6 +187,17 @@ void CsSweep2(uint3 dispatchThreadId : SV_DispatchThreadID)
 // 合成の Height へ**差分だけ**足し戻す。
 // 解析グリッドは粗いので、そのまま置き換えると合成解像度の細部が消える。
 // 動いたぶん（基盤 + 土砂 − 元の高さ）だけを足せば、細部はそのまま残る。
+//
+// **ただし積もった所では細部を埋める。** 土砂が積もっているのに下の凸凹が
+// そのまま出ていると、砂利の上に泥を塗っただけに見える。厚み d だけ積もった
+// なら、細部の振れ幅を d だけ 0 へ寄せる（|細部| − d、下限 0）。
+//
+//   - 出っ張りの**頂上は動かない**（周りが d 上がるので、相対的に d 低くなる）。
+//   - 窪みは埋まる。
+//   - 厚みが細部の振れ幅を超えたら、完全に平ら（＝解析グリッドの面）になる。
+//
+// 出っ張りは何ももらわず窪みが 2d もらう形になるので、細部の分布が上下対称なら
+// 平均は d のままで、体積の帳尻は合う。パラメータを持たないのはこのため。
 [numthreads(8, 8, 1)]
 void CsApply(uint3 dispatchThreadId : SV_DispatchThreadID)
 {
@@ -201,19 +212,54 @@ void CsApply(uint3 dispatchThreadId : SV_DispatchThreadID)
     RWTexture2D<float> heightTarget = ResourceDescriptorHeap[g_sediment.indices2.z];
 
     const float2 uv = (float2(texel) + 0.5f) / float(resolution);
-    const float delta = bedrock.SampleLevel(g_samplerLinearClamp, uv, 0.0f) +
-                        sediment.SampleLevel(g_samplerLinearClamp, uv, 0.0f) -
-                        original.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
+    const float coarseOriginal = original.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
+    const float coarseResult = bedrock.SampleLevel(g_samplerLinearClamp, uv, 0.0f) +
+                               sediment.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
+    const float delta = coarseResult - coarseOriginal;
 
-    heightTarget[texel] = saturate(heightTarget[texel] + delta);
+    // 合成解像度でしか持っていない細部（粗いグリッドとの差）。
+    const float detail = heightTarget[texel] - coarseOriginal;
+    // 積もった厚み。削れた所は 0（埋めるものが無い）。
+    const float deposit = max(delta, 0.0f);
+    const float buried = sign(detail) * max(abs(detail) - deposit, 0.0f);
+
+    heightTarget[texel] = saturate(coarseOriginal + delta + buried);
 }
 
 // --- 厚みをマスクにする -----------------------------------------------------
 //
-// 積もった土砂の厚みを 0〜1 のマスクにする。**一番厚い所で 1 に正規化**する
-// （絶対量ではなく分布を見るため。terrain-editor と同じ）。
+// 積もった土砂の厚みを 0〜1 のマスクにする。既定は**実寸で正規化**し、
+// 基準の厚みが 0 のときだけ「一番厚い所で 1」に落とす。
 // 非負の float はビット列の大小が uint と同じ順序なので、そのまま
 // InterlockedMax に掛けられる（川筋の最大値集計と同じ手）。
+//
+// **厚み = 基盤 + 土砂 − 元の高さ**（削れた所は 0）。土砂のテクスチャを
+// そのまま読むと、「地形を土砂にする」が入のときに**地形の高さそのもの**に
+// なってしまう（あの設定では土砂 = 動かせる地形なので）。
+
+// 解析グリッドの 1 セルに積もった厚み。
+float SedimentDeposit(uint2 cell)
+{
+    Texture2D<float> bedrock = ResourceDescriptorHeap[g_sediment.indices1.x];
+    Texture2D<float> sediment = ResourceDescriptorHeap[g_sediment.indices1.y];
+    Texture2D<float> original = ResourceDescriptorHeap[g_sediment.indices1.z];
+    const int3 at = int3(int2(cell), 0);
+    return max(bedrock.Load(at) + sediment.Load(at) - original.Load(at), 0.0f);
+}
+
+// 同じものを UV で補間して引く。厚みは 3 枚の**線形な足し引き**なので、
+// 1 枚ずつ補間してから引いても、引いてから補間しても同じ値になる。
+// マスクは合成解像度で出すため、こちらを使わないとグリッドの目が出る。
+float SedimentDepositAt(float2 uv)
+{
+    Texture2D<float> bedrock = ResourceDescriptorHeap[g_sediment.indices1.x];
+    Texture2D<float> sediment = ResourceDescriptorHeap[g_sediment.indices1.y];
+    Texture2D<float> original = ResourceDescriptorHeap[g_sediment.indices1.z];
+    return max(bedrock.SampleLevel(g_samplerLinearClamp, uv, 0.0f) +
+                   sediment.SampleLevel(g_samplerLinearClamp, uv, 0.0f) -
+                   original.SampleLevel(g_samplerLinearClamp, uv, 0.0f),
+               0.0f);
+}
 
 [numthreads(1, 1, 1)]
 void CsMaskMaxClear(uint3 dispatchThreadId : SV_DispatchThreadID)
@@ -228,11 +274,10 @@ void CsMaskMaxReduce(uint3 dispatchThreadId : SV_DispatchThreadID)
     const uint2 cell = dispatchThreadId.xy;
     if (OutsideSediment(cell)) { return; }
 
-    RWTexture2D<float> sediment = ResourceDescriptorHeap[g_sediment.indices0.y];
     RWTexture2D<uint> maxScratch = ResourceDescriptorHeap[g_sediment.indices3.x];
 
     uint previous;
-    InterlockedMax(maxScratch[uint2(0, 0)], asuint(max(sediment[cell], 0.0f)), previous);
+    InterlockedMax(maxScratch[uint2(0, 0)], asuint(SedimentDeposit(cell)), previous);
 }
 
 [numthreads(8, 8, 1)]
@@ -244,12 +289,11 @@ void CsMask(uint3 dispatchThreadId : SV_DispatchThreadID)
     const uint resolution = g_sediment.indices2.w;
     if (texel.x >= resolution || texel.y >= resolution) { return; }
 
-    Texture2D<float> sediment = ResourceDescriptorHeap[g_sediment.indices1.y];
     RWTexture2D<uint> maxScratch = ResourceDescriptorHeap[g_sediment.indices3.x];
     RWTexture2D<float> mask = ResourceDescriptorHeap[g_sediment.indices3.y];
 
     const float2 uv = (float2(texel) + 0.5f) / float(resolution);
-    const float thickness = sediment.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
+    const float thickness = SedimentDepositAt(uv);
 
     // **基準の厚みが与えられていれば実寸で正規化する。**
     // 0 のときだけ「一番厚い所で 1」に落とす（少数の分厚い点が基準になるので、

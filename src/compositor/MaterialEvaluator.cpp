@@ -861,8 +861,10 @@ bool MaterialEvaluator::ApplySedimentMask(rhi::Device& device,
     }
 
     SedimentConstants constants = {};
-    constants.indices0[1] = m_sediment.sediment.UavIndex();
+    // 厚みは「基盤 + 土砂 − 元の高さ」なので 3 枚とも読む。
+    constants.indices1[0] = m_sediment.bedrock.SrvIndex();
     constants.indices1[1] = m_sediment.sediment.SrvIndex();
+    constants.indices1[2] = m_sediment.original.SrvIndex();
     constants.indices2[0] = m_sediment.resolution;
     constants.indices2[3] = m_resolution;
     constants.indices3[0] = m_sediment.maxScratch.UavIndex();
@@ -882,7 +884,13 @@ bool MaterialEvaluator::ApplySedimentMask(rhi::Device& device,
     std::memcpy(cb.cpu, &constants, sizeof(constants));
 
     PIXBeginEvent(commandList, PIX_COLOR(190, 170, 120), "CompositeSedimentMask");
-    TransitionIfNeeded(commandList, m_sediment.sediment, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    // 作業用の 3 枚は読むだけ。
+    TransitionIfNeeded(commandList, m_sediment.bedrock,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(commandList, m_sediment.sediment,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(commandList, m_sediment.original,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
 
@@ -901,14 +909,14 @@ bool MaterialEvaluator::ApplySedimentMask(rhi::Device& device,
         barrier();
     }
 
-    // マスクを焼くときだけ、厚みは読み取り専用にする。
-    TransitionIfNeeded(commandList, m_sediment.sediment,
-                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     commandList->SetPipelineState(maskPass);
     commandList->Dispatch(DispatchCount(m_resolution), DispatchCount(m_resolution), 1);
     barrier();
 
+    // 次に使うときは書き込みへ戻す。
+    TransitionIfNeeded(commandList, m_sediment.bedrock, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     TransitionIfNeeded(commandList, m_sediment.sediment, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, m_sediment.original, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     PIXEndEvent(commandList);
     return true;
