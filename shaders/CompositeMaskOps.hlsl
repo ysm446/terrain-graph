@@ -8,6 +8,11 @@
 
 #include "CompositeCommon.hlsli"
 
+// compositor::CurvatureMode と一致させること。
+#define TG_CURVATURE_RIDGES   0
+#define TG_CURVATURE_VALLEYS  1
+#define TG_CURVATURE_ABSOLUTE 2
+
 // compositor::MaskBlendMode と一致させること。
 #define TG_BLEND_ADD      0
 #define TG_BLEND_MULTIPLY 1
@@ -26,8 +31,9 @@ struct MaskOpConstants
     // Levels: 黒点, 白点, ガンマ, 未使用
     // Blend : 強さ, 未使用 x3
     // Noise : 周波数, 量, オフセット, 未使用
+    // Curv  : 感度（正規化ハイト）, しきい値, ガンマ, 未使用
     float4 params1;
-    // x: 傾斜を測る距離（テクセル）、yzw: 未使用
+    // x: 傾斜を測る距離 / 曲率で比べる周りの広さ（テクセル）、yzw: 未使用
     float4 params2;
 };
 
@@ -74,6 +80,58 @@ void CsNoise(uint3 dispatchThreadId : SV_DispatchThreadID)
     // 量は 0.5 を中心にした振れ幅。1 でノイズそのもの、0 で一様な 0.5 になる。
     const float value = saturate(0.5f + (noise - 0.5f) * g_op.params1.y);
     output[texel] = ApplyInvert(value);
+}
+
+// 下地の曲率をマスクにする。**周りの平均との高さの差**を見る。
+//
+// terrain-editor は箱ぼかしを 1 枚作ってから引くが、ここは同心円の
+// **4 本のリング（32 点）を半径で重み付けして平均**し、円板の平均を近似する。
+// 半径が 64 テクセルまで伸びるので、まともに畳むと 1 テクセルあたり 1 万点を超える。
+// 高さは滑らかなので、この近似で十分に同じ絵になる。
+[numthreads(8, 8, 1)]
+void CsCurvature(uint3 dispatchThreadId : SV_DispatchThreadID)
+{
+    const uint2 texel = dispatchThreadId.xy;
+    if (OutsideMask(texel)) { return; }
+
+    RWTexture2D<float> output = ResourceDescriptorHeap[g_op.indices.x];
+    Texture2D<float> height = ResourceDescriptorHeap[g_op.indices.w];
+
+    const float resolution = float(MaskResolution());
+    const float2 uv = MaskUv(texel);
+    const float radius = max(g_op.params2.x, 1.0f);  // 比べる周りの広さ（テクセル）
+    const float center = height.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
+
+    // 円板の平均。リングの重みは面積に比例させる（半径そのもの）。
+    float sum = center * 0.5f;
+    float weight = 0.5f;
+    for (int ring = 1; ring <= 4; ++ring)
+    {
+        const float ringRadius = radius * (float(ring) / 4.0f);
+        const float ringWeight = float(ring);
+        for (int i = 0; i < 8; ++i)
+        {
+            const float angle = (float(i) / 8.0f) * 6.28318530718f;
+            const float2 offset = float2(cos(angle), sin(angle)) * ringRadius / resolution;
+            sum += height.SampleLevel(g_samplerLinearClamp, uv + offset, 0.0f) * ringWeight;
+            weight += ringWeight;
+        }
+    }
+    const float average = sum / max(weight, 1e-6f);
+
+    // 周りより高ければ正、低ければ負。
+    const float delta = center - average;
+    const uint mode = uint(g_op.params0.y);
+    float curvature = abs(delta);
+    if (mode == TG_CURVATURE_RIDGES) { curvature = delta; }
+    else if (mode == TG_CURVATURE_VALLEYS) { curvature = -delta; }
+
+    // 感度は正規化ハイトへ直して渡してある。
+    float value = saturate(curvature / max(g_op.params1.x, 1e-9f));
+    const float threshold = saturate(g_op.params1.y);
+    value = saturate((value - threshold) / max(1.0f - threshold, 1e-4f));
+    value = pow(value, max(g_op.params1.z, 1e-3f));
+    output[texel] = saturate(ApplyInvert(value));
 }
 
 // 画像 1 枚をマスクにする。**タイルしない 1 枚絵**として等倍で貼る

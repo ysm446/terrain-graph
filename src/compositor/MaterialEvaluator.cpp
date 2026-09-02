@@ -185,6 +185,8 @@ uint64_t HashMaskOpParams(uint64_t seed, const MaskOp& op) {
             return HashBytes(seed, &op.crumblingMask, sizeof(op.crumblingMask));
         case MaskOpKind::Noise:
             return HashBytes(seed, &op.noise, sizeof(op.noise));
+        case MaskOpKind::Curvature:
+            return HashBytes(seed, &op.curvature, sizeof(op.curvature));
         default:
             return seed;
     }
@@ -402,6 +404,7 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
     switch (op.kind) {
         case MaskOpKind::Noise:  entry = L"CsNoise"; break;
         case MaskOpKind::Slope:  entry = L"CsSlope"; break;
+        case MaskOpKind::Curvature: entry = L"CsCurvature"; break;
         case MaskOpKind::Levels: entry = L"CsLevels"; break;
         case MaskOpKind::Blend:  entry = L"CsBlend"; break;
         default: break;
@@ -437,6 +440,23 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
             constants.params1[0] = op.noise.scale;
             constants.params1[1] = op.noise.amount;
             constants.params1[2] = op.noise.offset;
+            break;
+        }
+        case MaskOpKind::Curvature: {
+            constants.indices[3] = m_textures.height.SrvIndex();
+            constants.params0[1] = static_cast<uint32_t>(op.curvature.mode);
+            // 感度は m。ハイト 0〜1 の全幅が標高差なので、その比へ直す。
+            const float heightMeters =
+                (stack.HeightMeters() > 0.0f) ? stack.HeightMeters() : 1.0f;
+            constants.params1[0] =
+                std::max(op.curvature.sensitivityMeters, 1e-4f) / heightMeters;
+            constants.params1[1] = std::clamp(op.curvature.threshold, 0.0f, 0.99f);
+            constants.params1[2] = std::clamp(op.curvature.gamma, 0.05f, 8.0f);
+            // 比べる周りの広さ（テクセル）。
+            const float sizeMeters = (stack.SizeMeters() > 0.0f) ? stack.SizeMeters() : 1.0f;
+            const float cellMeters = sizeMeters / static_cast<float>(std::max(1u, resolution));
+            constants.params2[0] =
+                std::clamp(op.curvature.detailMeters / std::max(cellMeters, 1e-6f), 1.0f, 64.0f);
             break;
         }
         case MaskOpKind::Slope: {
@@ -1308,7 +1328,8 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             hash = HashBytes(hash, &scaleHash, sizeof(scaleHash));
             hash = HashBytes(hash, &m_maskOpResolutions[i], sizeof(uint32_t));
             if (op.kind == MaskOpKind::Fluvial || op.kind == MaskOpKind::Slope ||
-                op.kind == MaskOpKind::Sediment || op.kind == MaskOpKind::Crumbling) {
+                op.kind == MaskOpKind::Curvature || op.kind == MaskOpKind::Sediment ||
+                op.kind == MaskOpKind::Crumbling) {
                 after = std::max(after, op.heightSourceLayer);
                 const size_t layerCount = std::min<size_t>(
                     stack.Layers().size(),

@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-04 01:00
+更新日時: 2026-09-04 03:00
 
 ## 現在の状況
 
@@ -62,6 +62,19 @@ Megascans の ORD（チャンネルパック）と EXR にも対応した。
 UI はグレー基調に整理し、ルールを [design/design-guide.md](../design/design-guide.md) に置いた。
 
 ## 完了済み
+
+- 2026-09-04 03:00 — **Mask Curvature ノードを terrain-editor から移植した**。
+  - `NodeKind::MaskCurvature`（保存名 `maskCurvature`）+ `MaskOpKind::Curvature`。
+    下地の Height を読むマスクなので、Base 入力と `heightSourceLayer` の
+    段取りは Mask Slope と同じ。
+  - アルゴリズムは**周りの平均との高さの差**（ラプラシアンではない）。
+    そのおかげで「比べる広さ」も「感度」も m で指定できる。
+  - 周りの平均は**同心円 4 本のリング（32 点）を半径で重み付け**して近似する。
+    terrain-editor は箱ぼかしを 1 枚作ってから引くが、半径が 64 テクセルまで
+    伸びると 1 テクセルあたり 1 万点を超えて畳めない。
+  - 検証: 3 つの向きを焼き比べ、**尾根と谷が同時に 0.3 を超える画素は 0.000%**
+    （＝排他）、**「両方」と（尾根 + 谷）の差は最大 0.000**（＝完全に一致）。
+    プレビューで尾根が白く出ること、プロパティ UI も目視した。
 
 - 2026-09-04 01:00 — **Mask だけ繋いだ堆積 / 崩落を走らせるようにした**
   （`MaterialLayer::maskOnly` + `NodeGraph::FindMaskSpliceIndex()`）。

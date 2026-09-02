@@ -121,6 +121,10 @@ base' = base + 0.5 * gain     ただしソースが constant のときは base �
 
 ノードごとの設定の意味は [nodes.md](nodes.md) にまとめてある。
 
+マスクのノードは種類ごとに使う設定が違うが、**全部書く**（種類を変えて戻したときに
+値が消えていると驚くため）。`curvature` は `{ mode, detail, sensitivity, threshold,
+gamma }` で、`mode` は `ridges` / `valleys` / `absolute`。
+
 レイヤーの `sediment`（`{ emission, emissionTime, detail, iterations, stabilization,
 viscosity, convertTerrain, resolution, maskContrast, maskThicknessMeters }`）は
 `kind` が `sediment` のノードだけが使う。

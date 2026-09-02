@@ -147,6 +147,8 @@ const char* const kMaskSourceNames[] = {"constant", "noise",     "texture", "hei
                                         "slope",    "curvature", "cavity",  "paint",
                                         "node"};
 const char* const kFluvialCurveNames[] = {"log", "threshold", "linear"};
+// 曲率マスクの向き。compositor::CurvatureMode の並びと一致させること。
+const char* const kCurvatureModeNames[] = {"ridges", "valleys", "absolute"};
 const char* const kMaskBlendModeNames[] = {"add", "multiply", "min", "max"};
 const char* const kChannelNames[] = {"baseColor", "normal", "surface", "height"};
 const char* const kLayerKindNames[] = {"surface", "shape",    "liquid",
@@ -360,6 +362,32 @@ json WriteSlope(const compositor::SlopeParams& slope) {
     node["gamma"] = slope.gamma;
     node["invert"] = slope.invert;
     return node;
+}
+
+json WriteCurvature(const compositor::CurvatureParams& curvature) {
+    json node;
+    node["mode"] = EnumName(kCurvatureModeNames, static_cast<uint32_t>(curvature.mode));
+    node["detail"] = curvature.detailMeters;
+    node["sensitivity"] = curvature.sensitivityMeters;
+    node["threshold"] = curvature.threshold;
+    node["gamma"] = curvature.gamma;
+    return node;
+}
+
+compositor::CurvatureParams ReadCurvature(const json& parent, const char* key) {
+    const compositor::CurvatureParams defaults;
+    const json* node = FindMember(parent, key);
+    if (node == nullptr || !node->is_object()) {
+        return defaults;
+    }
+    compositor::CurvatureParams curvature;
+    curvature.mode = static_cast<compositor::CurvatureMode>(
+        EnumValue(kCurvatureModeNames, *node, "mode", static_cast<uint32_t>(defaults.mode)));
+    curvature.detailMeters = ReadFloat(*node, "detail", defaults.detailMeters);
+    curvature.sensitivityMeters = ReadFloat(*node, "sensitivity", defaults.sensitivityMeters);
+    curvature.threshold = ReadFloat(*node, "threshold", defaults.threshold);
+    curvature.gamma = ReadFloat(*node, "gamma", defaults.gamma);
+    return curvature;
 }
 
 compositor::SlopeParams ReadSlope(const json& parent, const char* key) {
@@ -667,6 +695,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["noise"] = WriteNoise(mask->noise);
             item["fluvial"] = WriteFluvial(mask->fluvial);
             item["slope"] = WriteSlope(mask->slope);
+            item["curvature"] = WriteCurvature(mask->curvature);
             item["levels"] = WriteLevels(mask->levels);
             item["blend"] = WriteBlend(mask->blend);
         }
@@ -779,6 +808,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                 settings.noise = ReadNoise(item, "noise", graph::MaskNodeSettings().noise);
                 settings.fluvial = ReadFluvial(item, "fluvial");
                 settings.slope = ReadSlope(item, "slope");
+                settings.curvature = ReadCurvature(item, "curvature");
                 settings.levels = ReadLevels(item, "levels");
                 settings.blend = ReadBlend(item, "blend");
                 created.settings = std::move(settings);

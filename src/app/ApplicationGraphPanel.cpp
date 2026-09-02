@@ -53,6 +53,8 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
             return ImVec4(0.55f, 0.68f, 0.74f, 1.0f);
         case graph::NodeKind::MaskSlope:
             return ImVec4(0.60f, 0.70f, 0.66f, 1.0f);
+        case graph::NodeKind::MaskCurvature:
+            return ImVec4(0.66f, 0.68f, 0.74f, 1.0f);
         case graph::NodeKind::MaskLevels:
             return ImVec4(0.78f, 0.76f, 0.70f, 1.0f);
         case graph::NodeKind::MaskBlend:
@@ -670,6 +672,8 @@ void Application::DrawGraphEditor() {
                         "Mask Fluvial — 下地の川筋をマスクにする");
         addNodeMenuItem(graph::NodeKind::MaskSlope,
                         "Mask Slope — 下地の傾斜（角度）をマスクにする");
+        addNodeMenuItem(graph::NodeKind::MaskCurvature,
+                        "Mask Curvature — 下地の凹凸（尾根 / 谷）をマスクにする");
         addNodeMenuItem(graph::NodeKind::MaskLevels,
                         "Mask Levels — マスクの黒点 / 白点 / ガンマを調整する");
         addNodeMenuItem(graph::NodeKind::MaskBlend,
@@ -888,6 +892,12 @@ void Application::DrawGraphPanel() {
                 hint = "下地の傾斜（角度）をマスクにする。"
                        "Base にどこまでのハイトを使うかを繋ぐ";
                 break;
+            case graph::NodeKind::MaskCurvature:
+                header = "曲率";
+                hint = "下地の凹凸をマスクにする。周りの平均と比べて、"
+                       "高い所（尾根）か低い所（谷）を拾う。"
+                       "Base にどこまでのハイトを使うかを繋ぐ";
+                break;
             case graph::NodeKind::MaskLevels:
                 header = "レベル";
                 hint = "入力のマスクの黒点 / 白点 / ガンマを整える";
@@ -910,6 +920,9 @@ void Application::DrawGraphPanel() {
                     break;
                 case graph::NodeKind::MaskSlope:
                     changed |= DrawSlopeRows(mask->slope);
+                    break;
+                case graph::NodeKind::MaskCurvature:
+                    changed |= DrawCurvatureRows(mask->curvature);
                     break;
                 case graph::NodeKind::MaskLevels:
                     changed |= DrawLevelsRows(mask->levels);

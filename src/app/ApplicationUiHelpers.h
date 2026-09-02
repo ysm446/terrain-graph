@@ -136,6 +136,8 @@ inline const compositor::MaterialLayer& DefaultLayerFor(compositor::LayerKind ki
 // レイヤー一覧のツールチップなどで使う種類の表示名。LayerKind の並びと一致させること。
 inline const char* const kLayerKindLabels[] = {"サーフェス", "シェイプ", "水面",
                                                "ブラー",     "堆積",     "崩落"};
+// 曲率マスクの向き。compositor::CurvatureMode の並びと一致させること。
+inline const char* const kCurvatureModeLabels[] = {"尾根", "谷", "両方"};
 // 岩片の形。compositor::RockStyle の並びと一致させること。
 inline const char* const kRockStyleLabels[] = {"丸い", "多面体", "尖った破片"};
 // 堆積の計算グリッド。合成解像度とは別に持つ。
@@ -409,6 +411,33 @@ inline bool DrawFluvialRows(compositor::FluvialParams& fluvial) {
         fluvial.resolution = kFluvialResolutionValues[resolutionIndex];
         changed = true;
     }
+    return changed;
+}
+
+// 曲率マスクの設定行。プロパティテーブルの中で呼ぶこと。
+inline bool DrawCurvatureRows(compositor::CurvatureParams& curvature) {
+    const compositor::CurvatureParams defaults;
+    bool changed = false;
+    int mode = static_cast<int>(curvature.mode);
+    if (ui::PropertyCombo("向き", &mode, kCurvatureModeLabels,
+                          IM_ARRAYSIZE(kCurvatureModeLabels), static_cast<int>(defaults.mode),
+                          "周りより高い所（尾根）、低い所（谷）、その両方のどれを拾うか")) {
+        curvature.mode = static_cast<compositor::CurvatureMode>(mode);
+        changed = true;
+    }
+    changed |= ui::PropertyFloat(
+        "最大ディテール", &curvature.detailMeters, 1.0f, 512.0f, defaults.detailMeters,
+        "比べる周りの広さ（m）。大きいほど小さな凹凸を無視して広い尾根や谷を拾う",
+        "%.1f m", ImGuiSliderFlags_Logarithmic);
+    changed |= ui::PropertyFloat(
+        "感度", &curvature.sensitivityMeters, 0.01f, 100.0f, defaults.sensitivityMeters,
+        "この高さの差で 1 になる。小さいほど弱い曲率まで明るくなる", "%.2f m",
+        ImGuiSliderFlags_Logarithmic);
+    changed |= ui::PropertyFloat("しきい値", &curvature.threshold, 0.0f, 0.99f,
+                                 defaults.threshold, "これ以下の弱い曲率を捨てる", "%.2f");
+    changed |= ui::PropertyFloat("ガンマ", &curvature.gamma, 0.05f, 4.0f, defaults.gamma,
+                                 "1 未満で弱い曲率を明るく、1 より大きいと強い所だけを残す",
+                                 "%.2f");
     return changed;
 }
 

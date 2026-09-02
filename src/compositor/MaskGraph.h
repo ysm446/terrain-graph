@@ -31,6 +31,27 @@ enum class MaskOpKind : uint32_t {
     Crumbling = 6,
     // ノイズ 1 枚。入力を持たないマスクのソース。
     Noise = 7,
+    // 下地の曲率（周りより高い / 低い）。
+    Curvature = 8,
+};
+
+// 曲率マスクの向き。シェーダの TG_CURVATURE_* と一致させること。
+enum class CurvatureMode : uint32_t {
+    Ridges = 0,    // 周りより高い所（尾根・出っ張り）
+    Valleys = 1,   // 周りより低い所（谷・窪み）
+    Absolute = 2,  // どちらも
+};
+
+// 曲率マスク。**周りの平均との高さの差**を見る。ラプラシアンではないので、
+// 「どのくらいの広さの周りと比べるか」を実寸で指定できる。
+struct CurvatureParams {
+    CurvatureMode mode = CurvatureMode::Absolute;
+    // 比べる周りの広さ（m）。大きいほど小さな凹凸を無視して広い尾根や谷を拾う。
+    float detailMeters = 8.0f;
+    // この高さの差で 1 になる（m）。小さいほど弱い曲率まで明るくなる。
+    float sensitivityMeters = 1.0f;
+    float threshold = 0.0f;  // これ以下を捨てる
+    float gamma = 1.0f;
 };
 
 // シェーダの TG_BLEND_* と一致させること。
@@ -93,6 +114,7 @@ struct MaskOp {
     MapSlot map;
     FluvialParams fluvial;
     SlopeParams slope;
+    CurvatureParams curvature;
     LevelsParams levels;
     BlendParams blend;
     NoiseParams noise;

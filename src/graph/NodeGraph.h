@@ -64,6 +64,8 @@ enum class NodeKind : uint32_t {
     Crumbling = 12,
     // ノイズ 1 枚をマスクとして出す**マスクのソース**。入力を持たない。
     MaskNoise = 13,
+    // 下地の曲率（周りより高い / 低い）をマスクとして出す。
+    MaskCurvature = 14,
 };
 
 struct PinDefinition {
@@ -124,6 +126,7 @@ struct MaskNodeSettings {
     compositor::NoiseParams noise;
     compositor::FluvialParams fluvial;
     compositor::SlopeParams slope;
+    compositor::CurvatureParams curvature;
     compositor::LevelsParams levels;
     compositor::BlendParams blend;
 };
