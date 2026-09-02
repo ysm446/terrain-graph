@@ -94,8 +94,11 @@ private:
     // isSource は入力を持たないノード（ハイトマップ）。マスクの節を出さない。
     // maskFromNode が真のとき、マスクの出どころは Mask 入力に繋いだノード。
     // ソースと画像の行は出さない（同じ値を 2 か所から編集させない）。
+    // maskResolves が偽なら「Mask 入力に繋いだのに効いていない」注意書きを出す
+    // （堆積 / 崩落の Mask を、そのチェーンの外から繋いだとき）。
     bool DrawLayerSettings(compositor::MaterialLayer& layer, bool isBase, bool isSource = false,
-                           bool maskFromNode = false);
+                           bool maskFromNode = false,
+                           bool maskResolves = true);
     // グラフの変更をコンパイル結果（m_graphStack）へ反映する。フレームの頭で呼ぶ。
     void SyncGraphStack();
     // 選択中のノードを控える / 貼り付ける（Ctrl+C / Ctrl+V）。

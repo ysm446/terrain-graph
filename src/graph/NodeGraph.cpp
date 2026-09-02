@@ -449,6 +449,23 @@ const Node* NodeGraph::PreviewTop(GraphId nodeId) const {
     return ChainTop();
 }
 
+bool NodeGraph::MaskSourceResolves(const Node& consumer) const {
+    const MaskSourceRef source = UpstreamMaskOf(consumer);
+    if (source.node == nullptr) {
+        return true;  // 繋いでいない。マスクはノード側の設定で決まる。
+    }
+    // レイヤーでもあるマスクの出どころ（堆積 / 崩落）だけが、居場所に依存する。
+    if (source.node->kind != NodeKind::Sediment && source.node->kind != NodeKind::Crumbling) {
+        return true;
+    }
+    for (const Node* node : ChainFrom(&consumer)) {
+        if (node == source.node) {
+            return true;
+        }
+    }
+    return false;
+}
+
 const TerrainScale* NodeGraph::FindChainScale(GraphId nodeId) const {
     // チェーンの根（一番下）にあるソースを探す。地形の実寸はそこが持つ。
     const std::vector<const Node*> chain = ChainFrom(PreviewTop(nodeId));

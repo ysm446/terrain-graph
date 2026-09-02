@@ -839,7 +839,8 @@ void Application::DrawGraphPanel() {
                 maskFromNode = true;
             }
         }
-        changed |= DrawLayerSettings(settings->layer, isBase, isSource, maskFromNode);
+        changed |= DrawLayerSettings(settings->layer, isBase, isSource, maskFromNode,
+                                     m_graph.MaskSourceResolves(*selected));
 
         // 地形の実寸。**ソースだけが持ち、読み込むときに一度だけ決める。**
         // プレビュー設定ではなくここに置くのは、実寸が見え方の設定ではなく

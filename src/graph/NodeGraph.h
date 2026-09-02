@@ -196,6 +196,14 @@ public:
     // （堆積のように Result と Mask を両方出すノードは、ピンで見分ける）。
     CompiledGraph CompileLayersTo(GraphId nodeId, GraphId outputPin = 0) const;
 
+    // Mask 入力に繋いだ出どころが、実際にマスクとして効くか。
+    //
+    // 堆積 / 崩落の Mask 出力は、**そのレイヤーを合成した時点の作業用テクスチャ**
+    // から焼く。だから出どころが consumer の下地チェーンの中にいないと、
+    // 繋いでも結果が残っておらず、マスクが無いのと同じ扱いになる。
+    // 繋いでいない場合と、他の種類のマスクは常に true。
+    bool MaskSourceResolves(const Node& consumer) const;
+
     // チェーンの根にあるソース（Heightmap）の実寸。無ければ nullptr。
     // プレビューの平面のサイズと変位量はこれに従う。
     // nodeId が 0 なら出力ノードのチェーンを見る。

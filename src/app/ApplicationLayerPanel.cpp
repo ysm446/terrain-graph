@@ -27,7 +27,13 @@ namespace tg {
 // レイヤー 1 枚ぶんのプロパティ行。グラフパネルの下段から使う。
 // 変更の記録（アンドゥ / グラフの再コンパイル）は呼び出し側で行う。
 bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBase, bool isSource,
-                                   bool maskFromNode) {
+                                   bool maskFromNode, bool maskResolves) {
+    // **困っていることは一番上に出す。** 設定の行が多いレイヤーだと、
+    // マスクの節はスクロールの外へ行ってしまう。
+    if (!maskResolves) {
+        ui::HintText("Mask 入力に繋いだノードがこのチェーンの中にいないので、"
+                     "マスクが効いていない。そのノードの Result を下地として通すこと");
+    }
     // 既定値マーカーは種類ごとの既定値を参照する（追加時の初期値と揃える）。
     const compositor::MaterialLayer& defaults = DefaultLayerFor(layer.kind);
     const bool isShape = (layer.kind == compositor::LayerKind::Shape);
