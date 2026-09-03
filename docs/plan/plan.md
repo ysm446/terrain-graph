@@ -1,7 +1,7 @@
 # plan — 実装方針と優先順位
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-03 17:30
+更新日時: 2026-09-04 21:00
 
 進捗管理の入口。実装の詳細な設計は [docs/design/](../design/) に置く。
 
@@ -158,6 +158,9 @@ terrain-editor の売りのノード群。まず CPU 実装をそのまま移植
 
 - Multi-Scale Erosion / Fluvial Erosion / Droplet Erosion / Mask Fluvial。
 - Sediment / Snow / Soil / Crumbling / Rock / Scatter。
+- **River（未着手）** — 川筋から河床を掘り、下流へ単調な水面を張って
+  河原（岩・砂利を置く帯）のマスクを出す。設計案は
+  [reference/river-node.md](../reference/river-node.md)。
 - 評価の非同期化（terrain-editor の「グラフを丸ごとコピーして `std::async`、
   毎フレームポーリング、評価中バッジ」の方式を踏襲）。
 
