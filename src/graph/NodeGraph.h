@@ -259,6 +259,12 @@ private:
     };
     // top から「下地」チェーンを遡ってレイヤー列（下から上）にする共通部。
     CompiledGraph CompileChainFrom(const Node* top, ChainTrace* trace = nullptr) const;
+    // マスクの木を辿って、**レイヤーでもある出どころ**（堆積 / 崩落 / 積雪）を集める。
+    // Mask Levels / Mask Blend の先にいても見つける。この 3 つは
+    // 「そのレイヤーを合成した時点」の作業用テクスチャから焼くので、
+    // チェーンの中で走っていないと結果が残らない。
+    void CollectLayerMaskSources(const Node& maskNode, std::vector<const Node*>& out,
+                                 int depth) const;
     // マスクのノードを op の列へ落とす。返り値は結果の op の添字（-1 は未接続）。
     // 同じノード（かつ同じ Height の起点・同じ出力ピン）は 1 つの op を共有する。
     int EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,

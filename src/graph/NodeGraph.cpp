@@ -459,6 +459,39 @@ const Node* NodeGraph::PreviewTop(GraphId nodeId) const {
             }
         }
     }
+    // **出どころ（堆積 / 崩落 / 積雪）が本流に居ないことがある。**
+    // その Mask は「そのレイヤーを合成した時点」の作業用テクスチャから焼くので、
+    // 本流だけを合成したチェーンでは結果が残らず、繋いでいないのと同じ扱いになる
+    // （Mask Blend だと片側だけが素通りして、合成した絵に見えない）。
+    // 出どころを含むチェーンがあれば、そちらを起点にする。
+    if (node != nullptr && IsMaskNodeKind(node->kind)) {
+        std::vector<const Node*> sources;
+        CollectLayerMaskSources(*node, sources, 0);
+        if (!sources.empty()) {
+            const auto covers = [&](const Node* top) {
+                if (top == nullptr) {
+                    return false;
+                }
+                const std::vector<const Node*> chain = ChainFrom(top);
+                for (const Node* source : sources) {
+                    if (std::find(chain.begin(), chain.end(), source) == chain.end()) {
+                        return false;
+                    }
+                }
+                return true;
+            };
+            // **本流で足りるならそのまま。** 地形を最後まで合成した上に貼れる。
+            if (const Node* top = ChainTop(); covers(top)) {
+                return top;
+            }
+            // 足りなければ、出どころのうち**他を全部含むもの**を起点にする。
+            for (const Node* source : sources) {
+                if (covers(source)) {
+                    return source;
+                }
+            }
+        }
+    }
     return ChainTop();
 }
 
@@ -513,17 +546,24 @@ bool NodeGraph::MaskSourceResolves(const Node& consumer) const {
         return true;  // 繋いでいない。マスクはノード側の設定で決まる。
     }
     // レイヤーでもあるマスクの出どころ（堆積 / 崩落 / 積雪）だけが、居場所に依存する。
-    if (!IsLayerMaskSourceKind(source.node->kind)) {
+    // **Mask Levels / Mask Blend の先にいるものも数える。**
+    std::vector<const Node*> sources;
+    CollectLayerMaskSources(*source.node, sources, 0);
+    if (sources.empty()) {
         return true;
     }
     const std::vector<const Node*> chain = ChainFrom(&consumer);
-    for (const Node* node : chain) {
-        if (node == source.node) {
-            return true;  // チェーンの中にいる。そのまま走る。
+    for (const Node* node : sources) {
+        if (std::find(chain.begin(), chain.end(), node) != chain.end()) {
+            continue;  // チェーンの中にいる。そのまま走る。
+        }
+        // チェーンの外でも、下地が本流と合流していれば差し込める
+        // （Result は繋がなくてよい）。
+        if (FindMaskSpliceIndex(*node, chain) < 0) {
+            return false;
         }
     }
-    // チェーンの外でも、下地が本流と合流していれば差し込める（Result は繋がなくてよい）。
-    return FindMaskSpliceIndex(*source.node, chain) >= 0;
+    return true;
 }
 
 const TerrainScale* NodeGraph::FindChainScale(GraphId nodeId) const {
@@ -592,6 +632,28 @@ const Node* NodeGraph::UpstreamOf(const Node& node, ValueType type, size_t which
         return FindUpstreamNodeForPin(pin.id);
     }
     return nullptr;
+}
+
+// マスクの木を辿って、レイヤーでもある出どころ（堆積 / 崩落 / 積雪）を集める。
+// **出どころ自身はレイヤーなので、そこから先はマスクを遡らない。**
+void NodeGraph::CollectLayerMaskSources(const Node& maskNode, std::vector<const Node*>& out,
+                                        int depth) const {
+    constexpr int kMaxDepth = 32;
+    if (depth > kMaxDepth) {
+        return;
+    }
+    if (IsLayerMaskSourceKind(maskNode.kind)) {
+        if (std::find(out.begin(), out.end(), &maskNode) == out.end()) {
+            out.push_back(&maskNode);
+        }
+        return;
+    }
+    for (size_t which = 0; which < 2; ++which) {
+        const MaskSourceRef input = UpstreamMaskOf(maskNode, which);
+        if (input.node != nullptr) {
+            CollectLayerMaskSources(*input.node, out, depth + 1);
+        }
+    }
 }
 
 // マスクのノードを op の列へ落とす（入力が先、出力が後）。
@@ -809,30 +871,38 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace) co
     // 繋いでいない出力は結果に効かせない、という素直な形になる。
     for (bool inserted = true; inserted;) {
         inserted = false;
-        for (size_t i = 0; i < layerNodes.size(); ++i) {
-            const MaskSourceRef source = UpstreamMaskOf(*layerNodes[i]);
-            if (source.node == nullptr || !IsLayerMaskSourceKind(source.node->kind)) {
+        for (size_t i = 0; i < layerNodes.size() && !inserted; ++i) {
+            const MaskSourceRef mask = UpstreamMaskOf(*layerNodes[i]);
+            if (mask.node == nullptr) {
                 continue;
             }
-            if (std::find(layerNodes.begin(), layerNodes.end(), source.node) !=
-                layerNodes.end()) {
-                continue;  // 既にチェーンの中にいる（Result を繋いでいる）。
+            // **Mask Levels / Mask Blend の先にいる出どころも見つける。**
+            // 直上だけを見ていたので、レベルやブレンドを 1 枚挟むと
+            // 差し込まれずに黙って落ちていた。
+            std::vector<const Node*> sources;
+            CollectLayerMaskSources(*mask.node, sources, 0);
+            for (const Node* sourceNode : sources) {
+                if (std::find(layerNodes.begin(), layerNodes.end(), sourceNode) !=
+                    layerNodes.end()) {
+                    continue;  // 既にチェーンの中にいる（Result を繋いでいる）。
+                }
+                const auto* settings = std::get_if<LayerNodeSettings>(&sourceNode->settings);
+                const int join = FindMaskSpliceIndex(*sourceNode, layerNodes);
+                if (settings == nullptr || join < 0) {
+                    continue;  // 本流と合流しない。差し込めないので、そのまま定数へ落ちる。
+                }
+                const size_t at = static_cast<size_t>(join) + 1;
+                if (at > i) {
+                    continue;  // 使う側より上には差し込めない（循環は接続時に弾いている）。
+                }
+                compositor::MaterialLayer layer = settings->layer;
+                layer.maskOnly = true;
+                compiled.layers.insert(compiled.layers.begin() + static_cast<ptrdiff_t>(at),
+                                       layer);
+                layerNodes.insert(layerNodes.begin() + static_cast<ptrdiff_t>(at), sourceNode);
+                inserted = true;
+                break;
             }
-            const auto* settings = std::get_if<LayerNodeSettings>(&source.node->settings);
-            const int join = FindMaskSpliceIndex(*source.node, layerNodes);
-            if (settings == nullptr || join < 0) {
-                continue;  // 本流と合流しない。差し込めないので、そのまま定数へ落ちる。
-            }
-            const size_t at = static_cast<size_t>(join) + 1;
-            if (at > i) {
-                continue;  // 使う側より上には差し込めない（循環は接続時に弾いている）。
-            }
-            compositor::MaterialLayer layer = settings->layer;
-            layer.maskOnly = true;
-            compiled.layers.insert(compiled.layers.begin() + static_cast<ptrdiff_t>(at), layer);
-            layerNodes.insert(layerNodes.begin() + static_cast<ptrdiff_t>(at), source.node);
-            inserted = true;
-            break;
         }
     }
 

@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-04 17:00
+更新日時: 2026-09-04 19:00
 
 ## 現在の状況
 
@@ -62,6 +62,24 @@ Megascans の ORD（チャンネルパック）と EXR にも対応した。
 UI はグレー基調に整理し、ルールを [design/design-guide.md](../design/design-guide.md) に置いた。
 
 ## 完了済み
+
+- 2026-09-04 19:00 — **堆積 / 崩落 / 積雪の Mask を、Mask Blend / Mask Levels 越しに
+  使えるようにした**（`CollectLayerMaskSources`）。
+  - 症状: sample の「Snow の Mask × Mask Height」を Mask Blend で乗算し、
+    その Mask Blend をプレビューすると **Mask Height 単体とまったく同じ絵**になる。
+  - 原因: この 3 つの Mask は「そのレイヤーを合成した時点」の作業用テクスチャから
+    焼くので、出どころがチェーンの中で走っている必要がある。その出どころを
+    **直上のノードしか見ていなかった**ので、レベルやブレンドを 1 枚挟むと
+    見失って `EmitMaskOps` が -1 を返していた。Mask Blend は片方が未接続だと
+    もう片方を素通りさせるので、**落ちたことに気づけない**。
+  - 直した 3 か所。(1) `CompileChainFrom` の `maskOnly` 差し込み、
+    (2) `MaskSourceResolves`（注意書き）、(3) `PreviewTop`（プレビューの起点）。
+    (3) は「本流が出どころを全部含むならそのまま、足りなければ出どころのうち
+    他を全部含むものを起点にする」の順で選ぶ。
+  - 検証: sample の Mask Blend / Mask Height / Snow の Mask をそれぞれプレビューし、
+    直前は Blend と Mask Height が同一だったのが、直したあとは Blend が
+    **両方が立つ所だけ**（高い所の雪）になることを目視。出力チェーンの絵と
+    ユニットテストに変化がないことも確認した。
 
 - 2026-09-04 17:00 — **terrain-editor の Mask Height ノードを移植した**。
   - `NodeKind::MaskHeight` / `MaskOpKind::Height` / `HeightParams` と、
