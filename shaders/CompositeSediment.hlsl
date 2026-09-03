@@ -58,6 +58,8 @@ float LoadOutgoing(uint2 cell, uint direction)
 }
 
 // 合成の Height を解析用グリッドへ落とし、基盤と土砂に分ける。
+// **落とし方はセルの平均**（CompositeCommon.hlsli の DownsampleHeight）。
+// 間引くと材質スケールの凹凸がエイリアスして、厚みのマスクに細かい模様が乗る。
 [numthreads(8, 8, 1)]
 void CsSetup(uint3 dispatchThreadId : SV_DispatchThreadID)
 {
@@ -69,8 +71,7 @@ void CsSetup(uint3 dispatchThreadId : SV_DispatchThreadID)
     RWTexture2D<float> sediment = ResourceDescriptorHeap[g_sediment.indices0.y];
     RWTexture2D<float> original = ResourceDescriptorHeap[g_sediment.indices0.w];
 
-    const float2 uv = (float2(cell) + 0.5f) / float(SedimentResolution());
-    const float height = source.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
+    const float height = DownsampleHeight(source, cell, SedimentResolution());
 
     // **足し戻すのは差分**なので、始まりの高さを覚えておく。
     original[cell] = height;

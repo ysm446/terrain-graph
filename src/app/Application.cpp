@@ -387,8 +387,10 @@ int Application::Run() {
         m_imgui.EndFrame(commandList);
 
         // UI 込みの書き出しは、バックバッファが描き終わったこのフレームで写す。
+        // **合成の評価は非同期なので、走っている最中は撮らない**（前回の絵が写る）。
+        const bool evaluationIdle = !m_renderer.Evaluator().IsEvaluating();
         const bool captureUi = !m_options.uiScreenshotPath.empty() &&
-                               (m_frameCounter + 1) >= m_options.screenshotFrame;
+                               (m_frameCounter + 1) >= m_options.screenshotFrame && evaluationIdle;
         if (captureUi) {
             m_device.RequestBackBufferCapture(m_options.uiScreenshotPath);
         } else if (m_screenshotPending) {
@@ -407,7 +409,8 @@ int Application::Run() {
         if (captureUi) {
             break;
         }
-        if (!m_options.screenshotPath.empty() && m_frameCounter >= m_options.screenshotFrame) {
+        if (!m_options.screenshotPath.empty() && m_frameCounter >= m_options.screenshotFrame &&
+            evaluationIdle) {
             m_device.WaitForGpu();
             m_renderer.SaveOutputToPng(m_device, m_options.screenshotPath);
             break;
@@ -612,6 +615,11 @@ void Application::DrawStatusBar() {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_CheckMark));
                 ImGui::Text("ペイント中: %s", paintLayer->name.c_str());
                 ImGui::PopStyleColor();
+                ImGui::TextDisabled("|");
+            }
+            // 合成の評価はコンピュートキューで走る。見えている絵が古い間はここで分かる。
+            if (m_renderer.Evaluator().IsEvaluating()) {
+                ImGui::TextDisabled("合成を評価中…");
                 ImGui::TextDisabled("|");
             }
 

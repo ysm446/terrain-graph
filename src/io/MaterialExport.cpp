@@ -10,6 +10,7 @@
 #include <pix3.h>
 
 #include <algorithm>
+#include <cstring>
 #include <vector>
 
 namespace tg::io {
@@ -159,7 +160,7 @@ std::vector<MapRequest> BuildRequests(const ExportSettings& settings) {
     return requests;
 }
 
-// ハイトを EXR で書く。R16_FLOAT をそのまま float へ広げる。
+// ハイトを EXR で書く。R32_FLOAT をそのまま写す。
 bool WriteHeightExr(rhi::Device& device, compositor::MaterialEvaluator& evaluator,
                     const ExportSettings& settings) {
     const uint32_t resolution = evaluator.Resolution();
@@ -171,11 +172,9 @@ bool WriteHeightExr(rhi::Device& device, compositor::MaterialEvaluator& evaluato
         [&](const uint8_t* base, size_t rowPitch, uint32_t rowCount, size_t /*rowBytes*/) {
             const uint32_t rows = std::min(rowCount, resolution);
             for (uint32_t y = 0; y < rows; ++y) {
-                const auto* source = reinterpret_cast<const uint16_t*>(base + y * rowPitch);
+                const auto* source = reinterpret_cast<const float*>(base + y * rowPitch);
                 float* destination = pixels.data() + static_cast<size_t>(y) * resolution;
-                for (uint32_t x = 0; x < resolution; ++x) {
-                    destination[x] = DirectX::PackedVector::XMConvertHalfToFloat(source[x]);
-                }
+                std::memcpy(destination, source, sizeof(float) * resolution);
             }
         });
     if (!read) {

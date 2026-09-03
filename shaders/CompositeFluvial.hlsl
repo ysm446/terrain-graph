@@ -88,8 +88,8 @@ void CsSampleHeight(uint3 dispatchThreadId : SV_DispatchThreadID)
     Texture2D<float> source = ResourceDescriptorHeap[g_fluvial.indices2.x];
     RWTexture2D<float> heights = ResourceDescriptorHeap[g_fluvial.indices0.x];
 
-    const float2 uv = (float2(cell) + 0.5f) / float(FluvialResolution());
-    heights[cell] = source.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
+    // セルの平均で落とす（間引くと材質の凹凸がエイリアスする。堆積と同じ）。
+    heights[cell] = DownsampleHeight(source, cell, FluvialResolution());
 }
 
 // 分離型ガウスのローパス。**流向を読むための解析用ハイトだけ**を平滑化する

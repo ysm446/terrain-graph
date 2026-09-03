@@ -115,8 +115,8 @@ void CsSample(uint3 dispatchThreadId : SV_DispatchThreadID)
     Texture2D<float> source = ResourceDescriptorHeap[g_river.indices4.w];
     RWTexture2D<float> heights = ResourceDescriptorHeap[g_river.indices0.x];
 
-    const float2 uv = (float2(cell) + 0.5f) / float(RiverResolution());
-    heights[cell] = source.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
+    // セルの平均で落とす（間引くと材質の凹凸がエイリアスする。堆積と同じ）。
+    heights[cell] = DownsampleHeight(source, cell, RiverResolution());
 }
 
 float BlurAlongAxis(uint2 cell, int2 step, uint sourceIndex)
@@ -517,9 +517,11 @@ void CsApply(uint3 dispatchThreadId : SV_DispatchThreadID)
 
 // --- 水面の法線 --------------------------------------------------------------------
 //
-// 合成の Height は R16 なので、緩く傾いた水面は約 0.3 m ごとの階段になり、
-// そこから作った法線は縞になる。水面の法線は **R32 の水面高（解析グリッド）**の
-// 勾配から作り直し、水の被覆で混ぜる。Height から作った法線の後に掛けること。
+// 水面の法線は **解析グリッドの水面高（R32、平らな面）**の勾配から作り直し、
+// 水の被覆で混ぜる。Height から作った法線の後に掛けること。
+// 経緯: 合成の Height が R16 だった頃は、緩く傾いた水面が約 0.3 m ごとの階段になり、
+// そこから作った法線が縞になった。Height は R32 になったが、水面は細部を持たない
+// 面なので、水面高から直接作るほうが素直で、島の縁でも余計な傾きが出ない。
 // 勾配のスケールは CompositeBlur.hlsl の CsNormalFromHeight と同じ考え方。
 [numthreads(8, 8, 1)]
 void CsWaterNormal(uint3 dispatchThreadId : SV_DispatchThreadID)

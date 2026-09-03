@@ -18,7 +18,14 @@ using rhi::DispatchCount;
 constexpr DXGI_FORMAT kBaseColorFormat = DXGI_FORMAT_R11G11B10_FLOAT;
 constexpr DXGI_FORMAT kNormalFormat = DXGI_FORMAT_R16G16_FLOAT;
 constexpr DXGI_FORMAT kSurfaceFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
-constexpr DXGI_FORMAT kHeightFormat = DXGI_FORMAT_R16_FLOAT;
+// Height は R32。0〜1 の全幅が標高差なので、R16 では 600 m の地形で 1 ULP が約 0.3 m になり、
+// 合成後の Height から作り直す法線（ブラー / 堆積 / 積雪 / 河川の後）が階段になる。
+constexpr DXGI_FORMAT kHeightFormat = DXGI_FORMAT_R32_FLOAT;
+// マスクは 0〜1 の被覆率なので R16 で足りる（op の結果、水面の被覆 / 水深）。
+constexpr DXGI_FORMAT kMaskFormat = DXGI_FORMAT_R16_FLOAT;
+// 非同期評価の定数の置き場。レイヤーごとにタイル数ぶんの定数と、加工の反復用の
+// 数十本が載る。使い切ったら次の評価で倍に広げる。
+constexpr uint64_t kAsyncUploadBytes = 2ull * 1024 * 1024;
 
 constexpr uint32_t kFlagMaskInvert = 0x1u;
 constexpr uint32_t kFlagBaseLayer = 0x2u;
@@ -242,22 +249,50 @@ bool CreateChannelTexture(rhi::Device& device, uint32_t resolution, DXGI_FORMAT 
     return device.Allocator().CreateTexture2D(desc, outTexture);
 }
 
+bool CreateTextureSet(rhi::Device& device, uint32_t resolution, MaterialTextureSet& set) {
+    return CreateChannelTexture(device, resolution, kBaseColorFormat, L"MaterialBaseColor",
+                                set.baseColor) &&
+           CreateChannelTexture(device, resolution, kNormalFormat, L"MaterialNormal",
+                                set.normal) &&
+           CreateChannelTexture(device, resolution, kSurfaceFormat, L"MaterialSurface",
+                                set.surface) &&
+           CreateChannelTexture(device, resolution, kHeightFormat, L"MaterialHeight",
+                                set.height);
+}
+
+void ReleaseTextureSet(rhi::Device& device, MaterialTextureSet& set) {
+    device.DeferRelease(set.baseColor);
+    device.DeferRelease(set.normal);
+    device.DeferRelease(set.surface);
+    device.DeferRelease(set.height);
+}
+
 }  // namespace
 
-bool MaterialEvaluator::Create(rhi::Device& device, uint32_t resolution) {
+bool MaterialEvaluator::Create(rhi::Device& device, uint32_t resolution, bool asynchronous) {
+    // 走っている評価が前の組を読んでいるかもしれない。作り直す前に必ず待つ。
+    WaitForEvaluation();
     ReleaseTextures(device);
+    m_asyncInFlight = false;
+    m_hasResult = false;
+    m_asynchronous = asynchronous;
 
-    if (!CreateChannelTexture(device, resolution, kBaseColorFormat, L"MaterialBaseColor",
-                              m_textures.baseColor) ||
-        !CreateChannelTexture(device, resolution, kNormalFormat, L"MaterialNormal",
-                              m_textures.normal) ||
-        !CreateChannelTexture(device, resolution, kSurfaceFormat, L"MaterialSurface",
-                              m_textures.surface) ||
-        !CreateChannelTexture(device, resolution, kHeightFormat, L"MaterialHeight",
-                              m_textures.height) ||
+    if (!CreateTextureSet(device, resolution, m_textures) ||
         !CreateChannelTexture(device, resolution, kHeightFormat, L"MaterialScratch",
-                              m_textures.scratch)) {
+                              m_scratch)) {
         return false;
+    }
+    if (asynchronous) {
+        // 表側。描画はこちらを読み、評価は裏側（m_textures）へ書く。
+        if (!CreateTextureSet(device, resolution, m_frontTextures)) {
+            return false;
+        }
+        if (!m_compute.IsValid() &&
+            !m_compute.Create(device, kAsyncUploadBytes, L"MaterialEvaluatorCompute")) {
+            // キューが作れなくても同期で評価はできる。落とさずに続ける。
+            TG_LOG_WARN("合成の評価用のコンピュートキューを作れませんでした。同期で評価します");
+            m_compute.Destroy(device);
+        }
     }
 
     m_resolution = resolution;
@@ -330,7 +365,7 @@ bool MaterialEvaluator::EnsureMaskOpTextures(rhi::Device& device, const MaskProg
             continue;
         }
         device.DeferRelease(m_maskOpTextures[i]);
-        if (!CreateChannelTexture(device, resolution, kHeightFormat, L"MaskOp",
+        if (!CreateChannelTexture(device, resolution, kMaskFormat, L"MaskOp",
                                   m_maskOpTextures[i])) {
             TG_LOG_WARN("マスクの結果テクスチャを作れませんでした（%u^2）", resolution);
             ok = false;
@@ -344,6 +379,11 @@ bool MaterialEvaluator::EnsureMaskOpTextures(rhi::Device& device, const MaskProg
 }
 
 void MaterialEvaluator::Destroy(rhi::Device& device) {
+    // コンピュートキューがまだ作業用テクスチャを読んでいるかもしれない。先に待つ。
+    WaitForEvaluation();
+    m_compute.Destroy(device);
+    m_asyncInFlight = false;
+    m_hasResult = false;
     ReleaseFluvialResources(device);
     device.DeferRelease(m_maskHeightRange);
     ReleaseSedimentResources(device);
@@ -400,20 +440,62 @@ D3D12_GPU_DESCRIPTOR_HANDLE MaterialEvaluator::MaskThumbnailHandle(size_t layerI
 }
 
 void MaterialEvaluator::ReleaseTextures(rhi::Device& device) {
-    device.DeferRelease(m_textures.baseColor);
-    device.DeferRelease(m_textures.normal);
-    device.DeferRelease(m_textures.surface);
-    device.DeferRelease(m_textures.height);
-    device.DeferRelease(m_textures.scratch);
+    ReleaseTextureSet(device, m_textures);
+    ReleaseTextureSet(device, m_frontTextures);
+    device.DeferRelease(m_scratch);
 }
 
 bool MaterialEvaluator::Resize(rhi::Device& device, uint32_t resolution) {
     if (resolution == m_resolution) {
         return true;
     }
-    // 作り直す前に GPU の参照が切れるのを待つ。
+    // 作り直す前に GPU の参照が切れるのを待つ（コンピュートキューの評価も含む）。
     device.WaitForGpu();
-    return Create(device, resolution);
+    return Create(device, resolution, m_asynchronous);
+}
+
+bool MaterialEvaluator::IsEvaluating() const {
+    return m_asyncInFlight && m_compute.IsBusy();
+}
+
+void MaterialEvaluator::WaitForEvaluation() {
+    m_compute.Wait();
+}
+
+rhi::UploadAllocation MaterialEvaluator::AllocateConstants(rhi::Device& device, uint64_t size) {
+    if (m_recordingAsync) {
+        return m_compute.Allocate(size, 256);
+    }
+    return device.Upload().Allocate(size, 256);
+}
+
+std::vector<TileRect> MaterialEvaluator::MakeTiles() const {
+    std::vector<TileRect> tiles;
+    for (uint32_t y = 0; y < m_resolution; y += m_tileSize) {
+        for (uint32_t x = 0; x < m_resolution; x += m_tileSize) {
+            TileRect tile;
+            tile.x = x;
+            tile.y = y;
+            tile.width = std::min(m_tileSize, m_resolution - x);
+            tile.height = std::min(m_tileSize, m_resolution - y);
+            tiles.push_back(tile);
+        }
+    }
+    return tiles;
+}
+
+// メッシュの描画から読めるようにする。Height は頂点 / ドメインシェーダ
+// （ディスプレイスメント）からも読まれるため、NON_PIXEL も含める。
+// 状態の食い違いを避けるため 4 枚とも同じ状態に揃える。
+void MaterialEvaluator::TransitionForDisplay(ID3D12GraphicsCommandList* commandList,
+                                             MaterialTextureSet& set) {
+    constexpr D3D12_RESOURCE_STATES kDisplayReadState =
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE |
+        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    TransitionIfNeeded(commandList, set.baseColor, kDisplayReadState);
+    TransitionIfNeeded(commandList, set.normal, kDisplayReadState);
+    TransitionIfNeeded(commandList, set.surface, kDisplayReadState);
+    TransitionIfNeeded(commandList, set.height, kDisplayReadState);
 }
 // マスクの op を 1 つ焼く。入力（他の op の結果）は既に SRV になっている。
 bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipelineCache,
@@ -561,7 +643,7 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
         default: break;
     }
 
-    const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(MaskOpConstants), 256);
+    const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(MaskOpConstants));
     if (!cb.IsValid()) {
         return false;
     }
@@ -694,7 +776,7 @@ bool MaterialEvaluator::ApplyFluvialMask(rhi::Device& device,
     const auto upload = [&](uint32_t direction, D3D12_GPU_VIRTUAL_ADDRESS& outAddress) {
         FluvialConstants copy = constants;
         copy.indices2[2] = direction;
-        const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(FluvialConstants), 256);
+        const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(FluvialConstants));
         if (!cb.IsValid()) {
             return false;
         }
@@ -851,7 +933,7 @@ void MaterialEvaluator::RebuildNormalsFromHeight(rhi::Device& device,
                                   ? (stack.HeightMeters() / stack.SizeMeters())
                                   : 0.0f;
 
-    const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(BlurConstants), 256);
+    const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(BlurConstants));
     if (!cb.IsValid()) {
         return;
     }
@@ -946,7 +1028,7 @@ bool MaterialEvaluator::ApplySediment(rhi::Device& device, rhi::PipelineCache& p
     const auto upload = [&](float emission, D3D12_GPU_VIRTUAL_ADDRESS& outAddress) {
         SedimentConstants copy = constants;
         copy.params[1] = emission;
-        const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(SedimentConstants), 256);
+        const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(SedimentConstants));
         if (!cb.IsValid()) {
             return false;
         }
@@ -1015,6 +1097,10 @@ bool MaterialEvaluator::ApplySediment(rhi::Device& device, rhi::PipelineCache& p
         TransitionIfNeeded(commandList, m_sediment.original,
                            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     }
+    // 次のレイヤーは Height を UAV として書く。**Mask だけのときも戻す**
+    // （setup が読むために SRV へ遷移させたまま渡すと、GPU ベースバリデーションが
+    // 次の合成パスの UAV 書き込みを「レイアウト不一致」として報告する）。
+    TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
     PIXEndEvent(commandList);
 
@@ -1065,7 +1151,7 @@ bool MaterialEvaluator::ApplySedimentMask(rhi::Device& device,
                               ? (op.sedimentMask.thicknessMeters / heightMeters)
                               : 0.0f;
 
-    const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(SedimentConstants), 256);
+    const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(SedimentConstants));
     if (!cb.IsValid()) {
         return false;
     }
@@ -1239,7 +1325,7 @@ bool MaterialEvaluator::ApplySnow(rhi::Device& device, rhi::PipelineCache& pipel
         copy.params0[1] = emission;
         copy.indices3[0] = stride;
         copy.indices3[1] = smoothDirection;
-        const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(SnowConstants), 256);
+        const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(SnowConstants));
         if (!cb.IsValid()) {
             return false;
         }
@@ -1338,6 +1424,8 @@ bool MaterialEvaluator::ApplySnow(rhi::Device& device, rhi::PipelineCache& pipel
         TransitionIfNeeded(commandList, m_snow.thickness,
                            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     }
+    // 次のレイヤーは Height を UAV として書く。Mask だけのときも戻す（堆積と同じ）。
+    TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
     PIXEndEvent(commandList);
 
@@ -1374,7 +1462,7 @@ bool MaterialEvaluator::ApplySnowMask(rhi::Device& device, rhi::PipelineCache& p
     constants.params1[0] = std::max(0.0f, op.snowMask.thresholdMeters) / heightMeters;
     constants.params1[1] = std::max(0.0f, op.snowMask.featherMeters) / heightMeters;
 
-    const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(SnowConstants), 256);
+    const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(SnowConstants));
     if (!cb.IsValid()) {
         return false;
     }
@@ -1451,9 +1539,9 @@ bool MaterialEvaluator::EnsureRiverResources(rhi::Device& device, uint32_t resol
         grid(DXGI_FORMAT_R32_FLOAT, L"RiverGround", m_river.ground) &&
         grid(DXGI_FORMAT_R32_FLOAT, L"RiverLakeDepth", m_river.lakeDepth) &&
         grid(DXGI_FORMAT_R32_FLOAT, L"RiverHalfWidth", m_river.halfWidth) &&
-        CreateChannelTexture(device, fineResolution, kHeightFormat, L"RiverWaterFine",
+        CreateChannelTexture(device, fineResolution, kMaskFormat, L"RiverWaterFine",
                              m_river.waterFine) &&
-        CreateChannelTexture(device, fineResolution, kHeightFormat, L"RiverDepthFine",
+        CreateChannelTexture(device, fineResolution, kMaskFormat, L"RiverDepthFine",
                              m_river.depthFine);
     if (!ok) {
         TG_LOG_WARN("河川の作業リソースを作れませんでした（%u^2）", resolution);
@@ -1598,7 +1686,7 @@ bool MaterialEvaluator::ApplyRiver(rhi::Device& device, rhi::PipelineCache& pipe
         copy.indices6[1] = jfaStep;
         copy.indices6[3] = jfaRead;
         copy.indices7[2] = writeHeight;
-        const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(RiverConstants), 256);
+        const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(RiverConstants));
         if (!cb.IsValid()) {
             return false;
         }
@@ -1702,8 +1790,8 @@ bool MaterialEvaluator::ApplyRiver(rhi::Device& device, rhi::PipelineCache& pipe
     run(applyPass, DispatchCount(m_resolution));
 
     // 形が変わったので、法線も作り直す。書き戻していないなら形は変わっていない。
-    // 水面の法線だけは R16 の Height ではなく R32 の水面高から作る
-    // （緩い水面は R16 で階段になり、法線が縞になる）。
+    // 水面の法線だけは合成の Height ではなく解析グリッドの水面高（平らな面）から作る
+    // （Height が R16 だった頃は階段で縞になった。R32 になった今も水面高から作るほうが素直）。
     if (!layer.maskOnly) {
         RebuildNormalsFromHeight(device, normalPass, commandList, stack);
         commandList->SetComputeRootConstantBufferView(1, applyConstants);
@@ -1761,7 +1849,7 @@ bool MaterialEvaluator::ApplyRiverMask(rhi::Device& device, rhi::PipelineCache& 
     constants.params4[1] =
         std::max(op.riverMask.mainWidthMeters, op.riverMask.minWidthMeters) * 0.5f;
 
-    const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(RiverConstants), 256);
+    const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(RiverConstants));
     if (!cb.IsValid()) {
         return false;
     }
@@ -1855,7 +1943,7 @@ bool MaterialEvaluator::ApplyCrumbling(rhi::Device& device, rhi::PipelineCache& 
     constants.params1[3] = heightMeters;
     constants.params2[0] = amount;
 
-    const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(CrumblingConstants), 256);
+    const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(CrumblingConstants));
     if (!cb.IsValid()) {
         return false;
     }
@@ -1892,6 +1980,8 @@ bool MaterialEvaluator::ApplyCrumbling(rhi::Device& device, rhi::PipelineCache& 
             barrier();
         }
     }
+    // 次のレイヤーは Height を UAV として書く。Mask だけのときも戻す（堆積と同じ）。
+    TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     PIXEndEvent(commandList);
 
     // 形が変わったので、法線も作り直す。足し戻していないなら形は変わっていない。
@@ -1921,7 +2011,7 @@ bool MaterialEvaluator::ApplyCrumblingMask(rhi::Device& device,
     constants.indices2[0] = target.UavIndex();
     constants.indices2[1] = (op.crumblingMask.channel == 0u) ? 0u : 1u;
 
-    const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(CrumblingConstants), 256);
+    const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(CrumblingConstants));
     if (!cb.IsValid()) {
         return false;
     }
@@ -1989,7 +2079,7 @@ bool MaterialEvaluator::ApplyHeightBlur(rhi::Device& device,
             constants.strength = passStrength;
             constants.heightPerSize = heightPerSize;
 
-            const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(BlurConstants), 256);
+            const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(BlurConstants));
             if (!cb.IsValid()) {
                 complete = false;
                 break;
@@ -2005,17 +2095,17 @@ bool MaterialEvaluator::ApplyHeightBlur(rhi::Device& device,
         // 水平: Height（読み取り）→ 作業用。中間結果なので混ぜない。
         TransitionIfNeeded(commandList, m_textures.height,
                            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-        TransitionIfNeeded(commandList, m_textures.scratch,
+        TransitionIfNeeded(commandList, m_scratch,
                            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        dispatchPass(blurPipeline, m_textures.height.SrvIndex(), m_textures.scratch.UavIndex(),
+        dispatchPass(blurPipeline, m_textures.height.SrvIndex(), m_scratch.UavIndex(),
                      0u, 1.0f);
 
         // 垂直: 作業用（読み取り）→ Height。ここで元の高さと強さで混ぜる。
-        TransitionIfNeeded(commandList, m_textures.scratch,
+        TransitionIfNeeded(commandList, m_scratch,
                            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         TransitionIfNeeded(commandList, m_textures.height,
                            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        dispatchPass(blurPipeline, m_textures.scratch.SrvIndex(), m_textures.height.UavIndex(),
+        dispatchPass(blurPipeline, m_scratch.SrvIndex(), m_textures.height.UavIndex(),
                      1u, strength);
     }
 
@@ -2242,14 +2332,14 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             // Height を読み取り専用にしてからマスクを計算する。
             TransitionIfNeeded(commandList, m_textures.height,
                                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-            TransitionIfNeeded(commandList, m_textures.scratch,
+            TransitionIfNeeded(commandList, m_scratch,
                                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
             commandList->SetPipelineState(maskPipeline);
             for (const TileRect& tile : tiles) {
                 MaskConstants constants = {};
                 constants.heightIndex = m_textures.height.SrvIndex();
-                constants.outputIndex = m_textures.scratch.UavIndex();
+                constants.outputIndex = m_scratch.UavIndex();
                 constants.source = static_cast<uint32_t>(layer.mask.source);
                 constants.derivedScale = layer.mask.derivedScale;
                 constants.tile[0] = tile.x;
@@ -2260,7 +2350,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 constants.resolution[1] = m_resolution;
 
                 const rhi::UploadAllocation cb =
-                    device.Upload().Allocate(sizeof(MaskConstants), 256);
+                    AllocateConstants(device, sizeof(MaskConstants));
                 if (!cb.IsValid()) {
                     complete = false;
                     break;
@@ -2272,7 +2362,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             }
 
             // マスクを読み取りに、Height を書き込みに戻す。
-            TransitionIfNeeded(commandList, m_textures.scratch,
+            TransitionIfNeeded(commandList, m_scratch,
                                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             TransitionIfNeeded(commandList, m_textures.height,
                                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -2402,7 +2492,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             constants.textureIndices1[3] =
                 m_maskOpTextures[static_cast<size_t>(layer.mask.maskOp)].SrvIndex();
         } else if (useDerivedMask) {
-            constants.textureIndices1[3] = m_textures.scratch.SrvIndex();
+            constants.textureIndices1[3] = m_scratch.SrvIndex();
         }
 
         // derivedScale は CompositeMask 側で適用済み。二重適用しないため渡さない。
@@ -2427,7 +2517,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 tileConstants.tile[3] = tile.height;
 
                 const rhi::UploadAllocation cb =
-                    device.Upload().Allocate(sizeof(LayerConstants), 256);
+                    AllocateConstants(device, sizeof(LayerConstants));
                 if (!cb.IsValid()) {
                     complete = false;
                     break;
@@ -2465,7 +2555,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             thumbnailConstants.tile[3] = kMaskThumbnailSize;
 
             const rhi::UploadAllocation cb =
-                device.Upload().Allocate(sizeof(LayerConstants), 256);
+                AllocateConstants(device, sizeof(LayerConstants));
             if (!cb.IsValid()) {
                 complete = false;
             } else {
@@ -2482,54 +2572,133 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         runMaskOps(static_cast<int>(layerIndex));
     }
 
-    // メッシュの描画から読めるようにする。Height は頂点 / ドメインシェーダ
-    // （ディスプレイスメント）からも読まれるため、NON_PIXEL も含める。
-    // 状態の食い違いを避けるため 4 枚とも同じ状態に揃える。
+    // 読み取りへ。**ここでは NON_PIXEL までしか遷移させない。** コンピュートキューでは
+    // PIXEL_SHADER_RESOURCE を含む遷移を記録できないため、描画から読める状態への
+    // 遷移はグラフィックス側（TransitionForDisplay）で行う。書き出しはコンピュートと
+    // コピーで読むだけなので、この状態で足りる。
     constexpr D3D12_RESOURCE_STATES kOutputReadState =
-        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE |
         D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
     TransitionIfNeeded(commandList, m_textures.baseColor, kOutputReadState);
     TransitionIfNeeded(commandList, m_textures.normal, kOutputReadState);
     TransitionIfNeeded(commandList, m_textures.surface, kOutputReadState);
     TransitionIfNeeded(commandList, m_textures.height, kOutputReadState);
 
-    // サムネイルは ImGui が SRV として読む。
+    // サムネイルも同じ理由で NON_PIXEL まで。ImGui（ピクセルシェーダ）から読むなら
+    // グラフィックス側で PIXEL へ遷移させること（いまは読み手が無い）。
     for (rhi::GpuTexture& thumbnail : m_maskThumbnails) {
-        TransitionIfNeeded(commandList, thumbnail, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        TransitionIfNeeded(commandList, thumbnail, kOutputReadState);
     }
 
     PIXEndEvent(commandList);
     return complete;
 }
 
-void MaterialEvaluator::EvaluateIfDirty(rhi::Device& device, rhi::PipelineCache& pipelineCache,
-                                        ID3D12GraphicsCommandList* commandList,
-                                        const MaterialStack& stack,
-                                        const TextureLibrary& textures,
-                                        const MaterialLibrary& materials,
-                                        const PaintMaskStore& paintMasks) {
-    if (m_evaluatedRevision == stack.Revision()) {
+// 毎フレームの駆動。
+//
+//   1. 終わった評価があれば回収する（裏側を表側へ入れ替え、描画で読める状態へ）。
+//   2. スタックが変わっていて、評価が走っていなければ次を投入する。
+//
+// 走っている最中に何度編集されても、投入は 1 本ずつ。終わった時点で最新の版を
+// 評価し直すので、途中の版は飛ばされる（GPU の仕事は途中で止められない）。
+void MaterialEvaluator::Update(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                               ID3D12GraphicsCommandList* commandList,
+                               const MaterialStack& stack, const TextureLibrary& textures,
+                               const MaterialLibrary& materials,
+                               const PaintMaskStore& paintMasks) {
+    if (!m_textures.IsValid()) {
         return;
     }
 
-    std::vector<TileRect> tiles;
-    for (uint32_t y = 0; y < m_resolution; y += m_tileSize) {
-        for (uint32_t x = 0; x < m_resolution; x += m_tileSize) {
-            TileRect tile;
-            tile.x = x;
-            tile.y = y;
-            tile.width = std::min(m_tileSize, m_resolution - x);
-            tile.height = std::min(m_tileSize, m_resolution - y);
-            tiles.push_back(tile);
+    // --- 回収 -----------------------------------------------------------------
+    if (m_asyncInFlight && !m_compute.IsBusy()) {
+        m_asyncInFlight = false;
+        // 裏側に新しい結果が入った。表側と入れ替える。古い表側は次の評価先になる。
+        // まだ描画中のフレームが古い表側を読んでいるかもしれないが、次の評価は
+        // 投入時のフレームを GPU 側で待ってから走るので、書き込みが追い越すことはない。
+        std::swap(m_textures, m_frontTextures);
+        m_evaluatedRevision = m_asyncRevision;
+        m_hasResult = true;
+        TransitionForDisplay(commandList, m_frontTextures);
+    }
+
+    if (m_evaluatedRevision == stack.Revision() || m_asyncInFlight) {
+        return;
+    }
+
+    const std::vector<TileRect> tiles = MakeTiles();
+    const bool canRunAsync = m_asynchronous && m_compute.IsValid() && m_frontTextures.IsValid();
+
+    // --- 同期評価 ---------------------------------------------------------------
+    // 結果がまだ 1 つも無いとき（起動直後、解像度変更の直後）はその場で評価する。
+    // 前回の絵を出しておけないので、非同期にすると最初のフレームがゴミになる。
+    // キューが作れなかったときもここ（従来どおりフレームの中で評価する）。
+    if (!canRunAsync || !m_hasResult) {
+        // 途中で定数バッファが確保できなかった場合などは「評価済み」にせず、
+        // 次のフレームで評価し直す（タイルの継ぎ目が残ったまま確定するのを防ぐ）。
+        if (Evaluate(device, pipelineCache, commandList, stack, textures, materials, paintMasks,
+                     tiles)) {
+            m_evaluatedRevision = stack.Revision();
+            if (m_frontTextures.IsValid()) {
+                std::swap(m_textures, m_frontTextures);
+            }
+            m_hasResult = true;
+            TransitionForDisplay(commandList, m_frontTextures.IsValid() ? m_frontTextures
+                                                                        : m_textures);
+        }
+        return;
+    }
+
+    // --- 非同期評価 -------------------------------------------------------------
+    // 前回の記録で定数の置き場を使い切っていたら、倍に広げてから記録する。
+    if (m_compute.UploadExhausted()) {
+        const uint64_t bytes = m_compute.UploadBytes() * 2;
+        TG_LOG_INFO("合成の評価の定数の置き場を %llu KB へ広げます",
+                    static_cast<unsigned long long>(bytes / 1024));
+        m_compute.Destroy(device);
+        if (!m_compute.Create(device, bytes, L"MaterialEvaluatorCompute")) {
+            m_compute.Destroy(device);
+            return;
         }
     }
 
-    // 途中で定数バッファが確保できなかった場合などは「評価済み」にせず、
-    // 次のフレームで評価し直す（タイルの継ぎ目が残ったまま確定するのを防ぐ）。
-    if (Evaluate(device, pipelineCache, commandList, stack, textures, materials, paintMasks,
-                 tiles)) {
-        m_evaluatedRevision = stack.Revision();
+    // 評価先（裏側）は前回まで描画が読んでいた組。PIXEL を含む状態からの遷移は
+    // コンピュートキューでは記録できないので、**このフレームのリストで** UAV へ戻す。
+    // キューはこのフレームの完了を待ってから走るので、順序は保たれる。
+    TransitionIfNeeded(commandList, m_textures.baseColor, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, m_textures.normal, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, m_textures.surface, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+    ID3D12GraphicsCommandList* computeList = m_compute.Begin(device);
+    if (computeList == nullptr) {
+        return;
     }
+
+    // 記録が途中で失敗したら投入しない。焼いたことにしたマスクの op は実際には
+    // 走らないので、ハッシュを記録前の値へ戻す（戻さないと次回スキップされる）。
+    const std::vector<uint64_t> savedMaskOpHashes = m_maskOpHashes;
+    m_recordingAsync = true;
+    const bool recorded = Evaluate(device, pipelineCache, computeList, stack, textures,
+                                   materials, paintMasks, tiles);
+    m_recordingAsync = false;
+    if (!recorded) {
+        m_compute.Abort();
+        if (m_maskOpHashes.size() == savedMaskOpHashes.size()) {
+            m_maskOpHashes = savedMaskOpHashes;
+        } else {
+            std::fill(m_maskOpHashes.begin(), m_maskOpHashes.end(), 0ull);
+        }
+        return;
+    }
+    if (!m_compute.Submit(device)) {
+        std::fill(m_maskOpHashes.begin(), m_maskOpHashes.end(), 0ull);
+        return;
+    }
+    // 評価が参照しているテクスチャ（素材、ペイント、作業用）を、評価が終わる前に
+    // 解放しないよう Device に知らせる。
+    device.SetAuxiliaryFence(m_compute.Fence(), m_compute.SubmittedValue());
+    m_asyncInFlight = true;
+    m_asyncRevision = stack.Revision();
 }
 
 }  // namespace tg::compositor

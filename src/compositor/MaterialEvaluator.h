@@ -6,6 +6,7 @@
 #include "compositor/TextureLibrary.h"
 
 #include <vector>
+#include "rhi/ComputeQueue.h"
 #include "rhi/Device.h"
 #include "rhi/PipelineCache.h"
 
@@ -16,10 +17,9 @@ struct MaterialTextureSet {
     rhi::GpuTexture baseColor;  // R11G11B10_FLOAT
     rhi::GpuTexture normal;     // R16G16_FLOAT（xy のみ、z は再構成）
     rhi::GpuTexture surface;    // R8G8B8A8_UNORM（R=Roughness, G=Metallic, B=AO）
-    rhi::GpuTexture height;     // R16_FLOAT
-    // 近傍を読むパスの作業用。マスク生成（合成パスがここを読む）と、
-    // ブラーの水平パスが使う。どちらも Height と同じ形式。
-    rhi::GpuTexture scratch;  // R16_FLOAT
+    // R32_FLOAT。R16 だと 0〜1 の全幅が標高差なので、600 m の地形で 1 ULP が約 0.3 m。
+    // ブラー / 堆積の後にここから作り直す法線が階段になるため 32bit にした。
+    rhi::GpuTexture height;
 
     bool IsValid() const { return baseColor.IsValid(); }
 };
@@ -124,9 +124,16 @@ struct TileRect {
 // 評価は「出力タイル矩形と解像度」を引数に取る形で固定する。
 // 編集中はプレビュー解像度で全体を 1 パス、エクスポート時はフル解像度を
 // タイル分割して順に評価する、という二段構えを最初から通すため。
+//
+// **プレビューの評価は非同期。** `asynchronous` で作ると出力を 2 組持ち、
+// 評価は専用のコンピュートキュー（`rhi::ComputeQueue`）へ流す。描画は前回の結果
+// （表側）を読み続け、終わった時点で裏側と入れ替える（`Update`）。
+// 河川のように数千回ディスパッチする加工でも UI が止まらない。
+// 書き出し用は同期（`Evaluate` を直接呼び、1 組だけ持つ）。
 class MaterialEvaluator {
 public:
-    bool Create(rhi::Device& device, uint32_t resolution);
+    // asynchronous: 出力を 2 組持ち、評価をコンピュートキューへ流す（プレビュー用）。
+    bool Create(rhi::Device& device, uint32_t resolution, bool asynchronous = false);
     void Destroy(rhi::Device& device);
 
     bool Resize(rhi::Device& device, uint32_t resolution);
@@ -143,23 +150,37 @@ public:
                   const TextureLibrary& textures, const MaterialLibrary& materials,
                   const PaintMaskStore& paintMasks, const std::vector<TileRect>& tiles);
 
-    // スタックに変更があったときだけ全体を評価し直す。
-    // 全体はタイルに分割して評価する。エクスポート時と同じ経路を常に通しておくことで、
-    // タイル評価が壊れたままになるのを防ぐ。
-    void EvaluateIfDirty(rhi::Device& device, rhi::PipelineCache& pipelineCache,
-                         ID3D12GraphicsCommandList* commandList, const MaterialStack& stack,
-                         const TextureLibrary& textures, const MaterialLibrary& materials,
-                         const PaintMaskStore& paintMasks);
+    // 毎フレーム呼ぶ。スタックに変更があれば評価を投入し、終わった評価があれば
+    // 結果を表側へ入れ替える。全体はタイルに分割して評価する。エクスポート時と
+    // 同じ経路を常に通しておくことで、タイル評価が壊れたままになるのを防ぐ。
+    //
+    // 非同期で作ってあれば評価はコンピュートキューへ流し、commandList には
+    // 引き渡しの状態遷移だけを記録する。まだ結果が 1 つも無いとき（起動直後や
+    // 解像度変更の直後）だけは、その場で同期評価して最初のフレームから絵を出す。
+    void Update(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                ID3D12GraphicsCommandList* commandList, const MaterialStack& stack,
+                const TextureLibrary& textures, const MaterialLibrary& materials,
+                const PaintMaskStore& paintMasks);
+
+    // 非同期の評価が走っている最中か（UI の「評価中」表示と、開発用の撮影の待ちに使う）。
+    bool IsEvaluating() const;
+    // 走っている評価の完了を CPU で待つ。
+    void WaitForEvaluation();
 
     uint32_t TileSize() const { return m_tileSize; }
 
     void SetTileSize(uint32_t tileSize) { m_tileSize = (tileSize > 0) ? tileSize : 1; }
     uint32_t EvaluatedTileCount() const { return m_evaluatedTileCount; }
 
-    const MaterialTextureSet& Textures() const { return m_textures; }
+    // 描画が読む結果。非同期なら表側（評価済みで入れ替えたもの）、同期なら評価先そのもの。
+    const MaterialTextureSet& Textures() const {
+        return m_frontTextures.IsValid() ? m_frontTextures : m_textures;
+    }
     // 読み戻しのように、状態遷移を伴う操作から触るためのもの。
     // GpuTexture は自分の状態を持つので、遷移させる側は非 const 参照が要る。
-    MaterialTextureSet& TexturesMutable() { return m_textures; }
+    MaterialTextureSet& TexturesMutable() {
+        return m_frontTextures.IsValid() ? m_frontTextures : m_textures;
+    }
     uint32_t Resolution() const { return m_resolution; }
     uint32_t EvaluatedLayerCount() const { return m_evaluatedLayerCount; }
 
@@ -277,13 +298,41 @@ private:
     // レイヤー枚数ぶんのマスクサムネイルを用意する。増減した枚数だけ作る / 捨てる。
     void EnsureMaskThumbnails(rhi::Device& device, size_t layerCount);
 
+    // 定数バッファの置き場。コンピュートキューへ記録している間はそのキューの
+    // 置き場から、それ以外（同期評価 / 書き出し）はフレームのアップロードリングから取る。
+    // **評価器の中で device.Upload() を直接呼ばない**（キューの仕事はフレームより長生きする）。
+    rhi::UploadAllocation AllocateConstants(rhi::Device& device, uint64_t size);
+    // 全体をタイルに分ける。
+    std::vector<TileRect> MakeTiles() const;
+    // 描画（頂点 / ドメイン / ピクセル）から読める状態へ。**グラフィックスキューでだけ**
+    // 記録できる（PIXEL_SHADER_RESOURCE はコンピュートキューでは使えない）。
+    void TransitionForDisplay(ID3D12GraphicsCommandList* commandList, MaterialTextureSet& set);
+
+    // 評価先。非同期のときは裏側で、終わったら m_frontTextures と入れ替わる。
     MaterialTextureSet m_textures;
+    // 描画が読む表側。同期（書き出し用）のときは持たない。
+    MaterialTextureSet m_frontTextures;
+    // 近傍を読むパスの作業用。マスク生成（合成パスがここを読む）と、
+    // ブラーの水平パスが使う。Height と同じ形式。評価先と一緒に使うので 1 枚でよい。
+    rhi::GpuTexture m_scratch;
     std::vector<rhi::GpuTexture> m_maskThumbnails;
     uint32_t m_resolution = 0;
     uint64_t m_evaluatedRevision = 0;
     uint32_t m_evaluatedLayerCount = 0;
     uint32_t m_evaluatedTileCount = 0;
     uint32_t m_tileSize = 512;
+
+    // --- 非同期評価 ---------------------------------------------------------
+    rhi::ComputeQueue m_compute;
+    bool m_asynchronous = false;
+    // いまコンピュートキューへ記録している最中か（AllocateConstants の振り分け）。
+    bool m_recordingAsync = false;
+    // 投入済みで、まだ結果を回収していない評価があるか。
+    bool m_asyncInFlight = false;
+    // 投入した評価が対応するスタックの版。回収時に m_evaluatedRevision へ写す。
+    uint64_t m_asyncRevision = 0;
+    // 表側に描ける結果があるか。無いうちは同期で評価する。
+    bool m_hasResult = false;
 };
 
 }  // namespace tg::compositor

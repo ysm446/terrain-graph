@@ -1,7 +1,7 @@
 # rhi — DirectX 12 ラッパの設計
 
 作成日時: 2026-08-31 12:09
-更新日時: 2026-08-31 12:09
+更新日時: 2026-09-04 02:10
 
 `src/rhi/` の設計方針。実装は M1 で確定した。
 
@@ -51,6 +51,24 @@ RWTexture2D<float4> output = ResourceDescriptorHeap[g_layer.outputIndices.x];
   フレーム完了後に `DeletionQueue` が解放する。直接 `Reset` しない。
 - 定数バッファなどの一時データは `UploadRing` から確保する。
   フレームごとに巻き戻る線形アロケータで、既定は 16 MB/フレーム。
+
+## フレームの外で走る仕事（`ComputeQueue`）
+
+`rhi::ComputeQueue` は専用のコンピュートキュー + アロケータ + コマンドリスト + フェンス +
+定数用の線形バッファの組。合成の評価（`MaterialEvaluator`）がプレビュー用に 1 つ持つ。
+
+- `Begin` → 記録 → `Submit`。`Submit` はグラフィックスキューの**いま記録中のフレーム**
+  （`Device::NextFenceValue`）の完了を `Wait` してから実行する。そのフレームで
+  遷移させたリソースを、その状態で受け取るため。
+- **定数はフレームのアップロードリングから取らない。** リングはフレームの完了で
+  巻き戻るが、キューの仕事はそのあとも走っている。`ComputeQueue::Allocate` を使う。
+- **`PIXEL_SHADER_RESOURCE` を含む遷移は記録できない**（コンピュートリストの制限）。
+  描画で読む状態への遷移はグラフィックス側で行う。
+- **解放の安全は補助フェンスで守る。** 投入のたびに `Device::SetAuxiliaryFence` へ
+  完了値を渡す。以降 `DeferRelease` で積んだものは、フレームのフェンスに加えて
+  その完了も待ってから解放される（`DeletionQueue` のエントリが条件を持つ）。
+  `WaitForGpu` もこれを含めて待つので、PSO の作り直しやリサイズは従来どおりの手順でよい。
+- 同時に走らせられる仕事は 1 本。走っている間の `Begin` は nullptr を返す。
 
 ## 初期化時の一発実行
 

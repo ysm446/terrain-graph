@@ -7,7 +7,9 @@
 //   BaseColor : R11G11B10_FLOAT   リニア色
 //   Normal    : R16G16_FLOAT      タンジェント空間法線の xy（z は再構成）
 //   Surface   : R8G8B8A8_UNORM    R=Roughness, G=Metallic, B=AO
-//   Height    : R16_FLOAT         高さ（合成の駆動値かつ Displacement）
+//   Height    : R32_FLOAT         高さ（合成の駆動値かつ Displacement）
+//                                 R16 だと標高差 600 m で 1 ULP が約 0.3 m になり、
+//                                 合成後の Height から作る法線が階段になる
 
 // 「テクスチャなし」を表す SRV インデックス。C++ 側の kInvalidTextureIndex と揃える。
 static const uint kInvalidTextureIndex = 0xFFFFFFFFu;
@@ -113,6 +115,46 @@ float ApplyMaskLevels(float value, float low, float high, bool invert)
     const float range = max(high - low, 1e-4f);
     float result = saturate((value - low) / range);
     return invert ? (1.0f - result) : result;
+}
+
+// 合成の Height（正方形）を、解析グリッド（gridResolution^2）の 1 セルへ落とす。
+//
+// **セルが覆う矩形の平均を取る**（中心 1 点の間引きではない）。合成の Height には
+// 材質スケールの凹凸（下地サーフェスのハイトマップ）が入っていて、間引くと
+// それが粗いグリッドへエイリアスして、堆積 / 積雪 / 川筋のマスクに
+// 「見えているハイトと一致しない細かい模様」として出る。
+// グリッドのほうが細かい（平均する相手が無い）ときは線形補間で拾う。
+// 矩形の中心は (cell + 0.5) × 比 で、間引いていた頃のサンプル位置と同じ。
+float DownsampleHeight(Texture2D<float> source, uint2 cell, uint gridResolution)
+{
+    uint sourceWidth = 0u;
+    uint sourceHeight = 0u;
+    source.GetDimensions(sourceWidth, sourceHeight);
+
+    if (gridResolution >= sourceWidth)
+    {
+        const float2 uv = (float2(cell) + 0.5f) / float(gridResolution);
+        return source.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
+    }
+
+    const float ratio = float(sourceWidth) / float(gridResolution);
+    const int2 begin = int2(floor(float2(cell) * ratio));
+    int2 end = int2(floor(float2(cell + 1u) * ratio));
+    end = max(end, begin + int2(1, 1));
+    end = min(end, int2(sourceWidth, sourceHeight));
+
+    float sum = 0.0f;
+    [loop]
+    for (int y = begin.y; y < end.y; ++y)
+    {
+        [loop]
+        for (int x = begin.x; x < end.x; ++x)
+        {
+            sum += source.Load(int3(x, y, 0));
+        }
+    }
+    const int2 extent = end - begin;
+    return sum / float(max(extent.x * extent.y, 1));
 }
 
 #endif  // TG_COMPOSITE_COMMON_HLSLI

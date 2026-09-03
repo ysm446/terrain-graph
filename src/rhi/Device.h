@@ -40,7 +40,18 @@ public:
     bool ExecuteImmediate(const std::function<void(ID3D12GraphicsCommandList*)>& record);
 
     // GPU の完了を待つ。リソース破棄やリサイズの前に必ず呼ぶ。
+    // 補助フェンス（`SetAuxiliaryFence`）が登録されていれば、その仕事の完了も待つ。
     void WaitForGpu();
+
+    // フレームの外で走る仕事（合成の評価を流すコンピュートキュー）の完了条件を登録する。
+    // 以降の DeferRelease はこの完了も待ち、WaitForGpu もこれを含めて待つ。
+    // 仕事を投入するたびに、その完了値で呼び直すこと。
+    void SetAuxiliaryFence(ID3D12Fence* fence, uint64_t value);
+
+    // フレームのフェンスと、いま記録中のフレームが EndFrame で立てる値。
+    // 別のキューが「このフレームまで流し終えたら」と待つのに使う。
+    ID3D12Fence* FrameFence() const { return m_fence.Get(); }
+    uint64_t NextFenceValue() const { return m_nextFenceValue; }
     // デバッグレイヤーが溜めたメッセージをアプリのログへ流す。
     //
     // **これが無いと、検証エラーはデバッガを繋がない限り誰の目にも触れない。**
@@ -122,6 +133,9 @@ private:
 
     ComPtr<ID3D12Fence> m_fence;
     HANDLE m_fenceEvent = nullptr;
+    // 補助フェンス。フレームの外で走る仕事の完了条件（WaitForGpu が併せて待つ）。
+    ComPtr<ID3D12Fence> m_auxiliaryFence;
+    uint64_t m_auxiliaryFenceValue = 0;
     // 次に Signal する値。0 は「まだ一度も投入していない」を表すため 1 から始める。
     uint64_t m_nextFenceValue = 1;
     // 各フレームスロットが最後に投入した Signal 値。0 なら未使用。

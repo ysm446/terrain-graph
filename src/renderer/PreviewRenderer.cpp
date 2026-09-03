@@ -220,7 +220,8 @@ bool PreviewRenderer::Initialize(rhi::Device& device, rhi::PipelineCache& pipeli
     if (!m_environment.Initialize(device, pipelineCache)) {
         return false;
     }
-    if (!m_evaluator.Create(device, m_materialResolution)) {
+    // プレビューの評価は非同期（出力 2 組 + コンピュートキュー）。重い加工でも UI が止まらない。
+    if (!m_evaluator.Create(device, m_materialResolution, /*asynchronous=*/true)) {
         return false;
     }
 
@@ -598,9 +599,10 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     // パスを増やしたときに数え漏らしても、増やした本人が気づきやすい。
     m_stats = RenderStats{};
 
-    // レイヤースタックに変更があれば、メッシュを描く前に評価し直す。
-    m_evaluator.EvaluateIfDirty(device, pipelineCache, commandList, stack, textures, materials,
-                                paintMasks);
+    // レイヤースタックに変更があれば評価を投入し、終わった評価があれば結果を受け取る。
+    // 評価はコンピュートキューで走るので、このフレームは前回の結果を描く。
+    m_evaluator.Update(device, pipelineCache, commandList, stack, textures, materials,
+                       paintMasks);
 
     rhi::GraphicsPipelineDesc meshPipelineDesc;
     meshPipelineDesc.shaderPath = L"MeshPbr.hlsl";

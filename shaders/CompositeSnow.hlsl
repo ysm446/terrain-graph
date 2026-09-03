@@ -91,6 +91,7 @@ float SnowCoverage(float snow)
 
 // 合成の Height を解析用グリッドへ落とす。雪は下地を削らないので、
 // これがそのまま「基盤」になる（堆積のように元の高さを別に持たなくてよい）。
+// 落とし方は堆積と同じくセルの平均（間引くと材質の凹凸がエイリアスする）。
 [numthreads(8, 8, 1)]
 void CsSetup(uint3 dispatchThreadId : SV_DispatchThreadID)
 {
@@ -101,8 +102,7 @@ void CsSetup(uint3 dispatchThreadId : SV_DispatchThreadID)
     RWTexture2D<float> baseHeight = ResourceDescriptorHeap[g_snow.indices0.x];
     RWTexture2D<float> thickness = ResourceDescriptorHeap[g_snow.indices0.y];
 
-    const float2 uv = (float2(cell) + 0.5f) / float(SnowResolution());
-    baseHeight[cell] = source.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
+    baseHeight[cell] = DownsampleHeight(source, cell, SnowResolution());
     thickness[cell] = 0.0f;
 }
 

@@ -134,6 +134,8 @@ set(tg_sources
     src/io/RecentFiles.h
     src/rhi/Common.cpp
     src/rhi/Common.h
+    src/rhi/ComputeQueue.cpp
+    src/rhi/ComputeQueue.h
     src/rhi/DeletionQueue.cpp
     src/rhi/DeletionQueue.h
     src/rhi/DescriptorHeap.cpp

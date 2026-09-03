@@ -72,6 +72,12 @@ void Device::Defer(ComPtr<IUnknown> object) {
     m_deletionQueue.Push(std::move(object), m_nextFenceValue);
 }
 
+void Device::SetAuxiliaryFence(ID3D12Fence* fence, uint64_t value) {
+    m_auxiliaryFence = fence;
+    m_auxiliaryFenceValue = value;
+    m_deletionQueue.SetAuxiliaryFence(m_auxiliaryFence, value);
+}
+
 void Device::RequestBackBufferCapture(const std::filesystem::path& path,
                                       CaptureCallback onComplete) {
     m_capturePath = path;
@@ -626,6 +632,15 @@ void Device::WaitForGpu() {
         ::WaitForSingleObjectEx(m_fenceEvent, INFINITE, FALSE);
     }
 
+    // 補助フェンスの仕事（別キューの合成の評価）も終わるまで待つ。
+    // 「GPU が止まった」と信じて消す側は、そちらが参照中かどうかを知らない。
+    if (m_auxiliaryFence && m_auxiliaryFence->GetCompletedValue() < m_auxiliaryFenceValue) {
+        if (TG_CHECK_HR(m_auxiliaryFence->SetEventOnCompletion(m_auxiliaryFenceValue,
+                                                                m_fenceEvent))) {
+            ::WaitForSingleObjectEx(m_fenceEvent, INFINITE, FALSE);
+        }
+    }
+
     // ここまでで全スロットの処理は完了している。
     for (auto& fenceValue : m_fenceValues) {
         fenceValue = 0;
@@ -649,6 +664,9 @@ void Device::Shutdown() {
     m_captureCallback = {};
 
     m_deletionQueue.Flush();
+    m_deletionQueue.SetAuxiliaryFence(nullptr, 0);
+    m_auxiliaryFence.Reset();
+    m_auxiliaryFenceValue = 0;
     m_uploadRing.Destroy();
     ReleaseBackBuffers();
     m_rtvHeap.Destroy();
