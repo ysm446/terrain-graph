@@ -258,12 +258,15 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                 "流量に対する幅の指数。0.5 が水理幾何の標準、0 で一定幅", "%.2f");
             changed |= ui::PropertyFloat(
                 "河床の深さ", &layer.river.bedDepthMeters, 0.0f, 50.0f,
-                riverDefaults.bedDepthMeters, "水面から河床まで", "%.2f m",
+                riverDefaults.bedDepthMeters,
+                "川の中心での水面から河床までの深さ。水際へ向けて U 字に浅くなる", "%.2f m",
                 ImGuiSliderFlags_Logarithmic);
             changed |= ui::PropertyFloat(
                 "岸の幅", &layer.river.bankWidthMeters, 0.0f, 100.0f,
                 riverDefaults.bankWidthMeters,
-                "水際から岸の上端までの距離（掘る形の話。河原の広がりとは別）", "%.1f m",
+                "水際から岸の上端までの距離。岸は水面の高さから立ち上がる"
+                "（掘る形の話。河原の広がりとは別）",
+                "%.1f m",
                 ImGuiSliderFlags_Logarithmic);
             changed |= ui::PropertyFloat(
                 "岸の硬さ", &layer.river.bankHardness, 0.0f, 1.0f, riverDefaults.bankHardness,

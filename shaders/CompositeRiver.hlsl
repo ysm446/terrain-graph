@@ -405,7 +405,10 @@ void CsJfaStep(uint3 dispatchThreadId : SV_DispatchThreadID)
 //   - 水際からの距離 dw = 距離 − 半幅(種)（内側は負）
 //   - 水面高 = 種の surface（断面を水平にするため、ローカルの surface ではない）
 // を出す。湖（surface − 地形 > ε）はローカルの surface を水面高にする。
-// 河床は中心線の周りだけ掘り、岸を `岸の硬さ` で外側の地形へ繋ぐ。湖底は掘らない。
+// 河床は中心線の周りだけ掘る。断面は **U 字**で、中心で `河床の深さ`、水際（幅の端）で
+// ちょうど水面の高さまで上がる。岸は**水面の高さから**外側の地形へ `岸の硬さ` で繋ぐ。
+// 岸を河床から立ち上げると `岸の幅` の帯が丸ごと水没し、見える水の幅が
+// `幅 + 2 × 岸の幅` になってしまう（最初の実装で実際にそうなった）。湖底は掘らない。
 [numthreads(8, 8, 1)]
 void CsResolve(uint3 dispatchThreadId : SV_DispatchThreadID)
 {
@@ -440,19 +443,21 @@ void CsResolve(uint3 dispatchThreadId : SV_DispatchThreadID)
         dw = length(float2(cell) - seed.xy) - half;
         riverLevel = surface[seedCell];
 
-        const float bedLevel = riverLevel - g_river.params1.w;
         const float bankWidth = g_river.params2.x;
         if (dw < 0.0f)
         {
-            carved = min(ground, bedLevel);
+            // 中心で 1、水際で 0。放物線ぎみの U 字（水際の勾配は 2 × 深さ / 半幅）。
+            const float u = saturate(-dw / max(half, 1e-3f));
+            const float profile = 1.0f - (1.0f - u) * (1.0f - u);
+            carved = min(ground, riverLevel - g_river.params1.w * profile);
         }
         else if (dw < bankWidth)
         {
-            // 0 で直線の土手、1 で水際から一気に立ち上がる崖。
+            // 水面の高さから元の地形へ。0 で直線の土手、1 で水際から一気に立ち上がる崖。
             const float t = saturate(dw / max(bankWidth, 1e-3f));
             const float hardness = saturate(g_river.params2.y);
             const float rise = 1.0f - pow(1.0f - t, 1.0f + 6.0f * hardness);
-            carved = min(ground, lerp(bedLevel, ground, rise));
+            carved = min(ground, lerp(riverLevel, ground, rise));
         }
     }
 
