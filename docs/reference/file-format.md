@@ -130,6 +130,8 @@ base' = base + 0.5 * gain     ただしソースが constant のときは base �
 マスクのノードは種類ごとに使う設定が違うが、**全部書く**（種類を変えて戻したときに
 値が消えていると驚くため）。`curvature` は `{ mode, detail, sensitivity, threshold,
 gamma }` で、`mode` は `ridges` / `valleys` / `absolute`。
+`height`（Mask Height）は `{ fullRange, min, max, feather, gamma, invert }` で、
+`min` / `max` / `feather` はメートル。無ければ既定値（版は上げない）。
 
 レイヤーの `sediment`（`{ emission, emissionTime, detail, iterations, stabilization,
 viscosity, convertTerrain, resolution, maskContrast, maskThicknessMeters }`）は

@@ -69,6 +69,8 @@ enum class NodeKind : uint32_t {
     // 雪を降らせ、急な雪面から低い所へ滑らせて積もらせる加工
     // （terrain-editor の Snow）。
     Snow = 15,
+    // 下地の標高帯をマスクとして出す。
+    MaskHeight = 16,
 };
 
 struct PinDefinition {
@@ -128,6 +130,7 @@ struct MaskNodeSettings {
     compositor::MapSlot map;
     compositor::NoiseParams noise;
     compositor::FluvialParams fluvial;
+    compositor::HeightParams height;
     compositor::SlopeParams slope;
     compositor::CurvatureParams curvature;
     compositor::LevelsParams levels;
@@ -287,7 +290,7 @@ bool IsLayerNodeKind(NodeKind kind);
 bool IsSourceNodeKind(NodeKind kind);
 // マスクを出すノードか。
 bool IsMaskNodeKind(NodeKind kind);
-// 下地の Height を読むマスクか（川筋 / 傾斜）。
+// 下地の Height を読むマスクか（川筋 / 傾斜 / 曲率 / 標高）。
 bool IsHeightMaskNodeKind(NodeKind kind);
 // **レイヤーでもありマスクの出どころでもある**種類か（堆積 / 崩落 / 積雪）。
 // この 3 つの Mask は「そのレイヤーを合成した時点の作業用テクスチャ」から焼くので、

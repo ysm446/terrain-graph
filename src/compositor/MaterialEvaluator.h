@@ -162,6 +162,9 @@ private:
     // 川筋の作業リソース（1 組を使い回す）。
     bool EnsureFluvialResources(rhi::Device& device, uint32_t workResolution);
     void ReleaseFluvialResources(rhi::Device& device);
+    // 標高マスクの「全範囲」で使う、地形の最低 / 最高をためる 1 枚。
+    // 2 テクセルだけ使う（(0,0) が最低、(1,0) が最高）。使うときだけ作る。
+    bool EnsureMaskHeightRange(rhi::Device& device);
 
     // 堆積レイヤー 1 枚ぶん。土砂を重力で再分配し、差分を Height へ足し戻して
     // 法線を作り直す。**タイルには分けない**（グリッド全体を何度も舐めるため）。
@@ -212,6 +215,8 @@ private:
                          const MaterialStack& stack, const std::vector<TileRect>& tiles);
 
     FluvialResources m_fluvial;
+    // 標高マスクの「全範囲」用（R32_UINT）。InterlockedMin / Max でためる。
+    rhi::GpuTexture m_maskHeightRange;
     SedimentResources m_sediment;
     CrumblingResources m_crumbling;
     SnowResources m_snow;

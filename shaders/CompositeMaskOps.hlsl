@@ -21,10 +21,11 @@
 
 struct MaskOpConstants
 {
-    // x: 出力 UAV、y: 入力 A の SRV、z: 入力 B の SRV、
-    // w: 素材の SRV（Image は画像、Slope は合成の Height）
+    // x: 出力 UAV、y: 入力 A の SRV、z: 入力 B の SRV
+    //   （Height だけは最低 / 最高をためる UAV。入力 B を取らないので流用する）、
+    // w: 素材の SRV（Image は画像、Slope / Curv / Height は合成の Height）
     uint4 indices;
-    // x: 出力の一辺、y: 読むチャンネル（Image）/ 種類（Noise）、
+    // x: 出力の一辺、y: 読むチャンネル（Image）/ 種類（Noise）/ 全範囲（Height）、
     // z: 反転 / ブレンドの種類、w: オクターブ（Noise）
     uint4 params0;
     // Slope : 最小角（度）, 最大角（度）, ガンマ, 実寸比（標高差 / 一辺）
@@ -32,6 +33,7 @@ struct MaskOpConstants
     // Blend : 強さ, 未使用 x3
     // Noise : 周波数, 量, オフセット, 未使用
     // Curv  : 感度（正規化ハイト）, しきい値, ガンマ, 未使用
+    // Height: 最低（正規化ハイト）, 最高, ガンマ, フェザー
     float4 params1;
     // x: 傾斜を測る距離 / 曲率で比べる周りの広さ（テクセル）、yzw: 未使用
     float4 params2;
@@ -185,6 +187,83 @@ void CsSlope(uint3 dispatchThreadId : SV_DispatchThreadID)
     const float low = g_op.params1.x;
     const float high = max(g_op.params1.y, low + 1e-3f);
     float value = saturate((angleDegrees - low) / (high - low));
+    value = pow(value, max(g_op.params1.z, 1e-3f));
+    output[texel] = saturate(ApplyInvert(value));
+}
+
+// 下地の標高。**メートルで切る。**
+//
+// ハイト 0〜1 の全幅が標高差なので、m で指定した値はその比へ直して渡してある
+// （0 m が地形の一番低い所、標高差 m が一番高い所）。
+//
+// **全範囲**（`useFullRange`）のときは、地形の**実際の**最低 / 最高で正規化する。
+// これは 2 パス（クリア → 集計）を先に走らせて 1 枚へためておく。
+// 非負の float はビット列の大小が uint と同じ順序なので、そのまま
+// InterlockedMin / InterlockedMax に掛けられる（川筋の最大値集計と同じ手）。
+
+[numthreads(1, 1, 1)]
+void CsHeightRangeClear(uint3 dispatchThreadId : SV_DispatchThreadID)
+{
+    RWTexture2D<uint> range = ResourceDescriptorHeap[g_op.indices.z];
+    range[uint2(0, 0)] = 0xFFFFFFFFu;  // 最低（min の初期値）
+    range[uint2(1, 0)] = 0u;           // 最高（max の初期値）
+}
+
+[numthreads(8, 8, 1)]
+void CsHeightRangeReduce(uint3 dispatchThreadId : SV_DispatchThreadID)
+{
+    const uint2 texel = dispatchThreadId.xy;
+    if (OutsideMask(texel)) { return; }
+
+    Texture2D<float> height = ResourceDescriptorHeap[g_op.indices.w];
+    RWTexture2D<uint> range = ResourceDescriptorHeap[g_op.indices.z];
+
+    const uint bits = asuint(max(height.Load(int3(int2(texel), 0)), 0.0f));
+    uint previous;
+    InterlockedMin(range[uint2(0, 0)], bits, previous);
+    InterlockedMax(range[uint2(1, 0)], bits, previous);
+}
+
+[numthreads(8, 8, 1)]
+void CsHeight(uint3 dispatchThreadId : SV_DispatchThreadID)
+{
+    const uint2 texel = dispatchThreadId.xy;
+    if (OutsideMask(texel)) { return; }
+
+    RWTexture2D<float> output = ResourceDescriptorHeap[g_op.indices.x];
+    Texture2D<float> height = ResourceDescriptorHeap[g_op.indices.w];
+
+    const float sample = height.SampleLevel(g_samplerLinearClamp, MaskUv(texel), 0.0f);
+
+    float value = 0.0f;
+    if (g_op.params0.y != 0u)
+    {
+        // 全範囲。地形の一番低い所が 0、一番高い所が 1 になる。
+        RWTexture2D<uint> range = ResourceDescriptorHeap[g_op.indices.z];
+        const float low = asfloat(range[uint2(0, 0)]);
+        const float high = asfloat(range[uint2(1, 0)]);
+        value = saturate((sample - low) / max(high - low, 1e-6f));
+    }
+    else
+    {
+        // 標高帯。フェザーが 0 なら硬い帯、0 より大きいと上下の外側へなだらかに繋ぐ。
+        const float low = g_op.params1.x;
+        const float high = max(g_op.params1.y, low);
+        const float feather = g_op.params1.w;
+        if (feather <= 0.0f)
+        {
+            value = (sample >= low && sample <= high) ? 1.0f : 0.0f;
+        }
+        else
+        {
+            const float lower = smoothstep(low - feather, low, sample);
+            const float upper = 1.0f - smoothstep(high, high + feather, sample);
+            value = saturate(min(lower, upper));
+        }
+    }
+
+    // **ガンマは他のマスクと同じ向き**（pow(value, gamma)）。terrain-editor は
+    // 1/gamma だが、こちらは傾斜 / 曲率と揃えて「1 未満で弱い所を明るく」にする。
     value = pow(value, max(g_op.params1.z, 1e-3f));
     output[texel] = saturate(ApplyInvert(value));
 }

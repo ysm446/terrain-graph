@@ -1,7 +1,7 @@
 # node-graph — ノードグラフの設計
 
 作成日時: 2026-09-02 12:50
-更新日時: 2026-09-04 15:00
+更新日時: 2026-09-04 17:00
 
 `src/graph/` とグラフパネル（`src/app/ApplicationGraphPanel.cpp`）の設計。
 **ノード 1 つずつの役割・ピン・パラメータは
@@ -47,6 +47,7 @@ terrain-editor から移植したのは**仕組み**であって、ノードの�
 | Snow | `snow` | Base(入力) / Result / Mask(出力) | `MaterialLayer`（kind=Snow）の `snow` |
 | Mask Image | `maskImage` | Mask(出力) のみ | `MapSlot`（画像 + 読むチャンネル） |
 | Mask Fluvial | `maskFluvial` | Base(入力) / Mask(出力) | `FluvialParams`（川筋） |
+| Mask Height | `maskHeight` | Base(入力) / Mask(出力) | `HeightParams`（標高帯） |
 | Mask Slope | `maskSlope` | Base(入力) / Mask(出力) | `SlopeParams`（傾斜） |
 | Mask Levels | `maskLevels` | Mask(入力) / Mask(出力) | `LevelsParams` |
 | Mask Blend | `maskBlend` | Foreground / Background(入力) / Mask(出力) | `BlendParams` |
@@ -112,6 +113,25 @@ terrain-editor の Snow を移したもの。**合成レイヤーではなく加
   y に元の積雪厚）。terrain-editor は縦のパスで積雪厚を読みながら同じ場所へ
   書いていて、重みが競合していた。
 - CPU バックエンドは移していない（合成そのものが GPU なので落とす先が無い）。
+
+### マスク標高（Mask Height）
+
+terrain-editor の Mask Height。**下地の標高帯**をマスクにする。
+Base 入力の意味は Mask Slope / Mask Curvature と同じ。
+
+- **指定は m。** ハイト 0〜1 の全幅が `標高差` なので、評価器がその比へ直して渡す
+  （0 m がハイト 0、`標高差` m がハイト 1）。
+- **`全範囲` だけは 2 パス増える。** 地形の実際の最低 / 最高が要るので、
+  `CsHeightRangeClear` → `CsHeightRangeReduce` で 1 枚（R32_UINT の 2 テクセル）へ
+  ためてから焼く。非負の float はビット列の大小が uint と同じ順序なので、
+  `InterlockedMin` / `InterlockedMax` にそのまま掛けられる（川筋の最大値集計と同じ手）。
+  この 1 枚は**使うときだけ**作る。
+- 入力 B を取らないノードなので、`MaskOpConstants` の `indices.z`（入力 B の SRV）を
+  この集計用 UAV に流用している。
+- ガンマは `pow(値, ガンマ)`。terrain-editor は `1 / ガンマ` だが、
+  傾斜 / 曲率と揃えた（隣り合うノードでつまみの向きが逆だと混乱するため）。
+- **合成の Height を SRV へ遷移させる判定を 1 か所にまとめた**（`readsHeight`）。
+  傾斜だけを見ていたので、後から足した曲率が漏れていた。
 
 ### マスク画像（マスクのソース）
 

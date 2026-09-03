@@ -451,6 +451,35 @@ inline bool DrawCurvatureRows(compositor::CurvatureParams& curvature) {
     return changed;
 }
 
+// 標高マスクの設定行。**プロパティテーブルの中で呼ぶこと。**
+inline bool DrawHeightMaskRows(compositor::HeightParams& height) {
+    const compositor::HeightParams defaults;
+    bool changed = false;
+    changed |= ui::PropertyBool("全範囲", &height.useFullRange, defaults.useFullRange,
+                                "地形の一番低い所を 0、一番高い所を 1 にして、"
+                                "標高そのものをグラデーションにする。"
+                                "入れると下の 3 行は使わない");
+    if (!height.useFullRange) {
+        changed |= ui::PropertyFloat("最低標高", &height.minMeters, 0.0f, 8000.0f,
+                                     defaults.minMeters, "これより低い所を 0 にする",
+                                     "%.1f m");
+        changed |= ui::PropertyFloat("最高標高", &height.maxMeters, 0.0f, 8000.0f,
+                                     defaults.maxMeters, "これより高い所を 0 にする",
+                                     "%.1f m");
+        changed |= ui::PropertyFloat("フェザー", &height.featherMeters, 0.0f, 1000.0f,
+                                     defaults.featherMeters,
+                                     "標高帯の上下の境目をぼかす幅。0 で硬い帯になる",
+                                     "%.1f m", ImGuiSliderFlags_Logarithmic);
+    }
+    changed |= ui::PropertyFloat("ガンマ", &height.gamma, 0.05f, 4.0f, defaults.gamma,
+                                 "1 未満で境目の弱い所を明るく、"
+                                 "1 より大きいと帯の中心だけを残す",
+                                 "%.2f");
+    changed |= ui::PropertyBool("反転", &height.invert, defaults.invert,
+                                "指定した標高帯の外側のマスクを作るときに使う");
+    return changed;
+}
+
 // 傾斜マスクの設定行。**プロパティテーブルの中で呼ぶこと。**
 inline bool DrawSlopeRows(compositor::SlopeParams& slope) {
     const compositor::SlopeParams defaults;

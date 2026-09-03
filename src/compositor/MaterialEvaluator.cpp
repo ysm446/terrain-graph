@@ -200,6 +200,8 @@ uint64_t HashMaskOpParams(uint64_t seed, const MaskOp& op) {
             return HashBytes(seed, &op.curvature, sizeof(op.curvature));
         case MaskOpKind::Snow:
             return HashBytes(seed, &op.snowMask, sizeof(op.snowMask));
+        case MaskOpKind::Height:
+            return HashBytes(seed, &op.height, sizeof(op.height));
         default:
             return seed;
     }
@@ -321,6 +323,7 @@ bool MaterialEvaluator::EnsureMaskOpTextures(rhi::Device& device, const MaskProg
 
 void MaterialEvaluator::Destroy(rhi::Device& device) {
     ReleaseFluvialResources(device);
+    device.DeferRelease(m_maskHeightRange);
     ReleaseSedimentResources(device);
     ReleaseCrumblingResources(device);
     ReleaseSnowResources(device);
@@ -422,6 +425,7 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
     switch (op.kind) {
         case MaskOpKind::Noise:  entry = L"CsNoise"; break;
         case MaskOpKind::Slope:  entry = L"CsSlope"; break;
+        case MaskOpKind::Height: entry = L"CsHeight"; break;
         case MaskOpKind::Curvature: entry = L"CsCurvature"; break;
         case MaskOpKind::Levels: entry = L"CsLevels"; break;
         case MaskOpKind::Blend:  entry = L"CsBlend"; break;
@@ -477,6 +481,27 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
                 std::clamp(op.curvature.detailMeters / std::max(cellMeters, 1e-6f), 1.0f, 64.0f);
             break;
         }
+        case MaskOpKind::Height: {
+            constants.indices[3] = m_textures.height.SrvIndex();
+            constants.params0[1] = op.height.useFullRange ? 1u : 0u;
+            constants.params0[2] = op.height.invert ? 1u : 0u;
+            // 標高は m。ハイト 0〜1 の全幅が標高差なので、その比へ直す。
+            const float heightMeters =
+                (stack.HeightMeters() > 0.0f) ? stack.HeightMeters() : 1.0f;
+            const float low = std::min(op.height.minMeters, op.height.maxMeters);
+            const float high = std::max(op.height.minMeters, op.height.maxMeters);
+            constants.params1[0] = low / heightMeters;
+            constants.params1[1] = high / heightMeters;
+            constants.params1[2] = std::clamp(op.height.gamma, 0.05f, 8.0f);
+            constants.params1[3] = std::max(op.height.featherMeters, 0.0f) / heightMeters;
+            // 全範囲のときだけ、最低 / 最高をためる 1 枚を使う。
+            if (op.height.useFullRange && EnsureMaskHeightRange(device)) {
+                constants.indices[2] = m_maskHeightRange.UavIndex();
+            } else {
+                constants.params0[1] = 0u;
+            }
+            break;
+        }
         case MaskOpKind::Slope: {
             constants.indices[3] = m_textures.height.SrvIndex();
             constants.params0[2] = op.slope.invert ? 1u : 0u;
@@ -516,23 +541,63 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
     std::memcpy(cb.cpu, &constants, sizeof(constants));
 
     PIXBeginEvent(commandList, PIX_COLOR(200, 200, 120), "CompositeMaskOp");
-    // 画像を読む op は合成の Height を触らないが、傾斜は読むので SRV にしておく。
-    if (op.kind == MaskOpKind::Slope) {
+    // 画像やノイズは合成の Height を触らないが、下地から作る op は読むので
+    // SRV にしておく。**種類はここ 1 か所で判定する**（傾斜だけを見ていて
+    // 曲率が漏れていた）。
+    const bool readsHeight = (op.kind == MaskOpKind::Slope) ||
+                             (op.kind == MaskOpKind::Curvature) ||
+                             (op.kind == MaskOpKind::Height);
+    if (readsHeight) {
         TransitionIfNeeded(commandList, m_textures.height,
                            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     }
     TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
-    commandList->SetPipelineState(pipeline);
     commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+
+    // 標高マスクの「全範囲」は、地形の最低 / 最高を先に集計してから焼く。
+    if (op.kind == MaskOpKind::Height && constants.params0[1] != 0u) {
+        const auto rangePass = [&](const wchar_t* entry) {
+            return pipelineCache.GetCompute(L"CompositeMaskOps.hlsl", entry);
+        };
+        ID3D12PipelineState* clearPass = rangePass(L"CsHeightRangeClear");
+        ID3D12PipelineState* reducePass = rangePass(L"CsHeightRangeReduce");
+        if (clearPass == nullptr || reducePass == nullptr) {
+            PIXEndEvent(commandList);
+            return false;
+        }
+        const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+        commandList->SetPipelineState(clearPass);
+        commandList->Dispatch(1, 1, 1);
+        commandList->ResourceBarrier(1, &uav);
+        commandList->SetPipelineState(reducePass);
+        commandList->Dispatch(DispatchCount(resolution), DispatchCount(resolution), 1);
+        commandList->ResourceBarrier(1, &uav);
+    }
+
+    commandList->SetPipelineState(pipeline);
     commandList->Dispatch(DispatchCount(resolution), DispatchCount(resolution), 1);
 
     // 下流の op と合成パスは SRV で読む。Height は次のレイヤーが書き換える。
     TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    if (op.kind == MaskOpKind::Slope) {
+    if (readsHeight) {
         TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     }
     PIXEndEvent(commandList);
+    return true;
+}
+
+// 標高マスクの「全範囲」で使う 1 枚。2 テクセルしか使わないが、
+// テクスチャの作成は正方形しか用意していないので 2x2 で取る。
+bool MaterialEvaluator::EnsureMaskHeightRange(rhi::Device& device) {
+    if (m_maskHeightRange.IsValid()) {
+        return true;
+    }
+    if (!CreateChannelTexture(device, 2, DXGI_FORMAT_R32_UINT, L"MaskHeightRange",
+                              m_maskHeightRange)) {
+        TG_LOG_WARN("標高マスクの集計用テクスチャを作れませんでした");
+        return false;
+    }
     return true;
 }
 
@@ -1634,7 +1699,8 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             hash = HashBytes(hash, &m_maskOpResolutions[i], sizeof(uint32_t));
             if (op.kind == MaskOpKind::Fluvial || op.kind == MaskOpKind::Slope ||
                 op.kind == MaskOpKind::Curvature || op.kind == MaskOpKind::Sediment ||
-                op.kind == MaskOpKind::Crumbling || op.kind == MaskOpKind::Snow) {
+                op.kind == MaskOpKind::Crumbling || op.kind == MaskOpKind::Snow ||
+                op.kind == MaskOpKind::Height) {
                 after = std::max(after, op.heightSourceLayer);
                 const size_t layerCount = std::min<size_t>(
                     stack.Layers().size(),

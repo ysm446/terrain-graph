@@ -42,6 +42,8 @@ enum class MaskOpKind : uint32_t {
     Curvature = 8,
     // 積雪レイヤーが積もらせた**雪の被覆**。積雪厚をしきい値とぼかしで 0〜1 にする。
     Snow = 9,
+    // 下地の標高帯（この高さからこの高さまで）。
+    Height = 10,
 };
 
 // 曲率マスクの向き。シェーダの TG_CURVATURE_* と一致させること。
@@ -69,6 +71,18 @@ enum class MaskBlendMode : uint32_t {
     Multiply = 1,
     Min = 2,
     Max = 3,
+};
+
+// 標高マスク。**メートルで指定する。** ハイト 0〜1 の全幅が標高差なので、
+// 0 m は地形の一番低い所（ハイト 0）、標高差 m が一番高い所（ハイト 1）に当たる。
+struct HeightParams {
+    // 地形の**実際の**最低 / 最高で 0〜1 へ正規化する。下の 3 つは使わない。
+    bool useFullRange = false;
+    float minMeters = 0.0f;      // これより低い所を 0 にする
+    float maxMeters = 1000.0f;   // これより高い所を 0 にする
+    float featherMeters = 0.0f;  // 標高帯の上下の境目をぼかす幅
+    float gamma = 1.0f;
+    bool invert = false;
 };
 
 // 傾斜マスク。**角度（度）で指定する。** 実寸で地形を扱うので、
@@ -129,6 +143,7 @@ struct MaskOp {
 
     MapSlot map;
     FluvialParams fluvial;
+    HeightParams height;
     SlopeParams slope;
     CurvatureParams curvature;
     LevelsParams levels;

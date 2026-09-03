@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-04 15:00
+更新日時: 2026-09-04 17:00
 
 ## 現在の状況
 
@@ -62,6 +62,28 @@ Megascans の ORD（チャンネルパック）と EXR にも対応した。
 UI はグレー基調に整理し、ルールを [design/design-guide.md](../design/design-guide.md) に置いた。
 
 ## 完了済み
+
+- 2026-09-04 17:00 — **terrain-editor の Mask Height ノードを移植した**。
+  - `NodeKind::MaskHeight` / `MaskOpKind::Height` / `HeightParams` と、
+    `CompositeMaskOps.hlsl` の 3 エントリ（`CsHeight` /
+    `CsHeightRangeClear` / `CsHeightRangeReduce`）。ピンは Mask Slope と同じ
+    Base / Mask。
+  - **指定は m。** 0 m がハイト 0、`標高差` m がハイト 1。評価器が比へ直す。
+  - `全範囲` のときだけ、地形の実際の最低 / 最高を R32_UINT の 2 テクセルへ
+    `InterlockedMin` / `Max` で集めてから焼く（2 パス増える）。
+    この 1 枚は使うときだけ作る。入力 B を取らないノードなので、
+    定数の `indices.z` を集計用 UAV に流用した。
+  - **ガンマの向きだけ変えた。** terrain-editor は `1 / ガンマ` だが、
+    隣り合う傾斜 / 曲率と揃えて `pow(値, ガンマ)` にした。
+  - **既存のバグを 1 つ直した。** 合成の Height を SRV へ遷移させる判定が
+    傾斜だけを見ていて、後から足した Mask Curvature が漏れていた
+    （UAV 状態の Height を読んでいた）。`readsHeight` として 1 か所にまとめた。
+  - 検証: `data/sample.tgproj` の地形（標高差 604m）へ
+    Heightmap → Mask Height → Surface(Mask) → Output を組み、
+    (a) 350m 以上・フェザー 60m で**等高線に沿った雪線**が出ること、
+    (b) `全範囲` で低い所から高い所への滑らかなグラデーションになることを目視。
+    プロパティは `全範囲` を入れると標高の 3 行が消えることも確認した。
+    DXC で 3 エントリの単体コンパイルと、保存・読み込みの往復も確認。
 
 - 2026-09-04 15:00 — **terrain-editor の Snow ノードを移植した**。
   - `NodeKind::Snow` / `LayerKind::Snow` / `MaskOpKind::Snow` と

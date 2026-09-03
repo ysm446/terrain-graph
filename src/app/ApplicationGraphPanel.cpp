@@ -53,6 +53,8 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
             return ImVec4(0.68f, 0.72f, 0.62f, 1.0f);
         case graph::NodeKind::MaskFluvial:
             return ImVec4(0.55f, 0.68f, 0.74f, 1.0f);
+        case graph::NodeKind::MaskHeight:
+            return ImVec4(0.74f, 0.70f, 0.60f, 1.0f);
         case graph::NodeKind::MaskSlope:
             return ImVec4(0.60f, 0.70f, 0.66f, 1.0f);
         case graph::NodeKind::MaskCurvature:
@@ -711,6 +713,8 @@ void Application::DrawGraphEditor() {
                         "Mask Noise — ノイズをマスクにする（下地に依らない）");
         addNodeMenuItem(graph::NodeKind::MaskFluvial,
                         "Mask Fluvial — 下地の川筋をマスクにする");
+        addNodeMenuItem(graph::NodeKind::MaskHeight,
+                        "Mask Height — 下地の標高帯（m）をマスクにする");
         addNodeMenuItem(graph::NodeKind::MaskSlope,
                         "Mask Slope — 下地の傾斜（角度）をマスクにする");
         addNodeMenuItem(graph::NodeKind::MaskCurvature,
@@ -928,6 +932,12 @@ void Application::DrawGraphPanel() {
                 hint = "下地の高さから水の集まる所（川筋）を作る。"
                        "Base にどこまでのハイトを使うかを繋ぐ";
                 break;
+            case graph::NodeKind::MaskHeight:
+                header = "標高";
+                hint = "下地の標高帯（m）をマスクにする。"
+                       "0 m は地形の一番低い所で、標高差 m が一番高い所。"
+                       "Base にどこまでのハイトを使うかを繋ぐ";
+                break;
             case graph::NodeKind::MaskSlope:
                 header = "傾斜";
                 hint = "下地の傾斜（角度）をマスクにする。"
@@ -958,6 +968,9 @@ void Application::DrawGraphPanel() {
                     break;
                 case graph::NodeKind::MaskFluvial:
                     changed |= DrawFluvialRows(mask->fluvial);
+                    break;
+                case graph::NodeKind::MaskHeight:
+                    changed |= DrawHeightMaskRows(mask->height);
                     break;
                 case graph::NodeKind::MaskSlope:
                     changed |= DrawSlopeRows(mask->slope);

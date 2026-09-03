@@ -354,6 +354,33 @@ compositor::FluvialParams ReadFluvial(const json& parent, const char* key) {
     return fluvial;
 }
 
+json WriteHeightMask(const compositor::HeightParams& height) {
+    json node;
+    node["fullRange"] = height.useFullRange;
+    node["min"] = height.minMeters;
+    node["max"] = height.maxMeters;
+    node["feather"] = height.featherMeters;
+    node["gamma"] = height.gamma;
+    node["invert"] = height.invert;
+    return node;
+}
+
+compositor::HeightParams ReadHeightMask(const json& parent, const char* key) {
+    const compositor::HeightParams defaults;
+    const json* node = FindMember(parent, key);
+    if (node == nullptr || !node->is_object()) {
+        return defaults;
+    }
+    compositor::HeightParams height;
+    height.useFullRange = ReadBool(*node, "fullRange", defaults.useFullRange);
+    height.minMeters = ReadFloat(*node, "min", defaults.minMeters);
+    height.maxMeters = ReadFloat(*node, "max", defaults.maxMeters);
+    height.featherMeters = ReadFloat(*node, "feather", defaults.featherMeters);
+    height.gamma = ReadFloat(*node, "gamma", defaults.gamma);
+    height.invert = ReadBool(*node, "invert", defaults.invert);
+    return height;
+}
+
 json WriteSlope(const compositor::SlopeParams& slope) {
     json node;
     node["detail"] = slope.detailMeters;
@@ -731,6 +758,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["map"] = WriteMapSlot(mask->map, writeTexture);
             item["noise"] = WriteNoise(mask->noise);
             item["fluvial"] = WriteFluvial(mask->fluvial);
+            item["height"] = WriteHeightMask(mask->height);
             item["slope"] = WriteSlope(mask->slope);
             item["curvature"] = WriteCurvature(mask->curvature);
             item["levels"] = WriteLevels(mask->levels);
@@ -844,6 +872,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                 settings.map = ReadMapSlot(item, "map", readTexture);
                 settings.noise = ReadNoise(item, "noise", graph::MaskNodeSettings().noise);
                 settings.fluvial = ReadFluvial(item, "fluvial");
+                settings.height = ReadHeightMask(item, "height");
                 settings.slope = ReadSlope(item, "slope");
                 settings.curvature = ReadCurvature(item, "curvature");
                 settings.levels = ReadLevels(item, "levels");
