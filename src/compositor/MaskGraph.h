@@ -44,6 +44,8 @@ enum class MaskOpKind : uint32_t {
     Snow = 9,
     // 下地の標高帯（この高さからこの高さまで）。
     Height = 10,
+    // 河川レイヤーの出力。出力ピンによって水面の被覆 / 河原 / 水深になる。
+    River = 11,
 };
 
 // 曲率マスクの向き。シェーダの TG_CURVATURE_* と一致させること。
@@ -132,6 +134,19 @@ struct CrumblingMaskParams {
     uint32_t channel = 0;
 };
 
+// 河川の出力をマスクにするときの選択。**どの出力ピンから来たか**で決まる。
+struct RiverMaskParams {
+    // 0: 水面の被覆（Water）、1: 河原（Bank）、2: 水深（Depth）
+    uint32_t channel = 0;
+    // 河原（Bank）の形。レイヤーの RiverSettings から写す（積雪のしきい値と同じ扱い）。
+    float shoreWidthMeters = 15.0f;
+    float shoreHeightMeters = 2.0f;
+    float shoreFeather = 0.3f;
+    // 河原の広がりを流量で縮める基準（主流の幅）。
+    float mainWidthMeters = 60.0f;
+    float minWidthMeters = 3.0f;
+};
+
 // 演算 1 つ。入力は他の op の添字で、**自分より前**を指す（後方参照はしない）。
 struct MaskOp {
     MaskOpKind kind = MaskOpKind::Image;
@@ -152,6 +167,7 @@ struct MaskOp {
     SedimentMaskParams sedimentMask;
     CrumblingMaskParams crumblingMask;
     SnowMaskParams snowMask;
+    RiverMaskParams riverMask;
 };
 
 // 評価する順に並んだ op の列。

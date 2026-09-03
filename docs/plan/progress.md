@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-04 19:00
+更新日時: 2026-09-03 12:00
 
 ## 現在の状況
 
@@ -62,6 +62,26 @@ Megascans の ORD（チャンネルパック）と EXR にも対応した。
 UI はグレー基調に整理し、ルールを [design/design-guide.md](../design/design-guide.md) に置いた。
 
 ## 完了済み
+
+- 2026-09-03 12:00 — **River ノードを実装した**（設計案の段階 1: 水面まで）。
+  - 川筋 → 窪み埋め = 水面高（Planchon–Darboux）→ MFD 流量 → 幅 → JFA 距離場
+    → 掘り / 水張り → 合成解像度へ書き戻し、の一本。`Water` / `Bank` / `Depth` の
+    3 つの Mask を出す。設計は [reference/river-node.md](../reference/river-node.md)、
+    実装の要点は [design/node-graph.md](../design/node-graph.md) の「河川（加工）」。
+  - 実装して分かったこと 2 つ。(1) **水面の法線は R16 の Height から作れない。**
+    緩い水面が約 0.3 m ごとの階段になり、法線が縞になる（最初の絵で実際に出た）。
+    R32 の水面高から作り直す `CsWaterNormal` を足して消えた。
+    (2) 設計案の既定値（主流 120 m、しきい値 0.0005）は sample（一辺 2048 m）で
+    谷という谷が川になったので、主流 60 m / 最小 3 m / しきい値 0.002 /
+    最小勾配 0.0002 に落とした。
+  - 検証: sample の Grass の後ろに River → Bank（Surface）→ Water（Surface）を
+    挟んだテストプロジェクト（`data/river-test.tgproj`）を `--screenshot` で撮り、
+    谷筋に幅の異なる水路、水際の河原の帯、縞の無い水面が出ることを目視。
+    デバッグレイヤーの検証エラーは sample 単体でも出る 3 件（TexturePreview /
+    MaterialThumbnail / MaterialHeight の barrier layout）だけで、River 由来は無い。
+  - 未対応: 湖岸の Bank（河原は川の中心線からの距離で決めている）、涸れ川
+    （`水を張る` 切）と Seed 入力の目視確認、プロパティパネルの目視確認
+    （ヘッドレスではノードを選べない）。
 
 - 2026-09-04 19:00 — **堆積 / 崩落 / 積雪の Mask を、Mask Blend / Mask Levels 越しに
   使えるようにした**（`CollectLayerMaskSources`）。

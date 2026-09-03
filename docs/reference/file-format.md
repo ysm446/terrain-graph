@@ -1,7 +1,7 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-09-03 09:00
+更新日時: 2026-09-03 12:00
 
 実装は [src/io/ProjectIo.cpp](../../src/io/ProjectIo.cpp)。**形式を変えたらこの文書も直す。**
 
@@ -145,6 +145,12 @@ gravity, spread, seed }`）は `kind` が `crumbling` のノードだけが使�
 motionSlopeDegrees, transportRate, surfaceSmoothing, detail, resolution,
 maskThresholdMeters, maskFeatherMeters }`）は `kind` が `snow` のノードだけが使う。
 無ければ既定値（版は上げない。古いファイルには単に無い）。
+
+レイヤーの `river`（`{ threshold, detail, concentration, resolution, mainWidth, minWidth,
+widthExponent, bedDepth, bankWidth, bankHardness, fillWater, minSlope, shoreWidth,
+shoreHeight, shoreFeather }`）は `kind` が `river` のノードだけが使う。
+長さは m、`threshold` は全セル数に対する割合、`minSlope` は無次元。
+無ければ既定値（版は上げない）。
 
 レイヤーの `blur`（`{ radius, strength, iterations }`）は
 `kind` が `blur` のノード（Heightmap Blur）だけが使う。無ければ既定値。

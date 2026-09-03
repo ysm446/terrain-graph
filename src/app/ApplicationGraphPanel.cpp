@@ -47,6 +47,8 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
             return ImVec4(0.74f, 0.58f, 0.50f, 1.0f);
         case graph::NodeKind::Snow:
             return ImVec4(0.72f, 0.76f, 0.82f, 1.0f);
+        case graph::NodeKind::River:
+            return ImVec4(0.48f, 0.64f, 0.72f, 1.0f);
         case graph::NodeKind::MaskImage:
             return ImVec4(0.72f, 0.72f, 0.72f, 1.0f);
         case graph::NodeKind::MaskNoise:
@@ -706,6 +708,8 @@ void Application::DrawGraphEditor() {
                         "Crumbling — 崩れた岩屑を斜面下へ流して積む");
         addNodeMenuItem(graph::NodeKind::Snow,
                         "Snow — 雪を降らせ、急な雪面から落として積もらせる");
+        addNodeMenuItem(graph::NodeKind::River,
+                        "River — 川筋から河床を掘り、下流へ下がる水面を張る");
         ImGui::Separator();
         addNodeMenuItem(graph::NodeKind::MaskImage,
                         "Mask Image — 画像をマスクにする（白い所だけ乗る）");

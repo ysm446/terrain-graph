@@ -124,6 +124,14 @@ inline const compositor::MaterialLayer kDefaultSnowLayer = [] {
     return layer;
 }();
 
+// 河川ノードの既定値。設計は docs/reference/river-node.md。
+inline const compositor::MaterialLayer kDefaultRiverLayer = [] {
+    compositor::MaterialLayer layer;
+    layer.kind = compositor::LayerKind::River;
+    layer.name = "River";
+    return layer;
+}();
+
 inline const compositor::MaterialLayer& DefaultLayerFor(compositor::LayerKind kind) {
     switch (kind) {
         case compositor::LayerKind::Shape:
@@ -138,6 +146,8 @@ inline const compositor::MaterialLayer& DefaultLayerFor(compositor::LayerKind ki
             return kDefaultCrumblingLayer;
         case compositor::LayerKind::Snow:
             return kDefaultSnowLayer;
+        case compositor::LayerKind::River:
+            return kDefaultRiverLayer;
         default:
             return kDefaultLayer;
     }
@@ -145,7 +155,7 @@ inline const compositor::MaterialLayer& DefaultLayerFor(compositor::LayerKind ki
 
 // レイヤー一覧のツールチップなどで使う種類の表示名。LayerKind の並びと一致させること。
 inline const char* const kLayerKindLabels[] = {"サーフェス", "シェイプ", "水面", "ブラー",
-                                               "堆積",       "崩落",     "積雪"};
+                                               "堆積",       "崩落",     "積雪", "河川"};
 // 曲率マスクの向き。compositor::CurvatureMode の並びと一致させること。
 inline const char* const kCurvatureModeLabels[] = {"尾根", "谷", "両方"};
 // 岩片の形。compositor::RockStyle の並びと一致させること。

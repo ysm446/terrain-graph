@@ -152,7 +152,7 @@ const char* const kCurvatureModeNames[] = {"ridges", "valleys", "absolute"};
 const char* const kMaskBlendModeNames[] = {"add", "multiply", "min", "max"};
 const char* const kChannelNames[] = {"baseColor", "normal", "surface", "height"};
 const char* const kLayerKindNames[] = {"surface",   "shape",     "liquid", "blur",
-                                       "sediment", "crumbling", "snow"};
+                                       "sediment", "crumbling", "snow",   "river"};
 // 岩片の形。compositor::RockStyle の並びと一致させること。
 const char* const kRockStyleNames[] = {"classic", "polygonal", "shard"};
 const char* const kTonemapNames[] = {"none", "reinhard", "aces"};
@@ -575,6 +575,25 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     snow["maskFeatherMeters"] = layer.snow.maskFeatherMeters;
     node["snow"] = std::move(snow);
 
+    // 河川（河川レイヤーだけが使う）。
+    json river;
+    river["threshold"] = layer.river.threshold;
+    river["detail"] = layer.river.detailMeters;
+    river["concentration"] = layer.river.concentration;
+    river["resolution"] = layer.river.resolution;
+    river["mainWidth"] = layer.river.mainWidthMeters;
+    river["minWidth"] = layer.river.minWidthMeters;
+    river["widthExponent"] = layer.river.widthExponent;
+    river["bedDepth"] = layer.river.bedDepthMeters;
+    river["bankWidth"] = layer.river.bankWidthMeters;
+    river["bankHardness"] = layer.river.bankHardness;
+    river["fillWater"] = layer.river.fillWater;
+    river["minSlope"] = layer.river.minSlope;
+    river["shoreWidth"] = layer.river.shoreWidthMeters;
+    river["shoreHeight"] = layer.river.shoreHeightMeters;
+    river["shoreFeather"] = layer.river.shoreFeather;
+    node["river"] = std::move(river);
+
     // ぼかし（ブラーレイヤーだけが使う）。
     json blur;
     blur["radius"] = layer.blur.radiusMeters;
@@ -679,6 +698,31 @@ compositor::MaterialLayer ReadLayer(
             ReadFloat(*snow, "maskThresholdMeters", defaults.snow.maskThresholdMeters);
         layer.snow.maskFeatherMeters =
             ReadFloat(*snow, "maskFeatherMeters", defaults.snow.maskFeatherMeters);
+    }
+
+    if (const json* river = FindMember(node, "river"); river != nullptr && river->is_object()) {
+        layer.river.threshold = ReadFloat(*river, "threshold", defaults.river.threshold);
+        layer.river.detailMeters = ReadFloat(*river, "detail", defaults.river.detailMeters);
+        layer.river.concentration =
+            ReadFloat(*river, "concentration", defaults.river.concentration);
+        layer.river.resolution = static_cast<uint32_t>(
+            ReadInt(*river, "resolution", static_cast<int>(defaults.river.resolution)));
+        layer.river.mainWidthMeters =
+            ReadFloat(*river, "mainWidth", defaults.river.mainWidthMeters);
+        layer.river.minWidthMeters = ReadFloat(*river, "minWidth", defaults.river.minWidthMeters);
+        layer.river.widthExponent =
+            ReadFloat(*river, "widthExponent", defaults.river.widthExponent);
+        layer.river.bedDepthMeters = ReadFloat(*river, "bedDepth", defaults.river.bedDepthMeters);
+        layer.river.bankWidthMeters =
+            ReadFloat(*river, "bankWidth", defaults.river.bankWidthMeters);
+        layer.river.bankHardness = ReadFloat(*river, "bankHardness", defaults.river.bankHardness);
+        layer.river.fillWater = ReadBool(*river, "fillWater", defaults.river.fillWater);
+        layer.river.minSlope = ReadFloat(*river, "minSlope", defaults.river.minSlope);
+        layer.river.shoreWidthMeters =
+            ReadFloat(*river, "shoreWidth", defaults.river.shoreWidthMeters);
+        layer.river.shoreHeightMeters =
+            ReadFloat(*river, "shoreHeight", defaults.river.shoreHeightMeters);
+        layer.river.shoreFeather = ReadFloat(*river, "shoreFeather", defaults.river.shoreFeather);
     }
 
     if (const json* crumbling = FindMember(node, "crumbling");

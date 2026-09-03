@@ -1,7 +1,7 @@
 # node-graph — ノードグラフの設計
 
 作成日時: 2026-09-02 12:50
-更新日時: 2026-09-04 19:00
+更新日時: 2026-09-03 12:00
 
 `src/graph/` とグラフパネル（`src/app/ApplicationGraphPanel.cpp`）の設計。
 **ノード 1 つずつの役割・ピン・パラメータは
@@ -45,6 +45,7 @@ terrain-editor から移植したのは**仕組み**であって、ノードの�
 | Sediment | `sediment` | Base(入力) / Result / Mask(出力) | `MaterialLayer`（kind=Sediment）の `sediment` |
 | Crumbling | `crumbling` | Base / Emission(入力) / Result / Mask / Unique(出力) | `MaterialLayer`（kind=Crumbling）の `crumbling` |
 | Snow | `snow` | Base(入力) / Result / Mask(出力) | `MaterialLayer`（kind=Snow）の `snow` |
+| River | `river` | Base / Seed(入力) / Result / Water / Bank / Depth(出力) | `MaterialLayer`（kind=River）の `river` |
 | Mask Image | `maskImage` | Mask(出力) のみ | `MapSlot`（画像 + 読むチャンネル） |
 | Mask Fluvial | `maskFluvial` | Base(入力) / Mask(出力) | `FluvialParams`（川筋） |
 | Mask Height | `maskHeight` | Base(入力) / Mask(出力) | `HeightParams`（標高帯） |
@@ -114,6 +115,39 @@ terrain-editor の Snow を移したもの。**合成レイヤーではなく加
   書いていて、重みが競合していた。
 - CPU バックエンドは移していない（合成そのものが GPU なので落とす先が無い）。
 
+### 河川（加工）
+
+川筋から河床を掘り、下流へ単調に下がる水面を張る。`CompositeRiver.hlsl` と
+`MaterialEvaluator::ApplyRiver()`。設計の経緯と却下した案は
+[reference/river-node.md](../reference/river-node.md)、パラメータは
+[reference/nodes.md](../reference/nodes.md)。
+
+- **窪み埋めと水面の単調化は同じ計算**（Planchon–Darboux 法、最小勾配 ε 付き）
+  なので、1 回の反復で両方を出す。埋めた面の上で MFD を回すので、盆地は湖になり、
+  湖の下流へも流量が続く。Mask Fluvial の 8 回固定の窪み埋めは流用しない
+  （8 セルより大きい盆地で流量が消える）。
+- **幅の基準は主流側**（流量の最大）。しきい値側を基準にすると、主流はその数百倍の
+  流量を持つので支流の大半が上限に張り付く。
+- **中心線からの距離場は Jump Flooding**（歩幅 解像度/2 → 1、最後に 1 をもう 1 回）。
+  伝播する値は距離ではなく「半幅 − 距離」の最大で、太い本流と細い支流の合流点で
+  本流の縁が欠けないようにする。種の座標を運ぶので、水面高は
+  「最寄りの中心線セルの水面高」から引ける（断面が水平になる）。
+- **書き戻しは川の中と外で違う。** 外（掘った岸を含む）は堆積と同じく差分で
+  足し戻し、水の中は `max(地形, 水面高)` で置き換える。岸は河床から立ち上がるので、
+  水面と岸が交わる所が自然に汀線になり、細部が水面より高い所は島として残る。
+- **水面の被覆と水深は合成解像度で焼く**（`CsApply` の中）。粗いグリッドから作ると
+  島の縁が出ない。Bank は解析グリッドの値（水際からの距離 / 水面からの比高）から作る。
+- **水面の法線は R32 の水面高から作り直す**（`CsWaterNormal`）。合成の Height は
+  R16 なので、緩い水面は約 0.3 m ごとの階段になり、そこから作った法線は縞になる
+  （最初の実装で実際に縞が出た）。
+- Seed（Mask 入力）は雨の量。`CsAccumIter` が毎反復で雨を足し直すので、
+  初期化と反復の両方に掛ける。
+- 出力 3 本は 1 つの `MaskOpKind::River` を `channel` で見分ける（崩落の Mask /
+  Unique と同じ）。河原の形のパラメータはコンパイル時に op へ写す
+  （積雪のしきい値と同じ扱い）。
+- 作業テクスチャは川筋とは別に持つ（`RiverResources`）。同じ位置で焼く川筋の op に
+  上書きされると、後から焼く河川のマスクが壊れるため。
+
 ### マスク標高（Mask Height）
 
 terrain-editor の Mask Height。**下地の標高帯**をマスクにする。
@@ -133,9 +167,9 @@ Base 入力の意味は Mask Slope / Mask Curvature と同じ。
 - **合成の Height を SRV へ遷移させる判定を 1 か所にまとめた**（`readsHeight`）。
   傾斜だけを見ていたので、後から足した曲率が漏れていた。
 
-### レイヤーでもあるマスクの出どころ（堆積 / 崩落 / 積雪）
+### レイヤーでもあるマスクの出どころ（堆積 / 崩落 / 積雪 / 河川）
 
-この 3 つの Mask は「**そのレイヤーを合成した時点**の作業用テクスチャ」から焼く。
+この 4 つの Mask は「**そのレイヤーを合成した時点**の作業用テクスチャ」から焼く。
 だから出どころがチェーンの中で走っていないと結果が残らず、
 繋いでいないのと同じ扱いになる。判定は `IsLayerMaskSourceKind`。
 

@@ -68,6 +68,36 @@ struct SnowResources {
     bool IsValid() const { return thickness.IsValid(); }
 };
 
+// 河川（River）の作業リソース。川筋と同じく**合成解像度とは別のグリッド**で回し、
+// 掘った河床は差分として、水面は置き換えとして合成解像度へ書き戻す。
+// マスクの元になる値（水面高 / 水際からの距離 / 掘った地形 / 湖の深さ / 半幅）は
+// 解析グリッドの R32 で持つ（合成の Height は R16 で、水面の勾配を持てない）。
+// 水面の被覆と水深だけは合成解像度で持つ（島の縁を合成解像度で出すため）。
+struct RiverResources {
+    rhi::GpuTexture heights;     // R32_FLOAT 解析用ハイト（ならした地形）
+    rhi::GpuTexture scratch;     // R32_FLOAT ぼかし / 窪み埋めの二重バッファ
+    rhi::GpuTexture surface;     // R32_FLOAT 窪みを埋めた面 = 水面高
+    rhi::GpuTexture weights0;    // RGBA32_FLOAT 配分重み k=0..3
+    rhi::GpuTexture weights1;    // RGBA32_FLOAT 配分重み k=4..7
+    rhi::GpuTexture accumA;      // R32_FLOAT 流量（ヤコビ反復の ping-pong）
+    rhi::GpuTexture accumB;
+    rhi::GpuTexture width;       // R32_FLOAT 中心線セルの半幅（セル）。川でなければ 0
+    rhi::GpuTexture jfaA;        // RGBA32_FLOAT JFA（xy = 種の座標, z = 評価値, w = 有効）
+    rhi::GpuTexture jfaB;
+    rhi::GpuTexture maxScratch;  // R32_UINT 1x1 流量の最大値
+    rhi::GpuTexture waterLevel;  // R32_FLOAT 水面高（川の外は最寄りの川の水面高）
+    rhi::GpuTexture distance;    // R32_FLOAT 水際からの距離（m。内側は負）
+    rhi::GpuTexture ground;      // R32_FLOAT 掘った後の地形
+    rhi::GpuTexture lakeDepth;   // R32_FLOAT 埋めた面 − 地形（湖の深さ）
+    rhi::GpuTexture halfWidth;   // R32_FLOAT 最寄りの川の半幅（m）
+    rhi::GpuTexture waterFine;   // R16_FLOAT 水面の被覆（合成解像度）
+    rhi::GpuTexture depthFine;   // R16_FLOAT 水深（合成解像度。河床の深さで 1）
+    uint32_t resolution = 0;
+    uint32_t fineResolution = 0;
+
+    bool IsValid() const { return surface.IsValid(); }
+};
+
 // 崩落（Crumbling）の作業リソース。**合成解像度で回す**（岩片は m 単位の
 // 小さな形なので、粗いグリッドでは形にならない）。
 //
@@ -209,6 +239,21 @@ private:
                        ID3D12GraphicsCommandList* commandList, const MaskOp& op,
                        const MaterialStack& stack, rhi::GpuTexture& target);
 
+    // 河川レイヤー 1 枚ぶん。川筋から河床を掘り、水面を張って Height へ書き戻し、
+    // 法線を作り直す。seedIndex は Seed マスクの SRV（無ければ kInvalidTextureIndex）。
+    // **タイルには分けない**（川筋と同じ理由）。
+    bool ApplyRiver(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                    ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
+                    const MaterialStack& stack, uint32_t seedIndex);
+    bool EnsureRiverResources(rhi::Device& device, uint32_t resolution,
+                              uint32_t fineResolution);
+    void ReleaseRiverResources(rhi::Device& device);
+    // 直前の河川レイヤーが残した水面 / 河原 / 水深を、マスクとして焼く。
+    // **河川レイヤーの直後にしか使えない**（作業用テクスチャを使い回すため）。
+    bool ApplyRiverMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                        ID3D12GraphicsCommandList* commandList, const MaskOp& op,
+                        const MaterialStack& stack, rhi::GpuTexture& target);
+
     bool ApplyHeightBlur(rhi::Device& device, ID3D12GraphicsCommandList* commandList,
                          ID3D12PipelineState* blurPipeline,
                          ID3D12PipelineState* normalPipeline, const MaterialLayer& layer,
@@ -220,6 +265,7 @@ private:
     SedimentResources m_sediment;
     CrumblingResources m_crumbling;
     SnowResources m_snow;
+    RiverResources m_river;
     // マスクの op の結果。添字は MaskProgram と同じ。
     std::vector<rhi::GpuTexture> m_maskOpTextures;
     std::vector<uint32_t> m_maskOpResolutions;

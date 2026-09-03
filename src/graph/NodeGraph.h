@@ -71,6 +71,9 @@ enum class NodeKind : uint32_t {
     Snow = 15,
     // 下地の標高帯をマスクとして出す。
     MaskHeight = 16,
+    // 川筋から河床を掘り、下流へ単調に下がる水面を張る加工。
+    // 水面 / 河原 / 水深の 3 つの Mask も出す。
+    River = 17,
 };
 
 struct PinDefinition {

@@ -86,6 +86,25 @@ struct SnowConstants {
     float params1[4];      // マスクのしきい値, マスクのぼかし, 未使用 x2
 };
 
+// GPU 側の RiverConstants と一致させること。
+struct RiverConstants {
+    uint32_t indices0[4];  // UAV: heights, scratch, surface, weights0
+    uint32_t indices1[4];  // UAV: weights1, accumA, accumB, width
+    uint32_t indices2[4];  // UAV: jfaA, jfaB, maxScratch / SRV: 種マスク
+    uint32_t indices3[4];  // UAV: waterLevel, distance, ground, lakeDepth
+    uint32_t indices4[4];  // UAV: halfWidth, waterFine, depthFine / SRV: 合成の Height
+    uint32_t indices5[4];  // UAV: 合成の Height, マスクの出力 / グリッドの一辺, 合成解像度
+    uint32_t indices6[4];  // ヤコビの向き, JFA の歩幅, ぼかし半径, JFA の読み側
+    uint32_t indices7[4];  // マスクのチャンネル, 水を張る, Height へ書く, 合成の Normal の UAV
+    uint32_t indices8[4];  // SRV: heights, waterLevel, distance, ground
+    uint32_t indices9[4];  // SRV: lakeDepth, halfWidth, waterFine, depthFine
+    float params0[4];      // 集中度, しきい値（セル数）, 最小勾配（1 セルあたり）, 未使用
+    float params1[4];      // 主流の半幅（セル）, 最小の半幅（セル）, 幅の伸び, 河床の深さ
+    float params2[4];      // 岸の幅（セル）, 岸の硬さ, 河原の広がり（m）, 河原の比高（m）
+    float params3[4];      // 河原のぼかし, セルの大きさ（m）, 標高差（m）, 湖とみなす深さ
+    float params4[4];      // 水際のぼかし, 主流の半幅（m）, 岸の幅（m）, 標高差 / 一辺
+};
+
 // GPU 側の MaskOpConstants と一致させること。
 struct MaskOpConstants {
     uint32_t indices[4];  // 出力 UAV, 入力 A SRV, 入力 B SRV, 素材 SRV
@@ -161,6 +180,7 @@ uint64_t HashHeightState(uint64_t seed, const MaterialLayer& layer) {
     hash = HashBytes(hash, &layer.sediment, sizeof(layer.sediment));
     hash = HashBytes(hash, &layer.crumbling, sizeof(layer.crumbling));
     hash = HashBytes(hash, &layer.snow, sizeof(layer.snow));
+    hash = HashBytes(hash, &layer.river, sizeof(layer.river));
     hash = HashBytes(hash, &layer.maskOnly, sizeof(layer.maskOnly));
     // マスクは「どこに載せるか」を決めるので Height にも効く。
     hash = HashBytes(hash, &layer.mask.source, sizeof(layer.mask.source));
@@ -202,6 +222,8 @@ uint64_t HashMaskOpParams(uint64_t seed, const MaskOp& op) {
             return HashBytes(seed, &op.snowMask, sizeof(op.snowMask));
         case MaskOpKind::Height:
             return HashBytes(seed, &op.height, sizeof(op.height));
+        case MaskOpKind::River:
+            return HashBytes(seed, &op.riverMask, sizeof(op.riverMask));
         default:
             return seed;
     }
@@ -327,6 +349,7 @@ void MaterialEvaluator::Destroy(rhi::Device& device) {
     ReleaseSedimentResources(device);
     ReleaseCrumblingResources(device);
     ReleaseSnowResources(device);
+    ReleaseRiverResources(device);
     for (rhi::GpuTexture& texture : m_maskOpTextures) {
         device.DeferRelease(texture);
     }
@@ -419,6 +442,10 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
     // 積雪の被覆も、直前に走った積雪レイヤーの積雪厚から焼く。
     if (op.kind == MaskOpKind::Snow) {
         return ApplySnowMask(device, pipelineCache, commandList, op, stack, target);
+    }
+    // 河川の水面 / 河原 / 水深も、直前に走った河川レイヤーの作業用テクスチャから焼く。
+    if (op.kind == MaskOpKind::River) {
+        return ApplyRiverMask(device, pipelineCache, commandList, op, stack, target);
     }
 
     const wchar_t* entry = L"CsImage";
@@ -1370,6 +1397,398 @@ bool MaterialEvaluator::ApplySnowMask(rhi::Device& device, rhi::PipelineCache& p
     return true;
 }
 
+void MaterialEvaluator::ReleaseRiverResources(rhi::Device& device) {
+    device.DeferRelease(m_river.heights);
+    device.DeferRelease(m_river.scratch);
+    device.DeferRelease(m_river.surface);
+    device.DeferRelease(m_river.weights0);
+    device.DeferRelease(m_river.weights1);
+    device.DeferRelease(m_river.accumA);
+    device.DeferRelease(m_river.accumB);
+    device.DeferRelease(m_river.width);
+    device.DeferRelease(m_river.jfaA);
+    device.DeferRelease(m_river.jfaB);
+    device.DeferRelease(m_river.maxScratch);
+    device.DeferRelease(m_river.waterLevel);
+    device.DeferRelease(m_river.distance);
+    device.DeferRelease(m_river.ground);
+    device.DeferRelease(m_river.lakeDepth);
+    device.DeferRelease(m_river.halfWidth);
+    device.DeferRelease(m_river.waterFine);
+    device.DeferRelease(m_river.depthFine);
+    m_river.resolution = 0;
+    m_river.fineResolution = 0;
+}
+
+// 河川の作業リソースも**使うときだけ**作る。解析グリッドか合成解像度が変わったら作り直す。
+// 川筋（Fluvial）と共有しないのは、マスクの op が河川レイヤーの後で焼くまで
+// 中身を残しておく必要があるため（同じ位置で焼く川筋の op に上書きされると困る）。
+bool MaterialEvaluator::EnsureRiverResources(rhi::Device& device, uint32_t resolution,
+                                             uint32_t fineResolution) {
+    if (m_river.resolution == resolution && m_river.fineResolution == fineResolution &&
+        m_river.IsValid()) {
+        return true;
+    }
+    ReleaseRiverResources(device);
+
+    const auto grid = [&](DXGI_FORMAT format, const wchar_t* name, rhi::GpuTexture& texture) {
+        return CreateChannelTexture(device, resolution, format, name, texture);
+    };
+    const bool ok =
+        grid(DXGI_FORMAT_R32_FLOAT, L"RiverHeights", m_river.heights) &&
+        grid(DXGI_FORMAT_R32_FLOAT, L"RiverScratch", m_river.scratch) &&
+        grid(DXGI_FORMAT_R32_FLOAT, L"RiverSurface", m_river.surface) &&
+        grid(DXGI_FORMAT_R32G32B32A32_FLOAT, L"RiverWeights0", m_river.weights0) &&
+        grid(DXGI_FORMAT_R32G32B32A32_FLOAT, L"RiverWeights1", m_river.weights1) &&
+        grid(DXGI_FORMAT_R32_FLOAT, L"RiverAccumA", m_river.accumA) &&
+        grid(DXGI_FORMAT_R32_FLOAT, L"RiverAccumB", m_river.accumB) &&
+        grid(DXGI_FORMAT_R32_FLOAT, L"RiverWidth", m_river.width) &&
+        grid(DXGI_FORMAT_R32G32B32A32_FLOAT, L"RiverJfaA", m_river.jfaA) &&
+        grid(DXGI_FORMAT_R32G32B32A32_FLOAT, L"RiverJfaB", m_river.jfaB) &&
+        CreateChannelTexture(device, 1, DXGI_FORMAT_R32_UINT, L"RiverMax", m_river.maxScratch) &&
+        grid(DXGI_FORMAT_R32_FLOAT, L"RiverWaterLevel", m_river.waterLevel) &&
+        grid(DXGI_FORMAT_R32_FLOAT, L"RiverDistance", m_river.distance) &&
+        grid(DXGI_FORMAT_R32_FLOAT, L"RiverGround", m_river.ground) &&
+        grid(DXGI_FORMAT_R32_FLOAT, L"RiverLakeDepth", m_river.lakeDepth) &&
+        grid(DXGI_FORMAT_R32_FLOAT, L"RiverHalfWidth", m_river.halfWidth) &&
+        CreateChannelTexture(device, fineResolution, kHeightFormat, L"RiverWaterFine",
+                             m_river.waterFine) &&
+        CreateChannelTexture(device, fineResolution, kHeightFormat, L"RiverDepthFine",
+                             m_river.depthFine);
+    if (!ok) {
+        TG_LOG_WARN("河川の作業リソースを作れませんでした（%u^2）", resolution);
+        ReleaseRiverResources(device);
+        return false;
+    }
+    m_river.resolution = resolution;
+    m_river.fineResolution = fineResolution;
+    return true;
+}
+
+// 河川。設計は docs/reference/river-node.md。
+//
+//   解析グリッドへ落とす → ローパス → 窪み埋め = 水面高（2 × 解像度 回）
+//   → 埋めた面の上で MFD 重み → 流量（2 × 解像度 回）→ 幅 → JFA → 水面 / 距離 / 掘り
+//   → 合成解像度へ書き戻す（掘りは差分、水面は置き換え）→ 法線を作り直す
+//
+// **窪み埋めと水面の単調化は同じ計算**（Planchon–Darboux）なので 1 回で済ませる。
+// Mask Fluvial の 8 回固定の窪み埋めだと大きな盆地で流量が消え、湖の下流で
+// 川が途切れる。ここでは O(解像度) 回まわして盆地を出口まで埋める。
+bool MaterialEvaluator::ApplyRiver(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                   ID3D12GraphicsCommandList* commandList,
+                                   const MaterialLayer& layer, const MaterialStack& stack,
+                                   uint32_t seedIndex) {
+    const MaterialLayer::RiverSettings& params = layer.river;
+    const uint32_t resolution = std::clamp(params.resolution, 64u, 2048u);
+    if (!EnsureRiverResources(device, resolution, m_resolution)) {
+        return false;
+    }
+
+    const auto pipeline = [&](const wchar_t* entry) {
+        return pipelineCache.GetCompute(L"CompositeRiver.hlsl", entry);
+    };
+    ID3D12PipelineState* samplePass = pipeline(L"CsSample");
+    ID3D12PipelineState* blurHPass = pipeline(L"CsBlurH");
+    ID3D12PipelineState* blurVPass = pipeline(L"CsBlurV");
+    ID3D12PipelineState* fillInitPass = pipeline(L"CsFillInit");
+    ID3D12PipelineState* fillIterPass = pipeline(L"CsFillIter");
+    ID3D12PipelineState* weightsPass = pipeline(L"CsWeights");
+    ID3D12PipelineState* accumInitPass = pipeline(L"CsAccumInit");
+    ID3D12PipelineState* accumIterPass = pipeline(L"CsAccumIter");
+    ID3D12PipelineState* maxClearPass = pipeline(L"CsMaxClear");
+    ID3D12PipelineState* maxReducePass = pipeline(L"CsMaxReduce");
+    ID3D12PipelineState* widthPass = pipeline(L"CsWidth");
+    ID3D12PipelineState* jfaPass = pipeline(L"CsJfaStep");
+    ID3D12PipelineState* resolvePass = pipeline(L"CsResolve");
+    ID3D12PipelineState* applyPass = pipeline(L"CsApply");
+    ID3D12PipelineState* waterNormalPass = pipeline(L"CsWaterNormal");
+    ID3D12PipelineState* normalPass =
+        pipelineCache.GetCompute(L"CompositeBlur.hlsl", L"CsNormalFromHeight");
+    if (samplePass == nullptr || blurHPass == nullptr || blurVPass == nullptr ||
+        fillInitPass == nullptr || fillIterPass == nullptr || weightsPass == nullptr ||
+        accumInitPass == nullptr || accumIterPass == nullptr || maxClearPass == nullptr ||
+        maxReducePass == nullptr || widthPass == nullptr || jfaPass == nullptr ||
+        resolvePass == nullptr || applyPass == nullptr || waterNormalPass == nullptr ||
+        normalPass == nullptr) {
+        return false;
+    }
+
+    // --- パラメータを正規化ハイト / セル数へ直す --------------------------------
+    // ハイトは 0〜1 で、その全幅が標高差（m）。距離は 1 セルが何 m かで決まる。
+    const float sizeMeters = (stack.SizeMeters() > 0.0f) ? stack.SizeMeters() : 1.0f;
+    const float heightMeters = (stack.HeightMeters() > 0.0f) ? stack.HeightMeters() : 1.0f;
+    const float cellMeters = sizeMeters / static_cast<float>(std::max(1u, resolution - 1u));
+
+    const float detailMeters =
+        std::clamp(params.detailMeters, cellMeters, std::max(cellMeters, sizeMeters * 0.5f));
+    const uint32_t blurRadius = static_cast<uint32_t>(
+        std::clamp(static_cast<int>(std::lround(detailMeters / cellMeters)), 1, 64));
+    const float cellCount = static_cast<float>(resolution) * static_cast<float>(resolution);
+    // 最小勾配は無次元。1 セル進む間の落差（正規化ハイト）へ直す。
+    // 0 のままだと平坦面で MFD の重みが全部 0 になり流量が止まるので、下限を入れる。
+    const float slopePerCell = std::max(0.0f, params.minSlope) * cellMeters / heightMeters;
+    const float epsilon = std::max(slopePerCell, 1e-6f);
+    const float minHalfCells = std::max(0.0f, params.minWidthMeters) / (2.0f * cellMeters);
+    const float mainHalfCells =
+        std::max(std::max(0.0f, params.mainWidthMeters) / (2.0f * cellMeters), minHalfCells);
+
+    RiverConstants constants = {};
+    constants.indices0[0] = m_river.heights.UavIndex();
+    constants.indices0[1] = m_river.scratch.UavIndex();
+    constants.indices0[2] = m_river.surface.UavIndex();
+    constants.indices0[3] = m_river.weights0.UavIndex();
+    constants.indices1[0] = m_river.weights1.UavIndex();
+    constants.indices1[1] = m_river.accumA.UavIndex();
+    constants.indices1[2] = m_river.accumB.UavIndex();
+    constants.indices1[3] = m_river.width.UavIndex();
+    constants.indices2[0] = m_river.jfaA.UavIndex();
+    constants.indices2[1] = m_river.jfaB.UavIndex();
+    constants.indices2[2] = m_river.maxScratch.UavIndex();
+    constants.indices2[3] = seedIndex;
+    constants.indices3[0] = m_river.waterLevel.UavIndex();
+    constants.indices3[1] = m_river.distance.UavIndex();
+    constants.indices3[2] = m_river.ground.UavIndex();
+    constants.indices3[3] = m_river.lakeDepth.UavIndex();
+    constants.indices4[0] = m_river.halfWidth.UavIndex();
+    constants.indices4[1] = m_river.waterFine.UavIndex();
+    constants.indices4[2] = m_river.depthFine.UavIndex();
+    constants.indices4[3] = m_textures.height.SrvIndex();
+    constants.indices5[0] = m_textures.height.UavIndex();
+    constants.indices5[1] = kInvalidTextureIndex;
+    constants.indices5[2] = resolution;
+    constants.indices5[3] = m_resolution;
+    constants.indices6[2] = blurRadius;
+    constants.indices7[1] = params.fillWater ? 1u : 0u;
+    constants.indices7[3] = m_textures.normal.UavIndex();
+    constants.indices8[0] = m_river.heights.SrvIndex();
+    constants.indices8[1] = m_river.waterLevel.SrvIndex();
+    constants.indices8[2] = m_river.distance.SrvIndex();
+    constants.indices8[3] = m_river.ground.SrvIndex();
+    constants.indices9[0] = m_river.lakeDepth.SrvIndex();
+    constants.indices9[1] = m_river.halfWidth.SrvIndex();
+    constants.indices9[2] = m_river.waterFine.SrvIndex();
+    constants.indices9[3] = m_river.depthFine.SrvIndex();
+    constants.params0[0] = std::clamp(params.concentration, 0.1f, 16.0f);
+    constants.params0[1] = std::clamp(params.threshold, 0.0f, 1.0f) * cellCount;
+    constants.params0[2] = epsilon;
+    constants.params1[0] = mainHalfCells;
+    constants.params1[1] = minHalfCells;
+    constants.params1[2] = std::clamp(params.widthExponent, 0.0f, 2.0f);
+    constants.params1[3] = std::max(0.0f, params.bedDepthMeters) / heightMeters;
+    constants.params2[0] = std::max(0.0f, params.bankWidthMeters) / cellMeters;
+    constants.params2[1] = std::clamp(params.bankHardness, 0.0f, 1.0f);
+    constants.params2[2] = std::max(0.0f, params.shoreWidthMeters);
+    constants.params2[3] = std::max(0.0f, params.shoreHeightMeters);
+    constants.params3[0] = std::clamp(params.shoreFeather, 0.0f, 1.0f);
+    constants.params3[1] = cellMeters;
+    constants.params3[2] = heightMeters;
+    // 湖とみなす深さと水際のぼかしは、標高差に依らず実寸で固定する（5 cm / 2 cm）。
+    constants.params3[3] = 0.05f / heightMeters;
+    constants.params4[0] = 0.02f / heightMeters;
+    constants.params4[1] = mainHalfCells * cellMeters;
+    constants.params4[2] = std::max(0.0f, params.bankWidthMeters);
+    constants.params4[3] = heightMeters / sizeMeters;
+
+    // 定数は組み合わせぶんだけ確保して使い回す（反復のたびに確保すると
+    // アップロードリングを 1 フレームで食い潰す。川筋 / 堆積と同じ）。
+    const auto upload = [&](uint32_t direction, uint32_t jfaStep, uint32_t jfaRead,
+                            uint32_t writeHeight, D3D12_GPU_VIRTUAL_ADDRESS& outAddress) {
+        RiverConstants copy = constants;
+        copy.indices6[0] = direction;
+        copy.indices6[1] = jfaStep;
+        copy.indices6[3] = jfaRead;
+        copy.indices7[2] = writeHeight;
+        const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(RiverConstants), 256);
+        if (!cb.IsValid()) {
+            return false;
+        }
+        std::memcpy(cb.cpu, &copy, sizeof(copy));
+        outAddress = cb.gpuAddress;
+        return true;
+    };
+    D3D12_GPU_VIRTUAL_ADDRESS constantsA = 0;
+    D3D12_GPU_VIRTUAL_ADDRESS constantsB = 0;
+    if (!upload(0u, 0u, 0u, 0u, constantsA) || !upload(1u, 0u, 0u, 0u, constantsB)) {
+        return false;
+    }
+    // JFA の歩幅は 解像度/2 から 1 まで半分ずつ。最後に歩幅 1 をもう 1 回掛けて
+    // 取りこぼしを拾う（JFA+1）。
+    std::vector<uint32_t> jfaSteps;
+    for (uint32_t step = resolution / 2u; step >= 1u; step /= 2u) {
+        jfaSteps.push_back(step);
+    }
+    jfaSteps.push_back(1u);
+    std::vector<D3D12_GPU_VIRTUAL_ADDRESS> jfaConstants(jfaSteps.size());
+    for (size_t i = 0; i < jfaSteps.size(); ++i) {
+        if (!upload(static_cast<uint32_t>(i % 2), jfaSteps[i], 0u, 0u, jfaConstants[i])) {
+            return false;
+        }
+    }
+    // 偶数回なら結果は A に、奇数回なら B に残る。
+    const uint32_t jfaRead = (jfaSteps.size() % 2 == 0) ? 0u : 1u;
+    D3D12_GPU_VIRTUAL_ADDRESS resolveConstants = 0;
+    D3D12_GPU_VIRTUAL_ADDRESS applyConstants = 0;
+    if (!upload(0u, 0u, jfaRead, 0u, resolveConstants) ||
+        !upload(0u, 0u, jfaRead, layer.maskOnly ? 0u : 1u, applyConstants)) {
+        return false;
+    }
+
+    PIXBeginEvent(commandList, PIX_COLOR(70, 130, 180), "CompositeRiver");
+
+    // 入力の Height は読み取り専用（sample が読む）。
+    TransitionIfNeeded(commandList, m_textures.height,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+
+    const uint32_t groups = DispatchCount(resolution);
+    const auto barrier = [&]() {
+        const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+        commandList->ResourceBarrier(1, &uav);
+    };
+    const auto run = [&](ID3D12PipelineState* pipelineState, uint32_t groupCount) {
+        commandList->SetPipelineState(pipelineState);
+        commandList->Dispatch(groupCount, groupCount, 1);
+        barrier();
+    };
+
+    commandList->SetComputeRootConstantBufferView(1, constantsA);
+    run(samplePass, groups);
+    if (blurRadius > 1u) {
+        run(blurHPass, groups);
+        run(blurVPass, groups);
+    }
+
+    // 窪み埋め = 水面高。情報は 1 反復に 1 セル進むので、累積と同じ回数まわす。
+    // **偶数回まわすと結果は surface に残る。**
+    run(fillInitPass, groups);
+    const int jacobiIterations = static_cast<int>(resolution) * 2;
+    for (int i = 0; i < jacobiIterations; ++i) {
+        commandList->SetComputeRootConstantBufferView(1, (i % 2 == 0) ? constantsA : constantsB);
+        run(fillIterPass, groups);
+    }
+
+    commandList->SetComputeRootConstantBufferView(1, constantsA);
+    run(weightsPass, groups);
+    run(accumInitPass, groups);
+    for (int i = 0; i < jacobiIterations; ++i) {
+        commandList->SetComputeRootConstantBufferView(1, (i % 2 == 0) ? constantsA : constantsB);
+        run(accumIterPass, groups);
+    }
+    commandList->SetComputeRootConstantBufferView(1, constantsA);
+    run(maxClearPass, 1);
+    run(maxReducePass, groups);
+    run(widthPass, groups);
+
+    for (size_t i = 0; i < jfaSteps.size(); ++i) {
+        commandList->SetComputeRootConstantBufferView(1, jfaConstants[i]);
+        run(jfaPass, groups);
+    }
+    commandList->SetComputeRootConstantBufferView(1, resolveConstants);
+    run(resolvePass, groups);
+
+    // 合成解像度へ書き戻す。**Mask だけが目的のときは Height に書かない**が、
+    // 水面の被覆と水深（合成解像度）はここでしか焼けないので、パスは必ず通す。
+    TransitionIfNeeded(commandList, m_river.heights,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(commandList, m_river.waterLevel,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(commandList, m_river.distance,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(commandList, m_river.ground,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(commandList, m_river.lakeDepth,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    commandList->SetComputeRootConstantBufferView(1, applyConstants);
+    run(applyPass, DispatchCount(m_resolution));
+
+    // 形が変わったので、法線も作り直す。書き戻していないなら形は変わっていない。
+    // 水面の法線だけは R16 の Height ではなく R32 の水面高から作る
+    // （緩い水面は R16 で階段になり、法線が縞になる）。
+    if (!layer.maskOnly) {
+        RebuildNormalsFromHeight(device, normalPass, commandList, stack);
+        commandList->SetComputeRootConstantBufferView(1, applyConstants);
+        run(waterNormalPass, DispatchCount(m_resolution));
+    }
+
+    // 次に使うときは書き込みへ戻す。
+    TransitionIfNeeded(commandList, m_river.heights, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, m_river.waterLevel, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, m_river.distance, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, m_river.ground, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, m_river.lakeDepth, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+    PIXEndEvent(commandList);
+    return true;
+}
+
+// 直前の河川レイヤーが残した水面 / 河原 / 水深を、マスクとして焼く。
+//
+// **河川レイヤーを合成し終えた直後にしか呼ばない**（作業用テクスチャは
+// 次の河川レイヤーで上書きされるため）。段取りは堆積 / 崩落 / 積雪と同じ。
+bool MaterialEvaluator::ApplyRiverMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                       ID3D12GraphicsCommandList* commandList, const MaskOp& op,
+                                       const MaterialStack& stack, rhi::GpuTexture& target) {
+    if (!m_river.IsValid() || !target.IsValid() || m_river.fineResolution != m_resolution) {
+        return false;
+    }
+    ID3D12PipelineState* maskPass = pipelineCache.GetCompute(L"CompositeRiver.hlsl", L"CsMask");
+    if (maskPass == nullptr) {
+        return false;
+    }
+
+    const float sizeMeters = (stack.SizeMeters() > 0.0f) ? stack.SizeMeters() : 1.0f;
+    const float heightMeters = (stack.HeightMeters() > 0.0f) ? stack.HeightMeters() : 1.0f;
+    const float cellMeters =
+        sizeMeters / static_cast<float>(std::max(1u, m_river.resolution - 1u));
+
+    RiverConstants constants = {};
+    constants.indices5[1] = target.UavIndex();
+    constants.indices5[2] = m_river.resolution;
+    constants.indices5[3] = m_resolution;
+    constants.indices7[0] = std::min(op.riverMask.channel, 2u);
+    constants.indices8[1] = m_river.waterLevel.SrvIndex();
+    constants.indices8[2] = m_river.distance.SrvIndex();
+    constants.indices8[3] = m_river.ground.SrvIndex();
+    constants.indices9[1] = m_river.halfWidth.SrvIndex();
+    constants.indices9[2] = m_river.waterFine.SrvIndex();
+    constants.indices9[3] = m_river.depthFine.SrvIndex();
+    constants.params2[2] = std::max(0.0f, op.riverMask.shoreWidthMeters);
+    constants.params2[3] = std::max(0.0f, op.riverMask.shoreHeightMeters);
+    constants.params3[0] = std::clamp(op.riverMask.shoreFeather, 0.0f, 1.0f);
+    constants.params3[1] = cellMeters;
+    constants.params3[2] = heightMeters;
+    // 河原の広がりを縮める基準は主流の半幅（m）。ApplyRiver と同じ式で出す。
+    constants.params4[1] =
+        std::max(op.riverMask.mainWidthMeters, op.riverMask.minWidthMeters) * 0.5f;
+
+    const rhi::UploadAllocation cb = device.Upload().Allocate(sizeof(RiverConstants), 256);
+    if (!cb.IsValid()) {
+        return false;
+    }
+    std::memcpy(cb.cpu, &constants, sizeof(constants));
+
+    PIXBeginEvent(commandList, PIX_COLOR(90, 150, 200), "CompositeRiverMask");
+    rhi::GpuTexture* inputs[] = {&m_river.waterLevel, &m_river.distance, &m_river.ground,
+                                 &m_river.halfWidth,  &m_river.waterFine, &m_river.depthFine};
+    for (rhi::GpuTexture* texture : inputs) {
+        TransitionIfNeeded(commandList, *texture, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    }
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+    commandList->SetPipelineState(maskPass);
+    commandList->Dispatch(DispatchCount(m_resolution), DispatchCount(m_resolution), 1);
+    const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+    commandList->ResourceBarrier(1, &uav);
+
+    // 次に使うときは書き込みへ戻す。
+    for (rhi::GpuTexture* texture : inputs) {
+        TransitionIfNeeded(commandList, *texture, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    PIXEndEvent(commandList);
+    return true;
+}
+
 // 崩落レイヤー 1 枚ぶん。発生源のマスクから岩片を生み、斜面を下らせて積む。
 //
 // **合成解像度でそのまま回す。** 岩片は m 単位の小さな形なので、堆積のように
@@ -1700,7 +2119,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             if (op.kind == MaskOpKind::Fluvial || op.kind == MaskOpKind::Slope ||
                 op.kind == MaskOpKind::Curvature || op.kind == MaskOpKind::Sediment ||
                 op.kind == MaskOpKind::Crumbling || op.kind == MaskOpKind::Snow ||
-                op.kind == MaskOpKind::Height) {
+                op.kind == MaskOpKind::Height || op.kind == MaskOpKind::River) {
                 after = std::max(after, op.heightSourceLayer);
                 const size_t layerCount = std::min<size_t>(
                     stack.Layers().size(),
@@ -1764,18 +2183,24 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         if (IsHeightOperationKind(layer.kind)) {
             const bool hasUnderlying = (baseIndex != static_cast<size_t>(-1)) &&
                                        (layerIndex > baseIndex);
-            // 崩落だけは Mask 入力を**発生源**として使うので、先に引いておく。
+            // 崩落と河川は Mask 入力を**発生源 / 川の出どころ**として使うので、先に引いておく。
             // 段取り上、ここへ来る時点でその op は焼き終わっている。
+            uint32_t inputMaskIndex = kInvalidTextureIndex;
+            if (layer.mask.source == MaskSource::Node && layer.mask.maskOp >= 0 &&
+                static_cast<size_t>(layer.mask.maskOp) < maskOps.size() &&
+                maskOpDone[static_cast<size_t>(layer.mask.maskOp)]) {
+                inputMaskIndex =
+                    m_maskOpTextures[static_cast<size_t>(layer.mask.maskOp)].SrvIndex();
+            }
             if (layer.enabled && hasUnderlying && layer.kind == LayerKind::Crumbling) {
-                uint32_t emissionIndex = kInvalidTextureIndex;
-                if (layer.mask.source == MaskSource::Node && layer.mask.maskOp >= 0 &&
-                    static_cast<size_t>(layer.mask.maskOp) < maskOps.size() &&
-                    maskOpDone[static_cast<size_t>(layer.mask.maskOp)]) {
-                    emissionIndex =
-                        m_maskOpTextures[static_cast<size_t>(layer.mask.maskOp)].SrvIndex();
-                }
                 if (!ApplyCrumbling(device, pipelineCache, commandList, layer, stack,
-                                    emissionIndex)) {
+                                    inputMaskIndex)) {
+                    complete = false;
+                }
+                ++m_evaluatedLayerCount;
+            } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::River) {
+                if (!ApplyRiver(device, pipelineCache, commandList, layer, stack,
+                                inputMaskIndex)) {
                     complete = false;
                 }
                 ++m_evaluatedLayerCount;

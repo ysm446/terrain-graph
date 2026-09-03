@@ -52,6 +52,8 @@ enum class LayerKind : uint32_t {
     Crumbling = 5,
     // 積雪。雪を降らせ、急な雪面から低い所へ滑らせて溜める。
     Snow = 6,
+    // 河川。川筋から河床を掘り、下流へ単調に下がる水面を張る。
+    River = 7,
 };
 
 // 岩片の形。terrain-editor の RockStyle と同じ 3 種類。
@@ -64,7 +66,8 @@ enum class RockStyle : uint32_t {
 // 合成せずハイトを書き換える加工か。**下地にはなれない**（ならす相手が要る）。
 inline bool IsHeightOperationKind(LayerKind kind) {
     return kind == LayerKind::Blur || kind == LayerKind::Sediment ||
-           kind == LayerKind::Crumbling || kind == LayerKind::Snow;
+           kind == LayerKind::Crumbling || kind == LayerKind::Snow ||
+           kind == LayerKind::River;
 }
 
 // ハイトの基準面。ソースの値がこの値のとき、そのテクセルは「基準の高さ」ちょうどになる。
@@ -335,6 +338,51 @@ struct MaterialLayer {
         float maskFeatherMeters = 0.015f;
     };
     SnowSettings snow;
+
+    // 河川（kind == LayerKind::River のときだけ意味を持つ）。
+    //
+    // 川筋（フロー累積）から幅を決めて河床を掘り、下流へ単調に下がる水面を張る。
+    // 設計は docs/reference/river-node.md。水面は Planchon–Darboux 法の窪み埋め
+    // （最小勾配 ε 付き）そのもので、盆地は自然に湖になる。
+    // 単位は**すべて実寸（m）**で、評価器が正規化ハイト / セル数へ直す。
+    struct RiverSettings {
+        // --- 川筋 ---
+        // 川とみなす流量。**全セル数に対する割合**（Mask Fluvial と同じ単位）。
+        float threshold = 0.002f;
+        // 流向を読む前にならす大きさ（m）。
+        float detailMeters = 8.0f;
+        // 下流への配分の集中度（MFD の指数）。
+        float concentration = 4.0f;
+        // 川筋を計算するグリッド。**合成解像度とは別。**
+        uint32_t resolution = 512;
+        // --- 掘る ---
+        // **流量が最大のセル**での川幅（m）。幅の基準はここ。
+        float mainWidthMeters = 60.0f;
+        // しきい値ぎりぎりの細い沢でも、これより細くしない（m）。
+        float minWidthMeters = 3.0f;
+        // 流量に対する幅の指数。0.5 が水理幾何の標準、0 で一定幅。
+        float widthExponent = 0.5f;
+        // 水面から河床まで（m）。
+        float bedDepthMeters = 3.0f;
+        // 水際から岸の上端までの距離（m）。**掘る形**の話。
+        float bankWidthMeters = 8.0f;
+        // 0 でなだらかな土手、1 で切り立った崖。
+        float bankHardness = 0.35f;
+        // --- 水面 ---
+        // 切ると乾いた河床のまま残す（涸れ川・旧河道）。マスクは出る。
+        bool fillWater = true;
+        // 水面が下流へ下がる最小の傾き（無次元。0.001 = 1 km で 1 m）。
+        // 大きいほど平坦な谷底が上流側から水に浸かる。流向計算には 0 でも下限が入る。
+        float minSlope = 0.0002f;
+        // --- 河原（Bank マスク） ---
+        // 水際から外側へ、河原とみなす距離（m）。主流での値で、支流は幅と同じ比で縮む。
+        float shoreWidthMeters = 15.0f;
+        // 水面からこの高さまでを河原とする（m）。増水時に浸かる帯。
+        float shoreHeightMeters = 2.0f;
+        // 縁のなだらかさ。広がりと比高それぞれに対する割合（0〜1）。
+        float shoreFeather = 0.3f;
+    };
+    RiverSettings river;
 
     // **Height へ書き戻さない。** 加工（堆積 / 崩落）を、マスクを得るためだけに
     // 走らせるときに立てる。Result を繋がずに Mask だけを使う繋ぎ方のためのもの。

@@ -198,6 +198,116 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
         return changed;
     }
 
+    // 河川も合成レイヤーではなく「川筋から河床を掘って水を張る加工」。
+    // 川の出どころは Mask 入力（Seed）で受けるので、マスクの節は出さない。
+    if (layer.kind == compositor::LayerKind::River) {
+        const compositor::MaterialLayer::RiverSettings riverDefaults;
+        ui::SectionHeader("基本");
+        if (ui::BeginPropertyTable("riverBasicRows")) {
+            char riverName[128] = {};
+            std::snprintf(riverName, sizeof(riverName), "%s", layer.name.c_str());
+            if (ui::PropertyTextInput("名前", riverName, sizeof(riverName))) {
+                layer.name = riverName;
+                changed = true;
+            }
+            ui::EndPropertyTable();
+        }
+        ui::SectionHeader("川筋");
+        if (ui::BeginPropertyTable("riverFlowRows")) {
+            changed |= ui::PropertyFloat(
+                "川のしきい値", &layer.river.threshold, 0.0f, 0.05f, riverDefaults.threshold,
+                "川とみなす流量。全セル数に対する割合（Mask Fluvial と同じ単位）。"
+                "下げるほど細い沢まで川になる",
+                "%.4f", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat(
+                "最大ディテール", &layer.river.detailMeters, 1.0f, 512.0f,
+                riverDefaults.detailMeters,
+                "流向を読む前にならす大きさ。大きいほど大きな谷筋を追う", "%.1f m",
+                ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat(
+                "集中度", &layer.river.concentration, 0.1f, 16.0f, riverDefaults.concentration,
+                "下流への配分の集中度。大きいほど主流へ集まる", "%.2f");
+            int riverResolutionIndex = 1;
+            for (int i = 0; i < IM_ARRAYSIZE(kSedimentResolutionValues); ++i) {
+                if (kSedimentResolutionValues[i] == layer.river.resolution) {
+                    riverResolutionIndex = i;
+                }
+            }
+            if (ui::PropertyCombo("解像度", &riverResolutionIndex, kSedimentResolutionLabels,
+                                  IM_ARRAYSIZE(kSedimentResolutionLabels), 1,
+                                  "川筋を計算するグリッド。合成解像度とは別。"
+                                  "反復回数が比例して増えるので、調整中は 256 が軽い")) {
+                layer.river.resolution = kSedimentResolutionValues[riverResolutionIndex];
+                changed = true;
+            }
+            ui::EndPropertyTable();
+        }
+        ui::SectionHeader("掘る");
+        if (ui::BeginPropertyTable("riverCarveRows")) {
+            changed |= ui::PropertyFloat(
+                "主流の幅", &layer.river.mainWidthMeters, 1.0f, 1000.0f,
+                riverDefaults.mainWidthMeters,
+                "流量が最大のセルでの川幅。幅の基準はここで、支流は流量に応じて細くなる",
+                "%.1f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat(
+                "最小幅", &layer.river.minWidthMeters, 0.5f, 100.0f, riverDefaults.minWidthMeters,
+                "しきい値ぎりぎりの細い沢でも、これより細くしない", "%.1f m",
+                ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat(
+                "幅の伸び", &layer.river.widthExponent, 0.0f, 1.0f, riverDefaults.widthExponent,
+                "流量に対する幅の指数。0.5 が水理幾何の標準、0 で一定幅", "%.2f");
+            changed |= ui::PropertyFloat(
+                "河床の深さ", &layer.river.bedDepthMeters, 0.0f, 50.0f,
+                riverDefaults.bedDepthMeters, "水面から河床まで", "%.2f m",
+                ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat(
+                "岸の幅", &layer.river.bankWidthMeters, 0.0f, 100.0f,
+                riverDefaults.bankWidthMeters,
+                "水際から岸の上端までの距離（掘る形の話。河原の広がりとは別）", "%.1f m",
+                ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat(
+                "岸の硬さ", &layer.river.bankHardness, 0.0f, 1.0f, riverDefaults.bankHardness,
+                "0 でなだらかな土手、1 で切り立った崖", "%.2f");
+            ui::EndPropertyTable();
+        }
+        ui::SectionHeader("水面");
+        if (ui::BeginPropertyTable("riverWaterRows")) {
+            changed |= ui::PropertyBool(
+                "水を張る", &layer.river.fillWater, riverDefaults.fillWater,
+                "切ると乾いた河床のまま残す（涸れ川・旧河道）。Water / Depth の Mask は出る");
+            changed |= ui::PropertyFloat(
+                "最小勾配", &layer.river.minSlope, 0.0f, 0.02f, riverDefaults.minSlope,
+                "水面が下流へ下がる最小の傾き（0.001 = 1 km で 1 m）。"
+                "盆地はこの傾きで出口まで埋まって湖になる。"
+                "大きくすると平坦な谷底まで水に浸かる",
+                "%.4f", ImGuiSliderFlags_Logarithmic);
+            ui::EndPropertyTable();
+        }
+        ui::SectionHeader("河原");
+        if (ui::BeginPropertyTable("riverShoreRows")) {
+            changed |= ui::PropertyFloat(
+                "河原の広がり", &layer.river.shoreWidthMeters, 0.0f, 200.0f,
+                riverDefaults.shoreWidthMeters,
+                "水際から外側へ、河原（Bank）とみなす距離。主流での値で、"
+                "支流は幅と同じ比で縮む",
+                "%.1f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat(
+                "河原の比高", &layer.river.shoreHeightMeters, 0.0f, 20.0f,
+                riverDefaults.shoreHeightMeters,
+                "水面からこの高さまでを河原とする（増水時に浸かる帯）。"
+                "谷壁を駆け上がらないように高さでも切る",
+                "%.2f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat(
+                "河原のぼかし", &layer.river.shoreFeather, 0.0f, 1.0f, riverDefaults.shoreFeather,
+                "河原の縁のなだらかさ。広がりと比高それぞれに対する割合", "%.2f");
+            ui::EndPropertyTable();
+        }
+        ui::HintText("川筋から河床を掘り、下流へ単調に下がる水面を張る。盆地は湖になる。"
+                     "Water は水面の被覆、Bank は河原（岩・砂利を置く帯）、Depth は水深。"
+                     "水の Surface はハイトを定数にすること（水面の形は River が決める）");
+        return changed;
+    }
+
     // 崩落も合成レイヤーではなく「下地のハイトへ岩屑を積む加工」。
     // 発生源は Mask 入力（Emission）で受けるので、マスクの節は出さない。
     if (layer.kind == compositor::LayerKind::Crumbling) {

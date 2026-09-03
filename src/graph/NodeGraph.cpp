@@ -60,6 +60,17 @@ constexpr std::array<PinDefinition, 5> kCrumblingPins = {{
     {PinKind::Output, ValueType::Mask, "Unique"},
 }};
 
+// 河川のピン。川の出どころを絞る Seed（省略可）を受け、地形に加えて
+// **水面の被覆**・**河原**・**水深**を出す。
+constexpr std::array<PinDefinition, 6> kRiverPins = {{
+    {PinKind::Input, ValueType::Material, "Base"},
+    {PinKind::Input, ValueType::Mask, "Seed"},
+    {PinKind::Output, ValueType::Material, "Result"},
+    {PinKind::Output, ValueType::Mask, "Water"},
+    {PinKind::Output, ValueType::Mask, "Bank"},
+    {PinKind::Output, ValueType::Mask, "Depth"},
+}};
+
 // マスクを 1 枚受けて 1 枚返す加工のピン。
 constexpr std::array<PinDefinition, 2> kMaskFilterPins = {{
     {PinKind::Input, ValueType::Mask, "Mask"},
@@ -82,7 +93,7 @@ constexpr std::array<PinDefinition, 1> kSourceNodePins = {{
     {PinKind::Output, ValueType::Material, "Result"},
 }};
 
-constexpr std::array<NodeDefinition, 17> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 18> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -91,6 +102,7 @@ constexpr std::array<NodeDefinition, 17> kNodeDefinitions = {{
     {NodeKind::Sediment, "sediment", "Sediment", kDepositPins},
     {NodeKind::Crumbling, "crumbling", "Crumbling", kCrumblingPins},
     {NodeKind::Snow, "snow", "Snow", kDepositPins},
+    {NodeKind::River, "river", "River", kRiverPins},
     {NodeKind::MaskImage, "maskImage", "Mask Image", kMaskSourcePins},
     {NodeKind::MaskNoise, "maskNoise", "Mask Noise", kMaskSourcePins},
     {NodeKind::MaskFluvial, "maskFluvial", "Mask Fluvial", kMaskFromHeightPins},
@@ -130,7 +142,7 @@ bool IsLayerNodeKind(NodeKind kind) {
     return kind == NodeKind::Surface || kind == NodeKind::Shape || kind == NodeKind::Liquid ||
            kind == NodeKind::Heightmap || kind == NodeKind::Blur ||
            kind == NodeKind::Sediment || kind == NodeKind::Crumbling ||
-           kind == NodeKind::Snow;
+           kind == NodeKind::Snow || kind == NodeKind::River;
 }
 
 bool IsSourceNodeKind(NodeKind kind) {
@@ -152,7 +164,7 @@ bool IsHeightMaskNodeKind(NodeKind kind) {
 
 bool IsLayerMaskSourceKind(NodeKind kind) {
     return kind == NodeKind::Sediment || kind == NodeKind::Crumbling ||
-           kind == NodeKind::Snow;
+           kind == NodeKind::Snow || kind == NodeKind::River;
 }
 
 bool IsPreviewableNodeKind(NodeKind kind) {
@@ -177,6 +189,8 @@ compositor::LayerKind LayerKindFor(NodeKind kind) {
             return compositor::LayerKind::Crumbling;
         case NodeKind::Snow:
             return compositor::LayerKind::Snow;
+        case NodeKind::River:
+            return compositor::LayerKind::River;
         default:
             return compositor::LayerKind::Surface;
     }
@@ -508,6 +522,7 @@ bool NodeGraph::MaskDependsOnHeight(const Node& maskNode, int depth) const {
         case NodeKind::Sediment:
         case NodeKind::Crumbling:
         case NodeKind::Snow:
+        case NodeKind::River:
             return true;
         case NodeKind::MaskLevels:
         case NodeKind::MaskBlend:
@@ -701,6 +716,17 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
             layerOp.kind = compositor::MaskOpKind::Snow;
             layerOp.snowMask.thresholdMeters = layerSettings->layer.snow.maskThresholdMeters;
             layerOp.snowMask.featherMeters = layerSettings->layer.snow.maskFeatherMeters;
+        } else if (maskNode.kind == NodeKind::River) {
+            layerOp.kind = compositor::MaskOpKind::River;
+            // 0 番目の Mask 出力が水面、1 番目が河原、2 番目が水深。
+            layerOp.riverMask.channel =
+                static_cast<uint32_t>(std::min<size_t>(source.outputIndex, 2));
+            const auto& river = layerSettings->layer.river;
+            layerOp.riverMask.shoreWidthMeters = river.shoreWidthMeters;
+            layerOp.riverMask.shoreHeightMeters = river.shoreHeightMeters;
+            layerOp.riverMask.shoreFeather = river.shoreFeather;
+            layerOp.riverMask.mainWidthMeters = river.mainWidthMeters;
+            layerOp.riverMask.minWidthMeters = river.minWidthMeters;
         } else {
             layerOp.kind = compositor::MaskOpKind::Crumbling;
             // 0 番目の Mask 出力が厚み、1 番目が岩片ごとの乱数。
