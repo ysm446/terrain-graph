@@ -473,6 +473,8 @@ void Application::DrawUi() {
             }
             ImGui::Separator();
             ImGui::MenuItem("マテリアルプレビュー", nullptr, &m_showMaterialSphere);
+            ImGui::MenuItem("テクスチャプレビュー", nullptr, &m_showTexturePreview);
+            ImGui::MenuItem("天球プレビュー", nullptr, &m_showSkyPreview);
             ImGui::MenuItem("情報", nullptr, &m_showInfo);
             ImGui::MenuItem("設定", nullptr, &m_showSettings);
             ImGui::EndMenu();
@@ -515,6 +517,8 @@ void Application::DrawUi() {
     DrawLightingPanel();
 
     DrawMaterialSphereWindow();
+    DrawTexturePreviewWindow();
+    DrawSkyPreviewWindow();
     DrawInfoWindow();
     DrawSettingsWindow();
     DrawExportWindow();

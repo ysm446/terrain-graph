@@ -123,7 +123,21 @@ private:
     void DrawMaterialSphereWindow();
     // 天球パネル。一覧で選んだものがそのままビューポートの環境になる。
     void DrawSkyLibraryPanel();
+    // 天球一覧の右クリックメニュー（追加 / 複製 / 削除）。
+    // target が kNoSkyAsset なら、対象の要る項目は出さない。
+    void DrawSkyContextMenu(renderer::SkyAssetId target);
+    // 天球プレビューの窓（大きい絵 + 設定）。
+    // 一覧のサムネイルをダブルクリックするか、ウィンドウメニューから開く。
+    void DrawSkyPreviewWindow();
     void DrawTextureLibraryPanel();
+    // テクスチャ一覧の右クリックメニュー（読み込む / 削除）。
+    // target が kNoTexture なら、対象の要る項目は出さない。
+    void DrawTextureContextMenu(compositor::TextureId target);
+    // 削除の確認モーダルを開く。参照が無くても必ず通す。
+    void RequestTextureRemove(compositor::TextureId id);
+    // テクスチャプレビューの窓（拡大表示 + 詳細）。
+    // 一覧のサムネイルをダブルクリックするか、ウィンドウメニューから開く。
+    void DrawTexturePreviewWindow();
     // アプリの設定ウィンドウ（ウィンドウ > 設定）。プロジェクトに保存しない設定を置く。
     void DrawSettingsWindow();
     // 合成結果を画像へ書き出すウィンドウ（ファイル > テクスチャを書き出す…）。
@@ -422,6 +436,10 @@ private:
     bool m_showInfo = false;
     // マテリアルプレビューの窓。ドックへは収めない補助ウィンドウ。
     bool m_showMaterialSphere = false;
+    // テクスチャプレビューの窓。同じくドックへは収めない。
+    bool m_showTexturePreview = false;
+    // 天球プレビューの窓。同じくドックへは収めない。
+    bool m_showSkyPreview = false;
     // その窓の中身をこのフレームに描いたか。**折りたたまれていれば球も描かない。**
     // UI（DrawUi）はフレームの記録より前に走るので、その結果をここへ残して使う。
     bool m_materialSphereVisible = false;

@@ -245,9 +245,12 @@ void Application::DrawMaterialSphereWindow() {
     }
 
     // 縦長。球の下にプロパティが続くので、幅は 1 列ぶんあれば足りる。
+    // **窓そのものはスクロールさせない。** 中身は上下 2 つの区画で、
+    // スクロールするのは下（プロパティ）だけ。
     ImGui::SetNextWindowSize(ImVec2(ui::Scaled(420.0f), ui::Scaled(720.0f)),
                              ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("マテリアルプレビュー", &m_showMaterialSphere)) {
+    if (!ImGui::Begin("マテリアルプレビュー", &m_showMaterialSphere,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         ImGui::End();
         return;
     }
@@ -266,41 +269,55 @@ void Application::DrawMaterialSphereWindow() {
     compositor::MaterialAsset& asset =
         *m_materialLibrary.FindMutable(assets[static_cast<size_t>(index)].id);
 
-    // --- 球 ------------------------------------------------------------------
-    // **正方形で、幅いっぱいに置く。** 球のプレビューなので横に広げても情報は増えず、
-    // 大きくしすぎると下のプロパティが押し出される。上限を決めて頭打ちにする。
-    const float sphereSize =
-        std::clamp(ImGui::GetContentRegionAvail().x, ui::Scaled(160.0f), ui::Scaled(480.0f));
-    const ImVec2 min = ImGui::GetCursorScreenPos();
-    const ImVec2 max(min.x + sphereSize, min.y + sphereSize);
+    // --- 上下 2 区画 ----------------------------------------------------------
+    // 上が球、下がプロパティ。**スクロールするのは下だけ。**
+    // 上は**幅に合わせた正方形**なので、窓を広げれば球も大きくなり、余白が残らない。
+    const float paneSize = PreviewPaneSize();
 
-    // 画像より先に ID を持つアイテムを置く（サムネイルと同じ作法）。
-    ImGui::InvisibleButton("##materialSphere", ImVec2(sphereSize, sphereSize),
-                           ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
-    if (ImGui::IsItemActive()) {
-        const ImVec2 delta = ImGui::GetIO().MouseDelta;
-        if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
-            // **寄るのは右ドラッグの上下。** 上へ引くと寄る（引き寄せる向き）。
-            // ホイールは窓のスクロールに残す。窓の中身は球より縦に長いので、
-            // ホイールを取り上げるとプロパティまで送れなくなる。
-            // 1px = 0.012 刻み（Camera::Dolly と同じ換算）。
-            m_materialSphere.Zoom(-delta.y * 0.012f);
-        } else {
+    // --- 球 ------------------------------------------------------------------
+    ImGui::BeginChild("materialSpherePane", ImVec2(0.0f, paneSize), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    {
+        // 横長の窓では幅より高さのほうが小さいので、そのときだけ横に余白が出る。
+        // 余った幅は左右へ分けて、球を中央に置く。
+        const float sphereSize =
+            std::max(std::min(ImGui::GetContentRegionAvail().x, paneSize), ui::Scaled(32.0f));
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
+                             std::max(0.0f, (ImGui::GetContentRegionAvail().x - sphereSize) * 0.5f));
+        const ImVec2 min = ImGui::GetCursorScreenPos();
+        const ImVec2 max(min.x + sphereSize, min.y + sphereSize);
+
+        // 画像より先に ID を持つアイテムを置く（サムネイルと同じ作法）。
+        ImGui::InvisibleButton("##materialSphere", ImVec2(sphereSize, sphereSize),
+                               ImGuiButtonFlags_MouseButtonLeft);
+        if (ImGui::IsItemActive()) {
             // 1px = 0.35 度。ビューポートのカメラ（0.006 ラジアン ≒ 0.34 度）に合わせる。
+            const ImVec2 delta = ImGui::GetIO().MouseDelta;
             m_materialSphere.Orbit(delta.x * 0.35f, delta.y * 0.35f);
         }
+        // **寄るのはホイール。** この区画はスクロールしない（`NoScrollWithMouse`）ので、
+        // ビューポートと同じようにホイールをズームへ回せる。
+        // スクロールするのは下のプロパティの区画だけ。
+        if (ImGui::IsItemHovered() && ImGui::GetIO().MouseWheel != 0.0f) {
+            m_materialSphere.Zoom(ImGui::GetIO().MouseWheel);
+        }
+
+        if (m_materialSphere.HasOutput()) {
+            ImGui::GetWindowDrawList()->AddImage(
+                static_cast<ImTextureID>(m_materialSphere.OutputHandle().ptr), min, max);
+        }
+        ImGui::GetWindowDrawList()->AddRect(min, max, ImGui::GetColorU32(ImGuiCol_Border),
+                                            ImGui::GetStyle().FrameRounding, 0, ui::Scaled(1.0f));
     }
+    ImGui::EndChild();
 
-    if (m_materialSphere.HasOutput()) {
-        ImGui::GetWindowDrawList()->AddImage(
-            static_cast<ImTextureID>(m_materialSphere.OutputHandle().ptr), min, max);
-    }
-    ImGui::GetWindowDrawList()->AddRect(min, max, ImGui::GetColorU32(ImGuiCol_Border),
-                                        ImGui::GetStyle().FrameRounding, 0, ui::Scaled(1.0f));
+    ImGui::Separator();
 
-    ui::HintText("ドラッグで回す / 右ドラッグの上下で寄る。照らし方はビューポートと同じ");
+    // --- プロパティ（この区画だけスクロールする）------------------------------
+    ImGui::BeginChild("materialPropertyPane", ImVec2(0.0f, 0.0f));
+    ui::HintText("ドラッグで回す / ホイールで寄る。照らし方はビューポートと同じ");
 
-    // --- 表示だけの設定 ------------------------------------------------------
+    // 表示だけの設定。マテリアルの設定とは区切り線で分ける。
     if (ui::BeginPropertyTable("materialSphereViewRows")) {
         ui::PropertyFloat("タイル", &m_materialSphere.UvScale(), 0.25f, 8.0f, 2.0f,
                           "球 1 周に並べるマップの数。マテリアルには保存しない", "%.2f");
@@ -316,6 +333,7 @@ void Application::DrawMaterialSphereWindow() {
         m_materialLibrary.MarkThumbnailDirty(asset.id);
         MarkDocumentChanged();
     }
+    ImGui::EndChild();
 
     ImGui::End();
 }

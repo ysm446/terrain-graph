@@ -1,4 +1,5 @@
-// テクスチャパネル。一覧、詳細、削除の確認モーダル、参照箇所の収集。
+// テクスチャパネル。**一覧（サムネイル）だけ**を置き、詳細はプレビューの窓が持つ。
+// 削除の確認モーダルと参照箇所の収集もここ。
 
 #include "app/Application.h"
 
@@ -172,43 +173,26 @@ void Application::DrawTextureLibraryPanel() {
     const auto textureCount = static_cast<int>(entries.size());
     m_selectedTexture = std::clamp(m_selectedTexture, 0, (textureCount > 0) ? textureCount - 1 : 0);
 
-    if (ui::Button("読み込む…", ui::kWideButtonWidth)) {
-        std::vector<std::filesystem::path> paths =
-            ShowOpenFilesDialog(L"テクスチャを開く", ImageFileFilters());
-        if (!paths.empty()) {
-            m_pendingTexturePaths.insert(m_pendingTexturePaths.end(), paths.begin(), paths.end());
-        }
-    }
-    ImGui::SameLine();
-    ImGui::BeginDisabled(textureCount == 0);
-    const bool deletePressed = ui::Button("削除");
-    ImGui::EndDisabled();
-
     // Del キーでも消せる。**このパネルにフォーカスがあるときだけ**効かせ、
     // 名前を打っている最中は無視する。
     const bool deleteKey = textureCount > 0 && !ImGui::GetIO().WantTextInput &&
                            ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
                            ImGui::IsKeyPressed(ImGuiKey_Delete, false);
-
-    if (deletePressed || deleteKey) {
-        // **参照が無くても必ず確認する。** テクスチャの削除は取り消せないため
-        // （アンドゥの対象はレイヤーとマテリアルだけ）。
-        m_textureRemoveCandidate = entries[static_cast<size_t>(m_selectedTexture)].id;
-        m_textureRemoveUsers = CollectTextureUsers(m_textureRemoveCandidate);
-        ImGui::OpenPopup(kTextureRemoveModalTitle);
+    if (deleteKey) {
+        RequestTextureRemove(entries[static_cast<size_t>(m_selectedTexture)].id);
     }
     DrawTextureRemoveModal();
 
-    // **一覧と詳細は区画に割らず、パネル 1 枚をそのままスクロールさせる。**
-    // 帯は縦に狭いので、割ると両方が窮屈になる。一覧を全幅・全高で流し、
-    // 詳細はその下（スクロールした先）に置く。
-    // 一覧には全幅を使わせる。詳細を横へ置くと一覧の幅がその分だけ削れ、
-    // 帯が横に広くても枡が数列しか並ばない。
-
     // サムネイルの一覧。枠の幅に入るだけ横に並べる。
+    // **設定も操作のボタンも置かない**（マテリアル一覧と同じ形）。
+    // 中身の確認と名前の変更はプレビューの窓、読み込みと削除は右クリックのメニュー。
     // 読み込み時にミップを作ってあるので、元の画像をそのまま縮小して出せる。
     const float thumbnailSize = ui::Scaled(72.0f);
-    {
+    if (ImGui::BeginChild("textureGrid", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders)) {
+        if (textureCount == 0) {
+            ui::HintText("右クリックのメニューから画像を読み込む（PNG / JPG / TGA / EXR）。"
+                         "サムネイルのダブルクリックで中身が見られる");
+        }
         const float step = thumbnailSize + ImGui::GetStyle().ItemSpacing.x;
         const auto columns = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / step));
 
@@ -229,6 +213,13 @@ void Application::DrawTextureLibraryPanel() {
             if (thumbnail.clicked) {
                 m_selectedTexture = i;
             }
+            // ダブルクリックでプレビューの窓を開く。**選択も一緒に動く**ので、
+            // 開いた窓には必ずいま押したテクスチャが出る。
+            if (thumbnail.doubleClicked) {
+                m_selectedTexture = i;
+                m_showTexturePreview = true;
+                ImGui::SetWindowFocus("テクスチャプレビュー");
+            }
             // 読み込んだ直後のものは枠内へ送る。一覧はスクロールするので、
             // 追加しただけでは見えない位置に入ることがある。
             if (m_selectedTexture == i && m_scrollToSelectedTexture) {
@@ -242,7 +233,14 @@ void Application::DrawTextureLibraryPanel() {
                 ImGui::TextUnformatted(entry.name.c_str());
                 ImGui::EndDragDropSource();
             } else if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s", entry.name.c_str());
+                ImGui::SetTooltip("%s\nダブルクリックで詳細 / 右クリックでメニュー",
+                                  entry.name.c_str());
+            }
+            // 右クリックのメニュー。**押したサムネイルが対象。**
+            if (ImGui::BeginPopupContextItem("##textureMenu")) {
+                m_selectedTexture = i;
+                DrawTextureContextMenu(entry.id);
+                ImGui::EndPopup();
             }
             // 名前を添える。素材名は末尾で見分けが付くことが多く、
             // ホバーしないと分からないと一覧として使いにくい。
@@ -254,28 +252,105 @@ void Application::DrawTextureLibraryPanel() {
                 ImGui::SameLine();
             }
         }
+
+        // サムネイルの無い所での右クリック。対象が無いので「読み込む」だけ。
+        // **一覧が空のときもここから読み込む**（ボタンの帯を持たないため）。
+        if (ImGui::BeginPopupContextWindow("##textureGridMenu",
+                                           ImGuiPopupFlags_MouseButtonRight |
+                                               ImGuiPopupFlags_NoOpenOverItems)) {
+            DrawTextureContextMenu(compositor::kNoTexture);
+            ImGui::EndPopup();
+        }
+    }
+    ImGui::EndChild();
+
+    ImGui::End();
+}
+
+// 一覧の右クリックメニュー。**target が無効なら、対象の要る項目は出さない**
+// （サムネイルの無い所を押したとき）。ボタンの帯は持たず、読み込みも削除もここから行う。
+void Application::DrawTextureContextMenu(compositor::TextureId target) {
+    const compositor::LibraryTexture* entry = m_textureLibrary.Find(target);
+    if (entry != nullptr) {
+        ImGui::TextDisabled("%s", entry->name.c_str());
+        ImGui::Separator();
     }
 
-    if (textureCount == 0) {
-        ui::HintText("「読み込む…」で画像を読み込む（PNG / JPG / TGA / EXR）");
+    if (ImGui::MenuItem("読み込む…")) {
+        std::vector<std::filesystem::path> paths =
+            ShowOpenFilesDialog(L"テクスチャを開く", ImageFileFilters());
+        if (!paths.empty()) {
+            m_pendingTexturePaths.insert(m_pendingTexturePaths.end(), paths.begin(), paths.end());
+        }
+    }
+    if (entry != nullptr && ImGui::MenuItem("削除")) {
+        RequestTextureRemove(target);
+    }
+}
+
+// 削除の確認を出す。**参照が無くても必ず確認する。**
+// テクスチャの削除は取り消せない（アンドゥの対象はレイヤーとマテリアルだけ）。
+void Application::RequestTextureRemove(compositor::TextureId id) {
+    if (id == compositor::kNoTexture) {
+        return;
+    }
+    m_textureRemoveCandidate = id;
+    m_textureRemoveUsers = CollectTextureUsers(id);
+    ImGui::OpenPopup(kTextureRemoveModalTitle);
+}
+
+// テクスチャプレビューの窓。拡大した中身と、そのテクスチャの詳細。
+//
+// **映すのは一覧で選んでいるテクスチャ。** マテリアルの窓と同じ作法で、
+// 窓の側に別の選択を持たせない。
+void Application::DrawTexturePreviewWindow() {
+    if (!m_showTexturePreview) {
+        return;
+    }
+
+    // 縦長。画像の下に詳細が続くので、幅は 1 列ぶんあれば足りる。
+    // **窓そのものはスクロールさせない。** 中身は上下 2 つの区画で、
+    // スクロールするのは下（詳細）だけ。
+    ImGui::SetNextWindowSize(ImVec2(ui::Scaled(420.0f), ui::Scaled(620.0f)),
+                             ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("テクスチャプレビュー", &m_showTexturePreview,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         ImGui::End();
         return;
     }
 
-    const compositor::LibraryTexture& selected = entries[static_cast<size_t>(m_selectedTexture)];
-    // 拡大プレビュー。サムネイル（72）では中身を確かめられないため置く。
-    // **大きさは固定。** 流し込みなので伸ばす先の高さが決まらない。
-    //
-    // コンボは 0 が RGB なので、1 つずらして R / G / B / A の SRV を引く。
-    // 0（RGB）のときは -1 になり、ChannelHandle が通常の表示用を返す。
-    const float previewSize = ui::Scaled(kTexturePreviewSize);
-    ImGui::Image(static_cast<ImTextureID>(selected.ChannelHandle(m_previewChannel - 1).ptr),
-                 ImVec2(previewSize, previewSize));
-    // プロパティ行はプレビューの横へ回す。**下に積むとスクロールが長くなり、
-    // 何を選んでいるのかを見ながら値を確かめられない。**
-    ImGui::SameLine();
-    ImGui::BeginGroup();
+    const std::vector<compositor::LibraryTexture>& entries = m_textureLibrary.Entries();
+    if (entries.empty()) {
+        ui::HintText("テクスチャがない。「テクスチャ」パネルの右クリックから読み込む");
+        ImGui::End();
+        return;
+    }
 
+    const int index = std::clamp(m_selectedTexture, 0, static_cast<int>(entries.size()) - 1);
+    const compositor::LibraryTexture& selected = entries[static_cast<size_t>(index)];
+
+    // --- 上下 2 区画 ----------------------------------------------------------
+    // 上が拡大した絵、下が詳細。**スクロールするのは下だけ**で、
+    // 上は幅に合わせた正方形（マテリアルの窓と同じ）。
+    const float paneSize = PreviewPaneSize();
+
+    ImGui::BeginChild("texturePreviewPane", ImVec2(0.0f, paneSize), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    {
+        // コンボは 0 が RGB なので、1 つずらして R / G / B / A の SRV を引く。
+        // 0（RGB）のときは -1 になり、ChannelHandle が通常の表示用を返す。
+        const float imageSize =
+            std::max(std::min(ImGui::GetContentRegionAvail().x, paneSize), ui::Scaled(32.0f));
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
+                             std::max(0.0f, (ImGui::GetContentRegionAvail().x - imageSize) * 0.5f));
+        ImGui::Image(static_cast<ImTextureID>(selected.ChannelHandle(m_previewChannel - 1).ptr),
+                     ImVec2(imageSize, imageSize));
+    }
+    ImGui::EndChild();
+
+    ImGui::Separator();
+
+    ImGui::BeginChild("texturePropertyPane", ImVec2(0.0f, 0.0f));
     ui::SectionHeader("選択中");
     if (ui::BeginPropertyTable("textureRows")) {
         // ORD のように 1 枚へ複数のマップを詰めたテクスチャは、RGB のまま見ても
@@ -310,9 +385,9 @@ void Application::DrawTextureLibraryPanel() {
         ui::PropertyEnd();
         ui::EndPropertyTable();
     }
-    ui::HintText("サムネイルをマテリアルのマップ欄へドラッグすると割り当てられる");
+    ui::HintText("一覧のサムネイルをマテリアルのマップ欄へドラッグすると割り当てられる");
+    ImGui::EndChild();
 
-    ImGui::EndGroup();
     ImGui::End();
 }
 

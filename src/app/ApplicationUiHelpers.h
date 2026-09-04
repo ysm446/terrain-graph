@@ -209,6 +209,18 @@ inline constexpr uint32_t kResolutionValues[] = {512, 1024, 2048, 4096};
 inline const char* const kMeshSubdivisionLabels[] = {"256", "512", "1024"};
 inline constexpr uint32_t kMeshSubdivisionValues[] = {256, 512, 1024};
 
+// プレビューの窓（マテリアル / テクスチャ / 天球）の、上の区画に使う正方形の一辺。
+//
+// **幅に合わせる。** 窓を広げれば絵も大きくなり、区画に余白が残らない。
+// ただし窓が横長のときに幅ぶんの高さを取ると下のプロパティが消えるので、
+// 残りの高さ（プロパティ 1 画面ぶんを残した値）で頭打ちにする。
+// **この関数は上の区画を置く直前に呼ぶこと**（`GetContentRegionAvail` を見るため）。
+inline float PreviewPaneSize() {
+    const ImVec2 available = ImGui::GetContentRegionAvail();
+    const float maxHeight = available.y - ui::Scaled(140.0f);
+    return std::max(ui::Scaled(120.0f), std::min(available.x, maxHeight));
+}
+
 // レイヤー一覧のドラッグ＆ドロップで使うペイロードの種別。
 inline constexpr const char* kLayerDragDropType = "TG_LAYER";
 // レイヤー一覧の行に並べるサムネイルの一辺（96 DPI 基準）。行の高さはこれで決まる。
