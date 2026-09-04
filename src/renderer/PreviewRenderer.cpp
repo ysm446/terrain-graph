@@ -63,6 +63,8 @@ constexpr uint32_t kNoShadowIndex = 0xFFFFFFFFu;
 // GPU 側の MeshConstants と一致させること。
 struct MeshConstants {
     XMFLOAT4X4 viewProjection;
+    // 法線をカメラ空間で見るためのビュー行列。**HLSL 側と同じ並びにすること。**
+    XMFLOAT4X4 view;
     XMFLOAT4X4 model;
     XMFLOAT4X4 normalMatrix;
 
@@ -186,8 +188,16 @@ struct TonemapConstants {
     uint32_t height;
     float exposure;
     uint32_t tonemapMode;
-    uint32_t debugView;
+    // 0 以外なら、メッシュ側が書いた値をそのまま出す（チャンネルを覗く表示）。
+    uint32_t passthrough;
 };
+
+// 陰影を付けて描く表示か。**クレイもこちら側**（テクスチャを貼らないだけで
+// 陰影は本物なので、背景・被写界深度・露出・トーンマップはシェーディングと同じ）。
+// チャンネルを覗く表示だけが、値をそのまま画面へ出す。
+bool IsShadedView(DebugView view) {
+    return view == DebugView::Shaded || view == DebugView::Clay;
+}
 
 }  // namespace
 
@@ -653,6 +663,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
 
     MeshConstants constants = {};
     XMStoreFloat4x4(&constants.viewProjection, viewProjection);
+    XMStoreFloat4x4(&constants.view, view);
     XMStoreFloat4x4(&constants.model, model);
     // 法線行列だけは (M^-1)^T が要るため、転置を明示する。
     XMStoreFloat4x4(&constants.normalMatrix,
@@ -806,8 +817,8 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     // UV バッファには書かないので、シーンカラーだけを束ね直す。
     commandList->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
 
-    // デバッグ表示のときは背景を描かない。チャンネルの値だけを見たいため。
-    if (m_showSkybox && m_environment.IsReady() && m_debugView == DebugView::Shaded) {
+    // チャンネルを覗く表示のときは背景を描かない。値だけを見たいため。
+    if (m_showSkybox && m_environment.IsReady() && IsShadedView(m_debugView)) {
         rhi::GraphicsPipelineDesc skyboxPipelineDesc;
         skyboxPipelineDesc.shaderPath = L"Skybox.hlsl";
         skyboxPipelineDesc.vertexEntry = L"VsMain";
@@ -865,10 +876,10 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     // --- 被写界深度 --------------------------------------------------------
     // **トーンマップの前に、線形 HDR のまま掛ける。** 露出後だと明るい点が
     // 飽和してから広がり、玉ボケの芯が白く潰れる。
-    // デバッグ表示のときは掛けない（チャンネルの値そのものを見るための表示）。
+    // チャンネルを覗く表示には掛けない（値そのものを見るための表示）。
     uint32_t tonemapSourceIndex = m_sceneColor.SrvIndex();
     ID3D12PipelineState* dofPipeline =
-        (m_dof.enabled && m_debugView == DebugView::Shaded && m_sceneColorDof.IsValid())
+        (m_dof.enabled && IsShadedView(m_debugView) && m_sceneColorDof.IsValid())
             ? pipelineCache.GetCompute(L"DepthOfField.hlsl", L"CsMain")
             : nullptr;
     if (dofPipeline != nullptr) {
@@ -914,10 +925,10 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     TransitionIfNeeded(commandList, m_output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
     const TonemapConstants tonemapConstants{
-        tonemapSourceIndex,        m_output.UavIndex(),
-        m_width,                   m_height,
-        m_exposure.Exposure(),     static_cast<uint32_t>(m_tonemap),
-        static_cast<uint32_t>(m_debugView)};
+        tonemapSourceIndex,    m_output.UavIndex(),
+        m_width,               m_height,
+        m_exposure.Exposure(), static_cast<uint32_t>(m_tonemap),
+        IsShadedView(m_debugView) ? 0u : 1u};
 
     commandList->SetComputeRootSignature(pipelineCache.GlobalRootSignature());
     commandList->SetPipelineState(tonemapPipeline);

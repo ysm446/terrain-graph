@@ -12,6 +12,8 @@
 struct MeshConstants
 {
     float4x4 viewProjection;
+    // カメラ空間で法線を見るための、投影を掛ける前のビュー行列。
+    float4x4 view;
     float4x4 model;
     float4x4 normalMatrix;
 
@@ -81,7 +83,7 @@ static const float kLocalHeightGain = 16.0f;
 // ビューポートの表示モード。C++ 側の renderer::DebugView と一致させること。
 #define TG_VIEW_SHADED          0
 #define TG_VIEW_BASECOLOR       1
-#define TG_VIEW_NORMAL_TANGENT  2
+#define TG_VIEW_NORMAL_VIEW     2
 #define TG_VIEW_NORMAL_WORLD    3
 #define TG_VIEW_ROUGHNESS       4
 #define TG_VIEW_METALLIC        5
@@ -89,6 +91,7 @@ static const float kLocalHeightGain = 16.0f;
 #define TG_VIEW_HEIGHT          7
 #define TG_VIEW_HEIGHT_LOCAL    8
 #define TG_VIEW_WIREFRAME       9
+#define TG_VIEW_CLAY            10
 
 ConstantBuffer<MeshConstants> g_mesh : register(b1);
 
@@ -342,7 +345,24 @@ PsOutput PsMain(VsOutput input)
     float ambientOcclusion = 1.0f;
     float3 normal = geometricNormal;
 
-    if (g_mesh.useMaterialTextures != 0u)
+    // **クレイ表示**は、形（変位）はそのままで陰影だけをテクスチャ抜きにする。
+    // 合成の色 / 法線 / サーフェスを読まず、単色マテリアルと面の向きで塗る。
+    const bool clay = (g_mesh.debugView == TG_VIEW_CLAY);
+    const bool useMaterialShading = (g_mesh.useMaterialTextures != 0u) && !clay;
+
+    if (clay)
+    {
+        // **面から法線を起こす。** 平面メッシュの頂点法線は押し出しても上を向いた
+        // ままなので、そのまま陰影を付けると形が出ない。画面微分から取れば
+        // 実際に描かれた三角形の向きになり、分割の粗さが面として見える
+        // （メッシュの確認にはこれが要る）。
+        const float3 faceNormal =
+            normalize(cross(ddx(input.worldPosition), ddy(input.worldPosition)));
+        // 三角形の巻き方によって裏返るので、視線の側へ向ける。
+        normal = (dot(faceNormal, viewDirection) < 0.0f) ? -faceNormal : faceNormal;
+    }
+
+    if (useMaterialShading)
     {
         Texture2D<float4> baseColorMap = ResourceDescriptorHeap[g_mesh.materialBaseColorIndex];
         Texture2D<float2> normalMap    = ResourceDescriptorHeap[g_mesh.materialNormalIndex];
@@ -375,7 +395,7 @@ PsOutput PsMain(VsOutput input)
     //
     // 画素の座標は **x と y を別々に切り捨ててから足す**。float のまま足して
     // 丸めると桁落ちで縞の位相が揺れ、太いバンドに見える（terrain-editor で踏んだ）。
-    if (g_mesh.maskPreviewHatch != 0u)
+    if (g_mesh.maskPreviewHatch != 0u && useMaterialShading)
     {
         const float low = g_mesh.maskPreviewLow;
         const float high = g_mesh.maskPreviewHigh;
@@ -391,10 +411,11 @@ PsOutput PsMain(VsOutput input)
         }
     }
 
-    // --- デバッグ表示 ------------------------------------------------------
+    // --- チャンネルを覗く表示 ----------------------------------------------
     // チャンネルの中身をそのまま出す。露出もトーンマップも掛けない
-    // （後段の TonemapPass が debugView を見て素通しする）。
-    if (g_mesh.debugView != TG_VIEW_SHADED)
+    // （後段の TonemapPass が素通しする）。**クレイはここへ来ない。**
+    // 陰影を付ける表示なので、下のシェーディングをそのまま通す。
+    if (g_mesh.debugView != TG_VIEW_SHADED && !clay)
     {
         float3 debugColor = float3(0.0f, 0.0f, 0.0f);
         if (g_mesh.debugView == TG_VIEW_BASECOLOR)
@@ -402,17 +423,14 @@ PsOutput PsMain(VsOutput input)
             // ベースカラーはリニアで持っているので、見た目を合わせて sRGB で出す。
             debugColor = LinearToSrgb(saturate(baseColor));
         }
-        else if (g_mesh.debugView == TG_VIEW_NORMAL_TANGENT)
+        else if (g_mesh.debugView == TG_VIEW_NORMAL_VIEW)
         {
-            // 法線マップそのものの見え方（接空間）。
-            float3 tangentNormal = float3(0.0f, 0.0f, 1.0f);
-            if (g_mesh.useMaterialTextures != 0u)
-            {
-                Texture2D<float2> normalMap = ResourceDescriptorHeap[g_mesh.materialNormalIndex];
-                tangentNormal = DecodeTangentNormal(
-                    SampleMaterialNormal(normalMap, input.uv));
-            }
-            debugColor = tangentNormal * 0.5f + 0.5f;
+            // 陰影に使う向きを**カメラ空間**で見る。ビュー行列は回転と平行移動だけ
+            // なので、上 3x3 を掛ければ向きが移る（正規化は数値誤差の始末）。
+            // カメラは -Z を向く（右手系）ので、正面を向いた面が +Z＝水色になり、
+            // 法線マップと同じ読み方（平らなら水色）ができる。
+            const float3 viewNormal = normalize(mul((float3x3)g_mesh.view, normal));
+            debugColor = viewNormal * 0.5f + 0.5f;
         }
         else if (g_mesh.debugView == TG_VIEW_NORMAL_WORLD)
         {

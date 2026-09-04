@@ -10,8 +10,8 @@ struct TonemapConstants
     uint height;
     float exposure;
     uint tonemapMode;
-    // 0 以外なら、メッシュ側が書いた値をそのまま出す（デバッグ表示）。
-    uint debugView;
+    // 0 以外なら、メッシュ側が書いた値をそのまま出す（チャンネルを覗く表示）。
+    uint passthrough;
 };
 
 ConstantBuffer<TonemapConstants> g_constants : register(b0);
@@ -29,9 +29,9 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     float3 color = source[dispatchThreadId.xy].rgb;
 
-    // デバッグ表示はチャンネルの値そのものを見るためのものなので、
+    // チャンネルを覗く表示は値そのものを見るためのものなので、
     // 露出もトーンマップも sRGB 変換も通さない。
-    if (g_constants.debugView != 0u)
+    if (g_constants.passthrough != 0u)
     {
         output[dispatchThreadId.xy] = float4(color, 1.0f);
         return;
