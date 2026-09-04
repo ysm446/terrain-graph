@@ -137,11 +137,39 @@ PathElementId InsertPathPointOnEdge(PathSettings& path, PathElementId edgeId, fl
 }
 
 bool DeletePathPoint(PathSettings& path, PathElementId pointId) {
-    const size_t before = path.points.size();
-    std::erase_if(path.points, [pointId](const PathPoint& point) { return point.id == pointId; });
-    if (path.points.size() == before) {
+    if (path.FindPoint(pointId) == nullptr) {
         return false;
     }
+    // 鎖の途中の点（エッジがちょうど 2 本）は、消す前に両隣を繋ぎ直す。線は切れない。
+    // 端（1 本以下）と分岐（3 本以上）は繋ぎ直しようが無いので、そのまま切る。
+    std::vector<size_t> attached;
+    for (size_t i = 0; i < path.edges.size(); ++i) {
+        const PathEdge& edge = path.edges[i];
+        if (edge.from == pointId || edge.to == pointId) {
+            attached.push_back(i);
+        }
+    }
+    if (attached.size() == 2) {
+        PathEdge& keep = path.edges[attached[0]];
+        const PathEdge& drop = path.edges[attached[1]];
+        const PathElementId neighborA = (keep.from == pointId) ? keep.to : keep.from;
+        const PathElementId neighborB = (drop.from == pointId) ? drop.to : drop.from;
+        const PathElementId dropId = drop.id;
+        // 両隣が同じ点か、既に繋がっているなら繋ぎ直せない（自己ループ / 重複エッジ）。
+        if (neighborA != neighborB && path.FindEdgeBetween(neighborA, neighborB) == nullptr) {
+            // 残すほうのエッジを伸ばす。ID と曲線の種類 / 丸めはそのまま引き継がれる。
+            // 向きも残すほうに合わせる（隣 → 消す点 だったなら 隣 → もう一方の隣）。
+            if (keep.from == pointId) {
+                keep.from = neighborB;
+                keep.to = neighborA;
+            } else {
+                keep.from = neighborA;
+                keep.to = neighborB;
+            }
+            std::erase_if(path.edges, [dropId](const PathEdge& edge) { return edge.id == dropId; });
+        }
+    }
+    std::erase_if(path.points, [pointId](const PathPoint& point) { return point.id == pointId; });
     std::erase_if(path.edges, [pointId](const PathEdge& edge) {
         return edge.from == pointId || edge.to == pointId;
     });

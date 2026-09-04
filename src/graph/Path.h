@@ -107,7 +107,9 @@ bool ConnectPathPoints(PathSettings& path, PathElementId from, PathElementId to)
 // エッジの途中（t: 0〜1）に点を挿入し、エッジを 2 本に割る。
 // 幅 / フェザー / 強さは両端から補間する。返り値は新しい点（失敗なら 0）。
 PathElementId InsertPathPointOnEdge(PathSettings& path, PathElementId edgeId, float t);
-// 点を消す。付いているエッジも一緒に消える。
+// 点を消す。鎖の途中の点（エッジがちょうど 2 本）なら、両隣を 1 本のエッジで繋ぎ直して
+// から消すので線は切れない（曲線の種類 / 丸め / 向きは残ったエッジのものが続く）。
+// 端や分岐（エッジが 1 本以下、または 3 本以上）は、付いているエッジも一緒に消える。
 bool DeletePathPoint(PathSettings& path, PathElementId pointId);
 // エッジを消す。点は残る。
 bool DeletePathEdge(PathSettings& path, PathElementId edgeId);
