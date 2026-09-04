@@ -1,4 +1,5 @@
-// マテリアルパネル。ライブラリの一覧と、選択中マテリアルのマップ割り当て。
+// マテリアルパネル。**ライブラリの一覧（サムネイル）だけ**を置く。
+// マテリアルの設定は、球を見ながら触れるプレビューの窓（この下）が持つ。
 
 #include "app/Application.h"
 
@@ -32,54 +33,16 @@ void Application::DrawMaterialLibraryPanel() {
     const auto assetCount = static_cast<int>(assets.size());
     m_selectedMaterial = std::clamp(m_selectedMaterial, 0, (assetCount > 0) ? assetCount - 1 : 0);
 
-    if (ui::Button("追加")) {
-        m_materialLibrary.Add("マテリアル " + std::to_string(assets.size() + 1));
-        m_selectedMaterial = static_cast<int>(assets.size()) - 1;
-        m_scrollToSelectedMaterial = true;
-        MarkDocumentChanged();
-    }
-    ImGui::SameLine();
-    if (ui::Button("複製") && assetCount > 0) {
-        m_materialLibrary.Duplicate(assets[static_cast<size_t>(m_selectedMaterial)]);
-        m_selectedMaterial = static_cast<int>(assets.size()) - 1;
-        m_scrollToSelectedMaterial = true;
-        MarkDocumentChanged();
-    }
-    ImGui::SameLine();
-    if (ui::Button("削除") && assetCount > 0) {
-        // その場で消すと、この後の一覧描画が erase 済みの要素（assetCount は
-        // 古いまま）を読んでしまう。要求だけ積み、フレームの外で処理する。
-        m_pendingMaterialRemove = assets[static_cast<size_t>(m_selectedMaterial)].id;
-    }
-
-    // マテリアル単体のファイル (.tgmat)。プロジェクト間で持ち回るために使う。
-    // プロジェクトにはマテリアルの構造ごと埋め込まれるので、保存には要らない。
-    ImGui::SameLine();
-    if (ui::Button("読み込み…", ui::kWideButtonWidth)) {
-        const std::filesystem::path path =
-            ShowOpenFileDialog(L"マテリアルを読み込む", MaterialFileFilters());
-        if (!path.empty()) {
-            m_pendingMaterialImport = path;
-        }
-    }
-    ImGui::SameLine();
-    ImGui::BeginDisabled(assetCount == 0);
-    if (ui::Button("書き出し…", ui::kWideButtonWidth)) {
-        const compositor::MaterialAsset& target =
-            assets[static_cast<size_t>(m_selectedMaterial)];
-        const std::filesystem::path path = ShowSaveFileDialog(
-            L"マテリアルを書き出す", MaterialFileFilters(), L"tgmat", FromUtf8(target.name));
-        if (!path.empty()) {
-            m_pendingMaterialExport = path;
-            m_pendingExportMaterial = target.id;
-        }
-    }
-    ImGui::EndDisabled();
-
     // サムネイルの一覧。パネルの幅に入るだけ横に並べる。
+    // **設定はここに出さない。** 一覧は「どれを使うか選ぶ」場所で、値の調整は
+    // 球を見ながらやるほうが早い（ダブルクリックでプレビューの窓が開く）。
+    // 残りの高さいっぱいに使う。下に続くものが無いので、高さを決め打ちにしない。
     const float thumbnailSize = ui::Scaled(84.0f);
-    if (ImGui::BeginChild("materialGrid", ImVec2(0.0f, ui::Scaled(200.0f)),
-                          ImGuiChildFlags_Borders)) {
+    if (ImGui::BeginChild("materialGrid", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders)) {
+        if (assetCount == 0) {
+            ui::HintText("右クリックのメニューから追加する。"
+                         "サムネイルのダブルクリックで設定が開く");
+        }
         const float step = thumbnailSize + ImGui::GetStyle().ItemSpacing.x;
         const auto columns = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / step));
 
@@ -100,13 +63,28 @@ void Application::DrawMaterialLibraryPanel() {
             if (thumbnail.clicked) {
                 m_selectedMaterial = i;
             }
+            // ダブルクリックで球のプレビューを開く。**選択も一緒に動く**ので、
+            // 開いた窓には必ずいま押したマテリアルが出る。
+            if (thumbnail.doubleClicked) {
+                m_selectedMaterial = i;
+                m_showMaterialSphere = true;
+                ImGui::SetWindowFocus("マテリアルプレビュー");
+            }
             // 追加・複製した直後のものは枠内へ送る（テクスチャ一覧と同じ）。
             if (m_selectedMaterial == i && m_scrollToSelectedMaterial) {
                 m_scrollToSelectedMaterial = false;
                 ImGui::SetScrollHereY(1.0f);
             }
+            // 右クリックのメニュー。**押したサムネイルが対象**なので、
+            // 開くときに選択もそちらへ移す。
+            if (ImGui::BeginPopupContextItem("##materialMenu")) {
+                m_selectedMaterial = i;
+                DrawMaterialContextMenu(asset.id);
+                ImGui::EndPopup();
+            }
             if (thumbnail.hovered) {
-                ImGui::SetTooltip("%s", asset.name.c_str());
+                ImGui::SetTooltip("%s\nダブルクリックで設定 / 右クリックでメニュー",
+                                  asset.name.c_str());
             }
             ImGui::EndGroup();
 
@@ -115,17 +93,76 @@ void Application::DrawMaterialLibraryPanel() {
                 ImGui::SameLine();
             }
         }
+
+        // サムネイルの無い所での右クリック。対象が無いので「追加」と「読み込み」だけ。
+        // **一覧が空のときもここから作れる**（ボタンの帯を持たないため）。
+        if (ImGui::BeginPopupContextWindow("##materialGridMenu",
+                                           ImGuiPopupFlags_MouseButtonRight |
+                                               ImGuiPopupFlags_NoOpenOverItems)) {
+            DrawMaterialContextMenu(compositor::kNoMaterialAsset);
+            ImGui::EndPopup();
+        }
     }
     ImGui::EndChild();
 
-    if (assetCount == 0) {
-        ui::HintText("「追加」でマテリアルを作り、マップを割り当てる");
-        ImGui::End();
-        return;
+    ImGui::End();
+}
+
+// 一覧の右クリックメニュー。**target が無効なら、対象の要る項目は出さない**
+// （サムネイルの無い所を押したとき）。ボタンの帯は持たず、追加も削除もここから行う。
+void Application::DrawMaterialContextMenu(compositor::MaterialAssetId target) {
+    const std::vector<compositor::MaterialAsset>& assets = m_materialLibrary.Entries();
+    const compositor::MaterialAsset* asset = m_materialLibrary.Find(target);
+
+    if (asset != nullptr) {
+        ImGui::TextDisabled("%s", asset->name.c_str());
+        ImGui::Separator();
     }
 
-    compositor::MaterialAsset& asset =
-        *m_materialLibrary.FindMutable(assets[static_cast<size_t>(m_selectedMaterial)].id);
+    if (ImGui::MenuItem("追加")) {
+        m_materialLibrary.Add("マテリアル " + std::to_string(assets.size() + 1));
+        m_selectedMaterial = static_cast<int>(assets.size()) - 1;
+        m_scrollToSelectedMaterial = true;
+        MarkDocumentChanged();
+    }
+    if (asset != nullptr) {
+        if (ImGui::MenuItem("複製")) {
+            m_materialLibrary.Duplicate(*asset);
+            m_selectedMaterial = static_cast<int>(assets.size()) - 1;
+            m_scrollToSelectedMaterial = true;
+            MarkDocumentChanged();
+        }
+        if (ImGui::MenuItem("削除")) {
+            // その場で消すと、この後の一覧描画が erase 済みの要素を読んでしまう。
+            // 要求だけ積み、フレームの外で処理する。
+            m_pendingMaterialRemove = target;
+        }
+    }
+
+    // マテリアル単体のファイル (.tgmat)。プロジェクト間で持ち回るために使う。
+    // プロジェクトにはマテリアルの構造ごと埋め込まれるので、保存には要らない。
+    ImGui::Separator();
+    if (ImGui::MenuItem("読み込み…")) {
+        const std::filesystem::path path =
+            ShowOpenFileDialog(L"マテリアルを読み込む", MaterialFileFilters());
+        if (!path.empty()) {
+            m_pendingMaterialImport = path;
+        }
+    }
+    if (asset != nullptr && ImGui::MenuItem("書き出し…")) {
+        const std::filesystem::path path = ShowSaveFileDialog(
+            L"マテリアルを書き出す", MaterialFileFilters(), L"tgmat", FromUtf8(asset->name));
+        if (!path.empty()) {
+            m_pendingMaterialExport = path;
+            m_pendingExportMaterial = target;
+        }
+    }
+}
+
+// マテリアル 1 つのプロパティ（基本 + マップ）。**置き場所はプレビューの窓だけ。**
+// 一覧はサムネイルだけを出し、値の調整は球を見ながらやる。
+// 窓の描画から切り出してあるのは、球の操作と行の並びを読み分けられるようにするため。
+bool Application::DrawMaterialProperties(compositor::MaterialAsset& asset) {
     bool changed = false;
 
     ui::SectionHeader("基本");
@@ -194,8 +231,88 @@ void Application::DrawMaterialLibraryPanel() {
     ui::HintText("ORD は AO=R / ラフネス=G / ハイト=B に割り当てる（Megascans の並び）");
     ui::HintText("ハイトはレイヤーの「ハイトのソース」をテクスチャにすると効く");
 
-    if (changed) {
-        // サムネイルと合成の両方を作り直す。
+    return changed;
+}
+
+// マテリアルプレビューの窓。回せる球と、そのマテリアルのプロパティ。
+//
+// **映すのは一覧で選んでいるマテリアル。** 窓の側に別の選択を持たせると、
+// 一覧で選んだものと窓の中身が食い違う。
+void Application::DrawMaterialSphereWindow() {
+    m_materialSphereVisible = false;
+    if (!m_showMaterialSphere) {
+        return;
+    }
+
+    // 縦長。球の下にプロパティが続くので、幅は 1 列ぶんあれば足りる。
+    ImGui::SetNextWindowSize(ImVec2(ui::Scaled(420.0f), ui::Scaled(720.0f)),
+                             ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("マテリアルプレビュー", &m_showMaterialSphere)) {
+        ImGui::End();
+        return;
+    }
+
+    const std::vector<compositor::MaterialAsset>& assets = m_materialLibrary.Entries();
+    if (assets.empty()) {
+        ui::HintText("マテリアルがない。「マテリアル」パネルの「追加」で作る");
+        ImGui::End();
+        return;
+    }
+
+    m_materialSphereVisible = true;
+
+    const int index =
+        std::clamp(m_selectedMaterial, 0, static_cast<int>(assets.size()) - 1);
+    compositor::MaterialAsset& asset =
+        *m_materialLibrary.FindMutable(assets[static_cast<size_t>(index)].id);
+
+    // --- 球 ------------------------------------------------------------------
+    // **正方形で、幅いっぱいに置く。** 球のプレビューなので横に広げても情報は増えず、
+    // 大きくしすぎると下のプロパティが押し出される。上限を決めて頭打ちにする。
+    const float sphereSize =
+        std::clamp(ImGui::GetContentRegionAvail().x, ui::Scaled(160.0f), ui::Scaled(480.0f));
+    const ImVec2 min = ImGui::GetCursorScreenPos();
+    const ImVec2 max(min.x + sphereSize, min.y + sphereSize);
+
+    // 画像より先に ID を持つアイテムを置く（サムネイルと同じ作法）。
+    ImGui::InvisibleButton("##materialSphere", ImVec2(sphereSize, sphereSize),
+                           ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    if (ImGui::IsItemActive()) {
+        const ImVec2 delta = ImGui::GetIO().MouseDelta;
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+            // **寄るのは右ドラッグの上下。** 上へ引くと寄る（引き寄せる向き）。
+            // ホイールは窓のスクロールに残す。窓の中身は球より縦に長いので、
+            // ホイールを取り上げるとプロパティまで送れなくなる。
+            // 1px = 0.012 刻み（Camera::Dolly と同じ換算）。
+            m_materialSphere.Zoom(-delta.y * 0.012f);
+        } else {
+            // 1px = 0.35 度。ビューポートのカメラ（0.006 ラジアン ≒ 0.34 度）に合わせる。
+            m_materialSphere.Orbit(delta.x * 0.35f, delta.y * 0.35f);
+        }
+    }
+
+    if (m_materialSphere.HasOutput()) {
+        ImGui::GetWindowDrawList()->AddImage(
+            static_cast<ImTextureID>(m_materialSphere.OutputHandle().ptr), min, max);
+    }
+    ImGui::GetWindowDrawList()->AddRect(min, max, ImGui::GetColorU32(ImGuiCol_Border),
+                                        ImGui::GetStyle().FrameRounding, 0, ui::Scaled(1.0f));
+
+    ui::HintText("ドラッグで回す / 右ドラッグの上下で寄る。照らし方はビューポートと同じ");
+
+    // --- 表示だけの設定 ------------------------------------------------------
+    if (ui::BeginPropertyTable("materialSphereViewRows")) {
+        ui::PropertyFloat("タイル", &m_materialSphere.UvScale(), 0.25f, 8.0f, 2.0f,
+                          "球 1 周に並べるマップの数。マテリアルには保存しない", "%.2f");
+        ui::EndPropertyTable();
+    }
+    if (ui::Button("視点を戻す", ui::kWideButtonWidth)) {
+        m_materialSphere.ResetView();
+    }
+
+    ImGui::Separator();
+
+    if (DrawMaterialProperties(asset)) {
         m_materialLibrary.MarkThumbnailDirty(asset.id);
         MarkDocumentChanged();
     }

@@ -178,6 +178,7 @@ Thumbnail ThumbnailButton(const char* id, ImTextureID texture, float size, bool 
     Thumbnail state;
     state.hovered = ImGui::IsItemHovered();
     state.clicked = ImGui::IsItemClicked();
+    state.doubleClicked = state.hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
 
     // **まだ絵が無いときは枠だけ描く。** ImTextureID の 0 は ImTextureID_Invalid で、
     // そのまま AddImage へ渡すとデバッグビルドの ImGui がアサートで落ちる。

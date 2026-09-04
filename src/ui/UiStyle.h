@@ -102,6 +102,9 @@ void ThumbnailFrame(const ImVec2& min, const ImVec2& max, bool selected, bool ho
 struct Thumbnail {
     bool clicked = false;
     bool hovered = false;
+    // ダブルクリック。**1 回目のクリックは clicked にも立つ**ので、
+    // 「選ぶ」と「開く」を両方やりたい側はそのまま両方見ればよい。
+    bool doubleClicked = false;
 };
 
 // サムネイル 1 枚。**ドラッグ元にできる形で置く。**

@@ -12,6 +12,7 @@
 #include "io/AppSettings.h"
 #include "io/MaterialExport.h"
 #include "io/RecentFiles.h"
+#include "renderer/MaterialSphere.h"
 #include "renderer/PreviewRenderer.h"
 #include "renderer/SkyLibrary.h"
 #include "rhi/Device.h"
@@ -111,6 +112,15 @@ private:
     // outputPin は**どの出力を見るか**。0 なら最初の出力（レイヤーなら Result）。
     void SetPreviewGraphNode(graph::GraphId nodeId, graph::GraphId outputPin = 0);
     void DrawMaterialLibraryPanel();
+    // 一覧の右クリックメニュー（追加 / 複製 / 削除 / 読み込み / 書き出し）。
+    // target が kNoMaterialAsset なら、対象の要る項目は出さない。
+    void DrawMaterialContextMenu(compositor::MaterialAssetId target);
+    // マテリアル 1 つのプロパティ（基本 + マップ）。変更があれば真を返す。
+    // **置き場所はプレビューの窓だけ**（一覧はサムネイルだけを出す）。
+    bool DrawMaterialProperties(compositor::MaterialAsset& asset);
+    // マテリアルプレビューの窓（回せる球 + プロパティ）。
+    // 一覧のサムネイルをダブルクリックするか、ウィンドウメニューから開く。
+    void DrawMaterialSphereWindow();
     // 天球パネル。一覧で選んだものがそのままビューポートの環境になる。
     void DrawSkyLibraryPanel();
     void DrawTextureLibraryPanel();
@@ -236,6 +246,8 @@ private:
     rhi::ShaderCompiler m_shaderCompiler;
     rhi::PipelineCache m_pipelineCache;
     renderer::PreviewRenderer m_renderer;
+    // マテリアルプレビューの球。窓を開いている間だけ描く。
+    renderer::MaterialSphere m_materialSphere;
     // --- ノードグラフ -------------------------------------------------------
     // 合成はグラフが唯一の入口。グラフをレイヤー列へコンパイルして
     // 既存の GPU 評価器で評価する。m_graphStack はそのコンパイル結果。
@@ -408,6 +420,11 @@ private:
     bool m_showSettings = false;
     // 情報ウィンドウ。必要なときだけウィンドウメニューから開く。
     bool m_showInfo = false;
+    // マテリアルプレビューの窓。ドックへは収めない補助ウィンドウ。
+    bool m_showMaterialSphere = false;
+    // その窓の中身をこのフレームに描いたか。**折りたたまれていれば球も描かない。**
+    // UI（DrawUi）はフレームの記録より前に走るので、その結果をここへ残して使う。
+    bool m_materialSphereVisible = false;
     // 書き出しウィンドウ。設定ウィンドウと同じくドックへは収めない。
     bool m_showExport = false;
     io::ExportSettings m_exportSettings;
@@ -477,3 +494,5 @@ private:
 };
 
 }  // namespace tg
+
+

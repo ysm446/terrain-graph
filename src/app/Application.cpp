@@ -179,6 +179,7 @@ void Application::Shutdown() {
     // ImGui のコンテキストより先に破棄する（エディタが ImGui に依存している）。
     DestroyGraphEditor();
     m_paintMasks.Destroy(m_device);
+    m_materialSphere.Destroy(m_device);
     m_materialLibrary.Destroy(m_device);
     m_skyLibrary.Destroy(m_device);
     m_textureLibrary.Destroy(m_device);
@@ -387,6 +388,20 @@ int Application::Run() {
         m_renderer.Render(m_device, m_pipelineCache, commandList, m_graphStack,
                           m_textureLibrary, m_materialLibrary, m_paintMasks);
 
+        // マテリアルプレビューの球。**窓を開いている間だけ描く。**
+        // ImGui はこのフレームで描いた中身をそのまま読む（submit 済みの
+        // 描画命令が指すのは SRV なので、ここで書き換えてよい）。
+        if (m_materialSphereVisible && !m_materialLibrary.Entries().empty()) {
+            const auto& materials = m_materialLibrary.Entries();
+            const int index =
+                std::clamp(m_selectedMaterial, 0, static_cast<int>(materials.size()) - 1);
+            m_materialSphere.Render(m_device, m_pipelineCache, commandList,
+                                    materials[static_cast<size_t>(index)], m_textureLibrary,
+                                    m_renderer.GetEnvironment(), m_renderer.ActiveSky().iblIntensity,
+                                    m_renderer.Light(), m_renderer.Exposure().Exposure(),
+                                    m_renderer.Tonemap());
+        }
+
         // レンダラがターゲットを差し替えているので、ImGui を描く前に戻す。
         m_device.BindBackBuffer(commandList);
         m_imgui.EndFrame(commandList);
@@ -457,6 +472,7 @@ void Application::DrawUi() {
                 m_rebuildLayout = true;
             }
             ImGui::Separator();
+            ImGui::MenuItem("マテリアルプレビュー", nullptr, &m_showMaterialSphere);
             ImGui::MenuItem("情報", nullptr, &m_showInfo);
             ImGui::MenuItem("設定", nullptr, &m_showSettings);
             ImGui::EndMenu();
@@ -498,6 +514,7 @@ void Application::DrawUi() {
     DrawMaterialPanel();
     DrawLightingPanel();
 
+    DrawMaterialSphereWindow();
     DrawInfoWindow();
     DrawSettingsWindow();
     DrawExportWindow();

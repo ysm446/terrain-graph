@@ -158,6 +158,8 @@ set(tg_sources
     src/renderer/Camera.h
     src/renderer/Environment.cpp
     src/renderer/Environment.h
+    src/renderer/MaterialSphere.cpp
+    src/renderer/MaterialSphere.h
     src/renderer/Mesh.cpp
     src/renderer/Mesh.h
     src/renderer/PreviewRenderer.cpp
