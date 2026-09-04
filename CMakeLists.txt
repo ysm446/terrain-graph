@@ -263,12 +263,19 @@ add_executable(terrain_graph_tests
     tests/TestMain.cpp
     tests/TestSupport.h
     tests/FrameLimiterTests.cpp
+    tests/NodeGraphTests.cpp
     tests/UiInteractionTests.cpp
     tests/UndoHistoryTests.cpp
     src/app/UndoHistory.cpp
     src/app/UndoHistory.h
     src/core/FrameLimiter.cpp
     src/core/FrameLimiter.h
+    src/compositor/MaterialStack.cpp
+    src/compositor/MaterialStack.h
+    src/graph/NodeGraph.cpp
+    src/graph/NodeGraph.h
+    src/graph/Path.cpp
+    src/graph/Path.h
     src/ui/UiStyle.cpp
     src/ui/UiStyle.h
 )

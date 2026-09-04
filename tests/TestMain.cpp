@@ -7,6 +7,7 @@
 #include "TestSupport.h"
 
 void RunFrameLimiterTests();
+void RunNodeGraphTests();
 void RunUiInteractionTests();
 void RunUndoHistoryTests();
 
@@ -14,6 +15,7 @@ int main() {
     RunUiInteractionTests();
     RunUndoHistoryTests();
     RunFrameLimiterTests();
+    RunNodeGraphTests();
 
     std::printf("\n%s\n", (tg::tests::g_failures == 0) ? "すべて成功" : "失敗あり");
     return (tg::tests::g_failures == 0) ? 0 : 1;

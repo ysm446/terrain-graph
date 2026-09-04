@@ -492,9 +492,11 @@ const Node* NodeGraph::PreviewTop(GraphId nodeId) const {
     if (node != nullptr && IsLayerNodeKind(node->kind)) {
         return node;
     }
-    // 川筋ノードとパスは自分ではハイトを作らない。入力に繋いだチェーンを見る。
+    // Path とハイト由来のマスクは、自分ではハイトを作らない。入力に繋いだ
+    // チェーンだけを見る。未接続のときに Output 側の別チェーンへ落とすと
+    // 無関係な地形が見えるので、nullptr を返して中立平面を作らせる。
     if (node != nullptr &&
-        (node->kind == NodeKind::MaskFluvial || node->kind == NodeKind::Path)) {
+        (node->kind == NodeKind::Path || IsHeightMaskNodeKind(node->kind))) {
         for (const Pin& pin : node->inputs) {
             if (pin.valueType != ValueType::Material) {
                 continue;
@@ -503,6 +505,7 @@ const Node* NodeGraph::PreviewTop(GraphId nodeId) const {
                 return source;
             }
         }
+        return nullptr;
     }
     // **出どころ（堆積 / 崩落 / 積雪）が本流に居ないことがある。**
     // その Mask は「そのレイヤーを合成した時点」の作業用テクスチャから焼くので、
@@ -945,6 +948,20 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace) co
         }
     }
 
+    // Blur / Sediment / Snow などの加工は、入力する下地があって初めて結果を持つ。
+    // Base を外して加工だけが残った場合、評価器はどの出力テクスチャにも書かないため、
+    // 直前の評価結果がそのまま見えてしまう。加工を走らせず、変位 0 の中立平面へ戻す。
+    const bool hasEnabledBase =
+        std::any_of(compiled.layers.begin(), compiled.layers.end(), [](const auto& layer) {
+            return layer.enabled && !compositor::IsHeightOperationKind(layer.kind);
+        });
+    if (!hasEnabledBase) {
+        compiled.layers.clear();
+        compiled.layers.push_back(compositor::MaterialStack::MakeBaseLayer());
+        layerNodes.clear();
+        return compiled;
+    }
+
     // **Mask だけを繋いだ堆積 / 崩落 / 積雪を、チェーンへ差し込む。**
     //
     // この 3 つの Mask は「そのレイヤーを合成した時点」の作業用テクスチャから焼くので、
@@ -1008,10 +1025,6 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace) co
         }
     }
 
-    if (compiled.layers.empty()) {
-        // 空のスタックは操作の起点が無いので、下地 1 枚で補う（読み込み時と同じ方針）。
-        compiled.layers.push_back(compositor::MaterialStack::MakeBaseLayer());
-    }
     return compiled;
 }
 

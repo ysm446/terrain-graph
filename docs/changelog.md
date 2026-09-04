@@ -1,9 +1,19 @@
 # Changelog
 
 作成日時: 2026-08-31 06:18
-更新日時: 2026-09-04 17:30
+更新日時: 2026-09-04 17:33
 
 ## 未リリース
+
+### 2026-09-04 17:33 — ハイト入力を外したノードを平面へ戻す
+
+- Blur / Sediment / Crumbling / Snow / River / Droplet の Base 入力を外したとき、
+  以前の評価結果が残らず、高さ 0 の平面へ戻るようにした。
+- Base の無い加工チェーンは GPU 評価へ渡す前に中立平面へ置き換える。入力がある場合の
+  加工結果は変わらない。
+- Path の Base 入力を外したときも、Output 側の別の地形を表示せず、高さ 0 の平面へ戻す。
+- Mask Fluvial / Mask Height / Mask Slope / Mask Curvature も、Base 未接続時のプレビューは
+  Output 側の地形ではなく高さ 0 の平面を使う。
 
 ### 2026-09-04 17:30 — Droplet Erosion ノードを追加
 
