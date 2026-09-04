@@ -21,6 +21,10 @@ struct BlurConstants
     uint2 resolution;  // 出力全体の解像度
     float strength;    // 垂直パスで元の高さと混ぜる量
     float heightPerSize;  // 法線パスの実寸比（標高差 / 一辺）
+
+    // どこをぼかすか。kInvalidTextureIndex なら全体。
+    uint maskIndex;
+    uint3 pad0;
 };
 
 ConstantBuffer<BlurConstants> g_blur : register(b1);
@@ -66,11 +70,18 @@ void CsBlur(uint3 dispatchThreadId : SV_DispatchThreadID)
     if (g_blur.axis == 0u)
     {
         output[uint2(texel)] = blurred;
+        return;
     }
-    else
+
+    // **マスクは混ぜる量に掛ける。** 0 の所は元の高さがそのまま残るので、
+    // 反復しても masked な所へぼけが染み出さない（次の反復も元の高さを読む）。
+    float amount = g_blur.strength;
+    if (g_blur.maskIndex != kInvalidTextureIndex)
     {
-        output[uint2(texel)] = lerp(output[uint2(texel)], blurred, g_blur.strength);
+        Texture2D<float> mask = ResourceDescriptorHeap[g_blur.maskIndex];
+        amount *= saturate(mask.Load(int3(texel, 0)));
     }
+    output[uint2(texel)] = lerp(output[uint2(texel)], blurred, amount);
 }
 
 // ぼかした後の Height から法線を作り直す。

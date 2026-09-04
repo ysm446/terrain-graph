@@ -25,8 +25,10 @@ constexpr std::array<PinDefinition, 3> kLayerNodePins = {{
 }};
 
 // マスクを取らない加工（ブラー）のピン。
-constexpr std::array<PinDefinition, 2> kFilterNodePins = {{
+// ぼかしのピン。**Mask はどこをぼかすか**（明るい所ほどぼける。繋がなければ全体）。
+constexpr std::array<PinDefinition, 3> kBlurPins = {{
     {PinKind::Input, ValueType::Material, "Base"},
+    {PinKind::Input, ValueType::Mask, "Mask"},
     {PinKind::Output, ValueType::Material, "Result"},
 }};
 
@@ -129,7 +131,7 @@ constexpr std::array<NodeDefinition, 22> kNodeDefinitions = {{
     {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
     {NodeKind::Liquid, "liquid", "Liquid", kLayerNodePins},
-    {NodeKind::Blur, "heightmapBlur", "Heightmap Blur", kFilterNodePins},
+    {NodeKind::Blur, "heightmapBlur", "Heightmap Blur", kBlurPins},
     {NodeKind::Sediment, "sediment", "Sediment", kDepositPins},
     {NodeKind::Crumbling, "crumbling", "Crumbling", kCrumblingPins},
     {NodeKind::Snow, "snow", "Snow", kDepositPins},

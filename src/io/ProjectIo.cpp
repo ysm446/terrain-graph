@@ -1103,6 +1103,20 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
     std::vector<graph::Link> links;
     graph::GraphId maxId = 0;
 
+    // **リンクの ID を先に見ておく。** ノードの種類にピンを足した後で古いファイルを
+    // 開くと、足りないピンへ「いまの最大 + 1」を振ることになる。リンクを読む前に
+    // 振ると、既にあるリンクの ID とぶつかる（ノード / ピン / リンクは同じ ID 空間）。
+    if (const json* items = FindMember(node, "links"); items != nullptr && items->is_array()) {
+        for (const json& item : *items) {
+            if (!item.is_object()) {
+                continue;
+            }
+            maxId = std::max(maxId, static_cast<graph::GraphId>(ReadInt(item, "id", 0)));
+            maxId = std::max(maxId, static_cast<graph::GraphId>(ReadInt(item, "start", 0)));
+            maxId = std::max(maxId, static_cast<graph::GraphId>(ReadInt(item, "end", 0)));
+        }
+    }
+
     if (const json* items = FindMember(node, "nodes"); items != nullptr && items->is_array()) {
         for (const json& item : *items) {
             if (!item.is_object()) {

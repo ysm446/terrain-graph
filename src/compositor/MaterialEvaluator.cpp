@@ -167,6 +167,9 @@ struct BlurConstants {
     uint32_t resolution[2];
     float strength;
     float heightPerSize;
+
+    uint32_t maskIndex;  // どこをぼかすか。kInvalidTextureIndex なら全体
+    uint32_t pad0[3];
 };
 
 // GPU 側の MaskConstants と一致させること。
@@ -2873,7 +2876,8 @@ bool MaterialEvaluator::ApplyHeightBlur(rhi::Device& device,
                                        ID3D12PipelineState* blurPipeline,
                                        ID3D12PipelineState* normalPipeline,
                                        const MaterialLayer& layer, const MaterialStack& stack,
-                                       const std::vector<TileRect>& tiles) {
+                                       const std::vector<TileRect>& tiles,
+                                       uint32_t maskIndex) {
     // 半径は実寸（m）で持っている。合成解像度を変えても効きが変わらないように
     // するため、ここでテクセル数へ直す。
     const float sizeMeters = (stack.SizeMeters() > 0.0f) ? stack.SizeMeters() : 1.0f;
@@ -2911,6 +2915,8 @@ bool MaterialEvaluator::ApplyHeightBlur(rhi::Device& device,
             constants.resolution[1] = m_resolution;
             constants.strength = passStrength;
             constants.heightPerSize = heightPerSize;
+            // マスクは**混ぜる垂直パスだけ**に渡す。水平パスは中間結果なので効かせない。
+            constants.maskIndex = (axis == 1u) ? maskIndex : kInvalidTextureIndex;
 
             const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(BlurConstants));
             if (!cb.IsValid()) {
@@ -3152,7 +3158,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             } else if (layer.enabled && hasUnderlying && blurPipeline != nullptr &&
                        blurNormalPipeline != nullptr) {
                 if (!ApplyHeightBlur(device, commandList, blurPipeline, blurNormalPipeline,
-                                     layer, stack, tiles)) {
+                                     layer, stack, tiles, inputMaskIndex)) {
                     complete = false;
                 }
                 ++m_evaluatedLayerCount;

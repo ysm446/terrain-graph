@@ -366,10 +366,13 @@ private:
                           ID3D12GraphicsCommandList* commandList, const MaskOp& op,
                           rhi::GpuTexture& target);
 
+    // ハイトをぼかす。maskIndex は**どこをぼかすか**のマスクの SRV
+    // （無ければ kInvalidTextureIndex。0 の所は元の高さがそのまま残る）。
     bool ApplyHeightBlur(rhi::Device& device, ID3D12GraphicsCommandList* commandList,
                          ID3D12PipelineState* blurPipeline,
                          ID3D12PipelineState* normalPipeline, const MaterialLayer& layer,
-                         const MaterialStack& stack, const std::vector<TileRect>& tiles);
+                         const MaterialStack& stack, const std::vector<TileRect>& tiles,
+                         uint32_t maskIndex);
 
     FluvialResources m_fluvial;
     // 標高マスクの「全範囲」用（R32_UINT）。InterlockedMin / Max でためる。

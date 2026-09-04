@@ -1,7 +1,7 @@
 # nodes — ノードのリファレンス
 
 作成日時: 2026-09-03 17:30
-更新日時: 2026-09-04 17:30
+更新日時: 2026-09-05 05:00
 
 ノード 1 つずつの、**役割・ピン・パラメータ**の一覧。
 
@@ -34,12 +34,13 @@
 | **Surface** | `surface` | Base, Mask | Result | 素材を高さで張り合わせる |
 | **Shape** | `shape` | Base, Mask | Result | 高さへ起伏を加算する |
 | **Liquid** | `liquid` | Base, Mask | Result | 水位より低い所に水を張る |
-| **Heightmap Blur** | `heightmapBlur` | Base | Result | ハイトをぼかしてならす |
+| **Heightmap Blur** | `heightmapBlur` | Base, Mask | Result | ハイトをぼかしてならす |
 | **Sediment** | `sediment` | Base | Result, **Mask** | 土砂を重力で再分配する |
 | **Crumbling** | `crumbling` | Base, Emission | Result, **Mask**, **Unique** | 岩屑を斜面下へ流して積む |
 | **Snow** | `snow` | Base | Result, **Mask** | 雪を降らせ、急な雪面から落として積もらせる |
 | **River** | `river` | Base, Seed | Result, **Water**, **Bank**, **Depth** | 川筋から河床を掘り、下流へ下がる水面を張る |
 | **Droplet Erosion** | `droplet` | Base | Result, **Flow**, **Deposit** | 水滴を流して谷を刻み、土砂を運んで積む |
+| **Scatter** | `scatter` | Base, Mask | Result, **Mask**, **Unique** | 単純な形をばら撒き、分布のマスクを出す |
 | **Mask Image** | `maskImage` | — | Mask | 画像をマスクにする |
 | **Mask Noise** | `maskNoise` | — | Mask | ノイズをマスクにする |
 | **Mask Fluvial** | `maskFluvial` | Base | Mask | 下地の川筋をマスクにする |
@@ -144,6 +145,7 @@
 ## Heightmap Blur
 
 下地のハイトをぼかす**加工**。合成はしない。ぼかした形から法線も作り直す。
+**Mask 入力はどこをぼかすか**（明るい所ほどぼける。繋がなければ全体）。
 
 | パラメータ | 既定 | 意味 |
 | --- | --- | --- |
@@ -155,7 +157,10 @@
 - **下地になれない。** Base に何も繋がっていないと素通りする。
 - 素材の法線ディテールを載せたいなら、**このノードより後ろに**サーフェスを繋ぐ
   （前に繋ぐと、作り直した法線で上書きされる）。
-- マスクを取らない（Mask 入力を持たない）。
+- **Mask は混ぜる量に掛かる。** 0 の所は元の高さがそのまま残るので、反復しても
+  そこへぼけが染み出さない（次の反復も元の高さを読む）。
+  Mask Height を繋げば「低い所だけならす」、Mask Slope なら「急な所だけ残す」ができる。
+- **Mask 出力は持たない**（ぼかしは新しい領域を作らないため）。
 
 ## Sediment
 
