@@ -15,6 +15,7 @@
 #include "renderer/MaterialSphere.h"
 #include "renderer/PreviewRenderer.h"
 #include "renderer/SkyLibrary.h"
+#include "renderer/SkySphere.h"
 #include "rhi/Device.h"
 #include "rhi/PipelineCache.h"
 #include "rhi/ShaderCompiler.h"
@@ -262,6 +263,8 @@ private:
     renderer::PreviewRenderer m_renderer;
     // マテリアルプレビューの球。窓を開いている間だけ描く。
     renderer::MaterialSphere m_materialSphere;
+    // 天球プレビューの球。同じく窓を開いている間だけ描く。
+    renderer::SkySphere m_skySphere;
     // --- ノードグラフ -------------------------------------------------------
     // 合成はグラフが唯一の入口。グラフをレイヤー列へコンパイルして
     // 既存の GPU 評価器で評価する。m_graphStack はそのコンパイル結果。
@@ -440,6 +443,8 @@ private:
     bool m_showTexturePreview = false;
     // 天球プレビューの窓。同じくドックへは収めない。
     bool m_showSkyPreview = false;
+    // その窓の中身をこのフレームに描いたか（折りたたまれていれば球も描かない）。
+    bool m_skyPreviewVisible = false;
     // その窓の中身をこのフレームに描いたか。**折りたたまれていれば球も描かない。**
     // UI（DrawUi）はフレームの記録より前に走るので、その結果をここへ残して使う。
     bool m_materialSphereVisible = false;

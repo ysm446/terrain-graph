@@ -49,12 +49,6 @@ struct SkyAsset {
     // 一覧に出すサムネイル。設定を変えたら作り直す。
     rhi::GpuTexture thumbnail;
     bool thumbnailDirty = true;
-
-    // プレビューの窓へ出す大きい絵。**窓が要求したときだけ作る。**
-    // 一覧の 84px では空の階調や HDRI の中身までは読めないので、別に持つ。
-    // HDRI の読み直しを伴うので、全部の天球ぶんを常に作ることはしない。
-    rhi::GpuTexture preview;
-    bool previewDirty = true;
 };
 
 // 天球を保持し、サムネイルを作る。**一覧は決して空にしない。**
@@ -82,12 +76,7 @@ public:
     SkyAsset* ActiveMutable() { return FindMutable(m_activeId); }
 
     // サムネイルの作り直しを予約する。設定を変えたら呼ぶ。
-    // **プレビューの作り直しも一緒に予約する**（同じ設定から作るため）。
     void MarkThumbnailDirty(SkyAssetId id);
-
-    // プレビューの窓へ出す絵を要求する。**窓を開いている間、毎フレーム呼んでよい。**
-    // 実際に作るのは中身が変わったときだけ（ProcessPendingWork が処理する）。
-    void RequestPreview(SkyAssetId id) { m_previewRequest = id; }
 
     // 予約されたサムネイルを作る。GPU 待機と HDR ファイルの読み込みを伴うため、
     // フレームの外で呼ぶこと。**1 回につき 1 枚だけ作る。**
@@ -96,19 +85,13 @@ public:
 
     // 一覧で使うサムネイルのハンドル。まだ無ければ ptr が 0。
     D3D12_GPU_DESCRIPTOR_HANDLE ThumbnailHandle(SkyAssetId id) const;
-    // プレビューの窓へ出す絵のハンドル。まだ無ければ ptr が 0。
-    D3D12_GPU_DESCRIPTOR_HANDLE PreviewHandle(SkyAssetId id) const;
 
 private:
-    // 天球の絵を 1 枚作る。サムネイルもプレビューも中身は同じで、大きさだけが違う。
-    bool BuildImage(rhi::Device& device, rhi::PipelineCache& pipelineCache, SkyAsset& asset,
-                    uint32_t size, const wchar_t* debugName, rhi::GpuTexture& target);
+    bool BuildThumbnail(rhi::Device& device, rhi::PipelineCache& pipelineCache, SkyAsset& asset);
 
     std::vector<SkyAsset> m_entries;
     SkyAssetId m_nextId = 1;
     SkyAssetId m_activeId = kNoSkyAsset;
-    // プレビューを要求している天球。窓が閉じていれば kNoSkyAsset。
-    SkyAssetId m_previewRequest = kNoSkyAsset;
 };
 
 }  // namespace tg::renderer

@@ -138,11 +138,8 @@ void Application::DrawSkyContextMenu(renderer::SkyAssetId target) {
 // **映すのは適用中の天球**（一覧で選んだもの＝ビューポートの環境）。
 // マテリアル / テクスチャの窓と同じ作法で、窓の側に別の選択を持たせない。
 void Application::DrawSkyPreviewWindow() {
+    m_skyPreviewVisible = false;
     if (!m_showSkyPreview) {
-        // 閉じている間は要求を落とす。**大きい絵は窓が開いているときだけ作る。**
-        // 落とさないと、設定を変えるたびに使われない絵を作り直してしまう
-        // （HDRI の読み直しを伴うので、そのぶん止まる）。
-        m_skyLibrary.RequestPreview(renderer::kNoSkyAsset);
         return;
     }
 
@@ -162,8 +159,8 @@ void Application::DrawSkyPreviewWindow() {
         ImGui::End();
         return;
     }
-    // 大きい絵は**窓を開いている間だけ**作る（HDRI の読み直しを伴うため）。
-    m_skyLibrary.RequestPreview(active->id);
+    // 球は**適用中の環境キューブ**から毎フレーム描く（フレームの中で走る）。
+    m_skyPreviewVisible = true;
 
     // --- 上下 2 区画。上は幅に合わせた正方形の絵 -------------------------------
     const float paneSize = PreviewPaneSize();
@@ -174,23 +171,40 @@ void Application::DrawSkyPreviewWindow() {
             std::max(std::min(ImGui::GetContentRegionAvail().x, paneSize), ui::Scaled(32.0f));
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
                              std::max(0.0f, (ImGui::GetContentRegionAvail().x - imageSize) * 0.5f));
-        // まだ絵が無い（作っている最中）ときは枠だけ描く。ImTextureID の 0 を
-        // AddImage へ渡すとデバッグビルドの ImGui がアサートで落ちる。
-        const D3D12_GPU_DESCRIPTOR_HANDLE handle = m_skyLibrary.PreviewHandle(active->id);
         const ImVec2 min = ImGui::GetCursorScreenPos();
         const ImVec2 max(min.x + imageSize, min.y + imageSize);
-        if (handle.ptr != 0) {
-            ImGui::GetWindowDrawList()->AddImage(static_cast<ImTextureID>(handle.ptr), min, max);
+
+        // 画像より先に ID を持つアイテムを置く（マテリアルの球と同じ作法）。
+        ImGui::InvisibleButton("##skySphere", ImVec2(imageSize, imageSize),
+                               ImGuiButtonFlags_MouseButtonLeft);
+        if (ImGui::IsItemActive()) {
+            // 1px = 0.35 度。マテリアルの球と同じ効き方。
+            const ImVec2 delta = ImGui::GetIO().MouseDelta;
+            m_skySphere.Orbit(delta.x * 0.35f, delta.y * 0.35f);
+        }
+        // この区画はスクロールしないので、ホイールはズームへ回せる。
+        if (ImGui::IsItemHovered() && ImGui::GetIO().MouseWheel != 0.0f) {
+            m_skySphere.Zoom(ImGui::GetIO().MouseWheel);
+        }
+
+        // まだ絵が無いときは枠だけ描く。ImTextureID の 0 を AddImage へ渡すと
+        // デバッグビルドの ImGui がアサートで落ちる。
+        if (m_skySphere.HasOutput()) {
+            ImGui::GetWindowDrawList()->AddImage(
+                static_cast<ImTextureID>(m_skySphere.OutputHandle().ptr), min, max);
         }
         ImGui::GetWindowDrawList()->AddRect(min, max, ImGui::GetColorU32(ImGuiCol_Border),
                                             ImGui::GetStyle().FrameRounding, 0, ui::Scaled(1.0f));
-        ImGui::Dummy(ImVec2(imageSize, imageSize));
     }
     ImGui::EndChild();
 
     ImGui::Separator();
 
     ImGui::BeginChild("skyPropertyPane", ImVec2(0.0f, 0.0f));
+    ui::HintText("ドラッグで回す / ホイールで寄る。露出はビューポートと同じ");
+    if (ui::Button("視点を戻す", ui::kWideButtonWidth)) {
+        m_skySphere.ResetView();
+    }
     ui::HintText("一覧で選んだ天球が、そのままビューポートの環境になる");
 
     renderer::SkyDefinition& sky = active->sky;

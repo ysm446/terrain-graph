@@ -180,6 +180,7 @@ void Application::Shutdown() {
     DestroyGraphEditor();
     m_paintMasks.Destroy(m_device);
     m_materialSphere.Destroy(m_device);
+    m_skySphere.Destroy(m_device);
     m_materialLibrary.Destroy(m_device);
     m_skyLibrary.Destroy(m_device);
     m_textureLibrary.Destroy(m_device);
@@ -400,6 +401,13 @@ int Application::Run() {
                                     m_renderer.GetEnvironment(), m_renderer.ActiveSky().iblIntensity,
                                     m_renderer.Light(), m_renderer.Exposure().Exposure(),
                                     m_renderer.Tonemap());
+        }
+
+        // 天球プレビューの球。**適用中の環境キューブをそのまま引く。**
+        if (m_skyPreviewVisible) {
+            m_skySphere.Render(m_device, m_pipelineCache, commandList,
+                               m_renderer.GetEnvironment(), m_renderer.ActiveSky().iblIntensity,
+                               m_renderer.Exposure().Exposure(), m_renderer.Tonemap());
         }
 
         // レンダラがターゲットを差し替えているので、ImGui を描く前に戻す。

@@ -18,8 +18,6 @@ using rhi::TransitionIfNeeded;
 
 // サムネイルの一辺。マテリアルと揃える（一覧で並ぶ大きさが同じになる）。
 constexpr uint32_t kThumbnailSize = 128;
-// プレビューの窓へ出す絵の一辺。窓の中で拡大しても粗が見えない程度に取る。
-constexpr uint32_t kPreviewSize = 512;
 
 // サムネイル用に落とす equirect の大きさ。**元の解像度は要らない。**
 // 128 px の円へ 180 度を写すだけなので、これ以上あっても縁で潰れる。
@@ -161,7 +159,6 @@ bool NeedsLuminanceRebuild(const SkyDefinition& before, const SkyDefinition& aft
 void SkyLibrary::Destroy(rhi::Device& device) {
     for (SkyAsset& asset : m_entries) {
         device.DeferRelease(asset.thumbnail);
-        device.DeferRelease(asset.preview);
     }
     m_entries.clear();
     m_activeId = kNoSkyAsset;
@@ -195,7 +192,6 @@ void SkyLibrary::Remove(rhi::Device& device, SkyAssetId id) {
         return;
     }
     device.DeferRelease(it->thumbnail);
-    device.DeferRelease(it->preview);
     const auto index = static_cast<size_t>(std::distance(m_entries.begin(), it));
     m_entries.erase(it);
 
@@ -245,7 +241,6 @@ void SkyLibrary::SetActive(SkyAssetId id) {
 void SkyLibrary::MarkThumbnailDirty(SkyAssetId id) {
     if (SkyAsset* asset = FindMutable(id); asset != nullptr) {
         asset->thumbnailDirty = true;
-        asset->previewDirty = true;
     }
 }
 
@@ -257,57 +252,37 @@ D3D12_GPU_DESCRIPTOR_HANDLE SkyLibrary::ThumbnailHandle(SkyAssetId id) const {
     return asset->thumbnail.srv.gpu;
 }
 
-D3D12_GPU_DESCRIPTOR_HANDLE SkyLibrary::PreviewHandle(SkyAssetId id) const {
-    const SkyAsset* asset = Find(id);
-    if (asset == nullptr || !asset->preview.IsValid()) {
-        return D3D12_GPU_DESCRIPTOR_HANDLE{0};
-    }
-    return asset->preview.srv.gpu;
-}
-
 void SkyLibrary::ProcessPendingWork(rhi::Device& device, rhi::PipelineCache& pipelineCache) {
     for (SkyAsset& asset : m_entries) {
         if (!asset.thumbnailDirty) {
             continue;
         }
-        if (!BuildImage(device, pipelineCache, asset, kThumbnailSize, L"SkyThumbnail",
-                        asset.thumbnail)) {
+        if (!BuildThumbnail(device, pipelineCache, asset)) {
             TG_LOG_WARN("天球「%s」のサムネイルを作れませんでした", asset.name.c_str());
         }
         // 失敗しても要求は落とす（同じ失敗を毎フレーム繰り返さない）。
         asset.thumbnailDirty = false;
         return;
     }
-
-    // プレビューは**要求されている 1 枚だけ**作る。窓を閉じていれば作らない。
-    if (SkyAsset* asset = FindMutable(m_previewRequest);
-        asset != nullptr && asset->previewDirty) {
-        if (!BuildImage(device, pipelineCache, *asset, kPreviewSize, L"SkyPreview",
-                        asset->preview)) {
-            TG_LOG_WARN("天球「%s」のプレビューを作れませんでした", asset->name.c_str());
-        }
-        asset->previewDirty = false;
-    }
 }
 
-// サムネイルとプレビューは中身が同じで大きさだけが違うので、1 つの関数で作る。
-bool SkyLibrary::BuildImage(rhi::Device& device, rhi::PipelineCache& pipelineCache,
-                            SkyAsset& asset, uint32_t size, const wchar_t* debugName,
-                            rhi::GpuTexture& target) {
+bool SkyLibrary::BuildThumbnail(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                SkyAsset& asset) {
     ID3D12PipelineState* pipeline = pipelineCache.GetCompute(L"SkyThumbnail.hlsl", L"CsMain");
     if (pipeline == nullptr) {
         return false;
     }
 
+    rhi::GpuTexture& target = asset.thumbnail;
     if (!target.IsValid()) {
         rhi::TextureDesc desc;
-        desc.width = size;
-        desc.height = size;
+        desc.width = kThumbnailSize;
+        desc.height = kThumbnailSize;
         desc.format = DXGI_FORMAT_R8G8B8A8_UNORM;
         desc.allowUnorderedAccess = true;
         desc.createSrv = true;
         desc.initialState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-        desc.debugName = debugName;
+        desc.debugName = L"SkyThumbnail";
         if (!device.Allocator().CreateTexture2D(desc, target)) {
             return false;
         }
@@ -315,7 +290,7 @@ bool SkyLibrary::BuildImage(rhi::Device& device, rhi::PipelineCache& pipelineCac
 
     SkyThumbnailConstants constants = {};
     constants.outputIndex = target.UavIndex();
-    constants.size = size;
+    constants.size = kThumbnailSize;
     constants.equirectIndex = kInvalidTextureIndex;
     constants.luminanceScale = 1.0f;
     const SkySettings& procedural = asset.sky.procedural;
@@ -352,14 +327,15 @@ bool SkyLibrary::BuildImage(rhi::Device& device, rhi::PipelineCache& pipelineCac
     }
 
     const bool executed = device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {
-        PIXBeginEvent(commandList, PIX_COLOR(120, 200, 200), "SkyImage");
+        PIXBeginEvent(commandList, PIX_COLOR(120, 200, 200), "SkyThumbnail");
         TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
         commandList->SetComputeRootSignature(pipelineCache.GlobalRootSignature());
         commandList->SetPipelineState(pipeline);
         commandList->SetComputeRoot32BitConstants(0, sizeof(constants) / sizeof(uint32_t),
                                                   &constants, 0);
-        commandList->Dispatch(DispatchCount(size), DispatchCount(size), 1);
+        commandList->Dispatch(DispatchCount(kThumbnailSize), DispatchCount(kThumbnailSize),
+                              1);
 
         // ImGui から SRV として読むので、ピクセルシェーダ可視の状態へ移す。
         TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);

@@ -166,6 +166,8 @@ set(tg_sources
     src/renderer/PreviewRenderer.h
     src/renderer/SkyLibrary.cpp
     src/renderer/SkyLibrary.h
+    src/renderer/SkySphere.cpp
+    src/renderer/SkySphere.h
     src/ui/ImGuiLayer.cpp
     src/ui/ImGuiLayer.h
     src/ui/Toast.cpp
