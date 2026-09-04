@@ -151,8 +151,11 @@ const char* const kFluvialCurveNames[] = {"log", "threshold", "linear"};
 const char* const kCurvatureModeNames[] = {"ridges", "valleys", "absolute"};
 const char* const kMaskBlendModeNames[] = {"add", "multiply", "min", "max"};
 const char* const kChannelNames[] = {"baseColor", "normal", "surface", "height"};
-const char* const kLayerKindNames[] = {"surface",  "shape",     "liquid", "blur",   "sediment",
-                                       "crumbling", "snow",     "river",  "droplet"};
+const char* const kLayerKindNames[] = {"surface",   "shape", "liquid", "blur",    "sediment",
+                                       "crumbling", "snow",  "river",  "droplet", "scatter"};
+// 散布の形 / 向き。compositor::ScatterShape / ScatterOrientation の並びと一致させること。
+const char* const kScatterShapeNames[] = {"hemisphere", "cone"};
+const char* const kScatterOrientationNames[] = {"flat", "followGround", "slopeOriented"};
 // 岩片の形。compositor::RockStyle の並びと一致させること。
 const char* const kRockStyleNames[] = {"classic", "polygonal", "shard"};
 const char* const kTonemapNames[] = {"none", "reinhard", "aces"};
@@ -785,6 +788,22 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     droplet["resolution"] = layer.droplet.resolution;
     node["droplet"] = std::move(droplet);
 
+    // 散布（散布レイヤーだけが使う）。
+    json scatter;
+    scatter["shape"] = EnumName(kScatterShapeNames, static_cast<uint32_t>(layer.scatter.shape));
+    scatter["orientation"] =
+        EnumName(kScatterOrientationNames, static_cast<uint32_t>(layer.scatter.orientation));
+    scatter["seed"] = layer.scatter.seed;
+    scatter["density"] = layer.scatter.densityMeters;
+    scatter["coverage"] = layer.scatter.coverage;
+    scatter["sizeMin"] = layer.scatter.sizeMinMeters;
+    scatter["sizeMax"] = layer.scatter.sizeMaxMeters;
+    scatter["height"] = layer.scatter.heightMeters;
+    scatter["heightJitter"] = layer.scatter.heightJitter;
+    scatter["rotationVariation"] = layer.scatter.rotationVariation;
+    scatter["aspectVariation"] = layer.scatter.aspectVariation;
+    node["scatter"] = std::move(scatter);
+
     // ぼかし（ブラーレイヤーだけが使う）。
     json blur;
     blur["radius"] = layer.blur.radiusMeters;
@@ -954,6 +973,31 @@ compositor::MaterialLayer ReadLayer(
         layer.droplet.seed = ReadInt(*droplet, "seed", defaults.droplet.seed);
         layer.droplet.resolution = static_cast<uint32_t>(
             ReadInt(*droplet, "resolution", static_cast<int>(defaults.droplet.resolution)));
+    }
+
+    if (const json* scatter = FindMember(node, "scatter");
+        scatter != nullptr && scatter->is_object()) {
+        layer.scatter.shape = static_cast<compositor::ScatterShape>(
+            EnumValue(kScatterShapeNames, *scatter, "shape",
+                      static_cast<uint32_t>(defaults.scatter.shape)));
+        layer.scatter.orientation = static_cast<compositor::ScatterOrientation>(
+            EnumValue(kScatterOrientationNames, *scatter, "orientation",
+                      static_cast<uint32_t>(defaults.scatter.orientation)));
+        layer.scatter.seed = ReadInt(*scatter, "seed", defaults.scatter.seed);
+        layer.scatter.densityMeters =
+            ReadFloat(*scatter, "density", defaults.scatter.densityMeters);
+        layer.scatter.coverage = ReadFloat(*scatter, "coverage", defaults.scatter.coverage);
+        layer.scatter.sizeMinMeters =
+            ReadFloat(*scatter, "sizeMin", defaults.scatter.sizeMinMeters);
+        layer.scatter.sizeMaxMeters =
+            ReadFloat(*scatter, "sizeMax", defaults.scatter.sizeMaxMeters);
+        layer.scatter.heightMeters = ReadFloat(*scatter, "height", defaults.scatter.heightMeters);
+        layer.scatter.heightJitter =
+            ReadFloat(*scatter, "heightJitter", defaults.scatter.heightJitter);
+        layer.scatter.rotationVariation =
+            ReadFloat(*scatter, "rotationVariation", defaults.scatter.rotationVariation);
+        layer.scatter.aspectVariation =
+            ReadFloat(*scatter, "aspectVariation", defaults.scatter.aspectVariation);
     }
 
     if (const json* blur = FindMember(node, "blur"); blur != nullptr && blur->is_object()) {

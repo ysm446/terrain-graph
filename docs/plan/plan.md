@@ -159,7 +159,9 @@ terrain-editor の売りのノード群。まず CPU 実装をそのまま移植
 - Multi-Scale Erosion / Fluvial Erosion / Mask Fluvial。
 - **Droplet Erosion（2026-09-04 完了）。** GPU 版（スナップショット方式）を解析グリッド +
   差分の足し戻しで移した。Flow / Deposit の Mask を出す。
-- Sediment / Snow / Soil / Crumbling / Rock / Scatter。
+- Sediment / Snow / Soil / Crumbling / Rock。
+- **Scatter（2026-09-05 完了）。** 単純な形をばら撒き、分布と個体ごとの乱数の Mask を出す。
+  1 スレッド 1 テクセルで、近くの散布点から一番強い形を採る。
 - **River（段階 1 実装済み。2026-09-03）** — 川筋から河床を掘り、下流へ単調な
   水面を張って河原（岩・砂利を置く帯）のマスクを出す。設計と残り（湖岸の Bank）は
   [reference/river-node.md](../reference/river-node.md)。

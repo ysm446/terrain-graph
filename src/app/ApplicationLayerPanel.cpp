@@ -311,6 +311,82 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
         return changed;
     }
 
+    // 散布は合成レイヤーではなく「形をばら撒く加工」。
+    // マスク入力は**散布する範囲**（明るい所ほど置かれやすい）。
+    if (layer.kind == compositor::LayerKind::Scatter) {
+        const compositor::MaterialLayer::ScatterSettings scatterDefaults;
+        ui::SectionHeader("基本");
+        if (ui::BeginPropertyTable("scatterBasicRows")) {
+            char scatterName[128] = {};
+            std::snprintf(scatterName, sizeof(scatterName), "%s", layer.name.c_str());
+            if (ui::PropertyTextInput("名前", scatterName, sizeof(scatterName))) {
+                layer.name = scatterName;
+                changed = true;
+            }
+
+            static const char* const kShapeLabels[] = {"半球", "円錐"};
+            int shape = static_cast<int>(layer.scatter.shape);
+            if (ui::PropertyCombo("形", &shape, kShapeLabels, IM_ARRAYSIZE(kShapeLabels),
+                                  static_cast<int>(scatterDefaults.shape),
+                                  "半球は丸い低木や樹冠、円錐は尖った草や針葉樹の目安")) {
+                layer.scatter.shape = static_cast<compositor::ScatterShape>(shape);
+                changed = true;
+            }
+
+            static const char* const kOrientationLabels[] = {"平ら", "地面に沿う", "斜面向き"};
+            int orientation = static_cast<int>(layer.scatter.orientation);
+            if (ui::PropertyCombo("向き", &orientation, kOrientationLabels,
+                                  IM_ARRAYSIZE(kOrientationLabels),
+                                  static_cast<int>(scatterDefaults.orientation),
+                                  "地形の傾きの扱い。地面に沿うは斜面で低く潰れ、"
+                                  "斜面向きは個体の向きを傾きの向きへ寄せる")) {
+                layer.scatter.orientation =
+                    static_cast<compositor::ScatterOrientation>(orientation);
+                changed = true;
+            }
+
+            changed |= ui::PropertyFloat("間隔", &layer.scatter.densityMeters, 0.5f, 200.0f,
+                                         scatterDefaults.densityMeters,
+                                         "散布点の間隔（m）。小さいほど密に置かれる", "%.1f m",
+                                         ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat("被覆", &layer.scatter.coverage, 0.0f, 1.0f,
+                                         scatterDefaults.coverage,
+                                         "散布点に実際に置く確率。Mask 入力があれば掛かる",
+                                         "%.2f");
+            changed |= ui::PropertyInt("シード", &layer.scatter.seed, 0, 9999,
+                                       scatterDefaults.seed, "配置と個体差の種");
+            ui::EndPropertyTable();
+        }
+
+        ui::SectionHeader("個体");
+        if (ui::BeginPropertyTable("scatterInstanceRows")) {
+            changed |= ui::PropertyFloat("最小サイズ", &layer.scatter.sizeMinMeters, 0.1f, 200.0f,
+                                         scatterDefaults.sizeMinMeters, "個体の直径（m）",
+                                         "%.1f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat("最大サイズ", &layer.scatter.sizeMaxMeters, 0.1f, 200.0f,
+                                         scatterDefaults.sizeMaxMeters, "個体の直径（m）",
+                                         "%.1f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat("高さ", &layer.scatter.heightMeters, 0.0f, 100.0f,
+                                         scatterDefaults.heightMeters,
+                                         "地形に盛り上げる高さ（m）。0 でも Mask は出る",
+                                         "%.2f m");
+            changed |= ui::PropertyFloat("高さのばらつき", &layer.scatter.heightJitter, 0.0f, 1.0f,
+                                         scatterDefaults.heightJitter, "個体ごとの高さの差",
+                                         "%.2f");
+            changed |= ui::PropertyFloat("向きのばらつき", &layer.scatter.rotationVariation, 0.0f,
+                                         1.0f, scatterDefaults.rotationVariation,
+                                         "個体ごとの回転の差", "%.2f");
+            changed |= ui::PropertyFloat("細長さ", &layer.scatter.aspectVariation, 0.0f, 1.0f,
+                                         scatterDefaults.aspectVariation,
+                                         "個体ごとの縦横比の差。0 で真円", "%.2f");
+            ui::EndPropertyTable();
+        }
+        ui::HintText("Mask 入力で散布する範囲を絞れる（明るい所ほど置かれる）");
+        ui::HintText("Mask 出力は分布、Unique は個体ごとの乱数。"
+                     "高さ 0 のまま Mask だけを使ってもよい");
+        return changed;
+    }
+
     // 水滴侵食も合成レイヤーではなく「水滴で削って運んで積む加工」。マスク入力は持たない。
     if (layer.kind == compositor::LayerKind::Droplet) {
         const compositor::MaterialLayer::DropletSettings dropletDefaults;

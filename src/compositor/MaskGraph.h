@@ -50,6 +50,8 @@ enum class MaskOpKind : uint32_t {
     Path = 12,
     // 水滴侵食レイヤーの出力。出力ピンによって流量（水の通った量）か堆積量になる。
     Droplet = 13,
+    // 散布レイヤーの出力。出力ピンによって形（分布）か個体ごとの乱数になる。
+    Scatter = 14,
 };
 
 // 曲率マスクの向き。シェーダの TG_CURVATURE_* と一致させること。
@@ -157,6 +159,12 @@ struct DropletMaskParams {
     uint32_t channel = 0;
 };
 
+// 散布の出力をマスクにするときの選択。**どの出力ピンから来たか**で決まる。
+struct ScatterMaskParams {
+    // 0: 形（そこに何かある）、1: 個体ごとの乱数（色や材質のばらつき用）
+    uint32_t channel = 0;
+};
+
 // パスの線分 1 本。座標は地形平面の正規化 UV（0〜1）、幅 / フェザーは m。
 // 両端で値が違えばエッジ上で補間する。孤立した点は a == b の線分（円）。
 struct PathSegment {
@@ -200,6 +208,7 @@ struct MaskOp {
     SnowMaskParams snowMask;
     RiverMaskParams riverMask;
     DropletMaskParams dropletMask;
+    ScatterMaskParams scatterMask;
     PathMaskParams pathMask;
     // Path のときだけ。コンパイルがパスから作る線分列（正規化 UV）。
     std::vector<PathSegment> pathSegments;

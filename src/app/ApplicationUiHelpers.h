@@ -132,6 +132,17 @@ inline const compositor::MaterialLayer kDefaultRiverLayer = [] {
     return layer;
 }();
 
+// 散布ノードの既定値。値は terrain-editor の Scatter に合わせてある。
+inline const compositor::MaterialLayer kDefaultScatterLayer = [] {
+    compositor::MaterialLayer layer;
+    layer.kind = compositor::LayerKind::Scatter;
+    layer.name = "Scatter";
+    // 既定は**高さ 0**。まず分布（Mask）を見ながら密度と大きさを決め、
+    // 地形へ盛るかどうかは後から選べるようにする（terrain-editor と同じ既定）。
+    layer.scatter = {};
+    return layer;
+}();
+
 // 水滴侵食ノードの既定値。値は terrain-editor の Droplet Erosion に合わせてある。
 inline const compositor::MaterialLayer kDefaultDropletLayer = [] {
     compositor::MaterialLayer layer;
@@ -158,6 +169,8 @@ inline const compositor::MaterialLayer& DefaultLayerFor(compositor::LayerKind ki
             return kDefaultRiverLayer;
         case compositor::LayerKind::Droplet:
             return kDefaultDropletLayer;
+        case compositor::LayerKind::Scatter:
+            return kDefaultScatterLayer;
         default:
             return kDefaultLayer;
     }

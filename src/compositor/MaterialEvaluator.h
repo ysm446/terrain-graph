@@ -127,6 +127,20 @@ struct CrumblingResources {
     bool IsValid() const { return packed.IsValid(); }
 };
 
+// 散布（Scatter）の作業リソース。**合成解像度で回す**（形は m 単位の小さなものなので、
+// 粗いグリッドでは形にならない。崩落と同じ理由）。
+//
+// 形と個体ごとの乱数は 1 枚の R32_UINT にパックする（上位 16 bit / 下位 16 bit）。
+// 高さは別に積む。**Height は読みと書きで状態を分ける**ので、
+// 散布のパスでは差分だけを書き、足し戻しは別のパスで行う。
+struct ScatterResources {
+    rhi::GpuTexture packed;  // R32_UINT （形 16bit | 乱数 16bit）
+    rhi::GpuTexture delta;   // R32_FLOAT 高さの差分（正規化ハイト）
+    uint32_t resolution = 0;
+
+    bool IsValid() const { return packed.IsValid() && delta.IsValid(); }
+};
+
 // 合成の Height を小さなグリッドで CPU へ写したもの。
 //
 // ビューポートでパスを地形に沿って編集するのに使う（クリック位置の投影、点の表示）。
@@ -339,6 +353,19 @@ private:
                           ID3D12GraphicsCommandList* commandList, const MaskOp& op,
                           rhi::GpuTexture& target);
 
+    // 散布レイヤー 1 枚ぶん。近くの散布点から形を決めて Height へ足し戻し、
+    // 法線を作り直す。placementIndex は配置マスクの SRV（無ければ kInvalidTextureIndex）。
+    bool ApplyScatter(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                      ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
+                      const MaterialStack& stack, uint32_t placementIndex);
+    bool EnsureScatterResources(rhi::Device& device, uint32_t resolution);
+    void ReleaseScatterResources(rhi::Device& device);
+    // 直前の散布レイヤーが置いた形 / 乱数を、マスクとして焼く。
+    // **散布レイヤーの直後にしか使えない**（作業用テクスチャを使い回すため）。
+    bool ApplyScatterMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                          ID3D12GraphicsCommandList* commandList, const MaskOp& op,
+                          rhi::GpuTexture& target);
+
     bool ApplyHeightBlur(rhi::Device& device, ID3D12GraphicsCommandList* commandList,
                          ID3D12PipelineState* blurPipeline,
                          ID3D12PipelineState* normalPipeline, const MaterialLayer& layer,
@@ -352,6 +379,7 @@ private:
     SnowResources m_snow;
     RiverResources m_river;
     DropletResources m_droplet;
+    ScatterResources m_scatter;
     // マスクの op の結果。添字は MaskProgram と同じ。
     std::vector<rhi::GpuTexture> m_maskOpTextures;
     std::vector<uint32_t> m_maskOpResolutions;

@@ -75,6 +75,16 @@ struct CrumblingConstants {
     float params2[4];      // 岩屑の量, 未使用 x3
 };
 
+// GPU 側の ScatterConstants と一致させること。
+struct ScatterConstants {
+    uint32_t indices0[4];  // Height SRV, 差分 UAV, 配置マスク SRV, パック済み UAV
+    uint32_t indices1[4];  // 合成解像度, 形, 向きの決め方, 探索半径
+    uint32_t indices2[4];  // Height UAV, マスクの出力 UAV, 出力の種類, 未使用
+    float params0[4];      // 散布の間隔（m）, 置く確率, 最小サイズ, 最大サイズ（散布セル）
+    float params1[4];      // 高さ（正規化）, 高さのばらつき, 向きのばらつき, 細長さのばらつき
+    float params2[4];      // 届く範囲（散布セル）, シード, テクセル（m）, 標高差（m）
+};
+
 struct SedimentConstants {
     uint32_t indices0[4];  // UAV: 基盤, 土砂, 流出, 元の高さ
     uint32_t indices1[4];  // SRV: 基盤, 土砂, 元の高さ, 合成の Height
@@ -237,6 +247,8 @@ uint64_t HashMaskOpParams(uint64_t seed, const MaskOp& op) {
             return HashBytes(seed, &op.sedimentMask, sizeof(op.sedimentMask));
         case MaskOpKind::Crumbling:
             return HashBytes(seed, &op.crumblingMask, sizeof(op.crumblingMask));
+        case MaskOpKind::Scatter:
+            return HashBytes(seed, &op.scatterMask, sizeof(op.scatterMask));
         case MaskOpKind::Noise:
             return HashBytes(seed, &op.noise, sizeof(op.noise));
         case MaskOpKind::Curvature:
@@ -511,6 +523,7 @@ void MaterialEvaluator::Destroy(rhi::Device& device) {
     ReleaseSnowResources(device);
     ReleaseRiverResources(device);
     ReleaseDropletResources(device);
+    ReleaseScatterResources(device);
     for (rhi::GpuTexture& texture : m_maskOpTextures) {
         device.DeferRelease(texture);
     }
@@ -641,6 +654,10 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
     // 崩落も同じく、直前に走った崩落レイヤーの作業用テクスチャから焼く。
     if (op.kind == MaskOpKind::Crumbling) {
         return ApplyCrumblingMask(device, pipelineCache, commandList, op, target);
+    }
+    // 散布も同じく、直前に走った散布レイヤーの作業用テクスチャから焼く。
+    if (op.kind == MaskOpKind::Scatter) {
+        return ApplyScatterMask(device, pipelineCache, commandList, op, target);
     }
     // 積雪の被覆も、直前に走った積雪レイヤーの積雪厚から焼く。
     if (op.kind == MaskOpKind::Snow) {
@@ -1192,6 +1209,28 @@ bool MaterialEvaluator::EnsureCrumblingResources(rhi::Device& device, uint32_t r
         return false;
     }
     m_crumbling.resolution = resolution;
+    return true;
+}
+
+void MaterialEvaluator::ReleaseScatterResources(rhi::Device& device) {
+    device.DeferRelease(m_scatter.packed);
+    device.DeferRelease(m_scatter.delta);
+    m_scatter.resolution = 0;
+}
+
+bool MaterialEvaluator::EnsureScatterResources(rhi::Device& device, uint32_t resolution) {
+    if (m_scatter.IsValid() && m_scatter.resolution == resolution) {
+        return true;
+    }
+    ReleaseScatterResources(device);
+    if (!CreateChannelTexture(device, resolution, DXGI_FORMAT_R32_UINT, L"ScatterPacked",
+                              m_scatter.packed) ||
+        !CreateChannelTexture(device, resolution, DXGI_FORMAT_R32_FLOAT, L"ScatterDelta",
+                              m_scatter.delta)) {
+        ReleaseScatterResources(device);
+        return false;
+    }
+    m_scatter.resolution = resolution;
     return true;
 }
 
@@ -2678,6 +2717,154 @@ bool MaterialEvaluator::ApplyCrumblingMask(rhi::Device& device,
     return true;
 }
 
+// 散布。terrain-editor の Scatter の移植。段取りはシェーダの頭。
+//
+//   近くの散布点から形を決める（差分とパック済みの形 / 乱数を書く）
+//   → 差分を Height へ足す → 法線を作り直す
+bool MaterialEvaluator::ApplyScatter(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                     ID3D12GraphicsCommandList* commandList,
+                                     const MaterialLayer& layer, const MaterialStack& stack,
+                                     uint32_t placementIndex) {
+    if (!EnsureScatterResources(device, m_resolution)) {
+        return false;
+    }
+    const auto pipeline = [&](const wchar_t* entry) {
+        return pipelineCache.GetCompute(L"CompositeScatter.hlsl", entry);
+    };
+    ID3D12PipelineState* scatterPass = pipeline(L"CsScatter");
+    ID3D12PipelineState* resolvePass = pipeline(L"CsResolve");
+    ID3D12PipelineState* normalPass =
+        pipelineCache.GetCompute(L"CompositeBlur.hlsl", L"CsNormalFromHeight");
+    if (scatterPass == nullptr || resolvePass == nullptr) {
+        return false;
+    }
+
+    const MaterialLayer::ScatterSettings& params = layer.scatter;
+    const float sizeMeters = (stack.SizeMeters() > 0.0f) ? stack.SizeMeters() : 1.0f;
+    const float heightMeters = (stack.HeightMeters() > 0.0f) ? stack.HeightMeters() : 1.0f;
+    const float texelMeters = sizeMeters / static_cast<float>(std::max(1u, m_resolution));
+
+    // 大きさは m で持つ。散布の格子（間隔 = density）を単位に直して渡す。
+    // terrain-editor と同じ換算にしてあるので、同じ設定なら同じ分布になる。
+    const float density = std::clamp(params.densityMeters, 0.1f, 10000.0f);
+    const float minMeters = std::clamp(params.sizeMinMeters, 0.1f, 2000.0f);
+    const float maxMeters = std::clamp(std::max(params.sizeMaxMeters, minMeters), 0.1f, 2000.0f);
+    const float sizeMinCells = minMeters / density;
+    const float sizeMaxCells = maxMeters / density;
+    const float aspectVariation = std::clamp(params.aspectVariation, 0.0f, 1.0f);
+    // 届く範囲は「一番大きい個体を一番細長くしたとき」の半径。
+    // 探索するマスの数はここから決まる（遠すぎるマスは形が届かない）。
+    const float maxReach = (sizeMaxCells * 0.5f) * std::pow(2.0f, aspectVariation);
+    const int searchRadius =
+        std::clamp(static_cast<int>(std::ceil(maxReach - 0.05f)), 1, 32);
+
+    ScatterConstants constants = {};
+    constants.indices0[0] = m_textures.height.SrvIndex();
+    constants.indices0[1] = m_scatter.delta.UavIndex();
+    constants.indices0[2] = placementIndex;
+    constants.indices0[3] = m_scatter.packed.UavIndex();
+    constants.indices1[0] = m_resolution;
+    constants.indices1[1] = static_cast<uint32_t>(params.shape);
+    constants.indices1[2] = static_cast<uint32_t>(params.orientation);
+    constants.indices1[3] = static_cast<uint32_t>(searchRadius);
+    constants.indices2[0] = m_textures.height.UavIndex();
+    constants.params0[0] = density;
+    constants.params0[1] = std::clamp(params.coverage, 0.0f, 1.0f);
+    constants.params0[2] = sizeMinCells;
+    constants.params0[3] = sizeMaxCells;
+    // 高さは m。Height は正規化なので、標高差で割ってから渡す。
+    constants.params1[0] = std::max(params.heightMeters, 0.0f) / heightMeters;
+    constants.params1[1] = std::clamp(params.heightJitter, 0.0f, 1.0f);
+    constants.params1[2] = std::clamp(params.rotationVariation, 0.0f, 1.0f);
+    constants.params1[3] = aspectVariation;
+    constants.params2[0] = maxReach;
+    constants.params2[1] = static_cast<float>(params.seed);
+    constants.params2[2] = texelMeters;
+    constants.params2[3] = heightMeters;
+
+    const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(ScatterConstants));
+    if (!cb.IsValid()) {
+        return false;
+    }
+    std::memcpy(cb.cpu, &constants, sizeof(constants));
+
+    PIXBeginEvent(commandList, PIX_COLOR(120, 170, 110), "CompositeScatter");
+    commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+    const auto barrier = [&]() {
+        const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+        commandList->ResourceBarrier(1, &uav);
+    };
+
+    // 形を決めるパスは Height を読むだけ。読み取り専用にしてから走らせる。
+    TransitionIfNeeded(commandList, m_textures.height,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(commandList, m_scatter.packed, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, m_scatter.delta, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    commandList->SetPipelineState(scatterPass);
+    commandList->Dispatch(DispatchCount(m_resolution), DispatchCount(m_resolution), 1);
+    barrier();
+
+    // 差分を足し戻す。**Mask だけが目的のときは足さない**（Result を繋いでいない）。
+    // 形はパック済みのテクスチャに残るので、マスクはこの後で焼ける。
+    if (!layer.maskOnly) {
+        TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        commandList->SetPipelineState(resolvePass);
+        commandList->Dispatch(DispatchCount(m_resolution), DispatchCount(m_resolution), 1);
+        barrier();
+    }
+    // 次のレイヤーは Height を UAV として書く。Mask だけのときも戻す（崩落と同じ）。
+    TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    PIXEndEvent(commandList);
+
+    // 形が変わったので、法線も作り直す。足し戻していないなら形は変わっていない。
+    if (normalPass != nullptr && !layer.maskOnly) {
+        RebuildNormalsFromHeight(device, normalPass, commandList, stack);
+    }
+    return true;
+}
+
+// 直前の散布レイヤーが置いた形 / 乱数を、マスクとして焼く。
+bool MaterialEvaluator::ApplyScatterMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                         ID3D12GraphicsCommandList* commandList,
+                                         const MaskOp& op, rhi::GpuTexture& target) {
+    if (!m_scatter.IsValid() || !target.IsValid()) {
+        return false;
+    }
+    ID3D12PipelineState* maskPass = pipelineCache.GetCompute(L"CompositeScatter.hlsl", L"CsMask");
+    if (maskPass == nullptr) {
+        return false;
+    }
+
+    ScatterConstants constants = {};
+    constants.indices0[3] = m_scatter.packed.SrvIndex();
+    constants.indices1[0] = m_scatter.resolution;
+    constants.indices2[1] = target.UavIndex();
+    constants.indices2[2] = (op.scatterMask.channel == 0u) ? 0u : 1u;
+
+    const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(ScatterConstants));
+    if (!cb.IsValid()) {
+        return false;
+    }
+    std::memcpy(cb.cpu, &constants, sizeof(constants));
+
+    PIXBeginEvent(commandList, PIX_COLOR(120, 170, 110), "CompositeScatterMask");
+    TransitionIfNeeded(commandList, m_scatter.packed,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+    commandList->SetPipelineState(maskPass);
+    commandList->Dispatch(DispatchCount(m_scatter.resolution),
+                          DispatchCount(m_scatter.resolution), 1);
+    const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+    commandList->ResourceBarrier(1, &uav);
+
+    // 次に使うときは書き込みへ戻す。
+    TransitionIfNeeded(commandList, m_scatter.packed, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    PIXEndEvent(commandList);
+    return true;
+}
+
 bool MaterialEvaluator::ApplyHeightBlur(rhi::Device& device,
                                        ID3D12GraphicsCommandList* commandList,
                                        ID3D12PipelineState* blurPipeline,
@@ -2929,6 +3116,12 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             if (layer.enabled && hasUnderlying && layer.kind == LayerKind::Crumbling) {
                 if (!ApplyCrumbling(device, pipelineCache, commandList, layer, stack,
                                     inputMaskIndex)) {
+                    complete = false;
+                }
+                ++m_evaluatedLayerCount;
+            } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::Scatter) {
+                if (!ApplyScatter(device, pipelineCache, commandList, layer, stack,
+                                  inputMaskIndex)) {
                     complete = false;
                 }
                 ++m_evaluatedLayerCount;

@@ -56,6 +56,24 @@ enum class LayerKind : uint32_t {
     River = 7,
     // 水滴侵食。水滴を落として斜面を下らせ、削って運んで積む（terrain-editor の Droplet Erosion）。
     Droplet = 8,
+    // 散布。単純な形（半球 / 円錐）をばら撒き、分布のマスクを出す
+    // （terrain-editor の Scatter）。
+    Scatter = 9,
+};
+
+// 散布する形。terrain-editor の ScatterShapeType と同じ。
+// シェーダの TG_SCATTER_SHAPE_* と一致させること。
+enum class ScatterShape : uint32_t {
+    Hemisphere = 0,  // 丸い低木や樹冠の分布確認向き
+    Cone = 1,        // 尖った草や針葉樹の簡易 proxy 向き
+};
+
+// 地形の傾きに対する散布形状の扱い。terrain-editor の RockOrientationRule と同じ。
+// シェーダの TG_SCATTER_ORIENT_* と一致させること。
+enum class ScatterOrientation : uint32_t {
+    Flat = 0,          // 傾きを見ない
+    FollowGround = 1,  // 斜面に沿わせ、法線の上向き成分で高さを落とす
+    SlopeOriented = 2, // 個体の向きを斜面の向きへ寄せる
 };
 
 // 岩片の形。terrain-editor の RockStyle と同じ 3 種類。
@@ -69,7 +87,8 @@ enum class RockStyle : uint32_t {
 inline bool IsHeightOperationKind(LayerKind kind) {
     return kind == LayerKind::Blur || kind == LayerKind::Sediment ||
            kind == LayerKind::Crumbling || kind == LayerKind::Snow ||
-           kind == LayerKind::River || kind == LayerKind::Droplet;
+           kind == LayerKind::River || kind == LayerKind::Droplet ||
+           kind == LayerKind::Scatter;
 }
 
 // ハイトの基準面。ソースの値がこの値のとき、そのテクセルは「基準の高さ」ちょうどになる。
@@ -412,6 +431,27 @@ struct MaterialLayer {
         uint32_t resolution = 1024;
     };
     DropletSettings droplet;
+
+    // 散布（kind == LayerKind::Scatter のときだけ意味を持つ）。
+    //
+    // terrain-editor の Scatter を移したもの。地形を `散布の間隔` で区切った格子の
+    // 各マスへ 1 個ずつ形を置き、中心をずらして散らす。**大きさも間隔も m で持つ**
+    // ので、合成解像度を変えても分布は変わらない。
+    // 高さ 0 でも Mask / Unique は出る（分布だけを使う繋ぎ方のため）。
+    struct ScatterSettings {
+        ScatterShape shape = ScatterShape::Hemisphere;
+        ScatterOrientation orientation = ScatterOrientation::Flat;
+        int seed = 0;
+        float densityMeters = 8.0f;    // 散布点の間隔
+        float coverage = 1.0f;         // 実際に置く確率
+        float sizeMinMeters = 5.0f;    // 個体の最小直径
+        float sizeMaxMeters = 10.0f;   // 個体の最大直径
+        float heightMeters = 0.0f;     // 盛り上げる高さ。0 でもマスクは出る
+        float heightJitter = 0.5f;     // 個体ごとの高さのばらつき
+        float rotationVariation = 1.0f;  // 向きのばらつき
+        float aspectVariation = 0.3f;    // 細長さのばらつき
+    };
+    ScatterSettings scatter;
 
     // **Height へ書き戻さない。** 加工（堆積 / 崩落）を、マスクを得るためだけに
     // 走らせるときに立てる。Result を繋がずに Mask だけを使う繋ぎ方のためのもの。

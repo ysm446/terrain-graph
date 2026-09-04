@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-04 17:33
+更新日時: 2026-09-05 01:00
 
 ## 現在の状況
 
@@ -72,6 +72,20 @@ Megascans の ORD（チャンネルパック）と EXR にも対応した。
 UI はグレー基調に整理し、ルールを [design/design-guide.md](../design/design-guide.md) に置いた。
 
 ## 完了済み
+
+- 2026-09-05 01:00 — **Scatter ノード**（terrain-editor からの移植）。
+  - `shaders/CompositeScatter.hlsl`: **1 スレッド 1 テクセル**。地形を `間隔`（m）で
+    区切った格子の各マスへ 1 個ずつ形を置き、周りのマスを探索して**一番強い形**を採る
+    （足し合わせない）。崩落（1 スレッド 1 粒子）とは逆の作り。
+  - 形と個体ごとの乱数は R32_UINT へパック（16bit / 16bit）、高さの差分は R32_FLOAT。
+    **Height は読みと書きで状態を分ける**ので、足し戻しは `CsResolve` で行う。
+  - ハッシュと配置の式は terrain-editor と同じ（同じシードなら同じ分布）。
+    m → 散布セルの換算も同じにしてある。
+  - `Mask` 入力（配置の範囲）は**個体の中心 1 点**で読む。テクセルごとに読むと
+    マスクの縁で個体が切れる。
+  - 検証: `data/scatter-test.tgproj`（sample の Output 直前へ挟む）で地形に盛れること、
+    `data/scatter-mask-test.tgproj`（高さ 0 + Mask を Surface のマスクへ）で分布だけを
+    使えることを `--screenshot-ui` で確認。DXC で 3 エントリを単体コンパイル。
 
 - 2026-09-04 17:30 — **Droplet Erosion ノード**（terrain-editor の GPU 版の移植）。
   - `shaders/CompositeDroplet.hlsl`: スナップショット方式（凍らせた地形に全水滴 → 固定小数点の
