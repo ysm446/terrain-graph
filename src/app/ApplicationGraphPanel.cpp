@@ -66,9 +66,9 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
         case graph::NodeKind::MaskBlend:
             return ImVec4(0.74f, 0.70f, 0.78f, 1.0f);
         case graph::NodeKind::Path:
-            return ImVec4(0.66f, 0.62f, 0.84f, 1.0f);
+            return ImVec4(0.52f, 0.74f, 0.84f, 1.0f);
         case graph::NodeKind::MaskPath:
-            return ImVec4(0.70f, 0.66f, 0.80f, 1.0f);
+            return ImVec4(0.58f, 0.74f, 0.82f, 1.0f);
         case graph::NodeKind::Output:
         default:
             return ImVec4(0.59f, 0.64f, 0.68f, 1.0f);
@@ -84,9 +84,10 @@ ImVec4 PinTypeColor(graph::ValueType valueType) {
         // マスクはオレンジ。0〜1 の 1 チャンネル。
         case graph::ValueType::Mask:
             return ImVec4(0.82f, 0.64f, 0.36f, 1.0f);
-        // パスは薄い紫。線（点とエッジ）が流れる。
+        // パスは水色。線（点とエッジ）が流れる。緑 / オレンジと色相が離れていて、
+        // 明度は同じくらいなので暗い盤面で同じ強さで読める。
         case graph::ValueType::Path:
-            return ImVec4(0.74f, 0.64f, 0.92f, 1.0f);
+            return ImVec4(0.55f, 0.80f, 0.95f, 1.0f);
         // マテリアルは緑。4 チャンネル一式（ハイトを含む）。
         case graph::ValueType::Material:
         default:

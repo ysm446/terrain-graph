@@ -301,9 +301,8 @@ private:
     // 点 / エッジの ID はそのパスの中でしか意味を持たないので、毎フレーム実在を確かめる。
     struct PathEditState {
         graph::GraphId nodeId = 0;
-        // 続きを伸ばす点（末尾）。0 なら無し（次のクリックは新しい線の始点）。
-        graph::PathElementId tail = 0;
-        // 選択している点。プロパティの編集と Delete の対象。
+        // 選択している点。プロパティの編集と Delete の対象で、**伸ばす起点**でもある
+        // （Ctrl + クリックは先頭の点から伸びる）。
         std::vector<graph::PathElementId> selected;
         // ホバー中の点 / エッジ（エッジは最寄りの位置 t も）。
         graph::PathElementId hoverPoint = 0;
