@@ -185,6 +185,10 @@ public:
     const CpuHeightfield& Heightfield() const { return m_heightfield; }
     // 走っている評価の完了を CPU で待つ。
     void WaitForEvaluation();
+    // 評価先の Height をその場で CPU へ読み戻す（同期。**フレームの外で呼ぶこと**）。
+    // 経路探索のように、プレビューとは別の評価器で焼いた地形を読むためのもの。
+    // 解像度は評価器のもの。
+    bool ReadbackHeight(rhi::Device& device, CpuHeightfield& out);
 
     uint32_t TileSize() const { return m_tileSize; }
 
@@ -377,5 +381,9 @@ private:
     uint64_t m_heightfieldFenceValue = 0;
     bool m_heightfieldPending = false;
 };
+
+// スタックのうち **Height に効く状態**のハッシュ（レイヤーの高さ関連と、マスクの op）。
+// 「同じ地形か」を評価せずに見分けるためのもの（経路探索の地形の使い回しに使う）。
+uint64_t HashStackHeightState(const MaterialStack& stack);
 
 }  // namespace tg::compositor

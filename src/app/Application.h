@@ -213,6 +213,19 @@ private:
     // 地形に当たらなければ偽。
     bool PickTerrainUv(const ImVec2& mouse, const ImVec2& viewportMin, const ImVec2& viewportMax,
                        float& outU, float& outV) const;
+    // --- 経路探索（ApplicationPathEdit.cpp） ---
+    // Path ノードの Base に繋いだチェーンを 512² で焼いて、経路探索用の地形の写しにする。
+    // 上流が前回と同じ（Height に効く状態のハッシュが同じ）なら焼かない。
+    // GPU 待機を伴うので**フレームの外で呼ぶ**。Base が繋がっていなければ偽。
+    bool BakePathRouteTerrain(const graph::Node& node);
+    // 編集中の Path ノードの地形の写しを上流に追従させ、先送りにした再計算を片付ける。
+    // フレームの外で呼ぶ。
+    void ProcessPendingPathRoutes();
+    // 経路探索が有効なエッジの経路を計算し直す。既定は経路が古い（両端が動いた / 未計算）
+    // エッジだけ。force で全部、edges で対象を絞る。地形の写しがまだ無ければ先送りにし、
+    // 次のフレームの前に焼いてから計算する。変更があれば文書の変更を記録する。
+    void RecomputePathRoutes(graph::Node& node, bool force,
+                             const std::vector<graph::PathElementId>* edges);
     // 正規化 UV をワールド座標へ。高さは CPU 側のハイトから引く。
     DirectX::XMFLOAT3 PathWorldPosition(float u, float v, float heightOffsetMeters) const;
     // Path ノードのプロパティ（グラフパネルのプロパティ欄から呼ぶ）。変更があれば true。
@@ -337,6 +350,30 @@ private:
         float menuV = 0.0f;
     };
     PathEditState m_pathEdit;
+    // 経路探索が読む地形。**Path ノードの Base に繋いだチェーン**を、プレビューとは別に
+    // 焼いた Height の写し（プレビューが別の地形を見ていても Base を使う）。
+    // 上流を変えても経路は勝手に作り直さないが、写し自体は編集中に追従させておく
+    // （次の編集や再計算のボタンが今の地形を使えるように）。
+    struct PathRouteTerrainCache {
+        graph::GraphId nodeId = 0;
+        uint64_t stackHash = 0;        // 焼いたときの上流の Height に効く状態
+        uint64_t checkedRevision = 0;  // この改版で上流を確かめた（改版ごとに 1 回）
+        bool valid = false;
+        compositor::CpuHeightfield heightfield;
+        float sizeMeters = 1024.0f;
+        float heightMeters = 200.0f;
+    };
+    PathRouteTerrainCache m_pathRouteTerrain;
+    // 経路探索用の評価器（512²、同期）。最初に使うときに作る。
+    compositor::MaterialEvaluator m_pathRouteEvaluator;
+    // フレームの中で要求されたが、地形の写しが無くて先送りにした再計算。
+    struct PathRouteRequest {
+        bool pending = false;
+        graph::GraphId nodeId = 0;
+        bool force = false;
+        std::vector<graph::PathElementId> edges;  // 空なら全部
+    };
+    PathRouteRequest m_pathRouteRequest;
     int m_selectedTexture = 0;
     // 拡大プレビューで出すチャンネル。0 = RGB、1..4 = R / G / B / A。
     // ORD のように 1 枚へ複数のマップを詰めたテクスチャの中身を確かめるためのもの。
@@ -398,6 +435,9 @@ private:
     DocumentSnapshot m_committed;
     // このフレームでレイヤーかマテリアルが変わったか。フレームの終わりに畳む。
     bool m_documentDirty = false;
+    // このフレームの変更が「直前の編集の続き」であることの印。アンドゥの段を直前の
+    // 段に畳む（ドラッグを離した時点で走る経路の計算し直しが、別の段にならないように）。
+    bool m_documentJoinsEdit = false;
     // -1 でアンドゥ、+1 でリドゥ。マテリアルの破棄を伴うのでフレームの外で処理する。
     int m_pendingHistoryStep = 0;
     // 参照が切れたペイントマスクの回収を予約する。破棄は GPU 待機を伴う。

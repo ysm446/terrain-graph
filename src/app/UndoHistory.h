@@ -73,6 +73,8 @@ public:
     // 掴んでいたウィジェットが離れたことを伝える。
     // 同じスライダーをもう一度掴んだときに別の段になるようにするため。
     void EndEdit() { m_lastEditId = 0; }
+    // 直前に積んだ段の editId。「直前の編集の続き」を同じ段に畳みたいときに Push へ渡す。
+    uint32_t LastEditId() const { return m_lastEditId; }
 
     bool CanUndo() const { return !m_undo.empty(); }
     bool CanRedo() const { return !m_redo.empty(); }

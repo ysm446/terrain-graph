@@ -317,6 +317,74 @@ float CpuHeightfield::Sample(float u, float v) const {
     return top + (bottom - top) * ty;
 }
 
+uint64_t HashStackHeightState(const MaterialStack& stack) {
+    uint64_t hash = 0xcbf29ce484222325ull;
+    const float sizeMeters = stack.SizeMeters();
+    const float heightMeters = stack.HeightMeters();
+    hash = HashBytes(hash, &sizeMeters, sizeof(sizeMeters));
+    hash = HashBytes(hash, &heightMeters, sizeof(heightMeters));
+    for (const MaterialLayer& layer : stack.Layers()) {
+        hash = HashHeightState(hash, layer);
+    }
+    for (const MaskOp& op : stack.MaskOps()) {
+        hash = HashBytes(hash, &op.kind, sizeof(op.kind));
+        hash = HashBytes(hash, &op.inputA, sizeof(op.inputA));
+        hash = HashBytes(hash, &op.inputB, sizeof(op.inputB));
+        hash = HashBytes(hash, &op.heightSourceLayer, sizeof(op.heightSourceLayer));
+        hash = HashMaskOpParams(hash, op);
+    }
+    return hash;
+}
+
+bool MaterialEvaluator::ReadbackHeight(rhi::Device& device, CpuHeightfield& out) {
+    rhi::GpuTexture& height = TexturesMutable().height;
+    if (!height.IsValid() || m_resolution == 0) {
+        return false;
+    }
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+    UINT rowCount = 0;
+    UINT64 rowBytes = 0;
+    UINT64 totalBytes = 0;
+    const D3D12_RESOURCE_DESC desc = height.resource->GetDesc();
+    device.GetDevice()->GetCopyableFootprints(&desc, 0, 1, 0, &footprint, &rowCount, &rowBytes,
+                                              &totalBytes);
+    rhi::GpuBuffer readback;
+    if (!device.Allocator().CreateReadbackBuffer(totalBytes, L"HeightReadbackNow", readback)) {
+        return false;
+    }
+    const bool executed = device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {
+        PIXBeginEvent(commandList, PIX_COLOR(120, 140, 160), "HeightReadbackNow");
+        TransitionIfNeeded(commandList, height, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        const CD3DX12_TEXTURE_COPY_LOCATION destination(readback.resource.Get(), footprint);
+        const CD3DX12_TEXTURE_COPY_LOCATION source(height.resource.Get(), 0);
+        commandList->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+        PIXEndEvent(commandList);
+    });
+    if (!executed) {
+        device.DeferRelease(readback);
+        return false;
+    }
+    void* mapped = nullptr;
+    const D3D12_RANGE readRange = {0, static_cast<SIZE_T>(totalBytes)};
+    if (!TG_CHECK_HR(readback.resource->Map(0, &readRange, &mapped))) {
+        device.DeferRelease(readback);
+        return false;
+    }
+    out.resolution = m_resolution;
+    out.values.resize(static_cast<size_t>(m_resolution) * m_resolution);
+    const auto* base = static_cast<const uint8_t*>(mapped) + footprint.Offset;
+    const uint32_t rows = std::min<uint32_t>(rowCount, m_resolution);
+    for (uint32_t y = 0; y < rows; ++y) {
+        std::memcpy(out.values.data() + static_cast<size_t>(y) * m_resolution,
+                    base + static_cast<size_t>(y) * footprint.Footprint.RowPitch,
+                    sizeof(float) * m_resolution);
+    }
+    const D3D12_RANGE writtenRange = {0, 0};
+    readback.resource->Unmap(0, &writtenRange);
+    device.DeferRelease(readback);
+    return true;
+}
+
 bool MaterialEvaluator::Create(rhi::Device& device, uint32_t resolution, bool asynchronous) {
     // 走っている評価が前の組を読んでいるかもしれない。作り直す前に必ず待つ。
     WaitForEvaluation();

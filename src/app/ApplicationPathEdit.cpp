@@ -36,11 +36,13 @@
 #include "app/ApplicationUiHelpers.h"
 #include "core/Log.h"
 #include "graph/Path.h"
+#include "graph/PathRoute.h"
 #include "ui/UiStyle.h"
 
 #include <imgui.h>
 
 #include <DirectXMath.h>
+#include <pix3.h>
 
 #include <algorithm>
 #include <cmath>
@@ -89,10 +91,13 @@ struct PathScreenEdge {
     graph::PathElementId id = 0;
     graph::PathElementId from = 0;
     graph::PathElementId to = 0;
-    // 地形に沿わせるために細かく割った折れ線。t は from 側が 0。
+    // 地形に沿わせるために細かく割った折れ線。t は from 側が 0（内部点があれば道のりの割合）。
     std::vector<ImVec2> polyline;
     std::vector<float> t;
     std::vector<bool> visible;
+    // 経路探索が打った内部点（表示だけ。選べない）。
+    std::vector<ImVec2> waypoints;
+    std::vector<bool> waypointVisible;
 };
 
 // 鎖の曲線（曲線の鎖だけ）。ガイドの折れ線とは別に、本線として描く。
@@ -151,22 +156,51 @@ PathScreenCache BuildPathScreenCache(const graph::PathSettings& path, const XMMA
         const bool guide =
             strand != nullptr &&
             graph::StrandCurve(path, *strand, nullptr, nullptr) != graph::PathCurve::Line;
-        // 画面上の長さで割る数を決める。長い線ほど細かく割って地形に沿わせる。
-        // ガイドは 3D の直線で、画面上でも直線になるので両端だけでよい。
-        const float length = (sa->visible && sb->visible) ? Distance(sa->screen, sb->screen)
-                                                          : 400.0f;
-        const int segments =
-            guide ? 1 : std::clamp(static_cast<int>(length / ui::Scaled(14.0f)), 1, 32);
-        for (int i = 0; i <= segments; ++i) {
-            const float t = static_cast<float>(i) / static_cast<float>(segments);
-            const float u = a->u + (b->u - a->u) * t;
-            const float v = a->v + (b->v - a->v) * t;
-            const float offset = a->heightOffsetMeters + (b->heightOffsetMeters - a->heightOffsetMeters) * t;
-            const ProjectedPoint projected =
-                ProjectToViewport(viewProjection, worldOf(u, v, offset), viewportMin, size);
-            screenEdge.polyline.push_back(projected.screen);
-            screenEdge.t.push_back(t);
-            screenEdge.visible.push_back(projected.visible);
+        // 制御点列（from、経路の内部点…、to）。経路が古ければ両端だけ。
+        // t は UV の道のりの割合（点の挿入がこれを使う）。
+        const std::vector<graph::PathPoint> control = graph::PathEdgeControlPoints(path, edge);
+        if (control.size() < 2) {
+            continue;
+        }
+        std::vector<float> cumulative(control.size(), 0.0f);
+        for (size_t c = 1; c < control.size(); ++c) {
+            const float du = control[c].u - control[c - 1].u;
+            const float dv = control[c].v - control[c - 1].v;
+            cumulative[c] = cumulative[c - 1] + std::sqrt(du * du + dv * dv);
+        }
+        const float total = std::max(cumulative.back(), 1e-9f);
+        for (size_t c = 0; c + 1 < control.size(); ++c) {
+            const graph::PathPoint& from = control[c];
+            const graph::PathPoint& to = control[c + 1];
+            const ProjectedPoint pa = ProjectToViewport(
+                viewProjection, worldOf(from.u, from.v, from.heightOffsetMeters), viewportMin,
+                size);
+            const ProjectedPoint pb = ProjectToViewport(
+                viewProjection, worldOf(to.u, to.v, to.heightOffsetMeters), viewportMin, size);
+            // 画面上の長さで割る数を決める。長い線ほど細かく割って地形に沿わせる。
+            // ガイドは 3D の直線で、画面上でも直線になるので両端だけでよい。
+            const float length =
+                (pa.visible && pb.visible) ? Distance(pa.screen, pb.screen) : 400.0f;
+            const int segments =
+                guide ? 1 : std::clamp(static_cast<int>(length / ui::Scaled(14.0f)), 1, 32);
+            // 前の区間の終点と重ねない。
+            for (int i = (c == 0) ? 0 : 1; i <= segments; ++i) {
+                const float s = static_cast<float>(i) / static_cast<float>(segments);
+                const float u = from.u + (to.u - from.u) * s;
+                const float v = from.v + (to.v - from.v) * s;
+                const float offset =
+                    from.heightOffsetMeters + (to.heightOffsetMeters - from.heightOffsetMeters) * s;
+                const ProjectedPoint projected =
+                    ProjectToViewport(viewProjection, worldOf(u, v, offset), viewportMin, size);
+                screenEdge.polyline.push_back(projected.screen);
+                screenEdge.t.push_back((cumulative[c] + (cumulative[c + 1] - cumulative[c]) * s) /
+                                       total);
+                screenEdge.visible.push_back(projected.visible);
+            }
+            if (c + 2 < control.size()) {
+                screenEdge.waypoints.push_back(pb.screen);
+                screenEdge.waypointVisible.push_back(pb.visible);
+            }
         }
         cache.edges.push_back(std::move(screenEdge));
     }
@@ -531,8 +565,10 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
     }
 
     // --- 離した -------------------------------------------------------------------
+    bool released = false;
     if (state.dragging && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
         if (state.dragMoved) {
+            released = true;
             if (state.snapPoint != 0) {
                 // 相手の点へ合体。位置と幅は相手のものが残る。
                 if (graph::MergePathPoints(path, state.dragPoint, state.snapPoint)) {
@@ -689,6 +725,14 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
         m_graph.MarkDirty();
         MarkDocumentChanged();
     }
+    // 両端が動いたエッジの経路を作り直す。ドラッグ中は離すまで待つ（毎フレーム探索しない）。
+    // 離した時点の計算し直しは、ドラッグと同じアンドゥの段に畳む。
+    if (released) {
+        m_documentJoinsEdit = true;
+    }
+    if ((changed || released) && !state.dragging) {
+        RecomputePathRoutes(node, false, nullptr);
+    }
 }
 
 void Application::DrawPathOverlay(const graph::Node& node, const ImVec2& viewportMin,
@@ -769,6 +813,18 @@ void Application::DrawPathOverlay(const graph::Node& node, const ImVec2& viewpor
                     tip, ImVec2(base.x + side.x * halfWidth, base.y + side.y * halfWidth),
                     ImVec2(base.x - side.x * halfWidth, base.y - side.y * halfWidth), color);
             }
+        }
+    }
+
+    // --- 経路の内部点 -----------------------------------------------------------
+    // 経路探索が打った点。選べないので小さく、線と同じ色で。
+    for (const PathScreenEdge& edge : cache.edges) {
+        for (size_t i = 0; i < edge.waypoints.size(); ++i) {
+            if (!edge.waypointVisible[i]) {
+                continue;
+            }
+            drawList->AddCircleFilled(edge.waypoints[i], ui::Scaled(3.0f), lineShadow, 12);
+            drawList->AddCircleFilled(edge.waypoints[i], ui::Scaled(2.0f), lineColor, 12);
         }
     }
 
@@ -973,6 +1029,22 @@ bool Application::DrawPathSettings(graph::Node& node) {
         }
         ImGui::EndDisabled();
         ui::PropertyEnd();
+        // 経路探索。上流の地形を変えても勝手には作り直さない（ここで指示する）。
+        size_t routedEdges = 0;
+        for (const graph::PathEdge& edge : path.edges) {
+            if (edge.route != graph::PathRoute::None) {
+                ++routedEdges;
+            }
+        }
+        if (routedEdges > 0) {
+            ui::PropertyValue("経路探索", "エッジ %zu 本（古い %zu 本）", routedEdges,
+                              graph::CountStalePathRoutes(path));
+            ui::PropertyLabelEmpty("pathRouteAll");
+            if (ui::Button("経路をすべて再計算", ui::kWideButtonWidth)) {
+                RecomputePathRoutes(node, true, nullptr);
+            }
+            ui::PropertyEnd();
+        }
         ui::EndPropertyTable();
     }
 
@@ -1032,10 +1104,13 @@ bool Application::DrawPathSettings(graph::Node& node) {
             graph::PathCurve curve = edges.front()->curve;
             float rounding = edges.front()->rounding;
             float clothoidRatio = edges.front()->clothoidRatio;
+            graph::PathRoute route = edges.front()->route;
+            float maxGrade = edges.front()->maxGradePercent;
             bool mixed = false;
             for (const graph::PathEdge* edge : edges) {
                 if (edge->curve != curve || std::abs(edge->rounding - rounding) > 1e-4f ||
-                    std::abs(edge->clothoidRatio - clothoidRatio) > 1e-4f) {
+                    std::abs(edge->clothoidRatio - clothoidRatio) > 1e-4f ||
+                    edge->route != route || std::abs(edge->maxGradePercent - maxGrade) > 1e-4f) {
                     mixed = true;
                 }
             }
@@ -1070,6 +1145,42 @@ bool Application::DrawPathSettings(graph::Node& node) {
                     }
                     changed = true;
                 }
+                // 経路探索。鎖のエッジ全部に同じ設定を入れ、変えたらすぐ計算し直す。
+                static const char* const kRouteLabels[] = {"なし", "道路（許容勾配で探す）",
+                                                           "流れ（下る。川 / 氷河）"};
+                int routeIndex = static_cast<int>(route);
+                bool routeChanged = ui::PropertyCombo(
+                    "経路探索", &routeIndex, kRouteLabels, IM_ARRAYSIZE(kRouteLabels), 0,
+                    "両端の点の間の経路を Base に繋いだ地形から探し、内部の点を自動で打つ。"
+                    "置いた点は動かない。点を動かすと作り直す。上流の地形を変えたときは"
+                    "再計算のボタンで。道路は許容勾配を超えた分をペナルティにし、上りも下りも"
+                    "同じ扱い。流れは向き（from → to）に下り、上りを嫌って低い所（谷底）を好む");
+                route = static_cast<graph::PathRoute>(routeIndex);
+                if (route == graph::PathRoute::Road) {
+                    routeChanged |= ui::PropertyFloat(
+                        "許容勾配", &maxGrade, 0.5f, 60.0f, 10.0f,
+                        "これを超える勾配にペナルティ（%）。超えるほど遠回り（つづら折れ）を選ぶ",
+                        "%.1f %%", ImGuiSliderFlags_Logarithmic);
+                }
+                if (routeChanged) {
+                    for (graph::PathEdge* edge : edges) {
+                        edge->route = route;
+                        edge->maxGradePercent = maxGrade;
+                        edge->routed = false;
+                        if (route == graph::PathRoute::None) {
+                            edge->waypoints.clear();
+                        }
+                    }
+                    changed = true;
+                    RecomputePathRoutes(node, false, &m_pathEdit.selectedEdges);
+                }
+                if (route != graph::PathRoute::None) {
+                    ui::PropertyLabelEmpty("pathRouteStrand");
+                    if (ui::Button("この鎖を再計算", ui::kWideButtonWidth)) {
+                        RecomputePathRoutes(node, true, &m_pathEdit.selectedEdges);
+                    }
+                    ui::PropertyEnd();
+                }
                 ui::PropertyLabelEmpty("pathEdgeButtons");
                 if (ui::Button("向きを反転")) {
                     for (graph::PathEdge* edge : edges) {
@@ -1093,7 +1204,7 @@ bool Application::DrawPathSettings(graph::Node& node) {
                 ui::EndPropertyTable();
             }
             if (mixed) {
-                ui::HintText("鎖の中で曲線の種類か丸めが混在している。変えると全部に入る");
+                ui::HintText("鎖の中で曲線か経路探索の設定が混在している。変えると全部に入る");
             }
         }
     }
@@ -1102,6 +1213,162 @@ bool Application::DrawPathSettings(graph::Node& node) {
                  "地形はプレビュー中のものに沿う。Base に繋いだ地形を見るには、"
                  "このノードをダブルクリック");
     return changed;
+}
+
+// --- 経路探索 -----------------------------------------------------------------
+
+bool Application::BakePathRouteTerrain(const graph::Node& node) {
+    PathRouteTerrainCache& cache = m_pathRouteTerrain;
+    cache.checkedRevision = m_graph.Revision();
+    if (cache.nodeId != node.id) {
+        cache.nodeId = node.id;
+        cache.valid = false;
+        cache.stackHash = 0;
+    }
+    // Base が繋がっていなければ焼かない（繋がっていないと出力のチェーンに落ちるが、
+    // そこには Path 自身の結果が入りうるので、自分の結果を読む循環になる）。
+    bool baseConnected = false;
+    for (const graph::Pin& pin : node.inputs) {
+        if (pin.valueType != graph::ValueType::Material) {
+            continue;
+        }
+        for (const graph::Link& link : m_graph.Links()) {
+            if (link.endPin == pin.id) {
+                baseConnected = true;
+            }
+        }
+    }
+    if (!baseConnected) {
+        cache.valid = false;
+        cache.stackHash = 0;
+        return false;
+    }
+    // Base のチェーンをレイヤー列へ落とす（プレビューと同じ経路）。実寸はチェーンの根の
+    // Heightmap が持つ。無ければプレビュー設定のジオメトリの値。
+    graph::CompiledGraph compiled = m_graph.CompileLayersTo(node.id);
+    compositor::MaterialStack stack;
+    stack.Layers() = std::move(compiled.layers);
+    stack.MaskOps() = std::move(compiled.maskOps);
+    float sizeMeters = m_renderer.PlaneSize();
+    float heightMeters = m_renderer.DisplacementScale();
+    if (const graph::TerrainScale* scale = m_graph.FindChainScale(node.id)) {
+        sizeMeters = scale->sizeMeters;
+        heightMeters = scale->heightMeters;
+    }
+    stack.SetTerrainScale(sizeMeters, heightMeters);
+    const uint64_t hash = compositor::HashStackHeightState(stack);
+    if (cache.valid && cache.stackHash == hash) {
+        return true;
+    }
+
+    // 経路探索用の解像度。プレビューの CPU 側のハイト（512²）と同じ。1 km の地形で 1 セル 2 m。
+    constexpr uint32_t kResolution = 512;
+    if (m_pathRouteEvaluator.Resolution() != kResolution) {
+        if (!m_pathRouteEvaluator.Create(m_device, kResolution)) {
+            TG_LOG_WARN("経路探索用の評価器を作れませんでした");
+            cache.valid = false;
+            return false;
+        }
+        m_pathRouteEvaluator.SetTileSize(kResolution);
+    }
+    std::vector<compositor::TileRect> tiles(1);
+    tiles[0].width = kResolution;
+    tiles[0].height = kResolution;
+    bool evaluated = false;
+    const bool submitted = m_device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {
+        PIXBeginEvent(commandList, PIX_COLOR(120, 200, 240), "PathRouteTerrain");
+        evaluated = m_pathRouteEvaluator.Evaluate(m_device, m_pipelineCache, commandList, stack,
+                                                  m_textureLibrary, m_materialLibrary,
+                                                  m_paintMasks, tiles);
+        PIXEndEvent(commandList);
+    });
+    if (!submitted || !evaluated ||
+        !m_pathRouteEvaluator.ReadbackHeight(m_device, cache.heightfield)) {
+        TG_LOG_WARN("経路探索用の地形を焼けませんでした");
+        cache.valid = false;
+        return false;
+    }
+    cache.valid = true;
+    cache.stackHash = hash;
+    cache.sizeMeters = sizeMeters;
+    cache.heightMeters = heightMeters;
+    return true;
+}
+
+void Application::ProcessPendingPathRoutes() {
+    graph::Node* node = CurrentPathNode();
+    if (node == nullptr) {
+        // Path ノードを編集していない間は何もしない（写しは残しておく）。
+        return;
+    }
+    // 上流が変わっていたら焼き直す。グラフの改版ごとに 1 回だけ確かめる
+    // （パスの編集でも改版は進むが、Height に効く状態のハッシュが同じなら焼かない）。
+    if (m_pathRouteTerrain.nodeId != node->id ||
+        m_pathRouteTerrain.checkedRevision != m_graph.Revision()) {
+        BakePathRouteTerrain(*node);
+    }
+    if (m_pathRouteRequest.pending && m_pathRouteRequest.nodeId == node->id) {
+        m_pathRouteRequest.pending = false;
+        if (m_pathRouteTerrain.valid) {
+            RecomputePathRoutes(*node, m_pathRouteRequest.force,
+                                m_pathRouteRequest.edges.empty() ? nullptr
+                                                                 : &m_pathRouteRequest.edges);
+        } else {
+            TG_LOG_WARN("経路探索には Base に地形を繋いでください");
+        }
+        m_pathRouteRequest.force = false;
+        m_pathRouteRequest.edges.clear();
+    }
+}
+
+void Application::RecomputePathRoutes(graph::Node& node, bool force,
+                                      const std::vector<graph::PathElementId>* edges) {
+    auto* settings = std::get_if<graph::PathNodeSettings>(&node.settings);
+    if (settings == nullptr) {
+        return;
+    }
+    graph::PathSettings& path = settings->path;
+    bool anyRouted = false;
+    for (const graph::PathEdge& edge : path.edges) {
+        if (edge.route != graph::PathRoute::None) {
+            anyRouted = true;
+            break;
+        }
+    }
+    if (!anyRouted) {
+        return;
+    }
+    const PathRouteTerrainCache& cache = m_pathRouteTerrain;
+    if (!cache.valid || cache.nodeId != node.id) {
+        // 地形の写しがまだ無い。次のフレームの前に焼いてから計算する。
+        PathRouteRequest& request = m_pathRouteRequest;
+        if (request.pending && request.nodeId == node.id) {
+            request.force |= force;
+            // どちらかが「全部」なら全部。
+            if (edges == nullptr || request.edges.empty()) {
+                request.edges.clear();
+            } else {
+                request.edges.insert(request.edges.end(), edges->begin(), edges->end());
+            }
+        } else {
+            request.pending = true;
+            request.nodeId = node.id;
+            request.force = force;
+            request.edges = (edges != nullptr) ? *edges : std::vector<graph::PathElementId>{};
+        }
+        return;
+    }
+    graph::PathRouteTerrain terrain;
+    terrain.resolution = cache.heightfield.resolution;
+    terrain.heights = cache.heightfield.values.data();
+    terrain.sizeMeters = cache.sizeMeters;
+    terrain.heightMeters = cache.heightMeters;
+    const size_t routed = graph::RoutePathEdges(path, terrain, force, edges);
+    if (routed > 0) {
+        m_graph.MarkDirty();
+        MarkDocumentChanged();
+        TG_LOG_INFO("経路を計算しました: %zu 本", routed);
+    }
 }
 
 }  // namespace tg

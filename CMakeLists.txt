@@ -102,6 +102,7 @@ set(tg_sources
     src/graph/NodeGraph.cpp
     src/graph/NodeGraph.h
     src/graph/Path.cpp
+    src/graph/PathRoute.cpp
     src/graph/Path.h
     src/compositor/MaterialEvaluator.cpp
     src/compositor/MaterialEvaluator.h

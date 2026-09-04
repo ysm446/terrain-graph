@@ -520,6 +520,22 @@ json WritePath(const graph::PathSettings& path) {
         item["curve"] = EnumName(kPathCurveNames, static_cast<uint32_t>(edge.curve));
         item["rounding"] = edge.rounding;
         item["clothoidRatio"] = edge.clothoidRatio;
+        // 経路探索。内部点は導出したものだが保存する（地形を評価しないと作れないため）。
+        if (edge.route != graph::PathRoute::None) {
+            static const char* const kPathRouteNames[] = {"none", "road", "flow"};
+            item["route"] = EnumName(kPathRouteNames, static_cast<uint32_t>(edge.route));
+            item["maxGrade"] = edge.maxGradePercent;
+            if (edge.routed) {
+                item["routedFrom"] = json::array({edge.routedFromU, edge.routedFromV});
+                item["routedTo"] = json::array({edge.routedToU, edge.routedToV});
+                json waypoints = json::array();
+                for (const graph::PathRouteWaypoint& waypoint : edge.waypoints) {
+                    waypoints.push_back(waypoint.u);
+                    waypoints.push_back(waypoint.v);
+                }
+                item["waypoints"] = std::move(waypoints);
+            }
+        }
         edges.push_back(std::move(item));
     }
     node["edges"] = std::move(edges);
@@ -576,6 +592,36 @@ graph::PathSettings ReadPath(const json& parent, const char* key) {
                 kPathCurveNames, item, "curve", static_cast<uint32_t>(graph::PathCurve::Line)));
             edge.rounding = std::clamp(ReadFloat(item, "rounding", 1.0f), 0.0f, 1.0f);
             edge.clothoidRatio = std::clamp(ReadFloat(item, "clothoidRatio", 0.5f), 0.0f, 1.0f);
+            static const char* const kPathRouteNames[] = {"none", "road", "flow"};
+            edge.route = static_cast<graph::PathRoute>(EnumValue(
+                kPathRouteNames, item, "route", static_cast<uint32_t>(graph::PathRoute::None)));
+            edge.maxGradePercent = std::clamp(ReadFloat(item, "maxGrade", 10.0f), 0.1f, 100.0f);
+            // 内部点は「計算時の両端」が揃っているときだけ生かす。
+            const json* routedFrom = FindMember(item, "routedFrom");
+            const json* routedTo = FindMember(item, "routedTo");
+            const json* waypoints = FindMember(item, "waypoints");
+            const auto isPair = [](const json* value) {
+                return value != nullptr && value->is_array() && value->size() == 2 &&
+                       (*value)[0].is_number() && (*value)[1].is_number();
+            };
+            if (edge.route != graph::PathRoute::None && isPair(routedFrom) && isPair(routedTo)) {
+                edge.routed = true;
+                edge.routedFromU = (*routedFrom)[0].get<float>();
+                edge.routedFromV = (*routedFrom)[1].get<float>();
+                edge.routedToU = (*routedTo)[0].get<float>();
+                edge.routedToV = (*routedTo)[1].get<float>();
+                if (waypoints != nullptr && waypoints->is_array()) {
+                    for (size_t i = 0; i + 1 < waypoints->size(); i += 2) {
+                        const json& u = (*waypoints)[i];
+                        const json& v = (*waypoints)[i + 1];
+                        if (!u.is_number() || !v.is_number()) {
+                            continue;
+                        }
+                        edge.waypoints.push_back({std::clamp(u.get<float>(), 0.0f, 1.0f),
+                                                  std::clamp(v.get<float>(), 0.0f, 1.0f)});
+                    }
+                }
+            }
             // 端点が無い / 自分へ戻るエッジは捨てる（壊れたファイルの安全網）。
             if (edge.id <= 0 || edge.from == edge.to || path.FindPoint(edge.from) == nullptr ||
                 path.FindPoint(edge.to) == nullptr) {

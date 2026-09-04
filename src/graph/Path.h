@@ -47,6 +47,22 @@ enum class PathCurve : uint32_t {
     Clothoid = 3,
 };
 
+// 経路探索。鎖ごとに切り替え、両端の点の間の経路を地形から導いて、エッジの
+// **内部点**として持つ。ユーザーの点は動かさない。曲線は「ユーザーの点 + 内部点」を
+// 制御点にして今までどおり引く。
+enum class PathRoute : uint32_t {
+    None = 0,  // 両端をそのまま結ぶ
+    Road = 1,  // 道路。許容勾配を超えた分をペナルティにする。上りも下りも同じ扱い
+    // 流れ（川 / 氷河）。from → to へ下る。上りに強いペナルティ、低い所（谷底）を好む。
+    // 向きに依存するので、反転すると計算し直しになる。
+    Flow = 2,
+};
+
+struct PathRouteWaypoint {
+    float u = 0.0f;
+    float v = 0.0f;
+};
+
 struct PathEdge {
     PathElementId id = 0;
     PathElementId from = 0;
@@ -57,6 +73,21 @@ struct PathEdge {
     // クロソイドのとき、交角のうちクロソイド 2 本が受け持つ割合（0〜1）。
     // 0 で純粋な円弧、1 で円弧なし（緩和曲線だけ）。
     float clothoidRatio = 0.5f;
+
+    // --- 経路探索 ---
+    PathRoute route = PathRoute::None;
+    float maxGradePercent = 10.0f;  // 道路の許容勾配（%）
+    // 経路探索の結果（from → to の順。両端は含まない）。**導出したものだが保存する。**
+    // 地形は評価しないと分からず、上流を触るたびに勝手に追従させない方針のため
+    // （作り直すのは両端が動いたときと、再計算のボタン）。ユーザーは触れない。
+    std::vector<PathRouteWaypoint> waypoints;
+    // 内部点を計算したときの両端の位置。今の両端と違えば古い（内部点を無視して両端を
+    // 直線で結ぶ）。routed が偽なら未計算。
+    bool routed = false;
+    float routedFromU = 0.0f;
+    float routedFromV = 0.0f;
+    float routedToU = 0.0f;
+    float routedToV = 0.0f;
 };
 
 // 鎖。エッジが 2 本だけ付いた点を通り、それ以外の点（端 / 分岐 / 交差）で止まる。
@@ -104,8 +135,9 @@ struct PathSettings {
 PathElementId AddPathPoint(PathSettings& path, float u, float v, PathElementId connectFrom);
 // 2 点をエッジで繋ぐ（from → to）。既に繋がっていれば何もしない（真を返す）。
 bool ConnectPathPoints(PathSettings& path, PathElementId from, PathElementId to);
-// エッジの途中（t: 0〜1）に点を挿入し、エッジを 2 本に割る。
-// 幅 / フェザー / 強さは両端から補間する。返り値は新しい点（失敗なら 0）。
+// エッジの途中（t: 0〜1。内部点があれば折れ線の道のり）に点を挿入し、エッジを 2 本に割る。
+// 幅 / フェザー / 強さは両端から補間する。経路の内部点は挿入した所で前後に分ける。
+// 返り値は新しい点（失敗なら 0）。
 PathElementId InsertPathPointOnEdge(PathSettings& path, PathElementId edgeId, float t);
 // 点を消す。鎖の途中の点（エッジがちょうど 2 本）なら、両隣を 1 本のエッジで繋ぎ直して
 // から消すので線は切れない（曲線の種類 / 丸め / 向きは残ったエッジのものが続く）。
@@ -131,6 +163,16 @@ bool ReversePathEdge(PathSettings& path, PathElementId edgeId);
 // 点に付いているエッジを全部反転する。
 bool ReversePathEdgesAt(PathSettings& path, PathElementId pointId);
 
+// --- 経路の内部点 -----------------------------------------------------------
+// エッジの経路が今の両端の位置に合っているか。route が None なら常に真。
+bool IsPathEdgeRouteCurrent(const PathSettings& path, const PathEdge& edge);
+// エッジの制御点列（from、内部点…、to）。内部点の値（幅 / フェザー / 強さ / 高さのずれ）は
+// 両端の値を道のりで補間したもの（id は 0）。経路が古いエッジは内部点を飛ばして両端だけ返す。
+// 端点が無ければ空。
+std::vector<PathPoint> PathEdgeControlPoints(const PathSettings& path, const PathEdge& edge);
+// 経路探索が有効で、経路が古い（両端が動いた / 未計算）エッジの数。
+size_t CountStalePathRoutes(const PathSettings& path);
+
 // --- 鎖と曲線 -------------------------------------------------------------
 // 鎖を導出する。すべてのエッジがちょうど 1 つの鎖に入る。
 std::vector<PathStrand> BuildPathStrands(const PathSettings& path);
@@ -142,7 +184,7 @@ PathCurve StrandCurve(const PathSettings& path, const PathStrand& strand, float*
 // 鎖のクロソイド比（先頭のエッジの値）。
 float StrandClothoidRatio(const PathSettings& path, const PathStrand& strand);
 // 鎖を折れ線（曲線なら細かく割ったもの）にする。samplesPerSpan は制御点の区間ごとの標本数。
-// 直線の鎖は制御点そのものを返す。
+// 制御点は「ユーザーの点 + 経路の内部点」。直線の鎖は制御点そのものを返す。
 std::vector<PathCurveSample> SamplePathStrand(const PathSettings& path, const PathStrand& strand,
                                               int samplesPerSpan);
 // 鎖のエッジを全部反転する。

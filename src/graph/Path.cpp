@@ -94,30 +94,56 @@ PathElementId InsertPathPointOnEdge(PathSettings& path, PathElementId edgeId, fl
     if (edge == nullptr) {
         return 0;
     }
-    const PathPoint* a = path.FindPoint(edge->from);
-    const PathPoint* b = path.FindPoint(edge->to);
-    if (a == nullptr || b == nullptr) {
+    // 制御点列（from、経路の内部点…、to）。内部点が無ければ両端だけ。
+    const std::vector<PathPoint> control = PathEdgeControlPoints(path, *edge);
+    if (control.size() < 2) {
         return 0;
     }
-    const PathElementId from = edge->from;
     const PathElementId to = edge->to;
     t = std::clamp(t, 0.0f, 1.0f);
 
+    // 折れ線の道のり t の位置。どの線分（seg）の上かも出す。
+    std::vector<float> cumulative(control.size(), 0.0f);
+    for (size_t i = 1; i < control.size(); ++i) {
+        const float dx = control[i].u - control[i - 1].u;
+        const float dy = control[i].v - control[i - 1].v;
+        cumulative[i] = cumulative[i - 1] + std::sqrt(dx * dx + dy * dy);
+    }
+    const float target = cumulative.back() * t;
+    size_t seg = 0;
+    while (seg + 2 < control.size() && cumulative[seg + 1] < target) {
+        ++seg;
+    }
+    const float segmentLength = cumulative[seg + 1] - cumulative[seg];
+    const float local = (segmentLength > 1e-9f)
+                            ? std::clamp((target - cumulative[seg]) / segmentLength, 0.0f, 1.0f)
+                            : 0.0f;
+    const PathPoint& a = control[seg];
+    const PathPoint& b = control[seg + 1];
+
     PathPoint point;
     point.id = path.nextId++;
-    point.u = Lerp(a->u, b->u, t);
-    point.v = Lerp(a->v, b->v, t);
-    point.widthMeters = Lerp(a->widthMeters, b->widthMeters, t);
-    point.featherMeters = Lerp(a->featherMeters, b->featherMeters, t);
-    point.intensity = Lerp(a->intensity, b->intensity, t);
-    point.heightOffsetMeters = Lerp(a->heightOffsetMeters, b->heightOffsetMeters, t);
+    point.u = Lerp(a.u, b.u, local);
+    point.v = Lerp(a.v, b.v, local);
+    point.widthMeters = Lerp(a.widthMeters, b.widthMeters, local);
+    point.featherMeters = Lerp(a.featherMeters, b.featherMeters, local);
+    point.intensity = Lerp(a.intensity, b.intensity, local);
+    point.heightOffsetMeters = Lerp(a.heightOffsetMeters, b.heightOffsetMeters, local);
+    const PathPoint* toPoint = path.FindPoint(to);
+    if (toPoint == nullptr) {
+        return 0;
+    }
+    const float toU = toPoint->u;
+    const float toV = toPoint->v;
     path.points.push_back(point);
 
     // 元のエッジは from → 新しい点 に縮め、新しい点 → to をもう 1 本張る。
-    // 向きは元のまま。
+    // 向きは元のまま。曲線の種類と丸め、経路探索の設定は割った元のエッジから引き継ぐ
+    // （鎖の性質が途切れないように）。
+    PathEdge* head = nullptr;
     for (PathEdge& existing : path.edges) {
         if (existing.id == edgeId) {
-            existing.to = point.id;
+            head = &existing;
             break;
         }
     }
@@ -125,14 +151,32 @@ PathElementId InsertPathPointOnEdge(PathSettings& path, PathElementId edgeId, fl
     tail.id = path.nextId++;
     tail.from = point.id;
     tail.to = to;
-    // 曲線の種類と丸めは、割った元のエッジから引き継ぐ（鎖の性質が途切れないように）。
-    if (const PathEdge* head = path.FindEdge(edgeId)) {
-        tail.curve = head->curve;
-        tail.rounding = head->rounding;
-        tail.clothoidRatio = head->clothoidRatio;
+    tail.curve = head->curve;
+    tail.rounding = head->rounding;
+    tail.clothoidRatio = head->clothoidRatio;
+    tail.route = head->route;
+    tail.maxGradePercent = head->maxGradePercent;
+    // 経路の内部点は挿入した所で前後に分ける（control[1 + i] が waypoints[i]。
+    // seg 番目の線分より前の内部点が head に残る）。内部点が無かったなら、
+    // 両方とも未計算にしておく（経路が古かったなら、そのまま作り直される）。
+    if (control.size() > 2) {
+        tail.waypoints.assign(head->waypoints.begin() + static_cast<std::ptrdiff_t>(seg),
+                              head->waypoints.end());
+        head->waypoints.resize(seg);
+        head->routed = true;
+        head->routedToU = point.u;
+        head->routedToV = point.v;
+        tail.routed = true;
+        tail.routedFromU = point.u;
+        tail.routedFromV = point.v;
+        tail.routedToU = toU;
+        tail.routedToV = toV;
+    } else {
+        head->waypoints.clear();
+        head->routed = false;
     }
+    head->to = point.id;
     path.edges.push_back(tail);
-    (void)from;
     return point.id;
 }
 
@@ -310,10 +354,27 @@ PathElementId DetachPathEdgeEnd(PathSettings& path, PathElementId edgeId, PathEl
     return point.id;
 }
 
+namespace {
+
+// エッジの向きを反転する。経路の内部点も逆順にして、計算時の両端も入れ替える
+// （道路の経路は向きに依らないのでそのまま使える）。流れの経路は「下る向き」が
+// 変わるので未計算に戻す。
+void ReverseEdgeInPlace(PathEdge& edge) {
+    std::swap(edge.from, edge.to);
+    std::reverse(edge.waypoints.begin(), edge.waypoints.end());
+    std::swap(edge.routedFromU, edge.routedToU);
+    std::swap(edge.routedFromV, edge.routedToV);
+    if (edge.route == PathRoute::Flow) {
+        edge.routed = false;
+    }
+}
+
+}  // namespace
+
 bool ReversePathEdge(PathSettings& path, PathElementId edgeId) {
     for (PathEdge& edge : path.edges) {
         if (edge.id == edgeId) {
-            std::swap(edge.from, edge.to);
+            ReverseEdgeInPlace(edge);
             return true;
         }
     }
@@ -324,11 +385,88 @@ bool ReversePathEdgesAt(PathSettings& path, PathElementId pointId) {
     bool any = false;
     for (PathEdge& edge : path.edges) {
         if (edge.from == pointId || edge.to == pointId) {
-            std::swap(edge.from, edge.to);
+            ReverseEdgeInPlace(edge);
             any = true;
         }
     }
     return any;
+}
+
+// --- 経路の内部点 -----------------------------------------------------------
+
+bool IsPathEdgeRouteCurrent(const PathSettings& path, const PathEdge& edge) {
+    if (edge.route == PathRoute::None) {
+        return true;
+    }
+    if (!edge.routed) {
+        return false;
+    }
+    const PathPoint* a = path.FindPoint(edge.from);
+    const PathPoint* b = path.FindPoint(edge.to);
+    if (a == nullptr || b == nullptr) {
+        return false;
+    }
+    constexpr float kEpsilon = 1e-6f;
+    return std::abs(a->u - edge.routedFromU) < kEpsilon &&
+           std::abs(a->v - edge.routedFromV) < kEpsilon &&
+           std::abs(b->u - edge.routedToU) < kEpsilon &&
+           std::abs(b->v - edge.routedToV) < kEpsilon;
+}
+
+std::vector<PathPoint> PathEdgeControlPoints(const PathSettings& path, const PathEdge& edge) {
+    std::vector<PathPoint> out;
+    const PathPoint* a = path.FindPoint(edge.from);
+    const PathPoint* b = path.FindPoint(edge.to);
+    if (a == nullptr || b == nullptr) {
+        return out;
+    }
+    out.reserve(edge.waypoints.size() + 2);
+    out.push_back(*a);
+    if (!edge.waypoints.empty() && IsPathEdgeRouteCurrent(path, edge)) {
+        // 内部点の値は、両端の値を道のり（折れ線の長さの割合）で補間する。
+        std::vector<float> distances;
+        distances.reserve(edge.waypoints.size());
+        float total = 0.0f;
+        float previousU = a->u;
+        float previousV = a->v;
+        for (const PathRouteWaypoint& waypoint : edge.waypoints) {
+            const float dx = waypoint.u - previousU;
+            const float dy = waypoint.v - previousV;
+            total += std::sqrt(dx * dx + dy * dy);
+            distances.push_back(total);
+            previousU = waypoint.u;
+            previousV = waypoint.v;
+        }
+        {
+            const float dx = b->u - previousU;
+            const float dy = b->v - previousV;
+            total += std::sqrt(dx * dx + dy * dy);
+        }
+        for (size_t i = 0; i < edge.waypoints.size(); ++i) {
+            const float t = (total > 1e-9f) ? distances[i] / total : 0.0f;
+            PathPoint point;
+            point.id = 0;
+            point.u = edge.waypoints[i].u;
+            point.v = edge.waypoints[i].v;
+            point.widthMeters = Lerp(a->widthMeters, b->widthMeters, t);
+            point.featherMeters = Lerp(a->featherMeters, b->featherMeters, t);
+            point.intensity = Lerp(a->intensity, b->intensity, t);
+            point.heightOffsetMeters = Lerp(a->heightOffsetMeters, b->heightOffsetMeters, t);
+            out.push_back(point);
+        }
+    }
+    out.push_back(*b);
+    return out;
+}
+
+size_t CountStalePathRoutes(const PathSettings& path) {
+    size_t count = 0;
+    for (const PathEdge& edge : path.edges) {
+        if (edge.route != PathRoute::None && !IsPathEdgeRouteCurrent(path, edge)) {
+            ++count;
+        }
+    }
+    return count;
 }
 
 // --- 鎖 --------------------------------------------------------------------
@@ -718,17 +856,32 @@ void SampleClothoid(const std::vector<const PathPoint*>& points, float rounding,
 std::vector<PathCurveSample> SamplePathStrand(const PathSettings& path, const PathStrand& strand,
                                               int samplesPerSpan) {
     std::vector<PathCurveSample> out;
-    std::vector<const PathPoint*> points;
-    points.reserve(strand.points.size());
-    for (const PathElementId id : strand.points) {
-        const PathPoint* point = path.FindPoint(id);
-        if (point == nullptr) {
+    // 制御点は「ユーザーの点 + 経路の内部点」。エッジごとに from → to の並びで取り、
+    // 鎖の進む向きに合わせて繋ぐ（隣り合うエッジは点を共有するので 1 つ飛ばす）。
+    std::vector<PathPoint> control;
+    for (size_t i = 0; i < strand.edges.size() && i + 1 < strand.points.size(); ++i) {
+        const PathEdge* edge = path.FindEdge(strand.edges[i]);
+        if (edge == nullptr) {
             return out;
         }
-        points.push_back(point);
+        std::vector<PathPoint> section = PathEdgeControlPoints(path, *edge);
+        if (section.size() < 2) {
+            return out;
+        }
+        if (edge->from != strand.points[i]) {
+            std::reverse(section.begin(), section.end());
+        }
+        const size_t skip = control.empty() ? 0 : 1;
+        control.insert(control.end(), section.begin() + static_cast<std::ptrdiff_t>(skip),
+                       section.end());
     }
-    if (points.size() < 2) {
+    if (control.size() < 2) {
         return out;
+    }
+    std::vector<const PathPoint*> points;
+    points.reserve(control.size());
+    for (const PathPoint& point : control) {
+        points.push_back(&point);
     }
     float rounding = 1.0f;
     const PathCurve curve = StrandCurve(path, strand, &rounding, nullptr);

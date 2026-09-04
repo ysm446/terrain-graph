@@ -182,6 +182,9 @@ void Application::Shutdown() {
     m_materialLibrary.Destroy(m_device);
     m_skyLibrary.Destroy(m_device);
     m_textureLibrary.Destroy(m_device);
+    if (m_pathRouteEvaluator.Resolution() != 0) {
+        m_pathRouteEvaluator.Destroy(m_device);
+    }
     m_renderer.Shutdown(m_device);
     m_imgui.Shutdown();
     m_pipelineCache.Destroy();
@@ -283,6 +286,8 @@ int Application::Run() {
         // プロジェクトとマテリアルの読み書きも GPU 待機を伴うため、フレームの外で。
         // 他の保留処理より先に行う（読み込みが中身を丸ごと入れ替えるため）。
         ProcessPendingFileWork();
+        // 経路探索用の地形（Path ノードの Base）の焼き直しも GPU 待機を伴うため、フレームの外で。
+        ProcessPendingPathRoutes();
 
         // 開発用: 数フレーム描いてから合成結果を書き出して終了する。
         if (!m_options.exportDirectory.empty() && m_frameCounter >= m_options.screenshotFrame) {
@@ -510,7 +515,13 @@ void Application::DrawUi() {
     // 1 段に収まる（毎フレーム変更が来ても ID は変わらない）。
     if (m_documentDirty) {
         m_documentDirty = false;
-        m_undoHistory.Push(m_committed, static_cast<uint32_t>(ImGui::GetActiveID()));
+        // 直前の編集の続き（ドラッグを離した時点の経路の計算し直しなど）は、
+        // 直前の段の ID を渡して同じ段に畳む。
+        const uint32_t editId = m_documentJoinsEdit
+                                    ? m_undoHistory.LastEditId()
+                                    : static_cast<uint32_t>(ImGui::GetActiveID());
+        m_documentJoinsEdit = false;
+        m_undoHistory.Push(m_committed, editId);
         m_committed = CaptureDocument();
         // 古い段が押し出されると、そこでしか参照されていなかったマスクが浮く。
         m_pendingPaintSweep = true;

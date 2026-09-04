@@ -1,7 +1,7 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-09-04 06:50
+更新日時: 2026-09-04 14:30
 
 実装は [src/io/ProjectIo.cpp](../../src/io/ProjectIo.cpp)。**形式を変えたらこの文書も直す。**
 
@@ -156,9 +156,13 @@ shoreHeight, shoreFeather }`）は `kind` が `river` のノードだけが使�
 
 `kind` が `path` のノードは `path` を持つ。`points[]` は
 `{ id, u, v, width, feather, intensity, heightOffset }`（`u` / `v` は地形平面の正規化座標、
-寸法は m）、`edges[]` は `{ id, from, to, curve, rounding }`（点の `id` を指す。
-from → to が向き。`curve` は `line` / `quadratic` / `cubic` / `clothoid`、
-`rounding` と `clothoidRatio` は 0〜1。無ければ直線）。
+寸法は m）、`edges[]` は `{ id, from, to, curve, rounding, clothoidRatio, route, maxGrade,
+routedFrom, routedTo, waypoints }`（点の `id` を指す。from → to が向き。`curve` は
+`line` / `quadratic` / `cubic` / `clothoid`、`rounding` と `clothoidRatio` は 0〜1。
+無ければ直線）。経路探索の `route` は `none` / `road` / `flow`（無ければ `none`）、
+`maxGrade` は許容勾配（%）、`routedFrom` / `routedTo` は計算したときの両端 `[u, v]`、
+`waypoints` は内部点 `[u0, v0, u1, v1, …]`（両端を除く）。`route` が `none` なら書かず、
+`routedFrom` / `routedTo` が揃っていなければ未計算として読む（内部点は捨てる）。
 `nextId` は点とエッジの次の ID（パスの中でだけ一意）。端点の無いエッジは読み捨てる。
 無ければ空のパス（版は上げない）。
 

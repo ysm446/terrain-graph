@@ -1,7 +1,7 @@
 # plan — 実装方針と優先順位
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-04 03:30
+更新日時: 2026-09-04 14:40
 
 進捗管理の入口。実装の詳細な設計は [docs/design/](../design/) に置く。
 
@@ -221,6 +221,14 @@ terrain_graph.exe [--project <path>] [--save-project <path>]
   （傾きを gain 倍する、が実寸の意味に合う）。
 - 経緯: 実寸化のときに「法線の強さ」パラメータを廃したので、
   残っているつまみは `起伏の強さ` だけ。ここが効かないのは筋が通らない。
+
+### 起動直後の GPU ベースバリデーション（MaterialThumbnail）
+
+`--project` でプロジェクトを開いて数フレームで撮ると、`MaterialThumbnail.hlsl` の Dispatch で
+「Incompatible texture barrier layout（UAV なのに COMMON）」が 1〜2 回出ることがある
+（2026-09-04、`data/path-test.tgproj` + `--screenshot-ui --screenshot-frame 6` で再現。
+frame 12 では出ない）。マテリアルのサムネイル生成の状態遷移がフレームの早い時期に
+噛み合っていない疑い。経路探索の作業とは無関係（変更を退避しても出る）。
 
 ## 判断を保留している点
 
