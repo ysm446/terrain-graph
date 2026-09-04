@@ -511,7 +511,7 @@ json WritePath(const graph::PathSettings& path) {
     }
     node["points"] = std::move(points);
     json edges = json::array();
-    static const char* const kPathCurveNames[] = {"line", "quadratic", "cubic"};
+    static const char* const kPathCurveNames[] = {"line", "quadratic", "cubic", "clothoid"};
     for (const graph::PathEdge& edge : path.edges) {
         json item;
         item["id"] = edge.id;
@@ -519,6 +519,7 @@ json WritePath(const graph::PathSettings& path) {
         item["to"] = edge.to;
         item["curve"] = EnumName(kPathCurveNames, static_cast<uint32_t>(edge.curve));
         item["rounding"] = edge.rounding;
+        item["clothoidRatio"] = edge.clothoidRatio;
         edges.push_back(std::move(item));
     }
     node["edges"] = std::move(edges);
@@ -565,7 +566,8 @@ graph::PathSettings ReadPath(const json& parent, const char* key) {
             if (!item.is_object()) {
                 continue;
             }
-            static const char* const kPathCurveNames[] = {"line", "quadratic", "cubic"};
+            static const char* const kPathCurveNames[] = {"line", "quadratic", "cubic",
+                                                          "clothoid"};
             graph::PathEdge edge;
             edge.id = ReadInt(item, "id", 0);
             edge.from = ReadInt(item, "from", 0);
@@ -573,6 +575,7 @@ graph::PathSettings ReadPath(const json& parent, const char* key) {
             edge.curve = static_cast<graph::PathCurve>(EnumValue(
                 kPathCurveNames, item, "curve", static_cast<uint32_t>(graph::PathCurve::Line)));
             edge.rounding = std::clamp(ReadFloat(item, "rounding", 1.0f), 0.0f, 1.0f);
+            edge.clothoidRatio = std::clamp(ReadFloat(item, "clothoidRatio", 0.5f), 0.0f, 1.0f);
             // 端点が無い / 自分へ戻るエッジは捨てる（壊れたファイルの安全網）。
             if (edge.id <= 0 || edge.from == edge.to || path.FindPoint(edge.from) == nullptr ||
                 path.FindPoint(edge.to) == nullptr) {

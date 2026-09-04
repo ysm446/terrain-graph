@@ -42,6 +42,9 @@ enum class PathCurve : uint32_t {
     Line = 0,       // 折れ線そのもの
     Quadratic = 1,  // 2 次ベジェの連結。角ごとに丸め、両端の点だけ通る（C1）
     Cubic = 2,      // 3 次 B スプライン。さらに滑らか（C2）だが折れ線からより離れる
+    // クロソイド → 円弧 → クロソイド。角ごとに曲率が 0 から連続的に立ち上がる緩和曲線
+    // （道路 / 鉄道の線形）。2 次と同じく両端の点だけ通る。
+    Clothoid = 3,
 };
 
 struct PathEdge {
@@ -51,6 +54,9 @@ struct PathEdge {
     PathCurve curve = PathCurve::Line;
     // どれだけ角を取るか（0〜1）。0 で折れ線のまま、1 で最大（2 次なら線分の中点まで）。
     float rounding = 1.0f;
+    // クロソイドのとき、交角のうちクロソイド 2 本が受け持つ割合（0〜1）。
+    // 0 で純粋な円弧、1 で円弧なし（緩和曲線だけ）。
+    float clothoidRatio = 0.5f;
 };
 
 // 鎖。エッジが 2 本だけ付いた点を通り、それ以外の点（端 / 分岐 / 交差）で止まる。
@@ -131,6 +137,8 @@ const PathStrand* FindStrandOfEdge(const std::vector<PathStrand>& strands, PathE
 // 鎖の曲線の種類と丸め（先頭のエッジの値）。mixed はエッジごとに値が違うとき真。
 PathCurve StrandCurve(const PathSettings& path, const PathStrand& strand, float* outRounding,
                       bool* outMixed);
+// 鎖のクロソイド比（先頭のエッジの値）。
+float StrandClothoidRatio(const PathSettings& path, const PathStrand& strand);
 // 鎖を折れ線（曲線なら細かく割ったもの）にする。samplesPerSpan は制御点の区間ごとの標本数。
 // 直線の鎖は制御点そのものを返す。
 std::vector<PathCurveSample> SamplePathStrand(const PathSettings& path, const PathStrand& strand,

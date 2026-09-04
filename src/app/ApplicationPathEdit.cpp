@@ -1021,30 +1021,42 @@ bool Application::DrawPathSettings(graph::Node& node) {
             // 曲線の種類と丸め。鎖なら全エッジに同じ値を入れる（表示は先頭。混在なら注記）。
             graph::PathCurve curve = edges.front()->curve;
             float rounding = edges.front()->rounding;
+            float clothoidRatio = edges.front()->clothoidRatio;
             bool mixed = false;
             for (const graph::PathEdge* edge : edges) {
-                if (edge->curve != curve || std::abs(edge->rounding - rounding) > 1e-4f) {
+                if (edge->curve != curve || std::abs(edge->rounding - rounding) > 1e-4f ||
+                    std::abs(edge->clothoidRatio - clothoidRatio) > 1e-4f) {
                     mixed = true;
                 }
             }
             if (ui::BeginPropertyTable("graphPathEdgeRows")) {
                 ui::PropertyValue("エッジ", "%zu 本（点 %d → 点 %d）", edges.size(),
                                   edges.front()->from, edges.back()->to);
-                static const char* const kCurveLabels[] = {"直線", "2 次ベジェ", "3 次 B スプライン"};
+                static const char* const kCurveLabels[] = {"直線", "2 次ベジェ",
+                                                           "3 次 B スプライン", "クロソイド"};
                 int curveIndex = static_cast<int>(curve);
                 bool curveChanged = ui::PropertyCombo(
                     "曲線", &curveIndex, kCurveLabels, IM_ARRAYSIZE(kCurveLabels), 0,
                     "折れ線をガイドにして、その内側に描く曲線。点は通らない。"
-                    "2 次は角ごとに丸めて両端だけ通る。3 次はさらに滑らかだが折れ線からより離れる");
+                    "2 次は角ごとに丸めて両端だけ通る。3 次はさらに滑らかだが折れ線からより離れる。"
+                    "クロソイドは角ごとに緩和曲線 → 円弧 → 緩和曲線で、曲率が 0 から連続的に"
+                    "立ち上がる（道路 / 鉄道の線形）");
                 curve = static_cast<graph::PathCurve>(curveIndex);
                 curveChanged |= ui::PropertyFloat(
                     "丸め", &rounding, 0.0f, 1.0f, 1.0f,
-                    "どれだけ角を取るか。0 で折れ線のまま、1 で最大（2 次なら線分の中点まで）",
-                    "%.2f");
+                    "どれだけ角を取るか。0 で折れ線のまま、1 で最大（線分の中点まで）", "%.2f");
+                if (curve == graph::PathCurve::Clothoid) {
+                    curveChanged |= ui::PropertyFloat(
+                        "クロソイド比", &clothoidRatio, 0.0f, 1.0f, 0.5f,
+                        "交角のうち緩和曲線 2 本が受け持つ割合。0 で純粋な円弧、"
+                        "1 で円弧なし（緩和曲線だけ）",
+                        "%.2f");
+                }
                 if (curveChanged) {
                     for (graph::PathEdge* edge : edges) {
                         edge->curve = curve;
                         edge->rounding = rounding;
+                        edge->clothoidRatio = clothoidRatio;
                     }
                     changed = true;
                 }

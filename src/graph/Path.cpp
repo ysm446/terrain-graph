@@ -129,6 +129,7 @@ PathElementId InsertPathPointOnEdge(PathSettings& path, PathElementId edgeId, fl
     if (const PathEdge* head = path.FindEdge(edgeId)) {
         tail.curve = head->curve;
         tail.rounding = head->rounding;
+        tail.clothoidRatio = head->clothoidRatio;
     }
     path.edges.push_back(tail);
     (void)from;
@@ -382,6 +383,7 @@ PathCurve StrandCurve(const PathSettings& path, const PathStrand& strand, float*
                       bool* outMixed) {
     PathCurve curve = PathCurve::Line;
     float rounding = 1.0f;
+    float ratio = 0.5f;
     bool mixed = false;
     bool first = true;
     for (const PathElementId edgeId : strand.edges) {
@@ -392,8 +394,10 @@ PathCurve StrandCurve(const PathSettings& path, const PathStrand& strand, float*
         if (first) {
             curve = edge->curve;
             rounding = edge->rounding;
+            ratio = edge->clothoidRatio;
             first = false;
-        } else if (edge->curve != curve || std::abs(edge->rounding - rounding) > 1e-4f) {
+        } else if (edge->curve != curve || std::abs(edge->rounding - rounding) > 1e-4f ||
+                   std::abs(edge->clothoidRatio - ratio) > 1e-4f) {
             mixed = true;
         }
     }
@@ -404,6 +408,15 @@ PathCurve StrandCurve(const PathSettings& path, const PathStrand& strand, float*
         *outMixed = mixed;
     }
     return curve;
+}
+
+float StrandClothoidRatio(const PathSettings& path, const PathStrand& strand) {
+    for (const PathElementId edgeId : strand.edges) {
+        if (const PathEdge* edge = path.FindEdge(edgeId)) {
+            return std::clamp(edge->clothoidRatio, 0.0f, 1.0f);
+        }
+    }
+    return 0.5f;
 }
 
 bool ReversePathStrand(PathSettings& path, const PathStrand& strand) {
@@ -526,6 +539,152 @@ void SampleCubic(const std::vector<const PathPoint*>& points, float rounding, in
     }
 }
 
+// --- クロソイド ----------------------------------------------------------------
+//
+// 角ごとに「クロソイド → 円弧 → クロソイド」を挟む（technical-notes.com の
+// 「制御点からクロソイド曲線」の方式）。交角 I のうち ratio をクロソイド 2 本が
+// 受け持ち（片側 τ = I × ratio / 2）、残りを半径一定の円弧が受け持つ。
+// 曲率 0 の直線から連続的に曲率が立ち上がるので、道路 / 鉄道の線形になる。
+//
+// 単位曲線（円弧の半径 1）をローカル座標で組んでから、角の接線長が
+// 「丸め × 半分」の位置（2 次ベジェの入口 / 出口と同じ）に来るように拡大する。
+// クロソイドはフレネル積分の級数ではなく、曲率を数値積分して点列にする
+// （τ が大きくても精度が落ちない）。
+
+struct Vec2 {
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
+// 曲率 κ(s) が 0 → 1（rising）または 1 → 0 で、長さ L = 2τ のクロソイドを
+// origin から heading の向きに積分する。各標本の点と、最後の向きを返す。
+void IntegrateClothoid(Vec2 origin, float heading, float tau, float sign, bool rising,
+                       int samples, std::vector<Vec2>& out, float& outHeading) {
+    const float length = 2.0f * tau;
+    constexpr int kSubsteps = 8;
+    const int total = samples * kSubsteps;
+    const float ds = length / static_cast<float>(std::max(total, 1));
+    Vec2 position = origin;
+    float angle = heading;
+    for (int i = 1; i <= total; ++i) {
+        // 中点則。区間の真ん中の向きで進む。
+        const float sMid = (static_cast<float>(i) - 0.5f) * ds;
+        const float curvature = rising ? (sMid / length) : (1.0f - sMid / length);
+        const float angleMid = angle + sign * curvature * ds * 0.5f;
+        position.x += std::cos(angleMid) * ds;
+        position.y += std::sin(angleMid) * ds;
+        angle += sign * curvature * ds;
+        if (i % kSubsteps == 0) {
+            out.push_back(position);
+        }
+    }
+    outHeading = angle;
+}
+
+// 角 1 つぶんの単位曲線をローカル座標（入口が原点、入りの向きが +x）で組む。
+// 返り値は接線長（原点から折れ点まで）。曲線は out に、入口を含まない形で積む。
+float BuildUnitClothoidCorner(float turn, float sign, float ratio, int samples,
+                              std::vector<Vec2>& out) {
+    const float tau = turn * ratio * 0.5f;
+    const float arc = turn * (1.0f - ratio);
+    Vec2 position;
+    float heading = 0.0f;
+    if (tau > 1e-5f) {
+        IntegrateClothoid(position, heading, tau, sign, true, samples, out, heading);
+        position = out.back();
+    }
+    if (arc > 1e-5f) {
+        // 向きの左（sign が正）または右（負）に半径 1 の中心を取り、arc だけ回す。
+        const Vec2 center{position.x - sign * std::sin(heading),
+                          position.y + sign * std::cos(heading)};
+        const float start = std::atan2(position.y - center.y, position.x - center.x);
+        for (int i = 1; i <= samples; ++i) {
+            const float a = start + sign * arc * (static_cast<float>(i) / samples);
+            out.push_back({center.x + std::cos(a), center.y + std::sin(a)});
+        }
+        heading += sign * arc;
+        position = out.back();
+    }
+    if (tau > 1e-5f) {
+        IntegrateClothoid(position, heading, tau, sign, false, samples, out, heading);
+    }
+    if (out.empty()) {
+        return 0.0f;
+    }
+    // 入りの接線（原点、+x）と出の接線（終点、向き heading）の交点までの距離。
+    const Vec2 end = out.back();
+    const float sinI = std::sin(heading);
+    if (std::abs(sinI) < 1e-5f) {
+        return 0.0f;
+    }
+    const float u = -end.y / sinI;
+    return end.x + u * std::cos(heading);
+}
+
+void SampleClothoid(const std::vector<const PathPoint*>& points, float rounding, float ratio,
+                    int samplesPerSpan, std::vector<PathCurveSample>& out) {
+    const int n = static_cast<int>(points.size());
+    const float half = std::clamp(rounding, 0.0f, 1.0f) * 0.5f;
+    const float clampedRatio = std::clamp(ratio, 0.0f, 1.0f);
+    out.push_back(SampleAt(points, 0.0f, points[0]->u, points[0]->v));
+    for (int i = 1; i + 1 < n; ++i) {
+        const PathPoint& prev = *points[static_cast<size_t>(i - 1)];
+        const PathPoint& here = *points[static_cast<size_t>(i)];
+        const PathPoint& next = *points[static_cast<size_t>(i + 1)];
+        const float inX = here.u - prev.u;
+        const float inY = here.v - prev.v;
+        const float outX = next.u - here.u;
+        const float outY = next.v - here.v;
+        const float inLength = std::sqrt(inX * inX + inY * inY);
+        const float outLength = std::sqrt(outX * outX + outY * outY);
+        if (inLength <= 1e-6f || outLength <= 1e-6f) {
+            out.push_back(SampleAt(points, static_cast<float>(i), here.u, here.v));
+            continue;
+        }
+        const float dirInX = inX / inLength;
+        const float dirInY = inY / inLength;
+        const float dirOutX = outX / outLength;
+        const float dirOutY = outY / outLength;
+        const float cross = dirInX * dirOutY - dirInY * dirOutX;
+        const float dot = std::clamp(dirInX * dirOutX + dirInY * dirOutY, -1.0f, 1.0f);
+        const float turn = std::acos(dot);
+        // 接線長は短いほうの線分に合わせる（両側とも同じ距離で入って出る）。
+        const float tangent = std::min(inLength, outLength) * half;
+        // ほぼ直進、または折り返しは曲線にならない。折れ点をそのまま通す。
+        if (turn < 1e-3f || turn > 3.0f || tangent <= 1e-6f) {
+            out.push_back(SampleAt(points, static_cast<float>(i), here.u, here.v));
+            continue;
+        }
+        const float sign = (cross >= 0.0f) ? 1.0f : -1.0f;
+        std::vector<Vec2> local;
+        const float unitTangent =
+            BuildUnitClothoidCorner(turn, sign, clampedRatio, samplesPerSpan, local);
+        if (unitTangent <= 1e-6f || local.empty()) {
+            out.push_back(SampleAt(points, static_cast<float>(i), here.u, here.v));
+            continue;
+        }
+        const float scale = tangent / unitTangent;
+        // 入口 A = 折れ点から入りの向きに tangent だけ戻った所。
+        const float ax = here.u - dirInX * tangent;
+        const float ay = here.v - dirInY * tangent;
+        const float pa = static_cast<float>(i) - tangent / inLength;
+        const float pb = static_cast<float>(i) + tangent / outLength;
+        out.push_back(SampleAt(points, pa, ax, ay));
+        // ローカル（+x = 入りの向き、+y = その左）をワールドへ。
+        const float leftX = -dirInY;
+        const float leftY = dirInX;
+        for (size_t k = 0; k < local.size(); ++k) {
+            const Vec2& p = local[k];
+            const float u = ax + (dirInX * p.x + leftX * p.y) * scale;
+            const float v = ay + (dirInY * p.x + leftY * p.y) * scale;
+            const float t = static_cast<float>(k + 1) / static_cast<float>(local.size());
+            out.push_back(SampleAt(points, Lerp(pa, pb, t), u, v));
+        }
+    }
+    const PathPoint& end = *points[static_cast<size_t>(n - 1)];
+    out.push_back(SampleAt(points, static_cast<float>(n - 1), end.u, end.v));
+}
+
 }  // namespace
 
 std::vector<PathCurveSample> SamplePathStrand(const PathSettings& path, const PathStrand& strand,
@@ -554,6 +713,8 @@ std::vector<PathCurveSample> SamplePathStrand(const PathSettings& path, const Pa
     const int samples = std::clamp(samplesPerSpan, 1, 64);
     if (curve == PathCurve::Quadratic) {
         SampleQuadratic(points, rounding, samples, out);
+    } else if (curve == PathCurve::Clothoid) {
+        SampleClothoid(points, rounding, StrandClothoidRatio(path, strand), samples, out);
     } else {
         SampleCubic(points, rounding, samples, out);
     }
