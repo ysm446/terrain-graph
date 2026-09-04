@@ -222,6 +222,7 @@ uint64_t HashHeightState(uint64_t seed, const MaterialLayer& layer) {
     hash = HashBytes(hash, &layer.snow, sizeof(layer.snow));
     hash = HashBytes(hash, &layer.river, sizeof(layer.river));
     hash = HashBytes(hash, &layer.droplet, sizeof(layer.droplet));
+    hash = HashBytes(hash, &layer.scatter, sizeof(layer.scatter));
     hash = HashBytes(hash, &layer.maskOnly, sizeof(layer.maskOnly));
     // マスクは「どこに載せるか」を決めるので Height にも効く。
     hash = HashBytes(hash, &layer.mask.source, sizeof(layer.mask.source));
@@ -3157,11 +3158,16 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             hash = HashMaskOpParams(hash, op);
             hash = HashBytes(hash, &scaleHash, sizeof(scaleHash));
             hash = HashBytes(hash, &m_maskOpResolutions[i], sizeof(uint32_t));
+            // **下地の Height か、レイヤーの作業用テクスチャを読む op はここへ足すこと。**
+            // 抜けると 2 つ壊れる。(1) 焼く位置が「ループ前」になり、出どころの
+            // レイヤーが走る前の（＝前回の評価の）作業用テクスチャを読む。
+            // (2) ハッシュに Height の状態が入らないので、出どころの設定を
+            // 触っても焼き直されず、マスクが固まったまま更新されなくなる。
             if (op.kind == MaskOpKind::Fluvial || op.kind == MaskOpKind::Slope ||
                 op.kind == MaskOpKind::Curvature || op.kind == MaskOpKind::Sediment ||
                 op.kind == MaskOpKind::Crumbling || op.kind == MaskOpKind::Snow ||
                 op.kind == MaskOpKind::Height || op.kind == MaskOpKind::River ||
-                op.kind == MaskOpKind::Droplet) {
+                op.kind == MaskOpKind::Droplet || op.kind == MaskOpKind::Scatter) {
                 after = std::max(after, op.heightSourceLayer);
                 const size_t layerCount = std::min<size_t>(
                     stack.Layers().size(),
