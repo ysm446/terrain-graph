@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
 
 namespace tg::graph {
 namespace {
@@ -124,6 +125,11 @@ PathElementId InsertPathPointOnEdge(PathSettings& path, PathElementId edgeId, fl
     tail.id = path.nextId++;
     tail.from = point.id;
     tail.to = to;
+    // 曲線の種類と丸めは、割った元のエッジから引き継ぐ（鎖の性質が途切れないように）。
+    if (const PathEdge* head = path.FindEdge(edgeId)) {
+        tail.curve = head->curve;
+        tail.rounding = head->rounding;
+    }
     path.edges.push_back(tail);
     (void)from;
     return point.id;
@@ -296,27 +302,287 @@ bool ReversePathEdgesAt(PathSettings& path, PathElementId pointId) {
     return any;
 }
 
+// --- 鎖 --------------------------------------------------------------------
+
+namespace {
+
+PathElementId OtherEndOf(const PathEdge& edge, PathElementId pointId) {
+    return (edge.from == pointId) ? edge.to : edge.from;
+}
+
+// pointId に付いているエッジのうち、まだ使っていないもの。
+const PathEdge* NextUnvisitedEdge(const PathSettings& path, PathElementId pointId,
+                                  const std::unordered_set<PathElementId>& visited) {
+    for (const PathEdge& edge : path.edges) {
+        if ((edge.from == pointId || edge.to == pointId) && !visited.contains(edge.id)) {
+            return &edge;
+        }
+    }
+    return nullptr;
+}
+
+// start から edge を通って、エッジが 2 本だけの点を辿り続ける。
+PathStrand WalkStrand(const PathSettings& path, PathElementId start, const PathEdge* edge,
+                      std::unordered_set<PathElementId>& visited) {
+    PathStrand strand;
+    strand.points.push_back(start);
+    PathElementId current = start;
+    while (edge != nullptr) {
+        visited.insert(edge->id);
+        strand.edges.push_back(edge->id);
+        current = OtherEndOf(*edge, current);
+        strand.points.push_back(current);
+        if (current == start) {
+            strand.closed = true;
+            break;
+        }
+        if (path.EdgeCount(current) != 2) {
+            break;
+        }
+        edge = NextUnvisitedEdge(path, current, visited);
+    }
+    return strand;
+}
+
+}  // namespace
+
+std::vector<PathStrand> BuildPathStrands(const PathSettings& path) {
+    std::vector<PathStrand> strands;
+    std::unordered_set<PathElementId> visited;
+    // 端と分岐から出る鎖。
+    for (const PathPoint& point : path.points) {
+        if (path.EdgeCount(point.id) == 2) {
+            continue;
+        }
+        while (const PathEdge* edge = NextUnvisitedEdge(path, point.id, visited)) {
+            strands.push_back(WalkStrand(path, point.id, edge, visited));
+        }
+    }
+    // 残りは分岐の無い輪。
+    for (const PathEdge& edge : path.edges) {
+        if (visited.contains(edge.id)) {
+            continue;
+        }
+        strands.push_back(WalkStrand(path, edge.from, &edge, visited));
+    }
+    return strands;
+}
+
+const PathStrand* FindStrandOfEdge(const std::vector<PathStrand>& strands,
+                                   PathElementId edgeId) {
+    for (const PathStrand& strand : strands) {
+        if (std::find(strand.edges.begin(), strand.edges.end(), edgeId) != strand.edges.end()) {
+            return &strand;
+        }
+    }
+    return nullptr;
+}
+
+PathCurve StrandCurve(const PathSettings& path, const PathStrand& strand, float* outRounding,
+                      bool* outMixed) {
+    PathCurve curve = PathCurve::Line;
+    float rounding = 1.0f;
+    bool mixed = false;
+    bool first = true;
+    for (const PathElementId edgeId : strand.edges) {
+        const PathEdge* edge = path.FindEdge(edgeId);
+        if (edge == nullptr) {
+            continue;
+        }
+        if (first) {
+            curve = edge->curve;
+            rounding = edge->rounding;
+            first = false;
+        } else if (edge->curve != curve || std::abs(edge->rounding - rounding) > 1e-4f) {
+            mixed = true;
+        }
+    }
+    if (outRounding != nullptr) {
+        *outRounding = rounding;
+    }
+    if (outMixed != nullptr) {
+        *outMixed = mixed;
+    }
+    return curve;
+}
+
+bool ReversePathStrand(PathSettings& path, const PathStrand& strand) {
+    bool any = false;
+    for (const PathElementId edgeId : strand.edges) {
+        any |= ReversePathEdge(path, edgeId);
+    }
+    return any;
+}
+
+namespace {
+
+// 制御点の並びの「道のり」（点の添字 + 区間内の割合）で値を補間した標本。
+PathCurveSample SampleAt(const std::vector<const PathPoint*>& points, float parameter, float u,
+                         float v) {
+    const int last = static_cast<int>(points.size()) - 1;
+    const float clamped = std::clamp(parameter, 0.0f, static_cast<float>(last));
+    const int i0 = std::clamp(static_cast<int>(std::floor(clamped)), 0, last);
+    const int i1 = std::min(i0 + 1, last);
+    const float t = clamped - static_cast<float>(i0);
+    const PathPoint& a = *points[static_cast<size_t>(i0)];
+    const PathPoint& b = *points[static_cast<size_t>(i1)];
+    PathCurveSample sample;
+    sample.u = u;
+    sample.v = v;
+    sample.widthMeters = Lerp(a.widthMeters, b.widthMeters, t);
+    sample.featherMeters = Lerp(a.featherMeters, b.featherMeters, t);
+    sample.intensity = Lerp(a.intensity, b.intensity, t);
+    sample.heightOffsetMeters = Lerp(a.heightOffsetMeters, b.heightOffsetMeters, t);
+    return sample;
+}
+
+// 折れ線上の位置（道のりで指定）。
+void PolylineAt(const std::vector<const PathPoint*>& points, float parameter, float& outU,
+                float& outV) {
+    const int last = static_cast<int>(points.size()) - 1;
+    const float clamped = std::clamp(parameter, 0.0f, static_cast<float>(last));
+    const int i0 = std::clamp(static_cast<int>(std::floor(clamped)), 0, last);
+    const int i1 = std::min(i0 + 1, last);
+    const float t = clamped - static_cast<float>(i0);
+    outU = Lerp(points[static_cast<size_t>(i0)]->u, points[static_cast<size_t>(i1)]->u, t);
+    outV = Lerp(points[static_cast<size_t>(i0)]->v, points[static_cast<size_t>(i1)]->v, t);
+}
+
+// 2 次ベジェの連結。途中の点 Pi ごとに、両隣の線分上の「Pi から丸め × 半分」の位置
+// A / B を取り、A → B を Pi を制御点にした 2 次ベジェで結ぶ。A と B の間以外は直線。
+// 丸めが 1 なら A / B は線分の中点で直線部分は消え、両端の点だけを通る滑らかな線になる。
+void SampleQuadratic(const std::vector<const PathPoint*>& points, float rounding,
+                     int samplesPerSpan, std::vector<PathCurveSample>& out) {
+    const int n = static_cast<int>(points.size());
+    const float half = std::clamp(rounding, 0.0f, 1.0f) * 0.5f;
+    out.push_back(SampleAt(points, 0.0f, points[0]->u, points[0]->v));
+    for (int i = 1; i + 1 < n; ++i) {
+        const PathPoint& prev = *points[static_cast<size_t>(i - 1)];
+        const PathPoint& here = *points[static_cast<size_t>(i)];
+        const PathPoint& next = *points[static_cast<size_t>(i + 1)];
+        const float au = Lerp(here.u, prev.u, half);
+        const float av = Lerp(here.v, prev.v, half);
+        const float bu = Lerp(here.u, next.u, half);
+        const float bv = Lerp(here.v, next.v, half);
+        const float pa = static_cast<float>(i) - half;
+        const float pb = static_cast<float>(i) + half;
+        // A まで直線（A = 前の B ではないときだけ点を打つ）。
+        out.push_back(SampleAt(points, pa, au, av));
+        // A → B の 2 次ベジェ。
+        for (int k = 1; k <= samplesPerSpan; ++k) {
+            const float t = static_cast<float>(k) / static_cast<float>(samplesPerSpan);
+            const float w0 = (1.0f - t) * (1.0f - t);
+            const float w1 = 2.0f * (1.0f - t) * t;
+            const float w2 = t * t;
+            const float u = w0 * au + w1 * here.u + w2 * bu;
+            const float v = w0 * av + w1 * here.v + w2 * bv;
+            out.push_back(SampleAt(points, Lerp(pa, pb, t), u, v));
+        }
+    }
+    const PathPoint& end = *points[static_cast<size_t>(n - 1)];
+    out.push_back(SampleAt(points, static_cast<float>(n - 1), end.u, end.v));
+}
+
+// 3 次 B スプライン（両端を 3 重にして端の点を通す）。丸めは折れ線との混ぜ具合。
+void SampleCubic(const std::vector<const PathPoint*>& points, float rounding, int samplesPerSpan,
+                 std::vector<PathCurveSample>& out) {
+    const int n = static_cast<int>(points.size());
+    const float mix = std::clamp(rounding, 0.0f, 1.0f);
+    // 制御点の添字列。端を 3 重にする。
+    std::vector<int> control;
+    control.push_back(0);
+    control.push_back(0);
+    for (int i = 0; i < n; ++i) {
+        control.push_back(i);
+    }
+    control.push_back(n - 1);
+    control.push_back(n - 1);
+    const auto at = [&](size_t index) { return points[static_cast<size_t>(control[index])]; };
+    out.push_back(SampleAt(points, 0.0f, points[0]->u, points[0]->v));
+    for (size_t span = 0; span + 3 < control.size(); ++span) {
+        const PathPoint& c0 = *at(span);
+        const PathPoint& c1 = *at(span + 1);
+        const PathPoint& c2 = *at(span + 2);
+        const PathPoint& c3 = *at(span + 3);
+        // この区間は制御点 c1 と c2 の間に当たる。道のりもその添字で取る。
+        const float p1 = static_cast<float>(control[span + 1]);
+        const float p2 = static_cast<float>(control[span + 2]);
+        for (int k = 1; k <= samplesPerSpan; ++k) {
+            const float t = static_cast<float>(k) / static_cast<float>(samplesPerSpan);
+            const float t2 = t * t;
+            const float t3 = t2 * t;
+            const float b0 = (1.0f - t) * (1.0f - t) * (1.0f - t) / 6.0f;
+            const float b1 = (3.0f * t3 - 6.0f * t2 + 4.0f) / 6.0f;
+            const float b2 = (-3.0f * t3 + 3.0f * t2 + 3.0f * t + 1.0f) / 6.0f;
+            const float b3 = t3 / 6.0f;
+            const float su = b0 * c0.u + b1 * c1.u + b2 * c2.u + b3 * c3.u;
+            const float sv = b0 * c0.v + b1 * c1.v + b2 * c2.v + b3 * c3.v;
+            const float parameter = Lerp(p1, p2, t);
+            float lu = 0.0f;
+            float lv = 0.0f;
+            PolylineAt(points, parameter, lu, lv);
+            out.push_back(SampleAt(points, parameter, Lerp(lu, su, mix), Lerp(lv, sv, mix)));
+        }
+    }
+}
+
+}  // namespace
+
+std::vector<PathCurveSample> SamplePathStrand(const PathSettings& path, const PathStrand& strand,
+                                              int samplesPerSpan) {
+    std::vector<PathCurveSample> out;
+    std::vector<const PathPoint*> points;
+    points.reserve(strand.points.size());
+    for (const PathElementId id : strand.points) {
+        const PathPoint* point = path.FindPoint(id);
+        if (point == nullptr) {
+            return out;
+        }
+        points.push_back(point);
+    }
+    if (points.size() < 2) {
+        return out;
+    }
+    float rounding = 1.0f;
+    const PathCurve curve = StrandCurve(path, strand, &rounding, nullptr);
+    if (curve == PathCurve::Line || points.size() < 3 || rounding <= 0.0f) {
+        for (size_t i = 0; i < points.size(); ++i) {
+            out.push_back(SampleAt(points, static_cast<float>(i), points[i]->u, points[i]->v));
+        }
+        return out;
+    }
+    const int samples = std::clamp(samplesPerSpan, 1, 64);
+    if (curve == PathCurve::Quadratic) {
+        SampleQuadratic(points, rounding, samples, out);
+    } else {
+        SampleCubic(points, rounding, samples, out);
+    }
+    return out;
+}
+
 std::vector<compositor::PathSegment> BuildPathSegments(const PathSettings& path) {
     std::vector<compositor::PathSegment> segments;
     segments.reserve(path.edges.size() + path.points.size());
-    for (const PathEdge& edge : path.edges) {
-        const PathPoint* a = path.FindPoint(edge.from);
-        const PathPoint* b = path.FindPoint(edge.to);
-        if (a == nullptr || b == nullptr) {
-            continue;
+    // 評価用の分割。マスクは幅の内側が 1 になるので、粗くても縁は幅でぼける。
+    constexpr int kSamplesPerSpan = 12;
+    for (const PathStrand& strand : BuildPathStrands(path)) {
+        const std::vector<PathCurveSample> samples = SamplePathStrand(path, strand, kSamplesPerSpan);
+        for (size_t i = 0; i + 1 < samples.size(); ++i) {
+            const PathCurveSample& a = samples[i];
+            const PathCurveSample& b = samples[i + 1];
+            compositor::PathSegment segment;
+            segment.ax = a.u;
+            segment.ay = a.v;
+            segment.bx = b.u;
+            segment.by = b.v;
+            segment.widthA = a.widthMeters;
+            segment.widthB = b.widthMeters;
+            segment.featherA = a.featherMeters;
+            segment.featherB = b.featherMeters;
+            segment.intensityA = a.intensity;
+            segment.intensityB = b.intensity;
+            segments.push_back(segment);
         }
-        compositor::PathSegment segment;
-        segment.ax = a->u;
-        segment.ay = a->v;
-        segment.bx = b->u;
-        segment.by = b->v;
-        segment.widthA = a->widthMeters;
-        segment.widthB = b->widthMeters;
-        segment.featherA = a->featherMeters;
-        segment.featherB = b->featherMeters;
-        segment.intensityA = a->intensity;
-        segment.intensityB = b->intensity;
-        segments.push_back(segment);
     }
     // 孤立した点は円として出す（長さ 0 の線分）。
     for (const PathPoint& point : path.points) {

@@ -33,10 +33,43 @@ struct PathPoint {
     float heightOffsetMeters = 0.0f;
 };
 
+// 鎖（分岐から分岐までのエッジの並び）をどう描くか。エッジに持ち、鎖を選んだときに
+// まとめて読み書きする（鎖は導出したものなので、性質の置き場はエッジ）。
+//
+// **曲線は点を通らない。** 置いた点は制御点で、折れ線（ガイド）の内側を回る。
+// Catmull-Rom のように点を貫く形ではない。
+enum class PathCurve : uint32_t {
+    Line = 0,       // 折れ線そのもの
+    Quadratic = 1,  // 2 次ベジェの連結。角ごとに丸め、両端の点だけ通る（C1）
+    Cubic = 2,      // 3 次 B スプライン。さらに滑らか（C2）だが折れ線からより離れる
+};
+
 struct PathEdge {
     PathElementId id = 0;
     PathElementId from = 0;
     PathElementId to = 0;
+    PathCurve curve = PathCurve::Line;
+    // どれだけ角を取るか（0〜1）。0 で折れ線のまま、1 で最大（2 次なら線分の中点まで）。
+    float rounding = 1.0f;
+};
+
+// 鎖。エッジが 2 本だけ付いた点を通り、それ以外の点（端 / 分岐 / 交差）で止まる。
+// 「A の途中に B が乗る」という形は無く、支流を繋いだ時点で本流の鎖はそこで割れる。
+// 導出するものなので保存しない。
+struct PathStrand {
+    std::vector<PathElementId> points;  // 並んだ点（両端を含む）。閉じた輪なら末尾 = 先頭
+    std::vector<PathElementId> edges;   // points[i] と points[i+1] を結ぶエッジ
+    bool closed = false;                // 分岐の無い輪
+};
+
+// 曲線を割った標本 1 つ。座標は正規化 UV、値は制御点の値を道のりで補間したもの。
+struct PathCurveSample {
+    float u = 0.0f;
+    float v = 0.0f;
+    float widthMeters = 0.0f;
+    float featherMeters = 0.0f;
+    float intensity = 1.0f;
+    float heightOffsetMeters = 0.0f;
 };
 
 struct PathSettings {
@@ -90,8 +123,23 @@ bool ReversePathEdge(PathSettings& path, PathElementId edgeId);
 // 点に付いているエッジを全部反転する。
 bool ReversePathEdgesAt(PathSettings& path, PathElementId pointId);
 
+// --- 鎖と曲線 -------------------------------------------------------------
+// 鎖を導出する。すべてのエッジがちょうど 1 つの鎖に入る。
+std::vector<PathStrand> BuildPathStrands(const PathSettings& path);
+// エッジが属する鎖。無ければ nullptr。
+const PathStrand* FindStrandOfEdge(const std::vector<PathStrand>& strands, PathElementId edgeId);
+// 鎖の曲線の種類と丸め（先頭のエッジの値）。mixed はエッジごとに値が違うとき真。
+PathCurve StrandCurve(const PathSettings& path, const PathStrand& strand, float* outRounding,
+                      bool* outMixed);
+// 鎖を折れ線（曲線なら細かく割ったもの）にする。samplesPerSpan は制御点の区間ごとの標本数。
+// 直線の鎖は制御点そのものを返す。
+std::vector<PathCurveSample> SamplePathStrand(const PathSettings& path, const PathStrand& strand,
+                                              int samplesPerSpan);
+// 鎖のエッジを全部反転する。
+bool ReversePathStrand(PathSettings& path, const PathStrand& strand);
+
 // 評価用の線分列。座標は正規化 UV のまま（実寸への換算は評価器が一辺の長さで行う）。
-// エッジの無い孤立した点は、長さ 0 の線分（円）として出す。
+// 曲線の鎖は細かい直線に割って出す。エッジの無い孤立した点は、長さ 0 の線分（円）として出す。
 std::vector<compositor::PathSegment> BuildPathSegments(const PathSettings& path);
 
 }  // namespace tg::graph

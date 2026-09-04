@@ -4,7 +4,9 @@
 // の 3 つを軸にする。設計の経緯は docs/design/node-graph.md の「パス」。
 //
 //   点をクリック            選択する（伸ばす起点になる）
-//   エッジをクリック        選択する（Delete で消す、R で向きを反転）
+//   エッジをクリック        鎖（分岐から分岐まで）を選ぶ。向きと曲線の種類はここで変える。
+//                           エッジ 1 本の選択は無い（曲線も向きも鎖の性質で、1 本だけ変えると
+//                           鎖の中で食い違う。1 本だけ消す / 切り離すは右クリックのメニュー）
 //   空をクリック            選択を外す
 //   Ctrl + 空をクリック     選択した点から新しい点へ線を伸ばす（選択が無ければ新しい線の始点）
 //   Ctrl + 点をクリック     選択した点とその点を繋ぐ
@@ -13,7 +15,7 @@
 //   点をドラッグ            地形の表面に沿って動かす。他の点や線に重ねると吸着して結合
 //   右クリック              点 / エッジ / 空のメニュー（分離、削除、反転、挿入…）
 //   Delete                  選択した点（またはエッジ）を消す
-//   R                       選択した点に付くエッジ（または選択したエッジ）の向きを反転
+//   R                       選択した点に付くエッジ（または選択した鎖）の向きを反転
 //   Esc                     選択を外す
 //   Shift                   吸着しない
 //
@@ -93,9 +95,17 @@ struct PathScreenEdge {
     std::vector<bool> visible;
 };
 
+// 鎖の曲線（曲線の鎖だけ）。ガイドの折れ線とは別に、本線として描く。
+struct PathScreenCurve {
+    std::vector<ImVec2> polyline;
+    std::vector<bool> visible;
+};
+
 struct PathScreenCache {
     std::vector<PathScreenPoint> points;
     std::vector<PathScreenEdge> edges;
+    std::vector<graph::PathStrand> strands;
+    std::vector<PathScreenCurve> curves;  // strands と同じ並び。直線の鎖は空
 
     const PathScreenPoint* Find(graph::PathElementId id) const {
         for (const PathScreenPoint& point : points) {
@@ -148,6 +158,23 @@ PathScreenCache BuildPathScreenCache(const graph::PathSettings& path, const XMMA
             screenEdge.visible.push_back(projected.visible);
         }
         cache.edges.push_back(std::move(screenEdge));
+    }
+    // 曲線の鎖。制御点の区間ごとに割り、各標本を地形の高さで描く。
+    cache.strands = graph::BuildPathStrands(path);
+    cache.curves.resize(cache.strands.size());
+    for (size_t i = 0; i < cache.strands.size(); ++i) {
+        if (graph::StrandCurve(path, cache.strands[i], nullptr, nullptr) == graph::PathCurve::Line) {
+            continue;
+        }
+        constexpr int kSamplesPerSpan = 12;
+        for (const graph::PathCurveSample& sample :
+             graph::SamplePathStrand(path, cache.strands[i], kSamplesPerSpan)) {
+            const ProjectedPoint projected = ProjectToViewport(
+                viewProjection, worldOf(sample.u, sample.v, sample.heightOffsetMeters),
+                viewportMin, size);
+            cache.curves[i].polyline.push_back(projected.screen);
+            cache.curves[i].visible.push_back(projected.visible);
+        }
     }
     return cache;
 }
@@ -329,9 +356,12 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
     std::erase_if(state.selected, [&path](graph::PathElementId id) {
         return path.FindPoint(id) == nullptr;
     });
-    if (state.selectedEdge != 0 && path.FindEdge(state.selectedEdge) == nullptr) {
-        state.selectedEdge = 0;
-    }
+    std::erase_if(state.selectedEdges, [&path](graph::PathElementId id) {
+        return path.FindEdge(id) == nullptr;
+    });
+    std::erase_if(state.selectedStrandInterior, [&path](graph::PathElementId id) {
+        return path.FindPoint(id) == nullptr;
+    });
     if (state.dragPoint != 0 && path.FindPoint(state.dragPoint) == nullptr) {
         state.dragPoint = 0;
         state.dragging = false;
@@ -368,14 +398,27 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
     // 点の選択とエッジの選択は排他。
     const auto selectOnly = [&](graph::PathElementId id) {
         state.selected.clear();
-        state.selectedEdge = 0;
+        state.selectedEdges.clear();
+        state.selectedStrandInterior.clear();
         if (id != 0) {
             state.selected.push_back(id);
         }
     };
-    const auto selectEdge = [&](graph::PathElementId edgeId) {
+    // 鎖を丸ごと選ぶ。内側の点も覚えておき、Delete で一緒に消す。
+    const auto selectStrand = [&](graph::PathElementId edgeId) {
         state.selected.clear();
-        state.selectedEdge = edgeId;
+        state.selectedEdges.clear();
+        state.selectedStrandInterior.clear();
+        const graph::PathStrand* strand = graph::FindStrandOfEdge(cache.strands, edgeId);
+        if (strand == nullptr) {
+            state.selectedEdges.push_back(edgeId);
+            return;
+        }
+        state.selectedEdges = strand->edges;
+        state.selectedStrandInterior.clear();
+        for (size_t i = 1; i + 1 < strand->points.size(); ++i) {
+            state.selectedStrandInterior.push_back(strand->points[i]);
+        }
     };
     // 伸ばす起点。選択している点（複数なら先頭）。
     const graph::PathElementId anchor = state.selected.empty() ? 0 : state.selected.front();
@@ -444,8 +487,8 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
             state.dragPoint = state.hoverPoint;
             state.dragging = true;
         } else if (state.hoverEdge != 0) {
-            // エッジを選ぶ。挿入は Ctrl + クリック。
-            selectEdge(state.hoverEdge);
+            // エッジを選ぶ = その鎖を選ぶ。挿入は Ctrl + クリック。
+            selectStrand(state.hoverEdge);
         } else {
             // 空の所。選択を外す（次の Ctrl + クリックは新しい線の始点）。
             selectOnly(0);
@@ -508,8 +551,16 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
             selectOnly(0);
         }
         if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
-            if (state.selectedEdge != 0) {
-                changed |= graph::DeletePathEdge(path, state.selectedEdge);
+            if (!state.selectedEdges.empty()) {
+                for (const graph::PathElementId id : state.selectedEdges) {
+                    changed |= graph::DeletePathEdge(path, id);
+                }
+                // 鎖の内側の点は、エッジが無くなれば一緒に消す。
+                for (const graph::PathElementId id : state.selectedStrandInterior) {
+                    if (path.EdgeCount(id) == 0) {
+                        changed |= graph::DeletePathPoint(path, id);
+                    }
+                }
                 selectOnly(0);
             } else if (!state.selected.empty()) {
                 for (const graph::PathElementId id : state.selected) {
@@ -519,8 +570,8 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
             }
         }
         if (ImGui::IsKeyPressed(ImGuiKey_R, false) && !io.KeyCtrl) {
-            if (state.selectedEdge != 0) {
-                changed |= graph::ReversePathEdge(path, state.selectedEdge);
+            for (const graph::PathElementId id : state.selectedEdges) {
+                changed |= graph::ReversePathEdge(path, id);
             }
             for (const graph::PathElementId id : state.selected) {
                 changed |= graph::ReversePathEdgesAt(path, id);
@@ -539,7 +590,7 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
         if (state.menuPoint != 0) {
             selectOnly(state.menuPoint);
         } else if (state.menuEdge != 0) {
-            selectEdge(state.menuEdge);
+            selectStrand(state.menuEdge);
         }
         ImGui::OpenPopup("##pathContextMenu");
     }
@@ -592,10 +643,13 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
                     }
                 }
             }
-            if (ImGui::MenuItem("向きを反転")) {
-                changed |= graph::ReversePathEdge(path, edgeId);
+            // 向きは鎖の性質。1 本だけ反転すると鎖の中で食い違うので、鎖ごと反転する。
+            if (ImGui::MenuItem("鎖の向きを反転")) {
+                for (const graph::PathElementId id : state.selectedEdges) {
+                    changed |= graph::ReversePathEdge(path, id);
+                }
             }
-            if (ImGui::MenuItem("削除")) {
+            if (ImGui::MenuItem("このエッジを消す（ここで切る）")) {
                 changed |= graph::DeletePathEdge(path, edgeId);
                 selectOnly(0);
             }
@@ -664,10 +718,19 @@ void Application::DrawPathOverlay(const graph::Node& node, const ImVec2& viewpor
     for (const PathScreenEdge& edge : cache.edges) {
         const bool hovered = (edge.id == state.hoverEdge && !state.dragging);
         const bool snapping = (edge.id == state.snapEdge);
-        const bool selectedEdge = (edge.id == state.selectedEdge);
+        const bool selectedEdge =
+            std::find(state.selectedEdges.begin(), state.selectedEdges.end(), edge.id) !=
+            state.selectedEdges.end();
+        // 曲線の鎖のエッジはガイド。薄く細く描き、本線は曲線のほうに任せる。
+        const graph::PathStrand* strand = graph::FindStrandOfEdge(cache.strands, edge.id);
+        const bool guide =
+            strand != nullptr &&
+            graph::StrandCurve(path, *strand, nullptr, nullptr) != graph::PathCurve::Line;
+        const ImU32 baseColor = guide ? IM_COL32(120, 200, 240, 110) : lineColor;
         const ImU32 color = snapping ? snapColor
-                                     : ((hovered || selectedEdge) ? hoverColor : lineColor);
-        const float width = selectedEdge ? lineWidth + ui::Scaled(1.5f) : lineWidth;
+                                     : ((hovered || selectedEdge) ? hoverColor : baseColor);
+        const float width = selectedEdge ? lineWidth + ui::Scaled(1.5f)
+                                         : (guide ? ui::Scaled(1.0f) : lineWidth);
         for (size_t i = 0; i + 1 < edge.polyline.size(); ++i) {
             if (!edge.visible[i] || !edge.visible[i + 1]) {
                 continue;
@@ -696,6 +759,28 @@ void Application::DrawPathOverlay(const graph::Node& node, const ImVec2& viewpor
                     tip, ImVec2(base.x + side.x * halfWidth, base.y + side.y * halfWidth),
                     ImVec2(base.x - side.x * halfWidth, base.y - side.y * halfWidth), color);
             }
+        }
+    }
+
+    // --- 曲線（本線） -----------------------------------------------------------
+    for (size_t s = 0; s < cache.curves.size(); ++s) {
+        const PathScreenCurve& curve = cache.curves[s];
+        const graph::PathStrand& strand = cache.strands[s];
+        // 鎖が選ばれていれば本線も明るく太く。
+        const bool selectedStrand =
+            !strand.edges.empty() &&
+            std::find(state.selectedEdges.begin(), state.selectedEdges.end(),
+                      strand.edges.front()) != state.selectedEdges.end() &&
+            state.selectedEdges.size() == strand.edges.size();
+        const ImU32 color = selectedStrand ? hoverColor : lineColor;
+        const float width = selectedStrand ? lineWidth + ui::Scaled(1.5f) : lineWidth;
+        for (size_t i = 0; i + 1 < curve.polyline.size(); ++i) {
+            if (!curve.visible[i] || !curve.visible[i + 1]) {
+                continue;
+            }
+            drawList->AddLine(curve.polyline[i], curve.polyline[i + 1], lineShadow,
+                              width + ui::Scaled(2.0f));
+            drawList->AddLine(curve.polyline[i], curve.polyline[i + 1], color, width);
         }
     }
 
@@ -794,10 +879,11 @@ void Application::DrawPathOverlay(const graph::Node& node, const ImVec2& viewpor
         }
     } else if (state.dragging) {
         rows = {{"点 / 線に重ねる", "繋ぐ"}, {"Shift", "吸着しない"}};
-    } else if (state.selectedEdge != 0) {
-        rows = {{"Ctrl + 線をクリック", "点を挿入"},
-                {"右クリック", "挿入 / 切り離し / 反転 / 削除"},
-                {"Delete / R", "消す / 向きを反転"},
+    } else if (!state.selectedEdges.empty()) {
+        rows = {{"プロパティ", "曲線の種類 / 丸め / 向き"},
+                {"Ctrl + 線をクリック", "点を挿入"},
+                {"右クリック", "挿入 / 切り離し / ここで切る"},
+                {"Delete / R", "鎖を消す / 向きを反転"},
                 {"Esc", "選択を外す"}};
     } else if (!state.selected.empty()) {
         rows = {{"Ctrl + クリック", "伸ばす（点や線の上で繋ぐ）"},
@@ -806,7 +892,7 @@ void Application::DrawPathOverlay(const graph::Node& node, const ImVec2& viewpor
                 {"Delete / R", "消す / 向きを反転"},
                 {"Esc", "選択を外す"}};
     } else {
-        rows = {{"クリック", "点や線を選ぶ"},
+        rows = {{"クリック", "点や線（鎖）を選ぶ"},
                 {"Ctrl + クリック", "線を始める"},
                 {"Ctrl + 線をクリック", "点を挿入"},
                 {"Alt + ドラッグ", "視点"}};
@@ -921,22 +1007,71 @@ bool Application::DrawPathSettings(graph::Node& node) {
         }
     }
 
-    if (m_pathEdit.nodeId == node.id && m_pathEdit.selectedEdge != 0) {
-        if (const graph::PathEdge* edge = path.FindEdge(m_pathEdit.selectedEdge)) {
-            ui::SectionHeader("選択したエッジ");
+    if (m_pathEdit.nodeId == node.id && !m_pathEdit.selectedEdges.empty()) {
+        std::vector<graph::PathEdge*> edges;
+        for (const graph::PathElementId id : m_pathEdit.selectedEdges) {
+            for (graph::PathEdge& edge : path.edges) {
+                if (edge.id == id) {
+                    edges.push_back(&edge);
+                }
+            }
+        }
+        if (!edges.empty()) {
+            ui::SectionHeader("選択した鎖");
+            // 曲線の種類と丸め。鎖なら全エッジに同じ値を入れる（表示は先頭。混在なら注記）。
+            graph::PathCurve curve = edges.front()->curve;
+            float rounding = edges.front()->rounding;
+            bool mixed = false;
+            for (const graph::PathEdge* edge : edges) {
+                if (edge->curve != curve || std::abs(edge->rounding - rounding) > 1e-4f) {
+                    mixed = true;
+                }
+            }
             if (ui::BeginPropertyTable("graphPathEdgeRows")) {
-                ui::PropertyValue("向き", "点 %d → 点 %d", edge->from, edge->to);
+                ui::PropertyValue("エッジ", "%zu 本（点 %d → 点 %d）", edges.size(),
+                                  edges.front()->from, edges.back()->to);
+                static const char* const kCurveLabels[] = {"直線", "2 次ベジェ", "3 次 B スプライン"};
+                int curveIndex = static_cast<int>(curve);
+                bool curveChanged = ui::PropertyCombo(
+                    "曲線", &curveIndex, kCurveLabels, IM_ARRAYSIZE(kCurveLabels), 0,
+                    "折れ線をガイドにして、その内側に描く曲線。点は通らない。"
+                    "2 次は角ごとに丸めて両端だけ通る。3 次はさらに滑らかだが折れ線からより離れる");
+                curve = static_cast<graph::PathCurve>(curveIndex);
+                curveChanged |= ui::PropertyFloat(
+                    "丸め", &rounding, 0.0f, 1.0f, 1.0f,
+                    "どれだけ角を取るか。0 で折れ線のまま、1 で最大（2 次なら線分の中点まで）",
+                    "%.2f");
+                if (curveChanged) {
+                    for (graph::PathEdge* edge : edges) {
+                        edge->curve = curve;
+                        edge->rounding = rounding;
+                    }
+                    changed = true;
+                }
                 ui::PropertyLabelEmpty("pathEdgeButtons");
-                if (ui::Button("反転")) {
-                    changed |= graph::ReversePathEdge(path, edge->id);
+                if (ui::Button("向きを反転")) {
+                    for (graph::PathEdge* edge : edges) {
+                        changed |= graph::ReversePathEdge(path, edge->id);
+                    }
                 }
                 ImGui::SameLine();
                 if (ui::Button("削除")) {
-                    changed |= graph::DeletePathEdge(path, edge->id);
-                    m_pathEdit.selectedEdge = 0;
+                    for (const graph::PathElementId id : m_pathEdit.selectedEdges) {
+                        changed |= graph::DeletePathEdge(path, id);
+                    }
+                    for (const graph::PathElementId id : m_pathEdit.selectedStrandInterior) {
+                        if (path.EdgeCount(id) == 0) {
+                            changed |= graph::DeletePathPoint(path, id);
+                        }
+                    }
+                    m_pathEdit.selectedEdges.clear();
+                    m_pathEdit.selectedStrandInterior.clear();
                 }
                 ui::PropertyEnd();
                 ui::EndPropertyTable();
+            }
+            if (mixed) {
+                ui::HintText("鎖の中で曲線の種類か丸めが混在している。変えると全部に入る");
             }
         }
     }

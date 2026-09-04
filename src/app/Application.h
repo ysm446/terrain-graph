@@ -304,8 +304,11 @@ private:
         // 選択している点。プロパティの編集と Delete の対象で、**伸ばす起点**でもある
         // （Ctrl + クリックは先頭の点から伸びる）。
         std::vector<graph::PathElementId> selected;
-        // 選択しているエッジ。点の選択とは排他（Delete の意味を曖昧にしないため）。
-        graph::PathElementId selectedEdge = 0;
+        // 選択しているエッジ。1 本（クリック）か鎖（ダブルクリック）。
+        // 点の選択とは排他（Delete の意味を曖昧にしないため）。
+        std::vector<graph::PathElementId> selectedEdges;
+        // 鎖を選んだときの、その内側の点（両端を除く）。Delete で一緒に消す。
+        std::vector<graph::PathElementId> selectedStrandInterior;
         // ホバー中の点 / エッジ（エッジは最寄りの位置 t も）。
         graph::PathElementId hoverPoint = 0;
         graph::PathElementId hoverEdge = 0;
