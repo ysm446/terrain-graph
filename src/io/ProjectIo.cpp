@@ -250,6 +250,8 @@ json WriteMaterialBody(const compositor::MaterialAsset& asset, const TextureWrit
     json node;
     node["name"] = asset.name;
     node["baseColorTint"] = WriteFloat3(asset.baseColorTint);
+    node["hueShift"] = asset.hueShiftDegrees;
+    node["saturation"] = asset.saturation;
     node["roughness"] = asset.roughnessValue;
     node["metallic"] = asset.metallicValue;
     node["ambientOcclusion"] = asset.ambientOcclusionValue;
@@ -272,6 +274,8 @@ void ReadMaterialBody(const json& node, compositor::MaterialAsset& asset,
     const compositor::MaterialAsset defaults;
     asset.name = ReadString(node, "name", defaults.name);
     asset.baseColorTint = ReadFloat3(node, "baseColorTint", defaults.baseColorTint);
+    asset.hueShiftDegrees = ReadFloat(node, "hueShift", defaults.hueShiftDegrees);
+    asset.saturation = ReadFloat(node, "saturation", defaults.saturation);
     asset.roughnessValue = ReadFloat(node, "roughness", defaults.roughnessValue);
     asset.metallicValue = ReadFloat(node, "metallic", defaults.metallicValue);
     asset.ambientOcclusionValue =

@@ -157,4 +157,33 @@ float DownsampleHeight(Texture2D<float> source, uint2 cell, uint gridResolution)
     return sum / float(max(extent.x * extent.y, 1));
 }
 
+// ベースカラーの色相と彩度を調整する。**合成もサムネイルも球のプレビューも
+// 必ずこの関数を通すこと。** 別々に書くと、プレビューと本番で色が違うという
+// 一番たちの悪い壊れ方をする。
+//
+// **リニア空間のまま扱う。** sRGB へ往復する HSV 変換を合成の途中へ挟むと、
+// 暗部の色が壊れる（このアプリの合成はリニアで回している）。
+//   色相: 灰色の軸（1,1,1）まわりの回転。灰色は灰色のまま残る
+//   彩度: 輝度（Rec.709）へ寄せる / 離す。1 でそのまま、0 で無彩色
+//
+// 回転はわずかに負の成分を作ることがあるので、最後に 0 で止める。
+float3 AdjustBaseColor(float3 color, float hueRadians, float saturation)
+{
+    if (hueRadians != 0.0f)
+    {
+        const float3 axis = float3(0.57735027f, 0.57735027f, 0.57735027f);  // 1 / sqrt(3)
+        const float cosHue = cos(hueRadians);
+        const float sinHue = sin(hueRadians);
+        // ロドリゲスの回転。灰色の軸まわりに回すので、明るさはほぼ保たれる。
+        color = color * cosHue + cross(axis, color) * sinHue +
+                axis * dot(axis, color) * (1.0f - cosHue);
+    }
+    if (saturation != 1.0f)
+    {
+        const float luma = dot(color, float3(0.2126f, 0.7152f, 0.0722f));
+        color = lerp(float3(luma, luma, luma), color, saturation);
+    }
+    return max(color, 0.0f);
+}
+
 #endif  // TG_COMPOSITE_COMMON_HLSLI

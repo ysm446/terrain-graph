@@ -17,7 +17,10 @@ class ShaderCompiler;
 //   s0-s3 : スタティックサンプラ
 //
 // これにより、パスごとにルートシグネチャを作る必要がなくなる。
-inline constexpr uint32_t kRootConstantCount = 16;
+// **b0 のルート定数の dword 数。** 16 では足りなくなったので 20
+// （サムネイルの定数が 4 行 + 色の調整で 1 行になった）。
+// ルートシグネチャの予算は 64 dword で、ここと CBV 2 本しか使っていない。
+inline constexpr uint32_t kRootConstantCount = 20;
 
 // 頂点入力レイアウトの種類。頂点構造体は数が限られるので列挙で持つ。
 enum class VertexLayout {

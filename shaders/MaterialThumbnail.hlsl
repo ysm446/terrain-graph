@@ -32,6 +32,10 @@ struct ThumbnailConstants
     float uvScale;
     // スカラーのマップのチャンネル指定。4bit ずつ TG_CHANNEL_SLOT_* の順。
     uint mapChannels;
+
+    // ベースカラーの調整（ティントを掛けたあとに効く）。合成と同じ値を渡すこと。
+    float2 colorAdjust;  // 色相（ラジアン）, 彩度
+    float2 pad0;
 };
 
 ConstantBuffer<ThumbnailConstants> g_thumbnail : register(b0);
@@ -93,6 +97,7 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     {
         baseColor *= SampleMap(g_thumbnail.baseColorIndex, uv).rgb;
     }
+    baseColor = AdjustBaseColor(baseColor, g_thumbnail.colorAdjust.x, g_thumbnail.colorAdjust.y);
 
     float roughness = g_thumbnail.roughnessValue;
     if (g_thumbnail.roughnessIndex != kInvalidTextureIndex)

@@ -51,6 +51,10 @@ struct SphereConstants
     float backgroundMip;
     float exposure;
     uint tonemapMode;
+
+    // ベースカラーの調整（ティントを掛けたあとに効く）。合成と同じ値を渡すこと。
+    float2 colorAdjust;  // 色相（ラジアン）, 彩度
+    float2 pad0;
 };
 
 ConstantBuffer<SphereConstants> g_sphere : register(b1);
@@ -190,6 +194,7 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
                                MapLod(g_sphere.baseColorIndex, deltaX, deltaY))
                          .rgb;
     }
+    baseColor = AdjustBaseColor(baseColor, g_sphere.colorAdjust.x, g_sphere.colorAdjust.y);
 
     float roughness = g_sphere.roughnessValue;
     if (g_sphere.roughnessIndex != kInvalidTextureIndex)

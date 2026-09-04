@@ -1,7 +1,7 @@
 # rhi — DirectX 12 ラッパの設計
 
 作成日時: 2026-08-31 12:09
-更新日時: 2026-09-04 17:10
+更新日時: 2026-09-05 02:00
 
 `src/rhi/` の設計方針。実装は M1 で確定した。
 
@@ -26,7 +26,7 @@ RWTexture2D<float4> output = ResourceDescriptorHeap[g_layer.outputIndices.x];
 
 | スロット | 内容 |
 | --- | --- |
-| `b0` | ルート定数 16 dword（テクスチャのインデックスや小さなパラメータ） |
+| `b0` | ルート定数 20 dword（テクスチャのインデックスや小さなパラメータ） |
 | `b1` | ルート CBV（大きめの定数バッファ） |
 | `s0` | スタティックサンプラ point clamp |
 | `s1` | スタティックサンプラ linear clamp |
@@ -35,6 +35,10 @@ RWTexture2D<float4> output = ResourceDescriptorHeap[g_layer.outputIndices.x];
 | `s4` | スタティックサンプラ linear（U ラップ / V クランプ、equirect 用） |
 
 フラグに `CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED` と `SAMPLER_HEAP_DIRECTLY_INDEXED` を立てる。
+
+**ルート定数の枠（`kRootConstantCount`）は必要になったら増やしてよい。**
+ルートシグネチャの予算は 64 dword で、いま使っているのはここと CBV 2 本だけ。
+`float4` の行に切り上げて数えること（HLSL の定数バッファの詰め方に従う）。
 
 **`ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT` も必須。**
 入力レイアウトを使うグラフィックス PSO は、このフラグが無いと

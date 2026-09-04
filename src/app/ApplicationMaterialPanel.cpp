@@ -181,6 +181,14 @@ bool Application::DrawMaterialProperties(compositor::MaterialAsset& asset) {
         changed |= ui::PropertyColorLinear(
             "ティント", &asset.baseColorTint.x, &kDefaultAsset.baseColorTint.x,
             "ベースカラーのマップに掛ける色。白ならマップそのまま。マップが無ければこの色になる");
+        // **ベースカラーだけの調整。** ティントでは彩度を上げられず色相も回せないので、
+        // 素材を馴染ませる操作をここに置く。掛ける色（ティント）のあとに効く。
+        changed |= ui::PropertyFloat(
+            "色相", &asset.hueShiftDegrees, -180.0f, 180.0f, kDefaultAsset.hueShiftDegrees,
+            "ベースカラーの色みを回す（度）。灰色は灰色のまま残る", "%.0f 度");
+        changed |= ui::PropertyFloat("彩度", &asset.saturation, 0.0f, 2.0f,
+                                     kDefaultAsset.saturation,
+                                     "ベースカラーの鮮やかさ。0 で白黒、1 でそのまま", "%.2f");
         changed |= ui::PropertyFloat("ラフネス", &asset.roughnessValue, 0.0f, 1.0f,
                                      kDefaultAsset.roughnessValue, "マップが無いときの値",
                                      "%.2f");

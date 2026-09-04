@@ -40,6 +40,10 @@ struct ThumbnailConstants {
     float aoValue;
     float uvScale;
     uint32_t mapChannels;
+
+    // ベースカラーの調整。**合成と同じ値を渡すこと**（違うとサムネイルと本番で色が変わる）。
+    float colorAdjust[2];  // 色相（ラジアン）, 彩度
+    float pad0[2];
 };
 
 }  // namespace
@@ -218,6 +222,8 @@ bool MaterialLibrary::BuildThumbnail(rhi::Device& device, rhi::PipelineCache& pi
     constants.metallicValue = asset.metallicValue;
     constants.aoValue = asset.ambientOcclusionValue;
     constants.uvScale = kThumbnailUvScale;
+    constants.colorAdjust[0] = asset.hueShiftDegrees * (3.14159265358979f / 180.0f);
+    constants.colorAdjust[1] = asset.saturation;
 
     rhi::GpuTexture& thumbnail = asset.thumbnail;
     const bool executed = device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {

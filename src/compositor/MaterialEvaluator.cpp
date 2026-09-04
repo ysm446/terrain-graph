@@ -63,6 +63,7 @@ struct LayerConstants {
     uint32_t noiseTypes[4];
     uint32_t paintParams[4];
     uint32_t mapChannels[4];
+    float colorAdjust[4];  // 色相（ラジアン）, 彩度, 未使用 x2
 };
 
 // GPU 側の SedimentConstants と一致させること。
@@ -3262,6 +3263,14 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         constants.baseColor[0] = baseColor.x;
         constants.baseColor[1] = baseColor.y;
         constants.baseColor[2] = baseColor.z;
+
+        // 色相 / 彩度は**マテリアルだけ**が持つ（レイヤー側には無い）。
+        // 度で持ち、シェーダへはラジアンで渡す。
+        constants.colorAdjust[0] =
+            (material != nullptr)
+                ? material->hueShiftDegrees * (3.14159265358979f / 180.0f)
+                : 0.0f;
+        constants.colorAdjust[1] = (material != nullptr) ? material->saturation : 1.0f;
 
         constants.surfaceParams[0] =
             (material != nullptr) ? material->roughnessValue : layer.roughness;
