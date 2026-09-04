@@ -103,7 +103,9 @@ private:
     void SyncGraphStack();
     // 選択中のノードを控える / 貼り付ける（Ctrl+C / Ctrl+V）。
     void CopySelectedGraphNodes();
-    void PasteGraphNodes();
+    // 控えたノードを貼る。viewCenter は今のキャンバスの中央（キャンバス座標）で、
+    // 貼った集合の中心をそこへ置く。相対の配置は保つ。
+    void PasteGraphNodes(const ImVec2& viewCenter);
     // ビューポートに出すノードを決める。出力ノードや無効な ID は
     // 「出力ノードのチェーン」（0）に落とす。
     // outputPin は**どの出力を見るか**。0 なら最初の出力（レイヤーなら Result）。
@@ -244,6 +246,10 @@ private:
         graph::NodeSettings settings;
         float posX = 0.0f;
         float posY = 0.0f;
+        // コピーした時点のノードの大きさ。貼るときに集合の中心を出すのに使う
+        // （位置だけだと左上しか分からず、画面中央に寄せると右下へずれる）。
+        float sizeX = 0.0f;
+        float sizeY = 0.0f;
         struct Source {
             int copiedIndex = -1;              // コピーした集合の中の添字
             graph::GraphId externalPin = 0;    // 集合の外なら、その出力ピン

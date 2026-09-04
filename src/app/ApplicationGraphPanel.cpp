@@ -297,6 +297,9 @@ void Application::CopySelectedGraphNodes() {
         entry.settings = node->settings;
         entry.posX = node->posX;
         entry.posY = node->posY;
+        const ImVec2 size = ed::GetNodeSize(ed::NodeId(node->id));
+        entry.sizeX = size.x;
+        entry.sizeY = size.y;
         for (const graph::Pin& pin : node->inputs) {
             GraphClipboardNode::Source source;
             // この入力へ繋がっているリンクの「出力ピン」を覚える。
@@ -328,13 +331,30 @@ void Application::CopySelectedGraphNodes() {
     TG_LOG_INFO("ノードをコピーしました: %zu 個", m_graphClipboard.size());
 }
 
-void Application::PasteGraphNodes() {
+void Application::PasteGraphNodes(const ImVec2& viewCenter) {
     if (m_graphClipboard.empty()) {
         return;
     }
     // 貼るたびに少しずらす。同じ場所に重ねると、貼れたのかどうか分からない。
+    // **4 回で一巡させる。** 増やし続けると、貼るほど画面の中央から遠ざかる。
     ++m_graphPasteCount;
-    const float offset = 28.0f * static_cast<float>(m_graphPasteCount);
+    const float offset = 28.0f * static_cast<float>(m_graphPasteCount % 4);
+
+    // **貼る先は今見えている所**。コピー元が画面の外にあっても、貼ったノードが
+    // どこかへ消えないように、集合の中心をキャンバスの中央へ持ってくる。
+    // 集合の中の相対の配置はそのまま。
+    float minX = m_graphClipboard.front().posX;
+    float minY = m_graphClipboard.front().posY;
+    float maxX = minX;
+    float maxY = minY;
+    for (const GraphClipboardNode& entry : m_graphClipboard) {
+        minX = std::min(minX, entry.posX);
+        minY = std::min(minY, entry.posY);
+        maxX = std::max(maxX, entry.posX + entry.sizeX);
+        maxY = std::max(maxY, entry.posY + entry.sizeY);
+    }
+    const float deltaX = viewCenter.x - (minX + maxX) * 0.5f + offset;
+    const float deltaY = viewCenter.y - (minY + maxY) * 0.5f + offset;
 
     std::vector<graph::GraphId> created(m_graphClipboard.size(), 0);
     for (size_t i = 0; i < m_graphClipboard.size(); ++i) {
@@ -345,8 +365,8 @@ void Application::PasteGraphNodes() {
             continue;
         }
         node->settings = entry.settings;
-        node->posX = entry.posX + offset;
-        node->posY = entry.posY + offset;
+        node->posX = entry.posX + deltaX;
+        node->posY = entry.posY + deltaY;
         node->positionValid = true;
         created[i] = nodeId;
         m_graphNodesToPlace.push_back(nodeId);
@@ -577,7 +597,8 @@ void Application::DrawGraphEditor() {
             CopySelectedGraphNodes();
         }
         if (ImGui::IsKeyPressed(ImGuiKey_V, false)) {
-            PasteGraphNodes();
+            PasteGraphNodes(ed::ScreenToCanvas(ImVec2((canvasMin.x + canvasMax.x) * 0.5f,
+                                                      (canvasMin.y + canvasMax.y) * 0.5f)));
         }
     }
 
