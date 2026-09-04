@@ -138,10 +138,18 @@ inline constexpr uint32_t PackChannel(TextureChannel channel, uint32_t slotIndex
 }
 
 // ノイズの種類。シェーダの TG_NOISE_* と一致させること。
+// **並びを変えないこと。** プロジェクトには名前で保存するが、シェーダへは
+// 数値で渡すので、シェーダの TG_NOISE_* と一致している必要がある。
 enum class NoiseType : uint32_t {
-    Fbm = 0,     // 一般的なフラクタルノイズ
+    Fbm = 0,     // 一般的なフラクタルノイズ（値ノイズ）
     Ridged = 1,  // 尾根状。稜線や割れ目に向く
     Worley = 2,  // セル状。石畳や砂利に向く
+    // 勾配ノイズ（Perlin）。値ノイズより滑らかで、方向のあるうねりになる。
+    Perlin = 3,
+    // 雲状（billow）。勾配ノイズの絶対値。丸い塊が寄り集まった見た目。
+    Billow = 4,
+    // 割れ目（Worley の F2 − F1）。セルの境目が明るくなる。
+    Cracks = 5,
 };
 
 // フラクタルノイズのパラメータ。ハイトとマスクで共通に使う。

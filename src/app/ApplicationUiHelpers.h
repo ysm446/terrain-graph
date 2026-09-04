@@ -194,7 +194,8 @@ inline const renderer::MaterialSettings kDefaultMaterial;
 inline const renderer::CameraState kDefaultCamera;
 inline const renderer::SkySettings kDefaultSky;
 
-inline const char* const kNoiseTypeLabels[] = {"fBm", "尾根状", "セル状"};
+inline const char* const kNoiseTypeLabels[] = {"fBm",    "尾根状", "セル状",
+                                              "Perlin", "雲状",   "割れ目"};
 inline const char* const kValueSourceLabels[] = {"定数", "ノイズ", "テクスチャ"};
 // **「ノード」は選ばせない。** グラフで Mask 入力へ繋ぐと自動でそれになる。
 inline const char* const kMaskSourceLabels[] = {

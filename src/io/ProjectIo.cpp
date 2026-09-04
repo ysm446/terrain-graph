@@ -140,7 +140,8 @@ DirectX::XMFLOAT3 ReadFloat3(const json& node, const char* key,
 
 const char* const kTextureChannelNames[] = {"r", "g", "b", "a"};
 const char* const kValueSourceNames[] = {"constant", "noise", "texture"};
-const char* const kNoiseTypeNames[] = {"fbm", "ridged", "worley"};
+const char* const kNoiseTypeNames[] = {"fbm",    "ridged", "worley",
+                                      "perlin", "billow", "cracks"};
 // マスクのソース。`node` はグラフのマスクノードの結果を指す
 // （どのノードかはグラフの繋ぎ方から決まるので、ここには書かない）。
 const char* const kMaskSourceNames[] = {"constant", "noise",     "texture", "height",
