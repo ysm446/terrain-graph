@@ -85,6 +85,11 @@ public:
     // ヒープの Free を直接呼ばないこと（実行中のフレームがまだ参照している）。
     void DeferFree(DescriptorHeap& heap, const DescriptorHandle& handle);
 
+    // ミップごとの UAV / SRV だけを返す。ミップ連鎖を作り終えたら呼ぶこと
+    // （作る間しか使わないのに、1 枚でミップ数 × 2 枠を占め続けるため）。
+    // ミップ 0 の uav も同じハンドルなので一緒に落ちる。
+    void DeferFreeMipViews(GpuTexture& texture);
+
     // テクスチャ / バッファの本体とディスクリプタを、まとめて遅延解放する。
     // GPU 待機は不要。呼び出し後、引数は空になる。
     void DeferRelease(GpuTexture& texture);

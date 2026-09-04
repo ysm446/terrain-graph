@@ -14,8 +14,12 @@
 namespace tg::rhi {
 namespace {
 
-// ImGui のフォントアトラスや将来のテクスチャ用に、余裕をもって確保しておく。
-constexpr uint32_t kSrvHeapCapacity = 1024;
+// **シェーダから触るものは全部ここへ並ぶ**（読み込んだ素材、合成の中間テクスチャ、
+// マスク、サムネイル、環境マップ、ImGui のフォント）。素材 1 枚でも
+// 本体 + sRGB + チャンネル別の 4 本を使うので、1024 では素材を並べただけで届く。
+// ディスクリプタは 1 枠 32 バイト程度（8192 枠で 256KB ほど）、上限は
+// Tier 1 でも 100 万枠なので、ここは余裕を持たせるほうが安い。
+constexpr uint32_t kSrvHeapCapacity = 8192;
 constexpr uint32_t kRtvHeapCapacity = 64;
 constexpr uint32_t kDsvHeapCapacity = 32;
 
@@ -98,6 +102,24 @@ void Device::FinishCapture(bool success) {
 
 void Device::DeferFree(DescriptorHeap& heap, const DescriptorHandle& handle) {
     m_deletionQueue.Push(&heap, handle, m_nextFenceValue);
+}
+
+// ミップごとの UAV / SRV だけを返す。**ミップ連鎖を作り終えたら呼ぶ。**
+// これらはミップを作る間しか使わないのに、テクスチャ 1 枚で
+// ミップ数 × 2 枠（2K で 24 枠）を占め続ける。SRV ヒープの枠は有限なので、
+// 用が済んだら返さないと素材を並べただけで枯渇する。
+void Device::DeferFreeMipViews(GpuTexture& texture) {
+    // uav は mipUavs[0] と同じハンドルなので、返したあとは一緒に落とす
+    // （残すと解放済みのディスクリプタを指したままになる）。
+    for (const DescriptorHandle& handle : texture.mipUavs) {
+        DeferFree(m_srvHeap, handle);
+    }
+    for (const DescriptorHandle& handle : texture.mipSrvs) {
+        DeferFree(m_srvHeap, handle);
+    }
+    texture.mipUavs.clear();
+    texture.mipSrvs.clear();
+    texture.uav = DescriptorHandle{};
 }
 
 void Device::DeferRelease(GpuTexture& texture) {

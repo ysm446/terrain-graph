@@ -272,6 +272,10 @@ TextureId TextureLibrary::Load(rhi::Device& device, rhi::PipelineCache& pipeline
     if (!GenerateMips(device, pipelineCache, entry.texture)) {
         return failCleanup();
     }
+    // **ミップ用のビューはここまでしか使わない。** 以降は本体の SRV（と sRGB /
+    // チャンネル別の SRV）で読むだけなので、ミップ数 × 2 枠を抱えたままにしない。
+    // 2K の素材 1 枚で 24 枠あり、放っておくと素材を並べただけで SRV ヒープが尽きる。
+    device.DeferFreeMipViews(entry.texture);
 
     // リニアなテクスチャは、そのまま一覧へ出すと極端に暗い。表示用に焼き直す。
     if (isFloat) {
