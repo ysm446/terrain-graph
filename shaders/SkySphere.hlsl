@@ -1,15 +1,19 @@
 // 天球プレビューの窓に出す、回せる球。
 //
-// **裏返した球**として描く（一覧のサムネイル SkyThumbnail.hlsl と同じ見え方）。
-// 球の内側に環境が貼られていて、その中から見上げている絵になる。
-// 円板の中心が正面、縁が真横で、地平線は円の中央を横切る。
+// **面を反転した球（天球メッシュ）を外から見た絵**を描く。手前の面は抜けていて、
+// 向こう側の内壁に環境が貼られている――スカイドームを外から覗いた状態にあたる。
+// メッシュは持たず、レイと単位球の交点を解析的に解く（無限に細かい球と同じ見え方）。
 //
-// サムネイルと違うのは 3 つ。
+// **遠近を付ける。** 平行投影の円板だと、どの向きも同じ縮尺で並んで
+// 平たい魚眼に見える。カメラを置くと中央が大きく、縁ほど詰まって球らしくなる。
+//
+// 一覧のサムネイル（SkyThumbnail.hlsl）と違うのは 4 つ。
 //   - **適用中の環境キューブをそのまま引く**（HDRI を読み直さない）。毎フレーム描ける。
 //   - 向き（ヨー / ピッチ）を回せる。
+//   - 寄れる（カメラが球へ近づく）。
 //   - 露出とトーンマップはビューポートに合わせる（サムネイルは固定値）。
 //
-// **円の外はアルファ 0 で抜く。** 置いた先の背景色に重ねてもらう（サムネイルと同じ）。
+// **球の外はアルファ 0 で抜く。** 置いた先の背景色に重ねてもらう（サムネイルと同じ）。
 
 #include "EnvCommon.hlsli"
 #include "Tonemap.hlsli"
@@ -23,9 +27,9 @@ struct SkySphereConstants
 
     float exposure;
     uint tonemapMode;
-    // 1 で球が区画いっぱい。大きくすると球がはみ出し、真ん中を大きく見られる。
-    float zoom;
-    float pad0;
+    // カメラから球の中心までの距離（球の半径は 1）。小さいほど寄る。
+    float distance;
+    float tanHalfFov;
 
     // 向き。xy が ヨーの sin / cos、zw が ピッチの sin / cos。
     // 三角関数は CPU 側で済ませる（画素ごとに計算する意味がない）。
@@ -64,33 +68,42 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     RWTexture2D<float4> output = ResourceDescriptorHeap[g_sphere.outputIndex];
 
-    // 出力の中心を原点、半径 1 の円に正規化する。y は上向きにする。
-    const float2 uvCentered =
+    // 画素の中心からレイを飛ばす。カメラは +Z 側に置き、原点（球の中心）を見る。
+    // y は画素座標が下向きなので反転する。
+    const float2 ndc =
         ((float2(dispatchThreadId.xy) + 0.5f) / float(g_sphere.size)) * 2.0f - 1.0f;
-    const float2 disc = float2(uvCentered.x, -uvCentered.y);
-    const float radius = length(disc);
+    const float3 origin = float3(0.0f, 0.0f, g_sphere.distance);
+    const float3 rayDirection =
+        normalize(float3(ndc.x * g_sphere.tanHalfFov, -ndc.y * g_sphere.tanHalfFov, -1.0f));
 
-    // 余白はサムネイルと同じ。寄ると球が枠からはみ出す（円板の半径を広げる）。
-    const float sphereRadius = 0.92f * g_sphere.zoom;
-    const float aa = 1.5f / float(g_sphere.size);
+    // 単位球との交差。**遠いほうの交点**が、向こう側の内壁にあたる
+    // （面を反転した球なので、手前の面は抜けて見えない）。
+    const float b = dot(origin, rayDirection);
+    const float c = dot(origin, origin) - 1.0f;
+    const float discriminant = b * b - c;
 
-    if (radius > sphereRadius + aa || g_sphere.environmentIndex == kInvalidTextureIndex)
+    // 輪郭は解析的にぼかす。球の中心からレイまでの最短距離が 1 で輪郭。
+    // 画素の角幅 × 距離が、球の表面での画素の大きさ。
+    const float distanceToAxis = sqrt(max(dot(origin, origin) - b * b, 0.0f));
+    const float pixelWidth =
+        (2.0f * g_sphere.tanHalfFov / float(g_sphere.size)) * g_sphere.distance;
+    const float coverage = 1.0f - smoothstep(1.0f - pixelWidth, 1.0f + pixelWidth, distanceToAxis);
+
+    if (coverage <= 0.0f || g_sphere.environmentIndex == kInvalidTextureIndex)
     {
         output[dispatchThreadId.xy] = float4(0.0f, 0.0f, 0.0f, 0.0f);
         return;
     }
 
-    // 球の**内側**を見る方向。中心は正面（-Z）の内壁、縁は真横を向く。
-    const float2 spherePoint = disc / sphereRadius;
-    const float depth = sqrt(saturate(1.0f - dot(spherePoint, spherePoint)));
-    const float3 direction = RotateDirection(normalize(float3(spherePoint, -depth)),
-                                             g_sphere.rotation);
+    // 内壁の位置がそのまま、そこに貼られている環境の向き（球の半径は 1）。
+    // 輪郭のぼかしに使う画素は球を外れているので、判別式は 0 で止めて縁の点を使う。
+    const float far = -b + sqrt(max(discriminant, 0.0f));
+    const float3 direction =
+        RotateDirection(normalize(origin + rayDirection * far), g_sphere.rotation);
 
     TextureCube<float4> environment = ResourceDescriptorHeap[g_sphere.environmentIndex];
     const float3 radiance =
         environment.SampleLevel(g_samplerLinearClamp, direction, 0.0f).rgb * g_sphere.intensity;
-
-    const float coverage = 1.0f - smoothstep(sphereRadius - aa, sphereRadius + aa, radius);
 
     output[dispatchThreadId.xy] = float4(
         LinearToSrgb(ApplyTonemap(radiance * g_sphere.exposure, g_sphere.tonemapMode)), coverage);

@@ -21,8 +21,14 @@ constexpr uint32_t kInvalidTextureIndex = 0xFFFFFFFFu;
 
 // 回せる範囲。ピッチは真上・真下でヨーの意味が無くなるので手前で止める。
 constexpr float kMaxPitchDegrees = 89.0f;
-constexpr float kMinZoom = 1.0f;   // 球がちょうど枠に収まる
-constexpr float kMaxZoom = 6.0f;   // 中央を大きく見る
+
+// 画角と、球がちょうど枠に収まる距離。
+// 球（半径 1）の見かけの半径は asin(1 / 距離) なので、画角 40 度（半角 20 度）に対して
+// 3.2 で 18.2 度。サムネイル（半径の 92%）と同じくらいの余白が縁に残る。
+constexpr float kFovYDegrees = 40.0f;
+constexpr float kDefaultDistance = 3.2f;
+constexpr float kMinDistance = 1.15f;  // 内壁に近づく。遠近が強く出る
+constexpr float kMaxDistance = 8.0f;
 
 constexpr float kPi = 3.14159265358979f;
 
@@ -35,8 +41,8 @@ struct SkySphereConstants {
 
     float exposure;
     uint32_t tonemapMode;
-    float zoom;
-    float pad0;
+    float distance;
+    float tanHalfFov;
 
     float rotation[4];  // ヨーの sin / cos、ピッチの sin / cos
 };
@@ -48,22 +54,25 @@ void SkySphere::Destroy(rhi::Device& device) {
 }
 
 void SkySphere::Orbit(float deltaXDegrees, float deltaYDegrees) {
-    // **絵がドラッグに付いてくる向き。** 視線を回す側なので、マテリアルの球
-    // （カメラを回す側）とは符号が逆になるが、手触りは同じになる。
-    m_yawDegrees = std::fmod(m_yawDegrees + deltaXDegrees, 360.0f);
+    // **掴んだ面がドラッグに付いてくる向き。**
+    //
+    // 見えているのは球の**内壁**（向こう側の面）なので、球を右へ回すと
+    // 内壁は左へ動く。素直に足すと「引いた向きと逆へ動く」感触になるため、
+    // 上下左右とも符号を反転して、マウスの下の面がそのまま付いてくるようにする。
+    m_yawDegrees = std::fmod(m_yawDegrees - deltaXDegrees, 360.0f);
     m_pitchDegrees =
-        std::clamp(m_pitchDegrees + deltaYDegrees, -kMaxPitchDegrees, kMaxPitchDegrees);
+        std::clamp(m_pitchDegrees - deltaYDegrees, -kMaxPitchDegrees, kMaxPitchDegrees);
 }
 
 void SkySphere::Zoom(float steps) {
-    // 1 段で 10%。マテリアルの球と同じ効き方にする。
-    m_zoom = std::clamp(m_zoom * std::pow(1.1f, steps), kMinZoom, kMaxZoom);
+    // 1 段で 10% 寄る。マテリアルの球と同じ効き方にする。
+    m_distance = std::clamp(m_distance * std::pow(0.9f, steps), kMinDistance, kMaxDistance);
 }
 
 void SkySphere::ResetView() {
     m_yawDegrees = 0.0f;
     m_pitchDegrees = 0.0f;
-    m_zoom = 1.0f;
+    m_distance = kDefaultDistance;
 }
 
 void SkySphere::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache,
@@ -98,7 +107,8 @@ void SkySphere::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache,
     constants.intensity = iblIntensity;
     constants.exposure = exposure;
     constants.tonemapMode = static_cast<uint32_t>(tonemap);
-    constants.zoom = m_zoom;
+    constants.distance = m_distance;
+    constants.tanHalfFov = std::tan(kFovYDegrees * 0.5f * (kPi / 180.0f));
 
     const float yaw = m_yawDegrees * (kPi / 180.0f);
     const float pitch = m_pitchDegrees * (kPi / 180.0f);
