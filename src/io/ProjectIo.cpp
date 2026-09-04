@@ -463,6 +463,27 @@ compositor::LevelsParams ReadLevels(const json& parent, const char* key) {
     return levels;
 }
 
+json WriteMaskBlur(const compositor::MaskBlurParams& blur) {
+    json node = json::object();
+    node["radius"] = blur.radiusMeters;
+    node["strength"] = blur.strength;
+    node["iterations"] = blur.iterations;
+    return node;
+}
+
+compositor::MaskBlurParams ReadMaskBlur(const json& parent, const char* key) {
+    const compositor::MaskBlurParams defaults;
+    const json* node = FindMember(parent, key);
+    if (node == nullptr || !node->is_object()) {
+        return defaults;
+    }
+    compositor::MaskBlurParams blur;
+    blur.radiusMeters = ReadFloat(*node, "radius", defaults.radiusMeters);
+    blur.strength = ReadFloat(*node, "strength", defaults.strength);
+    blur.iterations = ReadInt(*node, "iterations", defaults.iterations);
+    return blur;
+}
+
 json WriteBlend(const compositor::BlendParams& blend) {
     json node;
     node["mode"] = EnumName(kMaskBlendModeNames, static_cast<uint32_t>(blend.mode));
@@ -1072,6 +1093,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["slope"] = WriteSlope(mask->slope);
             item["curvature"] = WriteCurvature(mask->curvature);
             item["levels"] = WriteLevels(mask->levels);
+            item["blur"] = WriteMaskBlur(mask->blur);
             item["blend"] = WriteBlend(mask->blend);
             item["maskPath"] = WritePathMask(mask->pathMask);
         } else if (const auto* path = std::get_if<graph::PathNodeSettings>(&node.settings)) {
@@ -1203,6 +1225,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                 settings.slope = ReadSlope(item, "slope");
                 settings.curvature = ReadCurvature(item, "curvature");
                 settings.levels = ReadLevels(item, "levels");
+                settings.blur = ReadMaskBlur(item, "blur");
                 settings.blend = ReadBlend(item, "blend");
                 settings.pathMask = ReadPathMask(item, "maskPath");
                 created.settings = std::move(settings);

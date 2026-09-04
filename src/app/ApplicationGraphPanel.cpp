@@ -67,6 +67,8 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
             return ImVec4(0.66f, 0.68f, 0.74f, 1.0f);
         case graph::NodeKind::MaskLevels:
             return ImVec4(0.78f, 0.76f, 0.70f, 1.0f);
+        case graph::NodeKind::MaskBlur:
+            return ImVec4(0.76f, 0.72f, 0.64f, 1.0f);
         case graph::NodeKind::MaskBlend:
             return ImVec4(0.74f, 0.70f, 0.78f, 1.0f);
         case graph::NodeKind::Path:
@@ -762,6 +764,8 @@ void Application::DrawGraphEditor() {
                         "Mask Curvature — 下地の凹凸（尾根 / 谷）をマスクにする");
         addNodeMenuItem(graph::NodeKind::MaskLevels,
                         "Mask Levels — マスクの黒点 / 白点 / ガンマを調整する");
+        addNodeMenuItem(graph::NodeKind::MaskBlur,
+                        "Mask Blur — マスクをぼかして境界をなだらかにする");
         addNodeMenuItem(graph::NodeKind::MaskBlend,
                         "Mask Blend — マスク 2 枚を合成する");
         ImGui::Separator();
@@ -999,6 +1003,11 @@ void Application::DrawGraphPanel() {
                 header = "レベル";
                 hint = "入力のマスクの黒点 / 白点 / ガンマを整える";
                 break;
+            case graph::NodeKind::MaskBlur:
+                header = "ぼかし";
+                hint = "入力のマスクをぼかす。境界のギザギザや、"
+                       "しきい値で二値になったマスクを馴染ませるのに使う";
+                break;
             case graph::NodeKind::MaskBlend:
                 header = "合成";
                 hint = "マスク 2 枚を合成する。片方だけ繋いだときはそれを通す";
@@ -1031,6 +1040,9 @@ void Application::DrawGraphPanel() {
                     break;
                 case graph::NodeKind::MaskLevels:
                     changed |= DrawLevelsRows(mask->levels);
+                    break;
+                case graph::NodeKind::MaskBlur:
+                    changed |= DrawMaskBlurRows(mask->blur);
                     break;
                 case graph::NodeKind::MaskBlend:
                     changed |= DrawBlendRows(mask->blend);

@@ -1,7 +1,7 @@
 # node-graph — ノードグラフの設計
 
 作成日時: 2026-09-02 12:50
-更新日時: 2026-09-04 17:33
+更新日時: 2026-09-05 07:30
 
 `src/graph/` とグラフパネル（`src/app/ApplicationGraphPanel.cpp`）の設計。
 **ノード 1 つずつの役割・ピン・パラメータは
@@ -51,6 +51,7 @@ terrain-editor から移植したのは**仕組み**であって、ノードの�
 | Mask Height | `maskHeight` | Base(入力) / Mask(出力) | `HeightParams`（標高帯） |
 | Mask Slope | `maskSlope` | Base(入力) / Mask(出力) | `SlopeParams`（傾斜） |
 | Mask Levels | `maskLevels` | Mask(入力) / Mask(出力) | `LevelsParams` |
+| Mask Blur | `maskBlur` | Mask(入力) / Mask(出力) | `MaskBlurParams` |
 | Mask Blend | `maskBlend` | Foreground / Background(入力) / Mask(出力) | `BlendParams` |
 | Output | `output` | Material(入力) | なし |
 
@@ -183,7 +184,8 @@ Base 入力の意味は Mask Slope / Mask Curvature と同じ。
 繋いでいないのと同じ扱いになる。判定は `IsLayerMaskSourceKind`。
 
 **探すときは、マスクの木を最後まで辿ること**（`CollectLayerMaskSources`）。
-Mask Levels や Mask Blend を 1 枚挟んだだけで見失うと、次の 3 か所が黙って壊れる。
+Mask Levels / Mask Blur / Mask Blend を 1 枚挟んだだけで見失うと、
+次の 3 か所が黙って壊れる。
 
 | 場所 | 何が起きるか |
 | --- | --- |

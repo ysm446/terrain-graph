@@ -251,6 +251,8 @@ uint64_t HashMaskOpParams(uint64_t seed, const MaskOp& op) {
             return HashBytes(seed, &op.levels, sizeof(op.levels));
         case MaskOpKind::Blend:
             return HashBytes(seed, &op.blend, sizeof(op.blend));
+        case MaskOpKind::Blur:
+            return HashBytes(seed, &op.blur, sizeof(op.blur));
         case MaskOpKind::Sediment:
             return HashBytes(seed, &op.sedimentMask, sizeof(op.sedimentMask));
         case MaskOpKind::Crumbling:
@@ -683,6 +685,11 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
     if (op.kind == MaskOpKind::Path) {
         return ApplyPathMask(device, pipelineCache, commandList, op, stack, target);
     }
+    // ぼかしは近傍を読むので、1 ディスパッチでは書けない（水平 / 垂直に分ける）。
+    if (op.kind == MaskOpKind::Blur) {
+        return ApplyMaskBlur(device, pipelineCache, commandList, op, stack,
+                             m_maskOpResolutions[index], target);
+    }
 
     const wchar_t* entry = L"CsImage";
     switch (op.kind) {
@@ -1056,6 +1063,105 @@ void MaterialEvaluator::CollectHeightfieldReadback() {
     }
     const D3D12_RANGE writtenRange = {0, 0};
     m_heightfieldReadback.resource->Unmap(0, &writtenRange);
+}
+
+// マスクをぼかす（terrain-editor の Mask Blur の移植）。
+//
+//   種入れ: 入力のマスクを結果へ写す
+//   反復 × { 水平: 結果 → 作業用 / 垂直: 作業用 → 結果（強さで混ぜる） }
+//
+// **あちらは箱ぼかしの繰り返しだが、こちらは分離型ガウス。**
+// ハイトのぼかし（ApplyHeightBlur）と同じ「半径（m）/ 強さ / 反復」で
+// 同じ効き方をするほうが、2 つのぼかしを行き来したときに戸惑わない。
+//
+// **作業用は m_scratch を借りる。** ハイトのぼかしと同時には走らないので、
+// 専用の 1 枚を増やす必要がない。
+//
+// 種入れを挟むのは、反復が「結果を読んで結果へ書く」形で回るため。
+// 入力の op は解像度が違うことがある（川筋は自前のグリッド）ので、
+// 写すときだけ UV で引いて、以降は同じ解像度どうしで回す。
+bool MaterialEvaluator::ApplyMaskBlur(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                      ID3D12GraphicsCommandList* commandList, const MaskOp& op,
+                                      const MaterialStack& stack, uint32_t resolution,
+                                      rhi::GpuTexture& target) {
+    // 作業用は合成解像度で取ってある。ぼかしの op も合成解像度で焼くので必ず一致する。
+    if (!target.IsValid() || !m_scratch.IsValid() || resolution != m_resolution ||
+        resolution == 0) {
+        return false;
+    }
+    const auto pipeline = [&](const wchar_t* entry) {
+        return pipelineCache.GetCompute(L"CompositeMaskOps.hlsl", entry);
+    };
+    ID3D12PipelineState* seedPass = pipeline(L"CsMaskBlurSeed");
+    ID3D12PipelineState* blurPass = pipeline(L"CsMaskBlur");
+    if (seedPass == nullptr || blurPass == nullptr) {
+        return false;
+    }
+
+    rhi::GpuTexture* input = nullptr;
+    if (op.inputA >= 0 && static_cast<size_t>(op.inputA) < m_maskOpTextures.size() &&
+        m_maskOpTextures[static_cast<size_t>(op.inputA)].IsValid()) {
+        input = &m_maskOpTextures[static_cast<size_t>(op.inputA)];
+    }
+    const uint32_t inputIndex = (input != nullptr) ? input->SrvIndex() : kInvalidTextureIndex;
+
+    // 半径は実寸（m）。合成解像度を変えても効きが変わらないようテクセルへ直す。
+    const float sizeMeters = (stack.SizeMeters() > 0.0f) ? stack.SizeMeters() : 1.0f;
+    const float radiusTexels =
+        op.blur.radiusMeters / sizeMeters * static_cast<float>(resolution);
+    const float strength = std::clamp(op.blur.strength, 0.0f, 1.0f);
+    const int iterations = std::clamp(op.blur.iterations, 1, 16);
+    // テクセル 1 つに満たない半径や強さ 0 は何も変えない。種入れだけで終える
+    // （ノードを素通りさせる。ここで失敗にすると下流が定数へ落ちてしまう）。
+    const bool passthrough = (radiusTexels < 0.5f) || (strength <= 0.0f);
+
+    const auto dispatch = [&](ID3D12PipelineState* pass, uint32_t outputIndex,
+                              uint32_t sourceIndex, uint32_t axis) {
+        MaskOpConstants constants = {};
+        constants.indices[0] = outputIndex;
+        constants.indices[1] = sourceIndex;
+        constants.indices[2] = kInvalidTextureIndex;
+        constants.indices[3] = kInvalidTextureIndex;
+        constants.params0[0] = resolution;
+        constants.params0[1] = axis;
+        constants.params2[0] = radiusTexels;
+        constants.params2[1] = strength;
+
+        const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(MaskOpConstants));
+        if (!cb.IsValid()) {
+            return false;
+        }
+        std::memcpy(cb.cpu, &constants, sizeof(constants));
+        commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+        commandList->SetPipelineState(pass);
+        commandList->Dispatch(DispatchCount(resolution), DispatchCount(resolution), 1);
+        return true;
+    };
+
+    PIXBeginEvent(commandList, PIX_COLOR(200, 180, 120), "CompositeMaskBlur");
+
+    if (input != nullptr) {
+        TransitionIfNeeded(commandList, *input, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    }
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    bool complete = dispatch(seedPass, target.UavIndex(), inputIndex, 0u);
+
+    for (int iteration = 0; complete && !passthrough && iteration < iterations; ++iteration) {
+        // 水平: 結果（読み取り）→ 作業用。中間結果なので混ぜない。
+        TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        TransitionIfNeeded(commandList, m_scratch, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        complete = dispatch(blurPass, m_scratch.UavIndex(), target.SrvIndex(), 0u);
+        // 垂直: 作業用（読み取り）→ 結果。ここで元のマスクと強さで混ぜる。
+        TransitionIfNeeded(commandList, m_scratch,
+                           D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        complete = complete && dispatch(blurPass, target.UavIndex(), m_scratch.SrvIndex(), 1u);
+    }
+
+    // 下流の op と合成パスは SRV で読む。
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    PIXEndEvent(commandList);
+    return complete;
 }
 
 bool MaterialEvaluator::ApplyFluvialMask(rhi::Device& device,

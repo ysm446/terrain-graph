@@ -52,6 +52,8 @@ enum class MaskOpKind : uint32_t {
     Droplet = 13,
     // 散布レイヤーの出力。出力ピンによって形（分布）か個体ごとの乱数になる。
     Scatter = 14,
+    // マスクをぼかす。マスク 1 枚を受けて 1 枚返す加工。
+    Blur = 15,
 };
 
 // 曲率マスクの向き。シェーダの TG_CURVATURE_* と一致させること。
@@ -186,6 +188,19 @@ struct PathMaskParams {
     bool invert = false;
 };
 
+// マスクのぼかし（terrain-editor の Mask Blur）。
+//
+// **半径は実寸（m）。** マスクの op は合成解像度で焼くので、テクセル数で持つと
+// 解像度を変えたときに効きが変わる。ハイトのぼかし（MaterialLayer::BlurSettings）と
+// 同じ持ち方に揃えてある。
+struct MaskBlurParams {
+    float radiusMeters = 8.0f;
+    // 元のマスクとぼかしたマスクを混ぜる量。1 で完全なぼかし。
+    float strength = 1.0f;
+    // ぼかしを重ねる回数。実効半径はおよそ 半径 x sqrt(反復)。
+    int iterations = 1;
+};
+
 // 演算 1 つ。入力は他の op の添字で、**自分より前**を指す（後方参照はしない）。
 struct MaskOp {
     MaskOpKind kind = MaskOpKind::Image;
@@ -202,6 +217,7 @@ struct MaskOp {
     CurvatureParams curvature;
     LevelsParams levels;
     BlendParams blend;
+    MaskBlurParams blur;
     NoiseParams noise;
     SedimentMaskParams sedimentMask;
     CrumblingMaskParams crumblingMask;

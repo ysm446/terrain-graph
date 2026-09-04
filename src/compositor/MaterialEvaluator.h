@@ -261,6 +261,12 @@ private:
     bool ApplyFluvialMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                           ID3D12GraphicsCommandList* commandList, const MaskOp& op,
                           const MaterialStack& stack, rhi::GpuTexture& target);
+    // マスクをぼかす。近傍を読むので、1 ディスパッチでは書けない
+    // （分離型ガウスの水平 / 垂直パスに分け、作業用テクスチャを挟む）。
+    bool ApplyMaskBlur(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                       ID3D12GraphicsCommandList* commandList, const MaskOp& op,
+                       const MaterialStack& stack, uint32_t resolution,
+                       rhi::GpuTexture& target);
     // op ごとの結果テクスチャを用意する。数や解像度が変わった枚だけ作り直す。
     bool EnsureMaskOpTextures(rhi::Device& device, const MaskProgram& ops);
     // パスの足跡を焼く。線分は定数バッファに入るぶんずつ流す。

@@ -36,6 +36,7 @@ struct MaskOpConstants
     // Height: 最低（正規化ハイト）, 最高, ガンマ, フェザー
     float4 params1;
     // x: 傾斜を測る距離 / 曲率で比べる周りの広さ（テクセル）、yzw: 未使用
+    // Blur  : x = ぼかし半径（テクセル）、y = 強さ
     float4 params2;
 };
 
@@ -322,4 +323,76 @@ void CsBlend(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     // 強さは「前景そのまま」と「合成結果」の間の補間。
     output[texel] = saturate(lerp(foreground, blended, saturate(g_op.params1.x)));
+}
+
+
+// --- マスクのぼかし -------------------------------------------------------
+//
+// terrain-editor の Mask Blur の移植。あちらは箱ぼかしの繰り返しだが、
+// こちらは**分離型ガウス**にしてハイトのぼかし（CompositeBlur.hlsl）と揃える。
+// 同じ「半径（m）/ 強さ / 反復」のつまみで同じ効き方をするほうが、
+// 2 つのぼかしを行き来したときに戸惑わない。
+//
+//   種入れ（CsMaskBlurSeed）: 入力のマスクを結果テクスチャへ写す
+//   反復 × { 水平（axis=0）: 結果 → 作業用 / 垂直（axis=1）: 作業用 → 結果 }
+//
+// **元のマスクと混ぜるのは垂直パスだけ。** 両方で混ぜると強さが 2 回掛かる。
+
+// 入力のマスクを結果テクスチャへ写す。**ぼかしの反復はここを起点に回る。**
+// 入力の解像度が違っても揃うよう、添字ではなく UV で引く。
+[numthreads(8, 8, 1)]
+void CsMaskBlurSeed(uint3 dispatchThreadId : SV_DispatchThreadID)
+{
+    const uint2 texel = dispatchThreadId.xy;
+    if (OutsideMask(texel)) { return; }
+
+    RWTexture2D<float> output = ResourceDescriptorHeap[g_op.indices.x];
+    if (g_op.indices.y == kInvalidTextureIndex)
+    {
+        output[texel] = 0.0f;
+        return;
+    }
+    output[texel] = saturate(SampleMaskInput(g_op.indices.y, MaskUv(texel)));
+}
+
+// 分離型ガウスの 1 パス。重みはシェーダ内で作り、合計で正規化する。
+//   w(x) = exp(-0.5 * (x / sigma)^2)、sigma = 半径 * 0.5
+[numthreads(8, 8, 1)]
+void CsMaskBlur(uint3 dispatchThreadId : SV_DispatchThreadID)
+{
+    const int2 texel = int2(dispatchThreadId.xy);
+    if (OutsideMask(uint2(texel))) { return; }
+
+    Texture2D<float> source = ResourceDescriptorHeap[g_op.indices.y];
+    RWTexture2D<float> output = ResourceDescriptorHeap[g_op.indices.x];
+
+    const int limit = int(MaskResolution()) - 1;
+    const int2 step = (g_op.params0.y == 0u) ? int2(1, 0) : int2(0, 1);
+    const float radiusTexels = g_op.params2.x;
+    const int kernelRadius = clamp(int(ceil(radiusTexels)), 1, 128);
+    const float sigma = max(radiusTexels * 0.5f, 0.5f);
+
+    float sum = source.Load(int3(texel, 0));
+    float weightSum = 1.0f;
+    for (int offset = 1; offset <= kernelRadius; ++offset)
+    {
+        const float x = float(offset) / sigma;
+        const float weight = exp(-0.5f * x * x);
+        // 端は clamp-to-edge。境界のアーティファクトを最小にする。
+        const int2 low = clamp(texel - step * offset, int2(0, 0), int2(limit, limit));
+        const int2 high = clamp(texel + step * offset, int2(0, 0), int2(limit, limit));
+        sum += (source.Load(int3(low, 0)) + source.Load(int3(high, 0))) * weight;
+        weightSum += weight * 2.0f;
+    }
+
+    const float blurred = saturate(sum / weightSum);
+    if (g_op.params0.y == 0u)
+    {
+        output[uint2(texel)] = blurred;
+        return;
+    }
+    // 反転はどの op でも最後に掛ける、が、ぼかしは反転のつまみを持たない
+    // （入力を反転したいなら Mask Levels を挟む）。ここでは強さだけを掛ける。
+    output[uint2(texel)] =
+        saturate(lerp(output[uint2(texel)], blurred, saturate(g_op.params2.y)));
 }

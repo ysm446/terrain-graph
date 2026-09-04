@@ -573,6 +573,24 @@ inline bool DrawLevelsRows(compositor::LevelsParams& levels) {
     return changed;
 }
 
+// マスクのぼかしの設定行。**プロパティテーブルの中で呼ぶこと。**
+// つまみはハイトのぼかし（Heightmap Blur）と同じ形に揃えてある。
+inline bool DrawMaskBlurRows(compositor::MaskBlurParams& blur) {
+    const compositor::MaskBlurParams defaults;
+    bool changed = false;
+    // 半径は実寸（m）。合成解像度を変えても効きが変わらない。
+    changed |= ui::PropertyFloat("半径", &blur.radiusMeters, 0.0f, 512.0f, defaults.radiusMeters,
+                                 "ぼかす範囲（m）。大きいほど境界がなだらかになる", "%.2f m",
+                                 ImGuiSliderFlags_Logarithmic);
+    changed |= ui::PropertyFloat("強さ", &blur.strength, 0.0f, 1.0f, defaults.strength,
+                                 "元のマスクとぼかしたマスクを混ぜる量。1 で完全なぼかし",
+                                 "%.2f");
+    changed |= ui::PropertyInt("反復", &blur.iterations, 1, 16, defaults.iterations,
+                               "ぼかしを重ねる回数。多いほど広く均される"
+                               "（実効半径はおよそ 半径 x sqrt(反復)）");
+    return changed;
+}
+
 // マスクの合成の設定行。**プロパティテーブルの中で呼ぶこと。**
 inline bool DrawBlendRows(compositor::BlendParams& blend) {
     const compositor::BlendParams defaults;

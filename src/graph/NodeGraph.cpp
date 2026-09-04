@@ -126,7 +126,7 @@ constexpr std::array<PinDefinition, 1> kSourceNodePins = {{
     {PinKind::Output, ValueType::Material, "Result"},
 }};
 
-constexpr std::array<NodeDefinition, 22> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 23> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -145,6 +145,7 @@ constexpr std::array<NodeDefinition, 22> kNodeDefinitions = {{
     {NodeKind::MaskSlope, "maskSlope", "Mask Slope", kMaskFromHeightPins},
     {NodeKind::MaskCurvature, "maskCurvature", "Mask Curvature", kMaskFromHeightPins},
     {NodeKind::MaskLevels, "maskLevels", "Mask Levels", kMaskFilterPins},
+    {NodeKind::MaskBlur, "maskBlur", "Mask Blur", kMaskFilterPins},
     {NodeKind::MaskBlend, "maskBlend", "Mask Blend", kMaskBlendPins},
     {NodeKind::Path, "path", "Path", kPathPins},
     {NodeKind::MaskPath, "maskPath", "Mask Path", kMaskPathPins},
@@ -191,8 +192,8 @@ bool IsMaskNodeKind(NodeKind kind) {
     return kind == NodeKind::MaskImage || kind == NodeKind::MaskNoise ||
            kind == NodeKind::MaskFluvial || kind == NodeKind::MaskHeight ||
            kind == NodeKind::MaskSlope || kind == NodeKind::MaskCurvature ||
-           kind == NodeKind::MaskLevels || kind == NodeKind::MaskBlend ||
-           kind == NodeKind::MaskPath;
+           kind == NodeKind::MaskLevels || kind == NodeKind::MaskBlur ||
+           kind == NodeKind::MaskBlend || kind == NodeKind::MaskPath;
 }
 
 // 下地の Height を読むマスクか。**チェーンのどこを読むか**を Base 入力で指す。
@@ -582,6 +583,7 @@ bool NodeGraph::MaskDependsOnHeight(const Node& maskNode, int depth) const {
         case NodeKind::MaskPath:
             return true;
         case NodeKind::MaskLevels:
+        case NodeKind::MaskBlur:
         case NodeKind::MaskBlend:
             for (size_t which = 0; which < 2; ++which) {
                 const MaskSourceRef input = UpstreamMaskOf(maskNode, which);
@@ -853,6 +855,10 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
             op.kind = compositor::MaskOpKind::Levels;
             op.levels = settings->levels;
             break;
+        case NodeKind::MaskBlur:
+            op.kind = compositor::MaskOpKind::Blur;
+            op.blur = settings->blur;
+            break;
         case NodeKind::MaskBlend:
             op.kind = compositor::MaskOpKind::Blend;
             op.blend = settings->blend;
@@ -893,7 +899,8 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
     }
 
     // 入力のマスクを先に焼く。**op は自分より前だけを指す。**
-    if (maskNode.kind == NodeKind::MaskLevels || maskNode.kind == NodeKind::MaskBlend) {
+    if (maskNode.kind == NodeKind::MaskLevels || maskNode.kind == NodeKind::MaskBlur ||
+        maskNode.kind == NodeKind::MaskBlend) {
         const MaskSourceRef a = UpstreamMaskOf(maskNode, 0);
         op.inputA = EmitMaskOps(a, defaultHeightLayer, layerNodes, ops, emitted, depth + 1);
     }
@@ -905,8 +912,9 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
             return -1;
         }
     }
-    if (maskNode.kind == NodeKind::MaskLevels && op.inputA < 0) {
-        // 入力の無いレベル調整は意味を持たない。
+    if ((maskNode.kind == NodeKind::MaskLevels || maskNode.kind == NodeKind::MaskBlur) &&
+        op.inputA < 0) {
+        // 入力の無いレベル調整 / ぼかしは意味を持たない。
         return -1;
     }
 

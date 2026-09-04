@@ -1,7 +1,7 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-09-04 15:40
+更新日時: 2026-09-05 07:30
 
 実装は [src/io/ProjectIo.cpp](../../src/io/ProjectIo.cpp)。**形式を変えたらこの文書も直す。**
 
@@ -110,6 +110,7 @@ base' = base + 0.5 * gain     ただしソースが constant のときは base �
 | `fluvial` | `maskFluvial` | `{ curve, threshold, gamma, softness, edgePower, detail, concentration, resolution }` |
 | `slope` | `maskSlope` | `{ detail, min, max, gamma, invert }` |
 | `levels` | `maskLevels` | `{ black, white, gamma, invert }` |
+| `blur` | `maskBlur` | `{ radius, strength, iterations }` |
 | `blend` | `maskBlend` | `{ mode, intensity }` |
 | `maskPath` | `maskPath` | `{ gamma, invert }` |
 | `path` | `path` | `{ points[], edges[], defaultWidth, defaultFeather, defaultIntensity, nextId }`（下記） |
@@ -293,7 +294,7 @@ RGB をそのまま使うマップ（ベースカラー / 法線）はテクス�
   並びで、ピンの型やラベルはノードの定義から再生成する（ファイルには書かない）。
 - `kind` は名前で書く（`surface` / `shape` / `liquid` / `heightmap` /
   `heightmapBlur` / `maskImage` / `maskFluvial` / `maskSlope` / `maskLevels` /
-  `maskBlend` / `output`）。知らない種類のノードは読み飛ばす。
+  `maskBlur` / `maskBlend` / `output`）。知らない種類のノードは読み飛ばす。
 - レイヤー設定を持つノード（surface / shape / liquid / heightmap /
   heightmapBlur）は `layer` に
   旧 `layers[]` の要素と同じ形を持つ。テクスチャ / マテリアル / ペイントの参照も
