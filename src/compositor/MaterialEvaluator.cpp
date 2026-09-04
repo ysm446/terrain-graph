@@ -168,7 +168,10 @@ struct BlurConstants {
     float strength;
     float heightPerSize;
 
-    uint32_t maskIndex;  // どこをぼかすか。kInvalidTextureIndex なら全体
+    // どこをぼかすか。**既定はマスク無し。**
+    // 法線の作り直し（CsNormalFromHeight）は堆積・積雪・河川なども使うので、
+    // ゼロのままだとディスクリプタ 0 をマスクとして読んでしまう。
+    uint32_t maskIndex = kInvalidTextureIndex;
     uint32_t pad0[3];
 };
 
@@ -2899,7 +2902,8 @@ bool MaterialEvaluator::ApplyHeightBlur(rhi::Device& device,
 
     // 1 パスぶん。**全タイルを回してから**呼び出し側が次のパスへ進むこと。
     const auto dispatchPass = [&](ID3D12PipelineState* pipeline, uint32_t sourceIndex,
-                                  uint32_t outputIndex, uint32_t axis, float passStrength) {
+                                  uint32_t outputIndex, uint32_t axis, float passStrength,
+                                  uint32_t passMaskIndex) {
         commandList->SetPipelineState(pipeline);
         for (const TileRect& tile : tiles) {
             BlurConstants constants = {};
@@ -2915,8 +2919,7 @@ bool MaterialEvaluator::ApplyHeightBlur(rhi::Device& device,
             constants.resolution[1] = m_resolution;
             constants.strength = passStrength;
             constants.heightPerSize = heightPerSize;
-            // マスクは**混ぜる垂直パスだけ**に渡す。水平パスは中間結果なので効かせない。
-            constants.maskIndex = (axis == 1u) ? maskIndex : kInvalidTextureIndex;
+            constants.maskIndex = passMaskIndex;
 
             const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(BlurConstants));
             if (!cb.IsValid()) {
@@ -2936,8 +2939,9 @@ bool MaterialEvaluator::ApplyHeightBlur(rhi::Device& device,
                            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         TransitionIfNeeded(commandList, m_scratch,
                            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        // マスクは混ぜる垂直パスで掛ける。水平パスは中間結果なので効かせない。
         dispatchPass(blurPipeline, m_textures.height.SrvIndex(), m_scratch.UavIndex(),
-                     0u, 1.0f);
+                     0u, 1.0f, kInvalidTextureIndex);
 
         // 垂直: 作業用（読み取り）→ Height。ここで元の高さと強さで混ぜる。
         TransitionIfNeeded(commandList, m_scratch,
@@ -2945,14 +2949,16 @@ bool MaterialEvaluator::ApplyHeightBlur(rhi::Device& device,
         TransitionIfNeeded(commandList, m_textures.height,
                            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         dispatchPass(blurPipeline, m_scratch.SrvIndex(), m_textures.height.UavIndex(),
-                     1u, strength);
+                     1u, strength, maskIndex);
     }
 
     // ぼかした形から法線を作り直す。**Height だけをぼかすと形と陰影が食い違う。**
+    // ここにもマスクを渡す。渡さないと、高さが変わっていない所まで法線が
+    // Height から作り直され、素材の法線ディテールが全面で消える。
     TransitionIfNeeded(commandList, m_textures.height,
                        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     dispatchPass(normalPipeline, m_textures.height.SrvIndex(), m_textures.normal.UavIndex(), 0u,
-                 1.0f);
+                 1.0f, maskIndex);
 
     // 次のレイヤーは Height を UAV として書き換えるので、状態を戻しておく。
     TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);

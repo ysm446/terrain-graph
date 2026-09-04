@@ -29,6 +29,22 @@ struct BlurConstants
 
 ConstantBuffer<BlurConstants> g_blur : register(b1);
 
+// ぼかす量にかかるマスク。マスクが無ければ 1（全体が対象）。
+//
+// **テクセル参照ではなく UV で引く。** マスクの op の結果は合成解像度とは
+// 限らない（川筋は自前のグリッドで焼く）ので、添字で引くと別の場所を読む。
+// 合成のレイヤーがノードのマスクを引くのと同じ形にしてある。
+float SampleBlurMask(int2 texel)
+{
+    if (g_blur.maskIndex == kInvalidTextureIndex)
+    {
+        return 1.0f;
+    }
+    Texture2D<float> mask = ResourceDescriptorHeap[g_blur.maskIndex];
+    const float2 uv = (float2(texel) + 0.5f) / float2(g_blur.resolution);
+    return saturate(mask.SampleLevel(g_samplerLinearClamp, uv, 0.0f));
+}
+
 // 分離型ガウスの 1 パス。重みはシェーダ内で作り、合計で正規化する
 // （CPU 側でカーネル配列を組んで渡す必要がない）。
 //   w(x) = exp(-0.5 * (x / sigma)^2)、sigma = 半径 * 0.5
@@ -75,12 +91,7 @@ void CsBlur(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     // **マスクは混ぜる量に掛ける。** 0 の所は元の高さがそのまま残るので、
     // 反復しても masked な所へぼけが染み出さない（次の反復も元の高さを読む）。
-    float amount = g_blur.strength;
-    if (g_blur.maskIndex != kInvalidTextureIndex)
-    {
-        Texture2D<float> mask = ResourceDescriptorHeap[g_blur.maskIndex];
-        amount *= saturate(mask.Load(int3(texel, 0)));
-    }
+    const float amount = g_blur.strength * SampleBlurMask(texel);
     output[uint2(texel)] = lerp(output[uint2(texel)], blurred, amount);
 }
 
@@ -100,6 +111,15 @@ void CsNormalFromHeight(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     const int2 texel = int2(g_blur.tile.xy + dispatchThreadId.xy);
 
+    // **マスクの外では法線も触らない。** 高さが 1 テクセルも変わっていない所で
+    // Height から作り直すと、素材の法線マップや下のレイヤーが積んだ細部が消え、
+    // 形はそのままなのに陰影だけが鈍る。ぼかしていない所は元の法線を残す。
+    const float amount = SampleBlurMask(texel);
+    if (amount <= 0.0f)
+    {
+        return;
+    }
+
     Texture2D<float> height = ResourceDescriptorHeap[g_blur.sourceIndex];
     RWTexture2D<float2> normalTarget = ResourceDescriptorHeap[g_blur.outputIndex];
 
@@ -116,7 +136,16 @@ void CsNormalFromHeight(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     // 実寸の勾配へ。tan(傾き) がそのまま法線の xy になる。
     const float scale = g_blur.heightPerSize;
-    const float3 normal = normalize(float3(-dx * scale, -dy * scale, 1.0f));
+    float3 normal = normalize(float3(-dx * scale, -dy * scale, 1.0f));
+
+    // 半端なマスクの所は高さも半端にしかぼけていないので、元の法線と混ぜる。
+    // マスクは反復のたびに同じだけ掛かる**場所のゲート**なので、混ぜる量にそのまま使える
+    // （強さと反復は収束の速さを変えるだけなので、ここには持ち込まない）。
+    if (amount < 1.0f)
+    {
+        const float3 previous = DecodeTangentNormal(normalTarget[uint2(texel)]);
+        normal = normalize(lerp(previous, normal, amount));
+    }
     normalTarget[uint2(texel)] = EncodeTangentNormal(normal);
 }
 
