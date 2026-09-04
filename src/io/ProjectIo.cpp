@@ -520,6 +520,13 @@ json WritePath(const graph::PathSettings& path) {
         item["curve"] = EnumName(kPathCurveNames, static_cast<uint32_t>(edge.curve));
         item["rounding"] = edge.rounding;
         item["clothoidRatio"] = edge.clothoidRatio;
+        // 幅の上書き。切っているときは書かない（点の値を使う）。
+        if (edge.overrideValues) {
+            item["overrideValues"] = true;
+            item["width"] = edge.widthMeters;
+            item["feather"] = edge.featherMeters;
+            item["intensity"] = edge.intensity;
+        }
         // 経路探索。内部点は導出したものだが保存する（地形を評価しないと作れないため）。
         if (edge.route != graph::PathRoute::None) {
             static const char* const kPathRouteNames[] = {"none", "road", "flow"};
@@ -592,6 +599,13 @@ graph::PathSettings ReadPath(const json& parent, const char* key) {
                 kPathCurveNames, item, "curve", static_cast<uint32_t>(graph::PathCurve::Line)));
             edge.rounding = std::clamp(ReadFloat(item, "rounding", 1.0f), 0.0f, 1.0f);
             edge.clothoidRatio = std::clamp(ReadFloat(item, "clothoidRatio", 0.5f), 0.0f, 1.0f);
+            if (const json* override = FindMember(item, "overrideValues");
+                override != nullptr && override->is_boolean() && override->get<bool>()) {
+                edge.overrideValues = true;
+                edge.widthMeters = ReadFloat(item, "width", path.defaultWidthMeters);
+                edge.featherMeters = ReadFloat(item, "feather", path.defaultFeatherMeters);
+                edge.intensity = ReadFloat(item, "intensity", path.defaultIntensity);
+            }
             static const char* const kPathRouteNames[] = {"none", "road", "flow"};
             edge.route = static_cast<graph::PathRoute>(EnumValue(
                 kPathRouteNames, item, "route", static_cast<uint32_t>(graph::PathRoute::None)));

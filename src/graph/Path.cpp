@@ -156,6 +156,10 @@ PathElementId InsertPathPointOnEdge(PathSettings& path, PathElementId edgeId, fl
     tail.clothoidRatio = head->clothoidRatio;
     tail.route = head->route;
     tail.maxGradePercent = head->maxGradePercent;
+    tail.overrideValues = head->overrideValues;
+    tail.widthMeters = head->widthMeters;
+    tail.featherMeters = head->featherMeters;
+    tail.intensity = head->intensity;
     // 経路の内部点は挿入した所で前後に分ける（control[1 + i] が waypoints[i]。
     // seg 番目の線分より前の内部点が head に残る）。内部点が無かったなら、
     // 両方とも未計算にしておく（経路が古かったなら、そのまま作り直される）。
@@ -456,6 +460,14 @@ std::vector<PathPoint> PathEdgeControlPoints(const PathSettings& path, const Pat
         }
     }
     out.push_back(*b);
+    // 幅を上書きするエッジは、両端も内部点もエッジの値で揃える。
+    if (edge.overrideValues) {
+        for (PathPoint& point : out) {
+            point.widthMeters = edge.widthMeters;
+            point.featherMeters = edge.featherMeters;
+            point.intensity = edge.intensity;
+        }
+    }
     return out;
 }
 
@@ -871,7 +883,17 @@ std::vector<PathCurveSample> SamplePathStrand(const PathSettings& path, const Pa
         if (edge->from != strand.points[i]) {
             std::reverse(section.begin(), section.end());
         }
-        const size_t skip = control.empty() ? 0 : 1;
+        // 共有する点の値（幅など）が前のエッジと違うなら（幅の上書きの境目）、同じ位置に
+        // 2 つ置いて値をそこで切り替える。長さ 0 の区間になるだけで、曲線も壊れない。
+        size_t skip = 0;
+        if (!control.empty()) {
+            const PathPoint& previous = control.back();
+            const PathPoint& shared = section.front();
+            const bool sameValues = std::abs(previous.widthMeters - shared.widthMeters) < 1e-4f &&
+                                    std::abs(previous.featherMeters - shared.featherMeters) < 1e-4f &&
+                                    std::abs(previous.intensity - shared.intensity) < 1e-4f;
+            skip = sameValues ? 1 : 0;
+        }
         control.insert(control.end(), section.begin() + static_cast<std::ptrdiff_t>(skip),
                        section.end());
     }

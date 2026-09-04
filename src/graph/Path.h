@@ -74,6 +74,15 @@ struct PathEdge {
     // 0 で純粋な円弧、1 で円弧なし（緩和曲線だけ）。
     float clothoidRatio = 0.5f;
 
+    // --- 幅の上書き ---
+    // 真なら、このエッジの上では点の幅 / フェザー / 強さを補間せず、ここの値で一定にする。
+    // 鎖を選んでまとめて決める（点ごとに入れて回るより速い）。点の値は捨てないので、
+    // 切れば点の値に戻る。高さのずれは対象外（点ごとのまま）。
+    bool overrideValues = false;
+    float widthMeters = 24.0f;
+    float featherMeters = 12.0f;
+    float intensity = 1.0f;
+
     // --- 経路探索 ---
     PathRoute route = PathRoute::None;
     float maxGradePercent = 10.0f;  // 道路の許容勾配（%）
@@ -168,7 +177,7 @@ bool ReversePathEdgesAt(PathSettings& path, PathElementId pointId);
 bool IsPathEdgeRouteCurrent(const PathSettings& path, const PathEdge& edge);
 // エッジの制御点列（from、内部点…、to）。内部点の値（幅 / フェザー / 強さ / 高さのずれ）は
 // 両端の値を道のりで補間したもの（id は 0）。経路が古いエッジは内部点を飛ばして両端だけ返す。
-// 端点が無ければ空。
+// 幅を上書きするエッジなら、両端も含めて幅 / フェザー / 強さはエッジの値。端点が無ければ空。
 std::vector<PathPoint> PathEdgeControlPoints(const PathSettings& path, const PathEdge& edge);
 // 経路探索が有効で、経路が古い（両端が動いた / 未計算）エッジの数。
 size_t CountStalePathRoutes(const PathSettings& path);
