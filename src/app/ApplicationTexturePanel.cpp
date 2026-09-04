@@ -6,6 +6,7 @@
 #include "app/ApplicationUiHelpers.h"
 #include "core/FileDialog.h"
 #include "core/Log.h"
+#include "core/Shell.h"
 #include "io/ProjectIo.h"
 #include "ui/UiStyle.h"
 
@@ -19,6 +20,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace tg {
@@ -281,6 +283,21 @@ void Application::DrawTextureContextMenu(compositor::TextureId target) {
             ShowOpenFilesDialog(L"テクスチャを開く", ImageFileFilters());
         if (!paths.empty()) {
             m_pendingTexturePaths.insert(m_pendingTexturePaths.end(), paths.begin(), paths.end());
+        }
+    }
+    if (entry != nullptr) {
+        // 読み込み元の画像をエクスプローラで開く。**元ファイルが残っているときだけ。**
+        // プロジェクトを別の環境へ移すと参照先が消えていることがあり、
+        // その状態で押しても何も起きないと壊れて見える。
+        std::error_code error;
+        const bool exists = !entry->path.empty() && std::filesystem::exists(entry->path, error);
+        ImGui::BeginDisabled(!exists);
+        if (ImGui::MenuItem("ファイルの場所を開く")) {
+            RevealFileInExplorer(entry->path);
+        }
+        ImGui::EndDisabled();
+        if (!exists && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("読み込み元のファイルが見つかりません");
         }
     }
     if (entry != nullptr && ImGui::MenuItem("削除")) {
