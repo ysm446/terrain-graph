@@ -807,6 +807,7 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     scatter["heightJitter"] = layer.scatter.heightJitter;
     scatter["rotationVariation"] = layer.scatter.rotationVariation;
     scatter["aspectVariation"] = layer.scatter.aspectVariation;
+    scatter["smoothness"] = layer.scatter.smoothness;
     node["scatter"] = std::move(scatter);
 
     // ぼかし（ブラーレイヤーだけが使う）。
@@ -1003,6 +1004,8 @@ compositor::MaterialLayer ReadLayer(
             ReadFloat(*scatter, "rotationVariation", defaults.scatter.rotationVariation);
         layer.scatter.aspectVariation =
             ReadFloat(*scatter, "aspectVariation", defaults.scatter.aspectVariation);
+        layer.scatter.smoothness =
+            ReadFloat(*scatter, "smoothness", defaults.scatter.smoothness);
     }
 
     if (const json* blur = FindMember(node, "blur"); blur != nullptr && blur->is_object()) {

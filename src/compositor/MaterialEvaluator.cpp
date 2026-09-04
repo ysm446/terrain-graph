@@ -84,6 +84,7 @@ struct ScatterConstants {
     float params0[4];      // 散布の間隔（m）, 置く確率, 最小サイズ, 最大サイズ（散布セル）
     float params1[4];      // 高さ（正規化）, 高さのばらつき, 向きのばらつき, 細長さのばらつき
     float params2[4];      // 届く範囲（散布セル）, シード, テクセル（m）, 標高差（m）
+    float params3[4];      // なめらかさ, 未使用 x3
 };
 
 struct SedimentConstants {
@@ -2782,6 +2783,7 @@ bool MaterialEvaluator::ApplyScatter(rhi::Device& device, rhi::PipelineCache& pi
     constants.params2[1] = static_cast<float>(params.seed);
     constants.params2[2] = texelMeters;
     constants.params2[3] = heightMeters;
+    constants.params3[0] = std::clamp(params.smoothness, 0.0f, 1.0f);
 
     const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(ScatterConstants));
     if (!cb.IsValid()) {

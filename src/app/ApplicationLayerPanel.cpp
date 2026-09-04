@@ -379,6 +379,9 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
             changed |= ui::PropertyFloat("細長さ", &layer.scatter.aspectVariation, 0.0f, 1.0f,
                                          scatterDefaults.aspectVariation,
                                          "個体ごとの縦横比の差。0 で真円", "%.2f");
+            changed |= ui::PropertyFloat(
+                "なめらかさ", &layer.scatter.smoothness, 0.0f, 1.0f, scatterDefaults.smoothness,
+                "重なった所の溶け方。0 で折り目が立ち、上げるほど溶け合う", "%.2f");
             ui::EndPropertyTable();
         }
         ui::HintText("Mask 入力で散布する範囲を絞れる（明るい所ほど置かれる）");

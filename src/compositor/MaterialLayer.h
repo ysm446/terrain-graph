@@ -458,6 +458,10 @@ struct MaterialLayer {
         float heightJitter = 0.5f;     // 個体ごとの高さのばらつき
         float rotationVariation = 1.0f;  // 向きのばらつき
         float aspectVariation = 0.3f;    // 細長さのばらつき
+        // 重なりの溶け方。0 で高さの max（交差が折り目になる）、
+        // 上げるほど soft max へ寄って metaball のように溶け合う。
+        // **既定は 0**（terrain-editor と同じ見え方）。
+        float smoothness = 0.0f;
     };
     ScatterSettings scatter;
 

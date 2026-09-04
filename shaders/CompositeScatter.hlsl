@@ -13,8 +13,15 @@
 // マスだけを見ればよいので、粒子を走らせずに 1 パスで済む
 // （崩落 Crumbling が 1 スレッド 1 粒子なのに対し、こちらは 1 スレッド 1 テクセル）。
 //
-// **重なった所は一番強い形が勝つ。** 足し合わせると、密度を上げたときに
-// 個体の形が消えて一様な盛り上がりになってしまう。terrain-editor と同じ扱い。
+// **重なった所は「一番高くなるほう」が勝つ**（高さの max による union）。
+// 足し合わせると、密度を上げたときに個体の形が消えて一様な盛り上がりになる。
+//
+// **形（Mask）の勝者と、高さの勝者は別に持つ。** 形だけで勝者を決めて
+// その個体の高さを足すと、個体ごとの高さの差（`高さのばらつき`）のぶん、
+// 境目で足す量が飛んで**三日月形の段差**になる（terrain-editor の式はこれ）。
+// 高さは「高さ × 形」の最大で選べば、段差は出ず折り目だけが残る。
+//
+// `なめらかさ` を上げると max を soft max へ寄せ、折り目も溶ける（metaball 風）。
 //
 // **形と乱数は 1 枚の R32_UINT にパックする**（上位 16 bit が形、下位 16 bit が乱数）。
 // 高さは別の R32_FLOAT に積む。**Height は読みと書きで状態を分ける**ので、
@@ -50,6 +57,8 @@ struct ScatterConstants
     float4 params1;
     // x: 届く範囲（散布セル）、y: シード、z: テクセルの大きさ（m）、w: 標高差（m）
     float4 params2;
+    // x: なめらかさ（0 で max のまま）、yzw: 未使用
+    float4 params3;
 };
 
 ConstantBuffer<ScatterConstants> g_scatter : register(b1);
@@ -74,6 +83,51 @@ float ScatterHash01(int x, int y, int s)
     return float(ScatterHash(x, y, s) & 0xFFFFFFu) / float(0xFFFFFFu);
 }
 
+// 散布セルの座標を、合成テクスチャのテクセルへ直す。
+int2 ScatterCellToTexel(float2 cell)
+{
+    const uint resolution = ScatterResolution();
+    const float density = max(g_scatter.params0.x, 0.1f);
+    const float texelMeters = max(g_scatter.params2.z, 1e-6f);
+    const float sizeMeters = texelMeters * float(resolution);
+    const float2 meters = cell * density + sizeMeters * 0.5f;
+    return clamp(int2(meters / texelMeters), int2(0, 0),
+                 int2(int(resolution) - 1, int(resolution) - 1));
+}
+
+// 地形の傾き（m / m）。**個体の中心で 1 回だけ読む。**
+// テクセルごとに読むと、1 つの個体の中でも足元の傾きで高さや向きが変わり、
+// 球が歪んで切り欠きが入る。個体は「中心の傾きに沿った 1 つの形」として置く。
+float2 SampleGroundGradient(int2 texel)
+{
+    const uint resolution = ScatterResolution();
+    const float texelMeters = max(g_scatter.params2.z, 1e-6f);
+    const float heightMeters = max(g_scatter.params2.w, 1e-6f);
+    Texture2D<float> heightIn = ResourceDescriptorHeap[g_scatter.indices0.x];
+
+    const int last = int(resolution) - 1;
+    const int2 xm = int2(max(texel.x - 1, 0), texel.y);
+    const int2 xp = int2(min(texel.x + 1, last), texel.y);
+    const int2 zm = int2(texel.x, max(texel.y - 1, 0));
+    const int2 zp = int2(texel.x, min(texel.y + 1, last));
+    // Height は正規化なので、標高差を掛けて m に直してから傾きにする。
+    const float invTwoMeters = heightMeters / (2.0f * texelMeters);
+    return float2((heightIn.Load(int3(xp, 0)) - heightIn.Load(int3(xm, 0))) * invTwoMeters,
+                  (heightIn.Load(int3(zp, 0)) - heightIn.Load(int3(zm, 0))) * invTwoMeters);
+}
+
+// なめらかな max。k = 0 なら普通の max。
+// 2 つの高さが k の範囲で近いとき、角を丸めて溶け合わせる（多項式 smooth max）。
+float SmoothMax(float a, float b, float k)
+{
+    if (k <= 0.0f)
+    {
+        return max(a, b);
+    }
+    const float h = saturate(0.5f + 0.5f * (a - b) / k);
+    return lerp(b, a, h) + k * h * (1.0f - h);
+}
+
 // 散布点の中心（散布セル座標）で配置マスクを読む。
 // **個体の中心 1 点だけ**を見る。テクセルごとに読むと、マスクの縁で個体が
 // 切り取られて形が崩れる（半分だけの半球が並ぶ）。
@@ -83,17 +137,8 @@ float SamplePlacementMask(float cellX, float cellZ)
     {
         return 1.0f;
     }
-    const uint resolution = ScatterResolution();
-    const float density = max(g_scatter.params0.x, 0.1f);
-    const float texelMeters = max(g_scatter.params2.z, 1e-6f);
-    const float sizeMeters = texelMeters * float(resolution);
-    // 散布セル → m（中心が原点）→ テクセル。
-    const float2 meters = float2(cellX, cellZ) * density + sizeMeters * 0.5f;
-    const int2 texel = clamp(int2(meters / texelMeters), int2(0, 0),
-                             int2(int(resolution) - 1, int(resolution) - 1));
-
     Texture2D<float> placement = ResourceDescriptorHeap[g_scatter.indices0.z];
-    return saturate(placement.Load(int3(texel, 0)));
+    return saturate(placement.Load(int3(ScatterCellToTexel(float2(cellX, cellZ)), 0)));
 }
 
 [numthreads(8, 8, 1)]
@@ -136,25 +181,8 @@ void CsScatter(uint3 dispatchThreadId : SV_DispatchThreadID)
     const int baseCx = int(floor(cellX));
     const int baseCz = int(floor(cellZ));
 
-    // 傾きは Flat 以外でしか要らない。読むのは 4 近傍だけ。
-    float gradX = 0.0f;
-    float gradZ = 0.0f;
-    float slopeLength = 0.0f;
-    float normalUp = 1.0f;
-    if (orientation != TG_SCATTER_ORIENT_FLAT)
-    {
-        const int last = int(resolution) - 1;
-        const int2 xm = int2(max(int(texel.x) - 1, 0), int(texel.y));
-        const int2 xp = int2(min(int(texel.x) + 1, last), int(texel.y));
-        const int2 zm = int2(int(texel.x), max(int(texel.y) - 1, 0));
-        const int2 zp = int2(int(texel.x), min(int(texel.y) + 1, last));
-        // Height は正規化なので、標高差を掛けて m に直してから傾きにする。
-        const float invTwoMeters = heightMeters / (2.0f * texelMeters);
-        gradX = (heightIn.Load(int3(xp, 0)) - heightIn.Load(int3(xm, 0))) * invTwoMeters;
-        gradZ = (heightIn.Load(int3(zp, 0)) - heightIn.Load(int3(zm, 0))) * invTwoMeters;
-        slopeLength = sqrt(gradX * gradX + gradZ * gradZ);
-        normalUp = 1.0f / sqrt(1.0f + slopeLength * slopeLength);
-    }
+    // なめらかさは高さの尺度で効かせる（個体の高さの何割まで溶かすか）。
+    const float smoothK = saturate(g_scatter.params3.x) * heightAmount * 0.5f;
 
     // 用途ごとにシードをずらす。並びは terrain-editor と同じ。
     const int sizeSeed = seed * 1583 + 22441;
@@ -199,10 +227,21 @@ void CsScatter(uint3 dispatchThreadId : SV_DispatchThreadID)
                 sizeMinCells + ScatterHash01(gx, gz, sizeSeed) * (sizeMaxCells - sizeMinCells);
             const float radiusCells = max(sizeCells * 0.5f, 1e-4f);
 
+            // 地形の傾きは**この個体の中心**で読む（Flat のときは要らない）。
+            float2 gradient = float2(0.0f, 0.0f);
+            float slopeLength = 0.0f;
+            float normalUp = 1.0f;
+            if (orientation != TG_SCATTER_ORIENT_FLAT)
+            {
+                gradient = SampleGroundGradient(ScatterCellToTexel(float2(centerX, centerZ)));
+                slopeLength = length(gradient);
+                normalUp = 1.0f / sqrt(1.0f + slopeLength * slopeLength);
+            }
+
             // 向き。Slope Oriented は斜面の向きへ寄せ、そこへばらつきを足す。
             const float randomTheta =
                 (ScatterHash01(gx, gz, rotationSeed) - 0.5f) * 6.28318530718f * rotationVar;
-            const float slopeTheta = (slopeLength > 1e-4f) ? atan2(gradZ, gradX) : 0.0f;
+            const float slopeTheta = (slopeLength > 1e-4f) ? atan2(gradient.y, gradient.x) : 0.0f;
             const float theta = (orientation == TG_SCATTER_ORIENT_SLOPE && slopeLength > 1e-4f)
                                     ? (slopeTheta + randomTheta)
                                     : randomTheta;
@@ -224,7 +263,7 @@ void CsScatter(uint3 dispatchThreadId : SV_DispatchThreadID)
             // Follow Ground / Slope Oriented は、斜面に沿った距離も測る
             // （急な斜面では、平面で見た足元より実際の面は長い）。
             const float slopeAlong = (orientation != TG_SCATTER_ORIENT_FLAT)
-                                         ? (gradX * offsetX + gradZ * offsetZ)
+                                         ? (gradient.x * offsetX + gradient.y * offsetZ)
                                          : 0.0f;
             const float normalized =
                 sqrt(localX * localX + localZ * localZ + slopeAlong * slopeAlong) / radiusCells;
@@ -244,13 +283,15 @@ void CsScatter(uint3 dispatchThreadId : SV_DispatchThreadID)
                 heightAmount * orientationScale *
                 (1.0f - heightJitter + heightJitter * 2.0f * jitter);
 
-            // **重なりは一番強い形が勝つ。** 足すと個体の形が潰れる。
+            // **形（Mask / Unique）と高さは別々に決める。**
+            // 形だけで勝者を決めてその高さを足すと、個体ごとの高さの差のぶん、
+            // 境目で足す量が飛んで段差になる。
             if (shape > bestShape)
             {
                 bestShape = shape;
-                bestHeight = instanceHeight * shape;
                 bestUnique = ScatterHash01(gx, gz, uniqueSeed);
             }
+            bestHeight = SmoothMax(bestHeight, instanceHeight * shape, smoothK);
         }
     }
 
