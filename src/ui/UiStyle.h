@@ -20,6 +20,13 @@ inline constexpr float kComboMaxWidth = 190.0f;
 inline constexpr float kButtonWidth = 68.0f;
 inline constexpr float kWideButtonWidth = 148.0f;
 
+// 文字の基準サイズ（px、拡大率を掛ける前）の既定値と、設定で選べる範囲。
+// **これが寸法の基準**で、下の kCaptionFontSize や TextScaled() はこの値を 1.0 とみなす。
+// 小さすぎると日本語が潰れ、大きすぎるとパネルに収まらないので上下を切る。
+inline constexpr float kDefaultFontSize = 17.0f;
+inline constexpr float kMinFontSize = 11.0f;
+inline constexpr float kMaxFontSize = 28.0f;
+
 // 一覧のサムネイルに添える名前の文字サイズ（基準は 17）。
 // **これ以外の場所で文字サイズを変えない。**
 // 本文よりはっきり小さくして、サムネイルの添え物だと分かるようにする。
@@ -38,6 +45,16 @@ void ApplyTheme(float dpiScale);
 
 // 96 DPI 基準の寸法を現在の DPI へ合わせる。
 float Scaled(float value);
+
+// **文字が入る寸法**（ラベル列の幅、スライダーやボタンの幅）に使う。
+// DPI に加えて文字サイズの倍率も掛かるので、文字を大きくしても
+// ラベルが切れたりボタンから文字がはみ出したりしない。
+// 余白・線幅・サムネイルのような、文字と関係ない寸法には使わない（Scaled を使う）。
+float TextScaled(float value);
+
+// 文字サイズの倍率（kDefaultFontSize を 1.0 とする）。
+// 文字サイズに追従させたい寸法を自分で組み立てるときに使う。
+float FontScale();
 
 // --- プロパティ行 ---------------------------------------------------------
 //

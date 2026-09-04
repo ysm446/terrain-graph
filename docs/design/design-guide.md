@@ -1,7 +1,7 @@
 # design-guide — UI の設計ガイド
 
 作成日時: 2026-08-31 14:36
-更新日時: 2026-09-05 00:10
+更新日時: 2026-09-05 10:05
 
 `src/ui/` と各パネルの見た目・レイアウト・配色・部品のルール。
 
@@ -104,7 +104,7 @@ ImGui は docking ブランチを使う。全体は 1 つのドックスペー�
 ### 設定ウィンドウ
 
 `ウィンドウ > 設定`。**プロジェクトに保存しない、アプリ側の設定だけ**を置く
-（UI の拡大率、ウィンドウの大きさ、垂直同期・FPS 上限・ホットリロード・背景色）。
+（UI の拡大率と文字サイズ、ウィンドウの大きさ、垂直同期・FPS 上限・ホットリロード・背景色）。
 たまにしか触らないものにドックの面積を割かないため、ドックへは収めない。
 
 - 中身は常設パネルと同じ `Property*` の行で書く。専用の見た目を作らない。
@@ -339,35 +339,48 @@ ImGui は docking ブランチを使う。全体は 1 つのドックスペー�
 ウィンドウ生成より前に呼ぶ）。無効にすると OS がウィンドウごとビットマップ拡大し、
 描画解像度が落ちてぼやける。
 
-`ui::Scaled()` は将来 UI 拡大率を変えられるようにするための入口として残してある。
-寸法定数はすべてこれを通して使う。
+寸法定数はすべて `ui::Scaled()`（DPI だけ）か `ui::TextScaled()`（DPI と文字サイズ）を
+通して使う。**文字が入る寸法は `TextScaled()`**、余白・線幅・サムネイルのように
+文字と関係ない寸法は `Scaled()`。混ぜると、文字を大きくしたときに
+ラベルが途中で切れたり、ボタンから文字がはみ出したりする。
 
 ### フォント
 
-Yu Gothic Medium → Meiryo → MS ゴシック の順で **17.0px** を読み込む。
+Yu Gothic Medium → Meiryo → MS ゴシック の順で読み込む。
 日本語が出せるフォントを優先する。
 
+**大きさは `設定 > UI > 文字サイズ` で使う人が選ぶ**（既定 17px、11〜28px）。
+拡大率と違って余白や部品幅は動かないので、**文字だけ**を大きく / 小さくできる。
+
+- 変更は `ImGuiLayer::SetFontSize()` に集約し、**ImGui 1.92 の `style.FontSizeBase`**
+  へ入れる（`FontScaleDpi` が拡大率、その積が実際に描かれる大きさ）。
+  拡大率と同じく動的ラスタライズなので、アトラスの作り直しも GPU 待機も要らない。
+- `ui::ApplyTheme()` はスタイルを既定から作り直すため、**呼んだあとは必ず
+  `FontSizeBase` と `FontScaleDpi` を入れ直す**（`ImGuiLayer::ApplyScaleToStyle()`）。
+- ラベルは短く保つ。長いラベルは文字を大きくするとラベル列に収まらない。
+
 **サイズを変えてよいのは一覧のサムネイルに添える名前だけ**
-（`kCaptionFontSize` = 12、`ui::GridCaption()` が使う）。
-本文（17）よりはっきり小さくして、サムネイルの添え物だと分かるようにする。
+（`kCaptionFontSize` = 12、`ui::GridCaption()` が使う。`FontScale()` を掛けて
+本文と同じ比で拡縮する）。本文（既定 17）よりはっきり小さくして、サムネイルの添え物だと分かるようにする。
 小さいほど 1 行に入る字数が増えるので、長い素材名の省略も減る。
 それ以外で文字サイズを変えない。ImGui 1.92 は同じフォントを別サイズで
 積めるため（`PushFont(nullptr, size)`）、第 2 フォントは読み込まない。
 
 ### 部品の幅（固定値。種類を勝手に増やさない）
 
-[src/ui/UiStyle.h](../../src/ui/UiStyle.h) の定数。96 DPI 基準で、`Scaled()` を通して使う。
+[src/ui/UiStyle.h](../../src/ui/UiStyle.h) の定数。96 DPI・文字 17px 基準。
+「通し方」の列が、`Scaled()`（DPI のみ）と `TextScaled()`（DPI × 文字サイズ）の別。
 
-| 定数 | 値 | 用途 |
-| --- | --- | --- |
-| `kLabelColumnWidth` | 108 | プロパティ行のラベル列 |
-| `kSliderMinWidth` / `kSliderMaxWidth` | 76 / 176 | スライダー。残り幅をこの範囲へ丸める |
-| `kComboMaxWidth` | 190 | コンボの上限 |
-| `kTextInputWidth` | 190 | 文字列入力 |
-| `kButtonWidth` | 68 | 通常のボタン（追加 / 複製 / 削除 など） |
-| `kWideButtonWidth` | 148 | 単独で置くボタン（視点をリセット など） |
-| `kSplitterGrabWidth` | 8 | 列の境界を掴める幅。線より広く取る |
-| `kCaptionFontSize` | 12 | 一覧のサムネイルに添える名前（唯一の例外サイズ） |
+| 定数 | 値 | 通し方 | 用途 |
+| --- | --- | --- | --- |
+| `kLabelColumnWidth` | 108 | TextScaled | プロパティ行のラベル列 |
+| `kSliderMinWidth` / `kSliderMaxWidth` | 76 / 176 | TextScaled | スライダー。残り幅をこの範囲へ丸める |
+| `kComboMaxWidth` | 190 | TextScaled | コンボの上限 |
+| `kTextInputWidth` | 190 | TextScaled | 文字列入力 |
+| `kButtonWidth` | 68 | TextScaled | 通常のボタン（追加 / 複製 / 削除 など） |
+| `kWideButtonWidth` | 148 | TextScaled | 単独で置くボタン（視点をリセット など） |
+| `kSplitterGrabWidth` | 8 | Scaled | 列の境界を掴める幅。線より広く取る |
+| `kCaptionFontSize` | 12 | FontScale | 一覧のサムネイルに添える名前（唯一の例外サイズ） |
 
 ---
 

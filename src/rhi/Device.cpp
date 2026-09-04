@@ -146,6 +146,32 @@ void Device::DeferRelease(GpuBuffer& buffer) {
     buffer = GpuBuffer{};
 }
 
+Device::VideoMemory Device::QueryVideoMemory() const {
+    VideoMemory result;
+
+    // D3D12MA の Budget は、内部で QueryVideoMemoryInfo を呼んだプロセス全体の値と、
+    // アロケータ自身の統計をまとめて返す。両方をここで一度に受け取る。
+    if (D3D12MA::Allocator* allocator = m_allocator.Raw(); allocator != nullptr) {
+        D3D12MA::Budget local = {};
+        allocator->GetBudget(&local, nullptr);
+        result.usage = local.UsageBytes;
+        result.budget = local.BudgetBytes;
+        result.allocated = local.Stats.AllocationBytes;
+        result.reserved = local.Stats.BlockBytes;
+        return result;
+    }
+
+    // アロケータがまだ無い場合でも、プロセス全体の値だけは取れる。
+    if (m_adapter) {
+        DXGI_QUERY_VIDEO_MEMORY_INFO info = {};
+        if (SUCCEEDED(m_adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &info))) {
+            result.usage = info.CurrentUsage;
+            result.budget = info.Budget;
+        }
+    }
+    return result;
+}
+
 uint64_t Device::CompletedFenceValue() const {
     return m_fence ? m_fence->GetCompletedValue() : 0;
 }

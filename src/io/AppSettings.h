@@ -19,6 +19,10 @@ struct UiSettings {
     bool followSystemScale = false;
     // 追従しないときの拡大率。
     float manualScale = 1.0f;
+    // 文字の基準サイズ（px、拡大率を掛ける前）。UI 全体に効く。
+    // 拡大率と違って余白や部品幅は動かないので、**文字だけを詰めたい / 大きくしたい**
+    // ときに使う。既定と範囲は `ui/UiStyle.h` の kDefaultFontSize / kMinFontSize / kMaxFontSize と揃える。
+    int fontSize = 17;
     // レイヤーパネルの一覧側（上の区画）の高さ（96 DPI 基準）。
     // 境界のドラッグで変わる。**拡大率を掛ける前の値で持つ**ので、
     // 表示スケールを変えても区画の見た目の高さが保たれる。

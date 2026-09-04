@@ -71,6 +71,11 @@ void AppSettings::Load() {
             // 壊れた値でも操作不能にならないよう、範囲へ丸める。
             m_ui.manualScale = std::clamp(scale->get<float>(), 0.5f, 4.0f);
         }
+        if (const auto fontSize = ui->find("fontSize");
+            fontSize != ui->end() && fontSize->is_number_integer()) {
+            // ImGuiLayer 側でも切るが、UI のスライダーに載る値にしておく。
+            m_ui.fontSize = std::clamp(fontSize->get<int>(), 11, 28);
+        }
         if (const auto listHeight = ui->find("layerListHeight");
             listHeight != ui->end() && listHeight->is_number()) {
             m_ui.layerListHeight = std::clamp(listHeight->get<float>(), 100.0f, 800.0f);
@@ -130,6 +135,7 @@ bool AppSettings::Save() const {
     json ui;
     ui["followSystemScale"] = m_ui.followSystemScale;
     ui["manualScale"] = m_ui.manualScale;
+    ui["fontSize"] = m_ui.fontSize;
     ui["layerListHeight"] = m_ui.layerListHeight;
 
     json display;

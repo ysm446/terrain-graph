@@ -144,6 +144,14 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
             std::snprintf(text, sizeof(text), "三角形 %s", GroupDigits(stats.triangles).c_str());
         }
         lines.emplace_back(text);
+        // VRAM はプロセス全体の使用量とバジェット。合成の解像度を上げたときに
+        // どれだけ余裕が残っているかを、その場で見えるようにする。
+        const rhi::Device::VideoMemory vram = m_device.QueryVideoMemory();
+        constexpr double kMegaBytes = 1024.0 * 1024.0;
+        std::snprintf(text, sizeof(text), "VRAM %.0f / %.0f MB",
+                      static_cast<double>(vram.usage) / kMegaBytes,
+                      static_cast<double>(vram.budget) / kMegaBytes);
+        lines.emplace_back(text);
     }
 
     const ImVec2 padding(ui::Scaled(8.0f), ui::Scaled(4.0f));

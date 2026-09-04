@@ -95,6 +95,20 @@ public:
     void DeferRelease(GpuTexture& texture);
     void DeferRelease(GpuBuffer& buffer);
 
+    // いま VRAM をどれだけ使っているか。
+    //
+    // usage / budget は**プロセス全体**の値（OS がこのプロセスへ割り当てている枠）で、
+    // allocated / reserved は D3D12MA を通して確保した分だけを表す。
+    // スワップチェーンやディスクリプタヒープ、ドライバの内部確保は allocated に入らないので、
+    // 常に usage のほうが大きくなる。
+    struct VideoMemory {
+        uint64_t usage = 0;      // プロセスが使っている VRAM
+        uint64_t budget = 0;     // OS がこのプロセスへ許している上限の目安
+        uint64_t allocated = 0;  // D3D12MA のアロケーションが実際に占めている分
+        uint64_t reserved = 0;   // D3D12MA がドライバから借りているブロックの合計
+    };
+    VideoMemory QueryVideoMemory() const;
+
     uint64_t CompletedFenceValue() const;
     size_t PendingDeletionCount() const { return m_deletionQueue.PendingCount(); }
     uint32_t FrameIndex() const { return m_frameIndex; }

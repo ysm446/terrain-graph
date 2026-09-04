@@ -747,6 +747,10 @@ uint32_t Application::DefaultClientHeight() const {
 // 1920x1080 のまま**で、文字と部品だけが大きくなる。
 // 拡大率だけ上げるとパネルが窮屈になるので、既定では大きさを揃える。
 void Application::ApplyUiScale() {
+    // 文字サイズは拡大率と別に効く。ウィンドウの大きさは変えない
+    // （作業面積は拡大率で決まるもので、文字の大小で動かすものではない）。
+    m_imgui.SetFontSize(static_cast<float>(m_settings.Ui().fontSize));
+
     const float desired = DesiredUiScale();
     if (std::abs(desired - m_imgui.UiScale()) < 0.001f) {
         return;
@@ -800,6 +804,14 @@ void Application::DrawSettingsWindow() {
                 changed = true;
             }
         }
+
+        // 文字だけの大きさ。拡大率と違って余白や部品幅は変わらないので、
+        // 「情報量は増やしたいが文字は読みたい」という詰め方の調整に使える。
+        // ラベルは短く保つ。ラベル列に収まらないと途中で切れる。
+        changed |= ui::PropertyInt("文字サイズ", &ui.fontSize, static_cast<int>(ui::kMinFontSize),
+                                   static_cast<int>(ui::kMaxFontSize), defaults.fontSize,
+                                   "UI 全体の文字の大きさ（px）。拡大率とは別に掛かる。"
+                                   "部品の高さは文字から決まるので、行の高さも一緒に変わる");
         ui::EndPropertyTable();
     }
     ui::HintText("拡大するとウィンドウも同じ倍率で大きくなる（作業面積は変わらない）");
@@ -917,6 +929,16 @@ void Application::DrawInfoWindow() {
                           m_paintMasks.Resolution(), m_paintMasks.UndoCount());
         ui::PropertyValue("アンドゥ", "%zu 段 / やり直し %zu 段", m_undoHistory.UndoCount(),
                           m_undoHistory.RedoCount());
+        // VRAM は 2 行に分ける。1 行目はプロセス全体（枠に対してどれだけ使っているか）、
+        // 2 行目はこのアプリが D3D12MA を通して確保した分。差はスワップチェーンや
+        // ディスクリプタヒープ、ドライバの内部確保にあたる。
+        const rhi::Device::VideoMemory vram = m_device.QueryVideoMemory();
+        constexpr double kMegaBytes = 1024.0 * 1024.0;
+        ui::PropertyValue("VRAM", "%.0f / %.0f MB", static_cast<double>(vram.usage) / kMegaBytes,
+                          static_cast<double>(vram.budget) / kMegaBytes);
+        ui::PropertyValue("VRAM 確保", "%.0f MB (ブロック %.0f MB)",
+                          static_cast<double>(vram.allocated) / kMegaBytes,
+                          static_cast<double>(vram.reserved) / kMegaBytes);
         ui::PropertyValue("PSO", "%zu 件", m_pipelineCache.PipelineCount());
         ui::PropertyValue("解放待ち", "%zu 件", m_device.PendingDeletionCount());
         ui::PropertyValue("アップロード", "%llu / %llu KB",
