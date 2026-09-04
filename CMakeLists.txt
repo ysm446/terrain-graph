@@ -89,6 +89,7 @@ set(tg_sources
     src/app/ApplicationGraphPanel.cpp
     src/app/ApplicationLayerPanel.cpp
     src/app/ApplicationMaterialPanel.cpp
+    src/app/ApplicationPathEdit.cpp
     src/app/ApplicationPreviewPanels.cpp
     src/app/ApplicationSkyPanel.cpp
     src/app/ApplicationTexturePanel.cpp
@@ -100,6 +101,8 @@ set(tg_sources
     src/core/Log.h
     src/graph/NodeGraph.cpp
     src/graph/NodeGraph.h
+    src/graph/Path.cpp
+    src/graph/Path.h
     src/compositor/MaterialEvaluator.cpp
     src/compositor/MaterialEvaluator.h
     src/compositor/MaterialLayer.h

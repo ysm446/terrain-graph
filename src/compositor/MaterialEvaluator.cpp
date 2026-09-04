@@ -112,6 +112,21 @@ struct RiverConstants {
     float params4[4];      // 水際のぼかし, 主流の半幅（m）, 岸の幅（m）, 標高差 / 一辺
 };
 
+// パスの線分を 1 回のディスパッチで流す上限。シェーダの TG_PATH_MAX_SEGMENTS と一致させること。
+// 3 float4 × 256 = 12 KB。定数バッファの 64 KB には十分に収まる。
+constexpr uint32_t kMaxPathSegments = 256;
+
+// GPU 側の PathMaskConstants と一致させること。
+struct PathMaskConstants {
+    uint32_t indices[4];  // 出力 UAV, 出力の一辺, 線分数, 前の結果と max
+    float params[4];      // 一辺（m）, ガンマ, 反転, 未使用
+    float segments[kMaxPathSegments * 3][4];
+};
+
+// CPU へ写すハイトの一辺。パスの投影と表示に使うだけなので粗くてよい
+// （2048 m の地形で 4 m。点の幅は数十 m）。
+constexpr uint32_t kHeightfieldReadbackResolution = 512;
+
 // GPU 側の MaskOpConstants と一致させること。
 struct MaskOpConstants {
     uint32_t indices[4];  // 出力 UAV, 入力 A SRV, 入力 B SRV, 素材 SRV
@@ -231,6 +246,17 @@ uint64_t HashMaskOpParams(uint64_t seed, const MaskOp& op) {
             return HashBytes(seed, &op.height, sizeof(op.height));
         case MaskOpKind::River:
             return HashBytes(seed, &op.riverMask, sizeof(op.riverMask));
+        case MaskOpKind::Path: {
+            // 線分列の中身まで混ぜる（点を 1 つ動かしただけでも焼き直すため）。
+            uint64_t hash = HashBytes(seed, &op.pathMask, sizeof(op.pathMask));
+            const size_t count = op.pathSegments.size();
+            hash = HashBytes(hash, &count, sizeof(count));
+            if (!op.pathSegments.empty()) {
+                hash = HashBytes(hash, op.pathSegments.data(),
+                                 op.pathSegments.size() * sizeof(PathSegment));
+            }
+            return hash;
+        }
         default:
             return seed;
     }
@@ -268,6 +294,28 @@ void ReleaseTextureSet(rhi::Device& device, MaterialTextureSet& set) {
 }
 
 }  // namespace
+
+float CpuHeightfield::Sample(float u, float v) const {
+    if (!IsValid()) {
+        return 0.5f;
+    }
+    // テクセル中心が (i + 0.5) / n に当たる（DownsampleHeight の矩形の中心）。
+    const float last = static_cast<float>(resolution - 1);
+    const float fx = std::clamp(u * static_cast<float>(resolution) - 0.5f, 0.0f, last);
+    const float fy = std::clamp(v * static_cast<float>(resolution) - 0.5f, 0.0f, last);
+    const uint32_t x0 = static_cast<uint32_t>(fx);
+    const uint32_t y0 = static_cast<uint32_t>(fy);
+    const uint32_t x1 = std::min(x0 + 1, resolution - 1);
+    const uint32_t y1 = std::min(y0 + 1, resolution - 1);
+    const float tx = fx - static_cast<float>(x0);
+    const float ty = fy - static_cast<float>(y0);
+    const auto at = [&](uint32_t x, uint32_t y) {
+        return values[static_cast<size_t>(y) * resolution + x];
+    };
+    const float top = at(x0, y0) + (at(x1, y0) - at(x0, y0)) * tx;
+    const float bottom = at(x0, y1) + (at(x1, y1) - at(x0, y1)) * tx;
+    return top + (bottom - top) * ty;
+}
 
 bool MaterialEvaluator::Create(rhi::Device& device, uint32_t resolution, bool asynchronous) {
     // 走っている評価が前の組を読んでいるかもしれない。作り直す前に必ず待つ。
@@ -384,6 +432,7 @@ void MaterialEvaluator::Destroy(rhi::Device& device) {
     m_compute.Destroy(device);
     m_asyncInFlight = false;
     m_hasResult = false;
+    ReleaseHeightfieldResources(device);
     ReleaseFluvialResources(device);
     device.DeferRelease(m_maskHeightRange);
     ReleaseSedimentResources(device);
@@ -528,6 +577,10 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
     // 河川の水面 / 河原 / 水深も、直前に走った河川レイヤーの作業用テクスチャから焼く。
     if (op.kind == MaskOpKind::River) {
         return ApplyRiverMask(device, pipelineCache, commandList, op, stack, target);
+    }
+    // パスは線分の列を定数で受ける専用のシェーダ。
+    if (op.kind == MaskOpKind::Path) {
+        return ApplyPathMask(device, pipelineCache, commandList, op, stack, target);
     }
 
     const wchar_t* entry = L"CsImage";
@@ -708,6 +761,200 @@ bool MaterialEvaluator::EnsureMaskHeightRange(rhi::Device& device) {
         return false;
     }
     return true;
+}
+
+// パスの足跡。線分は kMaxPathSegments 本ずつ流し、2 回目以降は前の結果と max を取る。
+// ガンマと反転は最後のバッチだけに掛ける（途中で掛けると max の意味が変わる）。
+bool MaterialEvaluator::ApplyPathMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                      ID3D12GraphicsCommandList* commandList, const MaskOp& op,
+                                      const MaterialStack& stack, rhi::GpuTexture& target) {
+    if (!target.IsValid()) {
+        return false;
+    }
+    ID3D12PipelineState* pipeline =
+        pipelineCache.GetCompute(L"CompositeMaskPath.hlsl", L"CsPath");
+    if (pipeline == nullptr) {
+        return false;
+    }
+    const uint32_t resolution = m_resolution;
+    const float sizeMeters = (stack.SizeMeters() > 0.0f) ? stack.SizeMeters() : 1.0f;
+    const size_t total = op.pathSegments.size();
+    const size_t batchCount =
+        std::max<size_t>(1, (total + kMaxPathSegments - 1) / kMaxPathSegments);
+
+    PIXBeginEvent(commandList, PIX_COLOR(170, 150, 220), "CompositeMaskPath");
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    commandList->SetPipelineState(pipeline);
+
+    for (size_t batch = 0; batch < batchCount; ++batch) {
+        const size_t begin = batch * kMaxPathSegments;
+        const size_t end = std::min(total, begin + kMaxPathSegments);
+        const bool last = (batch + 1 == batchCount);
+
+        const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(PathMaskConstants));
+        if (!cb.IsValid()) {
+            PIXEndEvent(commandList);
+            return false;
+        }
+        // 線分の配列は大きいので、定数は置き場の上で直接組む（スタックに 12 KB 積まない）。
+        auto* constants = static_cast<PathMaskConstants*>(cb.cpu);
+        constants->indices[0] = target.UavIndex();
+        constants->indices[1] = resolution;
+        constants->indices[2] = static_cast<uint32_t>(end - begin);
+        constants->indices[3] = (batch == 0) ? 0u : 1u;
+        constants->params[0] = sizeMeters;
+        constants->params[1] = last ? std::clamp(op.pathMask.gamma, 0.05f, 8.0f) : 1.0f;
+        constants->params[2] = (last && op.pathMask.invert) ? 1.0f : 0.0f;
+        constants->params[3] = 0.0f;
+        for (size_t i = begin; i < end; ++i) {
+            const PathSegment& segment = op.pathSegments[i];
+            float* slot = constants->segments[(i - begin) * 3];
+            slot[0] = segment.ax;
+            slot[1] = segment.ay;
+            slot[2] = segment.bx;
+            slot[3] = segment.by;
+            slot[4] = segment.widthA;
+            slot[5] = segment.widthB;
+            slot[6] = segment.featherA;
+            slot[7] = segment.featherB;
+            slot[8] = segment.intensityA;
+            slot[9] = segment.intensityB;
+            slot[10] = 0.0f;
+            slot[11] = 0.0f;
+        }
+
+        commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+        commandList->Dispatch(DispatchCount(resolution), DispatchCount(resolution), 1);
+        // 次のバッチは前の結果を読む。
+        const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(target.resource.Get());
+        commandList->ResourceBarrier(1, &uav);
+    }
+
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    PIXEndEvent(commandList);
+    return true;
+}
+
+// --- CPU 側のハイト ------------------------------------------------------------
+
+void MaterialEvaluator::ReleaseHeightfieldResources(rhi::Device& device) {
+    device.DeferRelease(m_heightfieldTexture);
+    device.DeferRelease(m_heightfieldReadback);
+    m_heightfieldReadbackBytes = 0;
+    m_heightfieldRowPitch = 0;
+    m_heightfieldPending = false;
+    m_heightfieldFence = nullptr;
+    m_heightfieldFenceValue = 0;
+}
+
+bool MaterialEvaluator::EnsureHeightfieldResources(rhi::Device& device) {
+    if (m_heightfieldTexture.IsValid() && m_heightfieldReadback.IsValid()) {
+        return true;
+    }
+    ReleaseHeightfieldResources(device);
+    if (!CreateChannelTexture(device, kHeightfieldReadbackResolution, DXGI_FORMAT_R32_FLOAT,
+                              L"HeightfieldReadbackTexture", m_heightfieldTexture)) {
+        return false;
+    }
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+    UINT rowCount = 0;
+    UINT64 rowBytes = 0;
+    UINT64 totalBytes = 0;
+    const D3D12_RESOURCE_DESC desc = m_heightfieldTexture.resource->GetDesc();
+    device.GetDevice()->GetCopyableFootprints(&desc, 0, 1, 0, &footprint, &rowCount, &rowBytes,
+                                              &totalBytes);
+    if (!device.Allocator().CreateReadbackBuffer(totalBytes, L"HeightfieldReadback",
+                                                 m_heightfieldReadback)) {
+        ReleaseHeightfieldResources(device);
+        return false;
+    }
+    m_heightfieldReadbackBytes = totalBytes;
+    m_heightfieldRowPitch = footprint.Footprint.RowPitch;
+    return true;
+}
+
+// 評価の末尾で呼ぶ。Height を縮小し、読み戻しバッファへコピーする。
+// コンピュートキューでも記録できる操作だけを使う（COPY_SOURCE への遷移とコピー）。
+void MaterialEvaluator::RecordHeightfieldReadback(rhi::Device& device,
+                                                  rhi::PipelineCache& pipelineCache,
+                                                  ID3D12GraphicsCommandList* commandList) {
+    // 前回の読み戻しをまだ写していなくても、今回で上書きしてよい
+    // （評価は 1 本ずつ流れるので、写す時点で最新の結果が入っている）。
+    if (!EnsureHeightfieldResources(device)) {
+        return;
+    }
+    ID3D12PipelineState* pipeline =
+        pipelineCache.GetCompute(L"CompositeBlur.hlsl", L"CsDownsample");
+    if (pipeline == nullptr) {
+        return;
+    }
+    BlurConstants constants = {};
+    constants.sourceIndex = m_textures.height.SrvIndex();
+    constants.outputIndex = m_heightfieldTexture.UavIndex();
+    constants.resolution[0] = kHeightfieldReadbackResolution;
+    constants.resolution[1] = kHeightfieldReadbackResolution;
+    const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(BlurConstants));
+    if (!cb.IsValid()) {
+        return;
+    }
+    std::memcpy(cb.cpu, &constants, sizeof(constants));
+
+    PIXBeginEvent(commandList, PIX_COLOR(120, 140, 160), "HeightfieldReadback");
+    TransitionIfNeeded(commandList, m_textures.height,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(commandList, m_heightfieldTexture, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    commandList->SetPipelineState(pipeline);
+    commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+    commandList->Dispatch(DispatchCount(kHeightfieldReadbackResolution),
+                          DispatchCount(kHeightfieldReadbackResolution), 1);
+    TransitionIfNeeded(commandList, m_heightfieldTexture, D3D12_RESOURCE_STATE_COPY_SOURCE);
+
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+    const D3D12_RESOURCE_DESC desc = m_heightfieldTexture.resource->GetDesc();
+    device.GetDevice()->GetCopyableFootprints(&desc, 0, 1, 0, &footprint, nullptr, nullptr,
+                                              nullptr);
+    const CD3DX12_TEXTURE_COPY_LOCATION destination(m_heightfieldReadback.resource.Get(),
+                                                    footprint);
+    const CD3DX12_TEXTURE_COPY_LOCATION source(m_heightfieldTexture.resource.Get(), 0);
+    commandList->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+    PIXEndEvent(commandList);
+
+    // 完了を待つフェンス。非同期ならコンピュートキューの次の値、同期ならこのフレームの値。
+    if (m_recordingAsync) {
+        m_heightfieldFence = m_compute.Fence();
+        m_heightfieldFenceValue = m_compute.SubmittedValue() + 1;
+    } else {
+        m_heightfieldFence = device.FrameFence();
+        m_heightfieldFenceValue = device.NextFenceValue();
+    }
+    m_heightfieldPending = true;
+}
+
+void MaterialEvaluator::CollectHeightfieldReadback() {
+    if (!m_heightfieldPending || m_heightfieldFence == nullptr ||
+        !m_heightfieldReadback.IsValid()) {
+        return;
+    }
+    if (m_heightfieldFence->GetCompletedValue() < m_heightfieldFenceValue) {
+        return;
+    }
+    m_heightfieldPending = false;
+    void* mapped = nullptr;
+    const D3D12_RANGE readRange = {0, static_cast<SIZE_T>(m_heightfieldReadbackBytes)};
+    if (!TG_CHECK_HR(m_heightfieldReadback.resource->Map(0, &readRange, &mapped))) {
+        return;
+    }
+    const uint32_t resolution = kHeightfieldReadbackResolution;
+    m_heightfield.resolution = resolution;
+    m_heightfield.values.resize(static_cast<size_t>(resolution) * resolution);
+    const auto* base = static_cast<const uint8_t*>(mapped);
+    for (uint32_t y = 0; y < resolution; ++y) {
+        std::memcpy(m_heightfield.values.data() + static_cast<size_t>(y) * resolution,
+                    base + static_cast<size_t>(y) * m_heightfieldRowPitch,
+                    sizeof(float) * resolution);
+    }
+    const D3D12_RANGE writtenRange = {0, 0};
+    m_heightfieldReadback.resource->Unmap(0, &writtenRange);
 }
 
 bool MaterialEvaluator::ApplyFluvialMask(rhi::Device& device,
@@ -2589,6 +2836,11 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         TransitionIfNeeded(commandList, thumbnail, kOutputReadState);
     }
 
+    // プレビュー用の評価器だけ、Height を CPU へ写す（パスの編集に使う）。
+    if (m_asynchronous && complete) {
+        RecordHeightfieldReadback(device, pipelineCache, commandList);
+    }
+
     PIXEndEvent(commandList);
     return complete;
 }
@@ -2608,6 +2860,9 @@ void MaterialEvaluator::Update(rhi::Device& device, rhi::PipelineCache& pipeline
     if (!m_textures.IsValid()) {
         return;
     }
+    // CPU 側のハイトの読み戻しは、評価の回収とは別に毎フレーム見る
+    // （同期評価のときはフレームのフェンスで終わるため）。
+    CollectHeightfieldReadback();
 
     // --- 回収 -----------------------------------------------------------------
     if (m_asyncInFlight && !m_compute.IsBusy()) {

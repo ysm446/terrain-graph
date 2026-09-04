@@ -46,6 +46,8 @@ enum class MaskOpKind : uint32_t {
     Height = 10,
     // 河川レイヤーの出力。出力ピンによって水面の被覆 / 河原 / 水深になる。
     River = 11,
+    // パス（向き付きの線）の足跡。中心線からの距離を幅とフェザーで 0〜1 にする。
+    Path = 12,
 };
 
 // 曲率マスクの向き。シェーダの TG_CURVATURE_* と一致させること。
@@ -147,6 +149,27 @@ struct RiverMaskParams {
     float minWidthMeters = 3.0f;
 };
 
+// パスの線分 1 本。座標は地形平面の正規化 UV（0〜1）、幅 / フェザーは m。
+// 両端で値が違えばエッジ上で補間する。孤立した点は a == b の線分（円）。
+struct PathSegment {
+    float ax = 0.0f;
+    float ay = 0.0f;
+    float bx = 0.0f;
+    float by = 0.0f;
+    float widthA = 0.0f;
+    float widthB = 0.0f;
+    float featherA = 0.0f;
+    float featherB = 0.0f;
+    float intensityA = 1.0f;
+    float intensityB = 1.0f;
+};
+
+// パスをマスクにするときの調整。形（幅 / フェザー / 強さ）は点が持つ。
+struct PathMaskParams {
+    float gamma = 1.0f;
+    bool invert = false;
+};
+
 // 演算 1 つ。入力は他の op の添字で、**自分より前**を指す（後方参照はしない）。
 struct MaskOp {
     MaskOpKind kind = MaskOpKind::Image;
@@ -168,6 +191,9 @@ struct MaskOp {
     CrumblingMaskParams crumblingMask;
     SnowMaskParams snowMask;
     RiverMaskParams riverMask;
+    PathMaskParams pathMask;
+    // Path のときだけ。コンパイルがパスから作る線分列（正規化 UV）。
+    std::vector<PathSegment> pathSegments;
 };
 
 // 評価する順に並んだ op の列。

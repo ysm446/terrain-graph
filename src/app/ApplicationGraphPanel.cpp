@@ -65,6 +65,10 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
             return ImVec4(0.78f, 0.76f, 0.70f, 1.0f);
         case graph::NodeKind::MaskBlend:
             return ImVec4(0.74f, 0.70f, 0.78f, 1.0f);
+        case graph::NodeKind::Path:
+            return ImVec4(0.66f, 0.62f, 0.84f, 1.0f);
+        case graph::NodeKind::MaskPath:
+            return ImVec4(0.70f, 0.66f, 0.80f, 1.0f);
         case graph::NodeKind::Output:
         default:
             return ImVec4(0.59f, 0.64f, 0.68f, 1.0f);
@@ -80,6 +84,9 @@ ImVec4 PinTypeColor(graph::ValueType valueType) {
         // マスクはオレンジ。0〜1 の 1 チャンネル。
         case graph::ValueType::Mask:
             return ImVec4(0.82f, 0.64f, 0.36f, 1.0f);
+        // パスは薄い紫。線（点とエッジ）が流れる。
+        case graph::ValueType::Path:
+            return ImVec4(0.74f, 0.64f, 0.92f, 1.0f);
         // マテリアルは緑。4 チャンネル一式（ハイトを含む）。
         case graph::ValueType::Material:
         default:
@@ -728,6 +735,11 @@ void Application::DrawGraphEditor() {
         addNodeMenuItem(graph::NodeKind::MaskBlend,
                         "Mask Blend — マスク 2 枚を合成する");
         ImGui::Separator();
+        addNodeMenuItem(graph::NodeKind::Path,
+                        "Path — 地形の上に線を引く（道路 / 川 / 氷河のガイド）");
+        addNodeMenuItem(graph::NodeKind::MaskPath,
+                        "Mask Path — パスの足跡をマスクにする");
+        ImGui::Separator();
         addNodeMenuItem(graph::NodeKind::Output, "Output — ここに繋いだ結果をプレビューする");
         ImGui::EndPopup();
     }
@@ -961,6 +973,11 @@ void Application::DrawGraphPanel() {
                 header = "合成";
                 hint = "マスク 2 枚を合成する。片方だけ繋いだときはそれを通す";
                 break;
+            case graph::NodeKind::MaskPath:
+                header = "パスの足跡";
+                hint = "Path 入力の線を、点ごとの幅とフェザーでマスクにする。"
+                       "形はパスの点が持ち、ここでは調整だけ";
+                break;
             default:
                 break;
         }
@@ -988,6 +1005,9 @@ void Application::DrawGraphPanel() {
                 case graph::NodeKind::MaskBlend:
                     changed |= DrawBlendRows(mask->blend);
                     break;
+                case graph::NodeKind::MaskPath:
+                    changed |= DrawPathMaskRows(mask->pathMask);
+                    break;
                 default:
                     changed |= DrawMapSlotRow("画像", mask->map, m_textureLibrary);
                     break;
@@ -996,6 +1016,11 @@ void Application::DrawGraphPanel() {
         }
         ui::HintText("%s", hint);
         if (changed) {
+            m_graph.MarkDirty();
+            MarkDocumentChanged();
+        }
+    } else if (std::get_if<graph::PathNodeSettings>(&selected->settings) != nullptr) {
+        if (DrawPathSettings(*selected)) {
             m_graph.MarkDirty();
             MarkDocumentChanged();
         }

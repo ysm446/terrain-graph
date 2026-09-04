@@ -84,6 +84,19 @@ constexpr std::array<PinDefinition, 3> kMaskBlendPins = {{
     {PinKind::Output, ValueType::Mask, "Mask"},
 }};
 
+// パスのピン。Base は「どの時点の地形に沿うか」（表示とプレビューに使う。
+// パスの座標は 2D なので評価には効かない）。出力はパスそのもの。
+constexpr std::array<PinDefinition, 2> kPathPins = {{
+    {PinKind::Input, ValueType::Material, "Base"},
+    {PinKind::Output, ValueType::Path, "Path"},
+}};
+
+// パスの足跡をマスクにするピン。
+constexpr std::array<PinDefinition, 2> kMaskPathPins = {{
+    {PinKind::Input, ValueType::Path, "Path"},
+    {PinKind::Output, ValueType::Mask, "Mask"},
+}};
+
 constexpr std::array<PinDefinition, 1> kOutputNodePins = {{
     {PinKind::Input, ValueType::Material, "Material"},
 }};
@@ -93,7 +106,7 @@ constexpr std::array<PinDefinition, 1> kSourceNodePins = {{
     {PinKind::Output, ValueType::Material, "Result"},
 }};
 
-constexpr std::array<NodeDefinition, 18> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 20> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -111,6 +124,8 @@ constexpr std::array<NodeDefinition, 18> kNodeDefinitions = {{
     {NodeKind::MaskCurvature, "maskCurvature", "Mask Curvature", kMaskFromHeightPins},
     {NodeKind::MaskLevels, "maskLevels", "Mask Levels", kMaskFilterPins},
     {NodeKind::MaskBlend, "maskBlend", "Mask Blend", kMaskBlendPins},
+    {NodeKind::Path, "path", "Path", kPathPins},
+    {NodeKind::MaskPath, "maskPath", "Mask Path", kMaskPathPins},
     {NodeKind::Output, "output", "Output", kOutputNodePins},
 }};
 
@@ -153,7 +168,8 @@ bool IsMaskNodeKind(NodeKind kind) {
     return kind == NodeKind::MaskImage || kind == NodeKind::MaskNoise ||
            kind == NodeKind::MaskFluvial || kind == NodeKind::MaskHeight ||
            kind == NodeKind::MaskSlope || kind == NodeKind::MaskCurvature ||
-           kind == NodeKind::MaskLevels || kind == NodeKind::MaskBlend;
+           kind == NodeKind::MaskLevels || kind == NodeKind::MaskBlend ||
+           kind == NodeKind::MaskPath;
 }
 
 // 下地の Height を読むマスクか。**チェーンのどこを読むか**を Base 入力で指す。
@@ -169,7 +185,8 @@ bool IsLayerMaskSourceKind(NodeKind kind) {
 
 bool IsPreviewableNodeKind(NodeKind kind) {
     // マスクは見ながら調整するものなので、どのマスクノードもプレビューできる。
-    return IsLayerNodeKind(kind) || IsMaskNodeKind(kind);
+    // パスは Base に繋いだ地形（沿う面）を出す。
+    return IsLayerNodeKind(kind) || IsMaskNodeKind(kind) || kind == NodeKind::Path;
 }
 
 compositor::LayerKind LayerKindFor(NodeKind kind) {
@@ -357,6 +374,8 @@ GraphId NodeGraph::CreateNode(NodeKind kind) {
         node.settings = std::move(settings);
     } else if (IsMaskNodeKind(kind)) {
         node.settings = MaskNodeSettings{};
+    } else if (kind == NodeKind::Path) {
+        node.settings = PathNodeSettings{};
     } else {
         node.settings = OutputNodeSettings{};
     }
@@ -462,8 +481,9 @@ const Node* NodeGraph::PreviewTop(GraphId nodeId) const {
     if (node != nullptr && IsLayerNodeKind(node->kind)) {
         return node;
     }
-    // 川筋ノードは自分ではハイトを作らない。入力に繋いだチェーンを見る。
-    if (node != nullptr && node->kind == NodeKind::MaskFluvial) {
+    // 川筋ノードとパスは自分ではハイトを作らない。入力に繋いだチェーンを見る。
+    if (node != nullptr &&
+        (node->kind == NodeKind::MaskFluvial || node->kind == NodeKind::Path)) {
         for (const Pin& pin : node->inputs) {
             if (pin.valueType != ValueType::Material) {
                 continue;
@@ -523,6 +543,10 @@ bool NodeGraph::MaskDependsOnHeight(const Node& maskNode, int depth) const {
         case NodeKind::Crumbling:
         case NodeKind::Snow:
         case NodeKind::River:
+            return true;
+        // パスは 2D で高さを読まないが、**地形の上に引いたもの**なので、
+        // 平らな板ではなく地形の上に貼って見せる（線と地形の対応こそが見たいもの）。
+        case NodeKind::MaskPath:
             return true;
         case NodeKind::MaskLevels:
         case NodeKind::MaskBlend:
@@ -792,6 +816,23 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
             op.kind = compositor::MaskOpKind::Blend;
             op.blend = settings->blend;
             break;
+        case NodeKind::MaskPath: {
+            // パスが繋がっていなければ「繋がっていない」のと同じ扱い。
+            const Node* pathNode = UpstreamOf(maskNode, ValueType::Path);
+            const auto* pathSettings = (pathNode != nullptr)
+                                           ? std::get_if<PathNodeSettings>(&pathNode->settings)
+                                           : nullptr;
+            if (pathSettings == nullptr) {
+                return -1;
+            }
+            op.kind = compositor::MaskOpKind::Path;
+            op.pathMask = settings->pathMask;
+            op.pathSegments = BuildPathSegments(pathSettings->path);
+            if (op.pathSegments.empty()) {
+                return -1;
+            }
+            break;
+        }
         default:
             return -1;
     }
@@ -1037,6 +1078,10 @@ CompiledGraph NodeGraph::CompileLayersTo(GraphId nodeId, GraphId outputPin) cons
         }
         compiled.layers.push_back(paint);
         return compiled;
+    }
+    if (node->kind == NodeKind::Path) {
+        // パスは Base に繋いだ地形（沿う面）を見せる。
+        return CompileChainFrom(PreviewTop(nodeId));
     }
     if (!IsLayerNodeKind(node->kind)) {
         return CompileLayers();

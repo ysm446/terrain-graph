@@ -462,6 +462,17 @@ inline bool DrawCurvatureRows(compositor::CurvatureParams& curvature) {
 }
 
 // 標高マスクの設定行。**プロパティテーブルの中で呼ぶこと。**
+// Mask Path の行。形（幅 / フェザー / 強さ）はパスの点が持つので、ここは調整だけ。
+inline bool DrawPathMaskRows(compositor::PathMaskParams& params) {
+    const compositor::PathMaskParams defaults;
+    bool changed = false;
+    changed |= ui::PropertyFloat("ガンマ", &params.gamma, 0.05f, 8.0f, defaults.gamma,
+                                 "フェザーのカーブ。1 未満で外側まで明るく、1 より大きいと中心へ締まる",
+                                 "%.2f", ImGuiSliderFlags_Logarithmic);
+    changed |= ui::PropertyBool("反転", &params.invert, defaults.invert, "白黒を入れ替える");
+    return changed;
+}
+
 inline bool DrawHeightMaskRows(compositor::HeightParams& height) {
     const compositor::HeightParams defaults;
     bool changed = false;

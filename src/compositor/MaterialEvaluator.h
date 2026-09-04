@@ -111,6 +111,22 @@ struct CrumblingResources {
     bool IsValid() const { return packed.IsValid(); }
 };
 
+// 合成の Height を小さなグリッドで CPU へ写したもの。
+//
+// ビューポートでパスを地形に沿って編集するのに使う（クリック位置の投影、点の表示）。
+// 評価のたびに、評価と同じキューで縮小 → 読み戻しバッファへコピーし、
+// フェンスが立ったら写す。**評価が終わるまでは前回の中身のまま。**
+struct CpuHeightfield {
+    uint32_t resolution = 0;
+    std::vector<float> values;  // 行優先、resolution^2。0〜1 の正規化ハイト
+
+    bool IsValid() const {
+        return resolution > 0 && values.size() == static_cast<size_t>(resolution) * resolution;
+    }
+    // 正規化 UV（0〜1）で双線形に引く。範囲外はクランプ。無効なら 0.5。
+    float Sample(float u, float v) const;
+};
+
 // 評価する出力領域。全体を 1 回で評価するときは矩形に全体を渡す。
 struct TileRect {
     uint32_t x = 0;
@@ -164,6 +180,9 @@ public:
 
     // 非同期の評価が走っている最中か（UI の「評価中」表示と、開発用の撮影の待ちに使う）。
     bool IsEvaluating() const;
+    // 合成の Height の CPU 側の写し（プレビュー用。書き出し用の評価器は持たない）。
+    // 評価が 1 度も終わっていなければ IsValid() が偽。
+    const CpuHeightfield& Heightfield() const { return m_heightfield; }
     // 走っている評価の完了を CPU で待つ。
     void WaitForEvaluation();
 
@@ -210,8 +229,20 @@ private:
                           const MaterialStack& stack, rhi::GpuTexture& target);
     // op ごとの結果テクスチャを用意する。数や解像度が変わった枚だけ作り直す。
     bool EnsureMaskOpTextures(rhi::Device& device, const MaskProgram& ops);
+    // パスの足跡を焼く。線分は定数バッファに入るぶんずつ流す。
+    bool ApplyPathMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                       ID3D12GraphicsCommandList* commandList, const MaskOp& op,
+                       const MaterialStack& stack, rhi::GpuTexture& target);
     // 川筋の作業リソース（1 組を使い回す）。
     bool EnsureFluvialResources(rhi::Device& device, uint32_t workResolution);
+    // --- CPU 側のハイト -----------------------------------------------------
+    // 評価の末尾で Height を縮小して読み戻しバッファへ写す（同じコマンドリストに記録）。
+    void RecordHeightfieldReadback(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                   ID3D12GraphicsCommandList* commandList);
+    // 読み戻しが終わっていれば CPU へ写す。
+    void CollectHeightfieldReadback();
+    bool EnsureHeightfieldResources(rhi::Device& device);
+    void ReleaseHeightfieldResources(rhi::Device& device);
     void ReleaseFluvialResources(rhi::Device& device);
     // 標高マスクの「全範囲」で使う、地形の最低 / 最高をためる 1 枚。
     // 2 テクセルだけ使う（(0,0) が最低、(1,0) が最高）。使うときだけ作る。
@@ -333,6 +364,18 @@ private:
     uint64_t m_asyncRevision = 0;
     // 表側に描ける結果があるか。無いうちは同期で評価する。
     bool m_hasResult = false;
+
+    // --- CPU 側のハイト -----------------------------------------------------
+    CpuHeightfield m_heightfield;
+    rhi::GpuTexture m_heightfieldTexture;   // R32_FLOAT 縮小先
+    rhi::GpuBuffer m_heightfieldReadback;   // READBACK ヒープ
+    uint64_t m_heightfieldReadbackBytes = 0;
+    uint32_t m_heightfieldRowPitch = 0;
+    // 読み戻しを記録したコマンドリストの完了を待つフェンス。null なら待つものなし。
+    // 評価器のキューか Device のフレームのフェンスで、どちらも評価器より長生きする。
+    ID3D12Fence* m_heightfieldFence = nullptr;
+    uint64_t m_heightfieldFenceValue = 0;
+    bool m_heightfieldPending = false;
 };
 
 }  // namespace tg::compositor

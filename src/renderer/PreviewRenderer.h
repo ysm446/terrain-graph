@@ -206,6 +206,7 @@ public:
     compositor::PaintContext PrepareUvBufferForRead(ID3D12GraphicsCommandList* commandList);
 
     Camera& GetCamera() { return m_camera; }
+    const Camera& GetCamera() const { return m_camera; }
     ExposureSettings& Exposure() { return m_exposure; }
     LightSettings& Light() { return m_light; }
     MaterialSettings& Material() { return m_material; }

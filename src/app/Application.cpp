@@ -617,6 +617,13 @@ void Application::DrawStatusBar() {
                 ImGui::PopStyleColor();
                 ImGui::TextDisabled("|");
             }
+            // パスを編集している間は左クリックが点を置く。ペイントと同じく常に見せる。
+            if (const graph::Node* pathNode = CurrentPathNode(); pathNode != nullptr) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_CheckMark));
+                ImGui::TextUnformatted("パス編集中");
+                ImGui::PopStyleColor();
+                ImGui::TextDisabled("|");
+            }
             // 合成の評価はコンピュートキューで走る。見えている絵が古い間はここで分かる。
             if (m_renderer.Evaluator().IsEvaluating()) {
                 ImGui::TextDisabled("合成を評価中…");

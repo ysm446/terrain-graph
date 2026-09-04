@@ -108,3 +108,24 @@ void CsNormalFromHeight(uint3 dispatchThreadId : SV_DispatchThreadID)
     const float3 normal = normalize(float3(-dx * scale, -dy * scale, 1.0f));
     normalTarget[uint2(texel)] = EncodeTangentNormal(normal);
 }
+
+// 合成の Height を小さなグリッドへ落とす（CPU へ読み戻すため）。
+//
+// ビューポートでパスを地形に沿って編集するのに、CPU 側でも地形の高さが要る
+// （クリック位置の地形への投影、点の表示位置）。合成解像度をそのまま読み戻すと
+// 重いので、セルの平均（DownsampleHeight）で 512² 程度へ落としてから写す。
+// 定数は BlurConstants を流用する（sourceIndex: Height の SRV、outputIndex: 出力 UAV、
+// resolution: 出力の一辺）。
+[numthreads(8, 8, 1)]
+void CsDownsample(uint3 dispatchThreadId : SV_DispatchThreadID)
+{
+    const uint2 cell = dispatchThreadId.xy;
+    const uint resolution = g_blur.resolution.x;
+    if (cell.x >= resolution || cell.y >= resolution)
+    {
+        return;
+    }
+    Texture2D<float> source = ResourceDescriptorHeap[g_blur.sourceIndex];
+    RWTexture2D<float> output = ResourceDescriptorHeap[g_blur.outputIndex];
+    output[cell] = DownsampleHeight(source, cell, resolution);
+}

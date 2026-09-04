@@ -2,6 +2,7 @@
 
 #include "compositor/MaterialLayer.h"
 #include "compositor/MaskGraph.h"
+#include "graph/Path.h"
 
 #include <cstdint>
 #include <span>
@@ -35,6 +36,8 @@ enum class ValueType : uint32_t {
     Material = 0,
     // マスク（0〜1 の 1 チャンネル）。レイヤーの「どこに乗せるか」を外から与える。
     Mask = 1,
+    // パス（地形の上に引いた向き付きの線）。Path ノードが出し、Mask Path が読む。
+    Path = 2,
 };
 
 enum class NodeKind : uint32_t {
@@ -74,6 +77,11 @@ enum class NodeKind : uint32_t {
     // 川筋から河床を掘り、下流へ単調に下がる水面を張る加工。
     // 水面 / 河原 / 水深の 3 つの Mask も出す。
     River = 17,
+    // 地形の上に引いた向き付きの線。道路 / 川 / 氷河のような「方向のあるもの」の
+    // ガイド。ビューポートで編集する。Base 入力は「どの時点の地形に沿うか」。
+    Path = 18,
+    // パスの足跡をマスクにする（中心線からの距離を幅とフェザーで 0〜1 へ）。
+    MaskPath = 19,
 };
 
 struct PinDefinition {
@@ -138,6 +146,12 @@ struct MaskNodeSettings {
     compositor::CurvatureParams curvature;
     compositor::LevelsParams levels;
     compositor::BlendParams blend;
+    compositor::PathMaskParams pathMask;
+};
+
+// パス（Path ノード）。点と向き付きのエッジ。中身は graph/Path.h。
+struct PathNodeSettings {
+    PathSettings path;
 };
 
 // グラフを評価器の入力へ落とした結果。レイヤー列と、マスクの op の列。
@@ -149,7 +163,8 @@ struct CompiledGraph {
 // 出力。ここに繋いだチェーンがプレビューのマテリアルになる。
 struct OutputNodeSettings {};
 
-using NodeSettings = std::variant<LayerNodeSettings, MaskNodeSettings, OutputNodeSettings>;
+using NodeSettings =
+    std::variant<LayerNodeSettings, MaskNodeSettings, OutputNodeSettings, PathNodeSettings>;
 
 struct Node {
     GraphId id = 0;
@@ -307,6 +322,7 @@ bool IsHeightMaskNodeKind(NodeKind kind);
 bool IsLayerMaskSourceKind(NodeKind kind);
 // 選ぶとプレビューの対象になる種類か。レイヤーに加えて、
 // **川筋（マスクを目で見て調整するもの）**もプレビューできる。
+// Path は Base に繋いだ地形（パスが沿う面）をプレビューする。
 bool IsPreviewableNodeKind(NodeKind kind);
 // 種類に対応するレイヤー種別（レイヤー設定を持つ種類のみ意味を持つ）。
 compositor::LayerKind LayerKindFor(NodeKind kind);

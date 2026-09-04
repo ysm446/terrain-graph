@@ -475,6 +475,110 @@ compositor::BlendParams ReadBlend(const json& parent, const char* key) {
     return blend;
 }
 
+json WritePathMask(const compositor::PathMaskParams& params) {
+    json node;
+    node["gamma"] = params.gamma;
+    node["invert"] = params.invert;
+    return node;
+}
+
+compositor::PathMaskParams ReadPathMask(const json& parent, const char* key) {
+    const compositor::PathMaskParams defaults;
+    const json* node = FindMember(parent, key);
+    if (node == nullptr || !node->is_object()) {
+        return defaults;
+    }
+    compositor::PathMaskParams params;
+    params.gamma = ReadFloat(*node, "gamma", defaults.gamma);
+    params.invert = ReadBool(*node, "invert", defaults.invert);
+    return params;
+}
+
+// パス（Path ノード）。点とエッジをそのまま書く。座標は正規化 UV、寸法は m。
+json WritePath(const graph::PathSettings& path) {
+    json node;
+    json points = json::array();
+    for (const graph::PathPoint& point : path.points) {
+        json item;
+        item["id"] = point.id;
+        item["u"] = point.u;
+        item["v"] = point.v;
+        item["width"] = point.widthMeters;
+        item["feather"] = point.featherMeters;
+        item["intensity"] = point.intensity;
+        item["heightOffset"] = point.heightOffsetMeters;
+        points.push_back(std::move(item));
+    }
+    node["points"] = std::move(points);
+    json edges = json::array();
+    for (const graph::PathEdge& edge : path.edges) {
+        json item;
+        item["id"] = edge.id;
+        item["from"] = edge.from;
+        item["to"] = edge.to;
+        edges.push_back(std::move(item));
+    }
+    node["edges"] = std::move(edges);
+    node["defaultWidth"] = path.defaultWidthMeters;
+    node["defaultFeather"] = path.defaultFeatherMeters;
+    node["defaultIntensity"] = path.defaultIntensity;
+    node["nextId"] = path.nextId;
+    return node;
+}
+
+graph::PathSettings ReadPath(const json& parent, const char* key) {
+    graph::PathSettings path;
+    const json* node = FindMember(parent, key);
+    if (node == nullptr || !node->is_object()) {
+        return path;
+    }
+    const graph::PathSettings defaults;
+    path.defaultWidthMeters = ReadFloat(*node, "defaultWidth", defaults.defaultWidthMeters);
+    path.defaultFeatherMeters = ReadFloat(*node, "defaultFeather", defaults.defaultFeatherMeters);
+    path.defaultIntensity = ReadFloat(*node, "defaultIntensity", defaults.defaultIntensity);
+    graph::PathElementId maxId = 0;
+    if (const json* points = FindMember(*node, "points"); points != nullptr && points->is_array()) {
+        for (const json& item : *points) {
+            if (!item.is_object()) {
+                continue;
+            }
+            graph::PathPoint point;
+            point.id = ReadInt(item, "id", 0);
+            if (point.id <= 0) {
+                continue;
+            }
+            point.u = std::clamp(ReadFloat(item, "u", 0.5f), 0.0f, 1.0f);
+            point.v = std::clamp(ReadFloat(item, "v", 0.5f), 0.0f, 1.0f);
+            point.widthMeters = ReadFloat(item, "width", path.defaultWidthMeters);
+            point.featherMeters = ReadFloat(item, "feather", path.defaultFeatherMeters);
+            point.intensity = ReadFloat(item, "intensity", path.defaultIntensity);
+            point.heightOffsetMeters = ReadFloat(item, "heightOffset", 0.0f);
+            maxId = std::max(maxId, point.id);
+            path.points.push_back(point);
+        }
+    }
+    if (const json* edges = FindMember(*node, "edges"); edges != nullptr && edges->is_array()) {
+        for (const json& item : *edges) {
+            if (!item.is_object()) {
+                continue;
+            }
+            graph::PathEdge edge;
+            edge.id = ReadInt(item, "id", 0);
+            edge.from = ReadInt(item, "from", 0);
+            edge.to = ReadInt(item, "to", 0);
+            // 端点が無い / 自分へ戻るエッジは捨てる（壊れたファイルの安全網）。
+            if (edge.id <= 0 || edge.from == edge.to || path.FindPoint(edge.from) == nullptr ||
+                path.FindPoint(edge.to) == nullptr) {
+                continue;
+            }
+            maxId = std::max(maxId, edge.id);
+            path.edges.push_back(edge);
+        }
+    }
+    path.nextId = std::max(ReadInt(*node, "nextId", 1), maxId + 1);
+    return path;
+}
+
 json WriteMask(const compositor::LayerMask& mask, const TextureWriter& writeTexture,
                const std::function<json(compositor::PaintMaskId)>& writePaint) {
     json node;
@@ -807,6 +911,9 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["curvature"] = WriteCurvature(mask->curvature);
             item["levels"] = WriteLevels(mask->levels);
             item["blend"] = WriteBlend(mask->blend);
+            item["maskPath"] = WritePathMask(mask->pathMask);
+        } else if (const auto* path = std::get_if<graph::PathNodeSettings>(&node.settings)) {
+            item["path"] = WritePath(path->path);
         }
         nodes.push_back(std::move(item));
     }
@@ -921,6 +1028,11 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                 settings.curvature = ReadCurvature(item, "curvature");
                 settings.levels = ReadLevels(item, "levels");
                 settings.blend = ReadBlend(item, "blend");
+                settings.pathMask = ReadPathMask(item, "maskPath");
+                created.settings = std::move(settings);
+            } else if (created.kind == graph::NodeKind::Path) {
+                graph::PathNodeSettings settings;
+                settings.path = ReadPath(item, "path");
                 created.settings = std::move(settings);
             } else {
                 created.settings = graph::OutputNodeSettings{};

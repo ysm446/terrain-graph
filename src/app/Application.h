@@ -196,6 +196,26 @@ private:
     void HandlePaintInput(compositor::MaterialLayer& layer, bool itemActive,
                           const ImVec2& imageOrigin, const ImVec2& imageSize);
 
+    // --- パスの編集（ApplicationPathEdit.cpp） --------------------------------
+    // 編集の対象になる Path ノード。グラフで Path ノードを選んでいるときだけ返す
+    // （ペイントと同じく、選択がビューポートの操作モードを決める）。
+    graph::Node* CurrentPathNode();
+    // ビューポート上の入力をパスの編集へ渡す。Path ノードが選ばれているときだけ呼ぶ。
+    // 変更があれば文書の変更を記録する。
+    void HandlePathInput(graph::Node& node, bool itemActive, bool itemHovered,
+                         const ImVec2& viewportMin, const ImVec2& viewportMax);
+    // パスの点と線をビューポートへ重ねて描く（ImGui。深度テストはしない）。
+    void DrawPathOverlay(const graph::Node& node, const ImVec2& viewportMin,
+                         const ImVec2& viewportMax);
+    // カーソル位置を地形へ投影する。CPU 側のハイトへレイを飛ばして最初の交点を返す。
+    // 地形に当たらなければ偽。
+    bool PickTerrainUv(const ImVec2& mouse, const ImVec2& viewportMin, const ImVec2& viewportMax,
+                       float& outU, float& outV) const;
+    // 正規化 UV をワールド座標へ。高さは CPU 側のハイトから引く。
+    DirectX::XMFLOAT3 PathWorldPosition(float u, float v, float heightOffsetMeters) const;
+    // Path ノードのプロパティ（グラフパネルのプロパティ欄から呼ぶ）。変更があれば true。
+    bool DrawPathSettings(graph::Node& node);
+
     Window m_window;
     rhi::Device m_device;
     rhi::ShaderCompiler m_shaderCompiler;
@@ -276,6 +296,37 @@ private:
     bool m_strokeActive = false;
     float m_strokeLastX = 0.0f;
     float m_strokeLastY = 0.0f;
+
+    // パスの編集の状態。ノードが変わったら捨てる。
+    // 点 / エッジの ID はそのパスの中でしか意味を持たないので、毎フレーム実在を確かめる。
+    struct PathEditState {
+        graph::GraphId nodeId = 0;
+        // 続きを伸ばす点（末尾）。0 なら無し（次のクリックは新しい線の始点）。
+        graph::PathElementId tail = 0;
+        // 選択している点。プロパティの編集と Delete の対象。
+        std::vector<graph::PathElementId> selected;
+        // ホバー中の点 / エッジ（エッジは最寄りの位置 t も）。
+        graph::PathElementId hoverPoint = 0;
+        graph::PathElementId hoverEdge = 0;
+        float hoverEdgeT = 0.0f;
+        // ドラッグ中の点。押した位置から動いたら移動、動かなければクリック。
+        graph::PathElementId dragPoint = 0;
+        bool dragging = false;
+        bool dragMoved = false;
+        ImVec2 pressPos{};
+        // ドラッグ中の吸着先（点が優先、無ければエッジ）。
+        graph::PathElementId snapPoint = 0;
+        graph::PathElementId snapEdge = 0;
+        float snapEdgeT = 0.0f;
+        // 右クリックしたときの対象（メニューを描くフレームでは状況が変わっているため控える）。
+        graph::PathElementId menuPoint = 0;
+        graph::PathElementId menuEdge = 0;
+        float menuEdgeT = 0.0f;
+        bool menuOnTerrain = false;
+        float menuU = 0.0f;
+        float menuV = 0.0f;
+    };
+    PathEditState m_pathEdit;
     int m_selectedTexture = 0;
     // 拡大プレビューで出すチャンネル。0 = RGB、1..4 = R / G / B / A。
     // ORD のように 1 枚へ複数のマップを詰めたテクスチャの中身を確かめるためのもの。

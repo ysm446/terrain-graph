@@ -509,6 +509,18 @@ void Application::DrawViewportPanel() {
                 m_strokeActive = false;
             }
 
+            // Path ノードを選んでいる間は、左クリック / ドラッグと右クリックがパスの編集。
+            // ペイントと同じく、視点は Alt を押している間だけ動く。
+            const ImVec2 imageMax(imageOrigin.x + available.x, imageOrigin.y + available.y);
+            graph::Node* pathNode = CurrentPathNode();
+            const bool pathEnabled = (pathNode != nullptr) && !brushEnabled && !lightDragging;
+            if (pathEnabled && !io.KeyAlt) {
+                HandlePathInput(*pathNode, itemActive, itemHovered, imageOrigin, imageMax);
+            } else if (!pathEnabled) {
+                m_pathEdit.dragging = false;
+                m_pathEdit.dragPoint = 0;
+            }
+
             // 視点操作は Alt を押している間だけ受ける（Maya と同じ割り当て）。
             //
             // Alt なしのドラッグは、将来の選択や範囲選択のために空けてある。
@@ -531,10 +543,12 @@ void Application::DrawViewportPanel() {
 
             HandleCameraShortcuts(itemHovered);
 
-            const ImVec2 imageMax(imageOrigin.x + available.x, imageOrigin.y + available.y);
             DrawAxisGizmo(camera, imageOrigin, imageMax);
             DrawHeightGuide(imageOrigin, imageMax);
             DrawLightGizmo(imageOrigin, imageMax);
+            if (pathNode != nullptr) {
+                DrawPathOverlay(*pathNode, imageOrigin, imageMax);
+            }
 
             // ビューポートに重ねる操作。左上に表示モードの切り替え、右上に FPS。
             DrawViewportOverlay(imageOrigin, imageMax);
