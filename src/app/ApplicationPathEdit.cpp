@@ -129,6 +129,8 @@ PathScreenCache BuildPathScreenCache(const graph::PathSettings& path, const XMMA
             size);
         cache.points.push_back({point.id, projected.screen, projected.visible});
     }
+    // 鎖を先に導出しておく（エッジがガイドか結果かで描き方が変わる）。
+    cache.strands = graph::BuildPathStrands(path);
     cache.edges.reserve(path.edges.size());
     for (const graph::PathEdge& edge : path.edges) {
         const graph::PathPoint* a = path.FindPoint(edge.from);
@@ -142,10 +144,19 @@ PathScreenCache BuildPathScreenCache(const graph::PathSettings& path, const XMMA
         screenEdge.id = edge.id;
         screenEdge.from = edge.from;
         screenEdge.to = edge.to;
+        // **曲線の鎖のエッジはガイド（制御の骨組み）なので、地形に沿わせず点と点を
+        // 3D の直線で結ぶ。** 結果である曲線のほうが地形に沿う。役割の違いが一目で分かり、
+        // ハイトを引かないぶん軽い。直線の鎖のエッジはそれ自体が結果なので地形に沿わせる。
+        const graph::PathStrand* strand = graph::FindStrandOfEdge(cache.strands, edge.id);
+        const bool guide =
+            strand != nullptr &&
+            graph::StrandCurve(path, *strand, nullptr, nullptr) != graph::PathCurve::Line;
         // 画面上の長さで割る数を決める。長い線ほど細かく割って地形に沿わせる。
+        // ガイドは 3D の直線で、画面上でも直線になるので両端だけでよい。
         const float length = (sa->visible && sb->visible) ? Distance(sa->screen, sb->screen)
                                                           : 400.0f;
-        const int segments = std::clamp(static_cast<int>(length / ui::Scaled(14.0f)), 1, 32);
+        const int segments =
+            guide ? 1 : std::clamp(static_cast<int>(length / ui::Scaled(14.0f)), 1, 32);
         for (int i = 0; i <= segments; ++i) {
             const float t = static_cast<float>(i) / static_cast<float>(segments);
             const float u = a->u + (b->u - a->u) * t;
@@ -160,7 +171,6 @@ PathScreenCache BuildPathScreenCache(const graph::PathSettings& path, const XMMA
         cache.edges.push_back(std::move(screenEdge));
     }
     // 曲線の鎖。制御点の区間ごとに割り、各標本を地形の高さで描く。
-    cache.strands = graph::BuildPathStrands(path);
     cache.curves.resize(cache.strands.size());
     for (size_t i = 0; i < cache.strands.size(); ++i) {
         if (graph::StrandCurve(path, cache.strands[i], nullptr, nullptr) == graph::PathCurve::Line) {
