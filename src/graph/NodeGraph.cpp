@@ -71,6 +71,14 @@ constexpr std::array<PinDefinition, 6> kRiverPins = {{
     {PinKind::Output, ValueType::Mask, "Depth"},
 }};
 
+// 水滴侵食のピン。地形に加えて**流量**（水の通った量）と**堆積量**を出す。
+constexpr std::array<PinDefinition, 4> kDropletPins = {{
+    {PinKind::Input, ValueType::Material, "Base"},
+    {PinKind::Output, ValueType::Material, "Result"},
+    {PinKind::Output, ValueType::Mask, "Flow"},
+    {PinKind::Output, ValueType::Mask, "Deposit"},
+}};
+
 // マスクを 1 枚受けて 1 枚返す加工のピン。
 constexpr std::array<PinDefinition, 2> kMaskFilterPins = {{
     {PinKind::Input, ValueType::Mask, "Mask"},
@@ -106,7 +114,7 @@ constexpr std::array<PinDefinition, 1> kSourceNodePins = {{
     {PinKind::Output, ValueType::Material, "Result"},
 }};
 
-constexpr std::array<NodeDefinition, 20> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 21> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -116,6 +124,7 @@ constexpr std::array<NodeDefinition, 20> kNodeDefinitions = {{
     {NodeKind::Crumbling, "crumbling", "Crumbling", kCrumblingPins},
     {NodeKind::Snow, "snow", "Snow", kDepositPins},
     {NodeKind::River, "river", "River", kRiverPins},
+    {NodeKind::Droplet, "droplet", "Droplet Erosion", kDropletPins},
     {NodeKind::MaskImage, "maskImage", "Mask Image", kMaskSourcePins},
     {NodeKind::MaskNoise, "maskNoise", "Mask Noise", kMaskSourcePins},
     {NodeKind::MaskFluvial, "maskFluvial", "Mask Fluvial", kMaskFromHeightPins},
@@ -157,7 +166,7 @@ bool IsLayerNodeKind(NodeKind kind) {
     return kind == NodeKind::Surface || kind == NodeKind::Shape || kind == NodeKind::Liquid ||
            kind == NodeKind::Heightmap || kind == NodeKind::Blur ||
            kind == NodeKind::Sediment || kind == NodeKind::Crumbling ||
-           kind == NodeKind::Snow || kind == NodeKind::River;
+           kind == NodeKind::Snow || kind == NodeKind::River || kind == NodeKind::Droplet;
 }
 
 bool IsSourceNodeKind(NodeKind kind) {
@@ -180,7 +189,7 @@ bool IsHeightMaskNodeKind(NodeKind kind) {
 
 bool IsLayerMaskSourceKind(NodeKind kind) {
     return kind == NodeKind::Sediment || kind == NodeKind::Crumbling ||
-           kind == NodeKind::Snow || kind == NodeKind::River;
+           kind == NodeKind::Snow || kind == NodeKind::River || kind == NodeKind::Droplet;
 }
 
 bool IsPreviewableNodeKind(NodeKind kind) {
@@ -208,6 +217,8 @@ compositor::LayerKind LayerKindFor(NodeKind kind) {
             return compositor::LayerKind::Snow;
         case NodeKind::River:
             return compositor::LayerKind::River;
+        case NodeKind::Droplet:
+            return compositor::LayerKind::Droplet;
         default:
             return compositor::LayerKind::Surface;
     }
@@ -543,6 +554,7 @@ bool NodeGraph::MaskDependsOnHeight(const Node& maskNode, int depth) const {
         case NodeKind::Crumbling:
         case NodeKind::Snow:
         case NodeKind::River:
+        case NodeKind::Droplet:
             return true;
         // パスは 2D で高さを読まないが、**地形の上に引いたもの**なので、
         // 平らな板ではなく地形の上に貼って見せる（線と地形の対応こそが見たいもの）。
@@ -751,6 +763,10 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
             layerOp.riverMask.shoreFeather = river.shoreFeather;
             layerOp.riverMask.mainWidthMeters = river.mainWidthMeters;
             layerOp.riverMask.minWidthMeters = river.minWidthMeters;
+        } else if (maskNode.kind == NodeKind::Droplet) {
+            layerOp.kind = compositor::MaskOpKind::Droplet;
+            // 0 番目の Mask 出力が流量、1 番目が堆積量。
+            layerOp.dropletMask.channel = (source.outputIndex == 0) ? 0u : 1u;
         } else {
             layerOp.kind = compositor::MaskOpKind::Crumbling;
             // 0 番目の Mask 出力が厚み、1 番目が岩片ごとの乱数。

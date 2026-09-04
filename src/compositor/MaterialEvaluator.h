@@ -98,6 +98,22 @@ struct RiverResources {
     bool IsValid() const { return surface.IsValid(); }
 };
 
+// 水滴侵食（Droplet）の作業リソース。堆積と同じく**合成解像度とは別のグリッド**で回し、
+// 差分を合成解像度へ足し戻す。マルチグリッドのレベルは同じテクスチャの左上 n×n を使う。
+// 作業ハイトは m 単位。差分 / 流量 / 堆積は固定小数点の int（InterlockedAdd で積む）。
+struct DropletResources {
+    rhi::GpuTexture heights;     // R32_FLOAT 作業ハイト（m）
+    rhi::GpuTexture source;      // R32_FLOAT レベル間の拡大元
+    rhi::GpuTexture original;    // R32_FLOAT 解析グリッドに落とした元の高さ（差分用）
+    rhi::GpuTexture delta;       // R32_SINT  1 反復の差分（固定小数）
+    rhi::GpuTexture flow;        // R32_SINT  流量（Flow マスクの元）
+    rhi::GpuTexture deposit;     // R32_SINT  堆積量（Deposit マスクの元）
+    rhi::GpuTexture maxScratch;  // R32_UINT 1x1 マスクの正規化用の最大値
+    uint32_t resolution = 0;
+
+    bool IsValid() const { return heights.IsValid(); }
+};
+
 // 崩落（Crumbling）の作業リソース。**合成解像度で回す**（岩片は m 単位の
 // 小さな形なので、粗いグリッドでは形にならない）。
 //
@@ -310,6 +326,19 @@ private:
                         ID3D12GraphicsCommandList* commandList, const MaskOp& op,
                         const MaterialStack& stack, rhi::GpuTexture& target);
 
+    // 水滴侵食レイヤー 1 枚ぶん。解析グリッドで水滴を流し、差分を Height へ足し戻して
+    // 法線を作り直す。**タイルには分けない**（堆積と同じ理由）。
+    bool ApplyDroplet(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                      ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
+                      const MaterialStack& stack);
+    bool EnsureDropletResources(rhi::Device& device, uint32_t resolution);
+    void ReleaseDropletResources(rhi::Device& device);
+    // 直前の水滴侵食レイヤーが残した流量 / 堆積を、マスクとして焼く。
+    // **水滴侵食レイヤーの直後にしか使えない**（作業用テクスチャを使い回すため）。
+    bool ApplyDropletMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                          ID3D12GraphicsCommandList* commandList, const MaskOp& op,
+                          rhi::GpuTexture& target);
+
     bool ApplyHeightBlur(rhi::Device& device, ID3D12GraphicsCommandList* commandList,
                          ID3D12PipelineState* blurPipeline,
                          ID3D12PipelineState* normalPipeline, const MaterialLayer& layer,
@@ -322,6 +351,7 @@ private:
     CrumblingResources m_crumbling;
     SnowResources m_snow;
     RiverResources m_river;
+    DropletResources m_droplet;
     // マスクの op の結果。添字は MaskProgram と同じ。
     std::vector<rhi::GpuTexture> m_maskOpTextures;
     std::vector<uint32_t> m_maskOpResolutions;

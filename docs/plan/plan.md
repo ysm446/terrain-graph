@@ -1,7 +1,7 @@
 # plan — 実装方針と優先順位
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-04 14:40
+更新日時: 2026-09-04 17:30
 
 進捗管理の入口。実装の詳細な設計は [docs/design/](../design/) に置く。
 
@@ -156,7 +156,9 @@ tests/
 
 terrain-editor の売りのノード群。まず CPU 実装をそのまま移植する。
 
-- Multi-Scale Erosion / Fluvial Erosion / Droplet Erosion / Mask Fluvial。
+- Multi-Scale Erosion / Fluvial Erosion / Mask Fluvial。
+- **Droplet Erosion（2026-09-04 完了）。** GPU 版（スナップショット方式）を解析グリッド +
+  差分の足し戻しで移した。Flow / Deposit の Mask を出す。
 - Sediment / Snow / Soil / Crumbling / Rock / Scatter。
 - **River（段階 1 実装済み。2026-09-03）** — 川筋から河床を掘り、下流へ単調な
   水面を張って河原（岩・砂利を置く帯）のマスクを出す。設計と残り（湖岸の Bank）は

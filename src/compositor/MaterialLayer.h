@@ -54,6 +54,8 @@ enum class LayerKind : uint32_t {
     Snow = 6,
     // 河川。川筋から河床を掘り、下流へ単調に下がる水面を張る。
     River = 7,
+    // 水滴侵食。水滴を落として斜面を下らせ、削って運んで積む（terrain-editor の Droplet Erosion）。
+    Droplet = 8,
 };
 
 // 岩片の形。terrain-editor の RockStyle と同じ 3 種類。
@@ -67,7 +69,7 @@ enum class RockStyle : uint32_t {
 inline bool IsHeightOperationKind(LayerKind kind) {
     return kind == LayerKind::Blur || kind == LayerKind::Sediment ||
            kind == LayerKind::Crumbling || kind == LayerKind::Snow ||
-           kind == LayerKind::River;
+           kind == LayerKind::River || kind == LayerKind::Droplet;
 }
 
 // ハイトの基準面。ソースの値がこの値のとき、そのテクセルは「基準の高さ」ちょうどになる。
@@ -383,6 +385,33 @@ struct MaterialLayer {
         float shoreFeather = 0.3f;
     };
     RiverSettings river;
+
+    // 水滴侵食（kind == LayerKind::Droplet のときだけ意味を持つ）。
+    //
+    // terrain-editor の Droplet Erosion（GPU 版）を移したもの。容量ベースの粒子侵食で、
+    // 水滴を落として慣性つきで斜面を下らせ、運べる量より少なければ削り、多ければ積む。
+    // **合成解像度とは別の解析グリッド**で回し、差分を Height へ足し戻す。
+    // 距離は m、密度は解析グリッドのセルあたりで持つので、結果は合成解像度に依らない。
+    struct DropletSettings {
+        // 水滴の数。解析グリッドの**セルあたり**（絶対数ではない）。
+        float dropletDensity = 0.25f;
+        // 1 滴が進む距離（m）。セルの大きさで歩数に直す。
+        float travelMeters = 512.0f;
+        float erosionStrength = 0.30f;     // 1 歩で削る割合
+        float depositionStrength = 0.30f;  // 容量を超えた土砂を捨てる割合
+        float inertia = 0.05f;             // 0 で傾斜どおり、1 で前の向きを保つ
+        float minSlope = 0.01f;            // 平坦でも運べるようにする傾斜の下限
+        float sedimentCapacity = 4.0f;     // 運べる量の係数
+        float evaporationPerMeter = 0.002f;  // 1 m 進むごとに失う水の割合
+        float gravity = 4.0f;              // 下りでの加速
+        bool multigrid = true;             // 64² から倍々に上げる
+        // 反復（水滴を分けて流す回数）。掘れた谷を次の反復が見るので、多いほど水系が育つ。
+        int iterations = 30;
+        int seed = 1337;
+        // 解析グリッド。**合成解像度とは別。**
+        uint32_t resolution = 1024;
+    };
+    DropletSettings droplet;
 
     // **Height へ書き戻さない。** 加工（堆積 / 崩落）を、マスクを得るためだけに
     // 走らせるときに立てる。Result を繋がずに Mask だけを使う繋ぎ方のためのもの。

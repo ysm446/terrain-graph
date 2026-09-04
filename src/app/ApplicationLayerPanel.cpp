@@ -311,6 +311,96 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
         return changed;
     }
 
+    // 水滴侵食も合成レイヤーではなく「水滴で削って運んで積む加工」。マスク入力は持たない。
+    if (layer.kind == compositor::LayerKind::Droplet) {
+        const compositor::MaterialLayer::DropletSettings dropletDefaults;
+        ui::SectionHeader("基本");
+        if (ui::BeginPropertyTable("dropletBasicRows")) {
+            char dropletName[128] = {};
+            std::snprintf(dropletName, sizeof(dropletName), "%s", layer.name.c_str());
+            if (ui::PropertyTextInput("名前", dropletName, sizeof(dropletName))) {
+                layer.name = dropletName;
+                changed = true;
+            }
+            ui::EndPropertyTable();
+        }
+        ui::SectionHeader("水滴");
+        if (ui::BeginPropertyTable("dropletFlowRows")) {
+            changed |= ui::PropertyFloat(
+                "密度", &layer.droplet.dropletDensity, 0.01f, 4.0f, dropletDefaults.dropletDensity,
+                "水滴の数。解析グリッドのセルあたりで持つので、同じ密度なら解像度を変えても"
+                "同じくらいの量になる。上げるほど水系が密になり、重くなる",
+                "%.2f /セル", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat(
+                "移動距離", &layer.droplet.travelMeters, 16.0f, 4096.0f,
+                dropletDefaults.travelMeters, "1 滴が進む距離。長いほど谷が下流まで繋がる",
+                "%.0f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat(
+                "慣性", &layer.droplet.inertia, 0.0f, 0.99f, dropletDefaults.inertia,
+                "0 で傾斜どおりに曲がり、1 に近いほど前の向きを保つ（谷が真っ直ぐになる）",
+                "%.2f");
+            changed |= ui::PropertyFloat(
+                "蒸発", &layer.droplet.evaporationPerMeter, 0.0f, 0.05f,
+                dropletDefaults.evaporationPerMeter,
+                "1 m 進むごとに失う水の割合。水が減ると運べる量も減り、途中で積み始める",
+                "%.4f", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat("重力", &layer.droplet.gravity, 0.0f, 20.0f,
+                                         dropletDefaults.gravity,
+                                         "下りでの加速。速いほど多く運べる", "%.1f");
+            ui::EndPropertyTable();
+        }
+        ui::SectionHeader("削る / 積む");
+        if (ui::BeginPropertyTable("dropletCarveRows")) {
+            changed |= ui::PropertyFloat(
+                "侵食", &layer.droplet.erosionStrength, 0.0f, 1.0f,
+                dropletDefaults.erosionStrength, "1 歩で削る割合（容量の不足ぶんに掛ける）",
+                "%.2f");
+            changed |= ui::PropertyFloat(
+                "堆積", &layer.droplet.depositionStrength, 0.0f, 1.0f,
+                dropletDefaults.depositionStrength, "容量を超えた土砂を捨てる割合", "%.2f");
+            changed |= ui::PropertyFloat(
+                "容量", &layer.droplet.sedimentCapacity, 0.1f, 20.0f,
+                dropletDefaults.sedimentCapacity,
+                "運べる量の係数（傾斜 × 速度 × 水量に掛ける）。大きいほど深く削る", "%.1f",
+                ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat(
+                "最小傾斜", &layer.droplet.minSlope, 0.0001f, 0.1f, dropletDefaults.minSlope,
+                "平坦な所でも運べるようにする傾斜の下限", "%.4f",
+                ImGuiSliderFlags_Logarithmic);
+            ui::EndPropertyTable();
+        }
+        ui::SectionHeader("計算");
+        if (ui::BeginPropertyTable("dropletComputeRows")) {
+            int dropletResolutionIndex = 2;
+            for (int i = 0; i < IM_ARRAYSIZE(kSedimentResolutionValues); ++i) {
+                if (kSedimentResolutionValues[i] == layer.droplet.resolution) {
+                    dropletResolutionIndex = i;
+                }
+            }
+            if (ui::PropertyCombo("解像度", &dropletResolutionIndex, kSedimentResolutionLabels,
+                                  IM_ARRAYSIZE(kSedimentResolutionLabels), 2,
+                                  "水滴を流すグリッド。合成解像度とは別。結果は合成解像度には"
+                                  "依らないが、ここを変えると細かい枝が変わる")) {
+                layer.droplet.resolution = kSedimentResolutionValues[dropletResolutionIndex];
+                changed = true;
+            }
+            changed |= ui::PropertyBool(
+                "マルチグリッド", &layer.droplet.multigrid, dropletDefaults.multigrid,
+                "64² から倍々に上げて流す。粗いレベルが大きな谷を、細かいレベルが枝を決める");
+            changed |= ui::PropertyInt(
+                "反復", &layer.droplet.iterations, 1, 200, dropletDefaults.iterations,
+                "水滴を分けて流す回数。掘れた谷を次の反復が見るので、多いほど水系が育つ");
+            changed |= ui::PropertyInt("シード", &layer.droplet.seed, 0, 1000000,
+                                       dropletDefaults.seed, "水滴の落とし方の乱数");
+            ui::EndPropertyTable();
+        }
+        ui::HintText("水滴を落として斜面を下らせ、運べる量より少なければ削り、多ければ積む"
+                     "（terrain-editor の Droplet Erosion）。Flow は水の通った量（谷筋に砂利）、"
+                     "Deposit は積もった量（谷底や扇状地に土）。地形の変更は差分で足すので、"
+                     "素材の凹凸は壊さない");
+        return changed;
+    }
+
     // 崩落も合成レイヤーではなく「下地のハイトへ岩屑を積む加工」。
     // 発生源は Mask 入力（Emission）で受けるので、マスクの節は出さない。
     if (layer.kind == compositor::LayerKind::Crumbling) {

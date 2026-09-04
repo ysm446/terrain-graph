@@ -82,6 +82,9 @@ enum class NodeKind : uint32_t {
     Path = 18,
     // パスの足跡をマスクにする（中心線からの距離を幅とフェザーで 0〜1 へ）。
     MaskPath = 19,
+    // 水滴侵食。水滴を落として斜面を下らせ、削って運んで積む加工。
+    // 流量（水の通った量）と堆積量の 2 つの Mask も出す。
+    Droplet = 20,
 };
 
 struct PinDefinition {

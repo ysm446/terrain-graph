@@ -151,8 +151,8 @@ const char* const kFluvialCurveNames[] = {"log", "threshold", "linear"};
 const char* const kCurvatureModeNames[] = {"ridges", "valleys", "absolute"};
 const char* const kMaskBlendModeNames[] = {"add", "multiply", "min", "max"};
 const char* const kChannelNames[] = {"baseColor", "normal", "surface", "height"};
-const char* const kLayerKindNames[] = {"surface",   "shape",     "liquid", "blur",
-                                       "sediment", "crumbling", "snow",   "river"};
+const char* const kLayerKindNames[] = {"surface",  "shape",     "liquid", "blur",   "sediment",
+                                       "crumbling", "snow",     "river",  "droplet"};
 // 岩片の形。compositor::RockStyle の並びと一致させること。
 const char* const kRockStyleNames[] = {"classic", "polygonal", "shard"};
 const char* const kTonemapNames[] = {"none", "reinhard", "aces"};
@@ -768,6 +768,23 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     river["shoreFeather"] = layer.river.shoreFeather;
     node["river"] = std::move(river);
 
+    // 水滴侵食（水滴侵食レイヤーだけが使う）。
+    json droplet;
+    droplet["density"] = layer.droplet.dropletDensity;
+    droplet["travel"] = layer.droplet.travelMeters;
+    droplet["erosion"] = layer.droplet.erosionStrength;
+    droplet["deposition"] = layer.droplet.depositionStrength;
+    droplet["inertia"] = layer.droplet.inertia;
+    droplet["minSlope"] = layer.droplet.minSlope;
+    droplet["capacity"] = layer.droplet.sedimentCapacity;
+    droplet["evaporation"] = layer.droplet.evaporationPerMeter;
+    droplet["gravity"] = layer.droplet.gravity;
+    droplet["multigrid"] = layer.droplet.multigrid;
+    droplet["iterations"] = layer.droplet.iterations;
+    droplet["seed"] = layer.droplet.seed;
+    droplet["resolution"] = layer.droplet.resolution;
+    node["droplet"] = std::move(droplet);
+
     // ぼかし（ブラーレイヤーだけが使う）。
     json blur;
     blur["radius"] = layer.blur.radiusMeters;
@@ -914,6 +931,29 @@ compositor::MaterialLayer ReadLayer(
         layer.crumbling.gravity = ReadFloat(*crumbling, "gravity", defaults.crumbling.gravity);
         layer.crumbling.spread = ReadFloat(*crumbling, "spread", defaults.crumbling.spread);
         layer.crumbling.seed = ReadInt(*crumbling, "seed", defaults.crumbling.seed);
+    }
+
+    if (const json* droplet = FindMember(node, "droplet");
+        droplet != nullptr && droplet->is_object()) {
+        layer.droplet.dropletDensity =
+            ReadFloat(*droplet, "density", defaults.droplet.dropletDensity);
+        layer.droplet.travelMeters = ReadFloat(*droplet, "travel", defaults.droplet.travelMeters);
+        layer.droplet.erosionStrength =
+            ReadFloat(*droplet, "erosion", defaults.droplet.erosionStrength);
+        layer.droplet.depositionStrength =
+            ReadFloat(*droplet, "deposition", defaults.droplet.depositionStrength);
+        layer.droplet.inertia = ReadFloat(*droplet, "inertia", defaults.droplet.inertia);
+        layer.droplet.minSlope = ReadFloat(*droplet, "minSlope", defaults.droplet.minSlope);
+        layer.droplet.sedimentCapacity =
+            ReadFloat(*droplet, "capacity", defaults.droplet.sedimentCapacity);
+        layer.droplet.evaporationPerMeter =
+            ReadFloat(*droplet, "evaporation", defaults.droplet.evaporationPerMeter);
+        layer.droplet.gravity = ReadFloat(*droplet, "gravity", defaults.droplet.gravity);
+        layer.droplet.multigrid = ReadBool(*droplet, "multigrid", defaults.droplet.multigrid);
+        layer.droplet.iterations = ReadInt(*droplet, "iterations", defaults.droplet.iterations);
+        layer.droplet.seed = ReadInt(*droplet, "seed", defaults.droplet.seed);
+        layer.droplet.resolution = static_cast<uint32_t>(
+            ReadInt(*droplet, "resolution", static_cast<int>(defaults.droplet.resolution)));
     }
 
     if (const json* blur = FindMember(node, "blur"); blur != nullptr && blur->is_object()) {

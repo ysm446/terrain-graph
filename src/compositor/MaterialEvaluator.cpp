@@ -203,6 +203,7 @@ uint64_t HashHeightState(uint64_t seed, const MaterialLayer& layer) {
     hash = HashBytes(hash, &layer.crumbling, sizeof(layer.crumbling));
     hash = HashBytes(hash, &layer.snow, sizeof(layer.snow));
     hash = HashBytes(hash, &layer.river, sizeof(layer.river));
+    hash = HashBytes(hash, &layer.droplet, sizeof(layer.droplet));
     hash = HashBytes(hash, &layer.maskOnly, sizeof(layer.maskOnly));
     // マスクは「どこに載せるか」を決めるので Height にも効く。
     hash = HashBytes(hash, &layer.mask.source, sizeof(layer.mask.source));
@@ -246,6 +247,8 @@ uint64_t HashMaskOpParams(uint64_t seed, const MaskOp& op) {
             return HashBytes(seed, &op.height, sizeof(op.height));
         case MaskOpKind::River:
             return HashBytes(seed, &op.riverMask, sizeof(op.riverMask));
+        case MaskOpKind::Droplet:
+            return HashBytes(seed, &op.dropletMask, sizeof(op.dropletMask));
         case MaskOpKind::Path: {
             // 線分列の中身まで混ぜる（点を 1 つ動かしただけでも焼き直すため）。
             uint64_t hash = HashBytes(seed, &op.pathMask, sizeof(op.pathMask));
@@ -507,6 +510,7 @@ void MaterialEvaluator::Destroy(rhi::Device& device) {
     ReleaseCrumblingResources(device);
     ReleaseSnowResources(device);
     ReleaseRiverResources(device);
+    ReleaseDropletResources(device);
     for (rhi::GpuTexture& texture : m_maskOpTextures) {
         device.DeferRelease(texture);
     }
@@ -645,6 +649,10 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
     // 河川の水面 / 河原 / 水深も、直前に走った河川レイヤーの作業用テクスチャから焼く。
     if (op.kind == MaskOpKind::River) {
         return ApplyRiverMask(device, pipelineCache, commandList, op, stack, target);
+    }
+    // 水滴侵食の流量 / 堆積も、直前に走った水滴侵食レイヤーの作業用テクスチャから焼く。
+    if (op.kind == MaskOpKind::Droplet) {
+        return ApplyDropletMask(device, pipelineCache, commandList, op, target);
     }
     // パスは線分の列を定数で受ける専用のシェーダ。
     if (op.kind == MaskOpKind::Path) {
@@ -2197,6 +2205,326 @@ bool MaterialEvaluator::ApplyRiverMask(rhi::Device& device, rhi::PipelineCache& 
 // **合成解像度でそのまま回す。** 岩片は m 単位の小さな形なので、堆積のように
 // 粗いグリッドで回すと形にならない。歩行は 1 スレッド 1 粒子で、
 // 読むのは合成の Height（この時点までの合成結果）だけ。
+
+// 水滴侵食の定数。シェーダ側の DropletConstants と一致させること。
+struct DropletConstants {
+    uint32_t indices0[4];
+    uint32_t indices1[4];
+    uint32_t indices2[4];
+    uint32_t indices3[4];
+    uint32_t indices4[4];
+    uint32_t indices5[4];
+    float params0[4];
+    float params1[4];
+    float params2[4];
+};
+
+void MaterialEvaluator::ReleaseDropletResources(rhi::Device& device) {
+    device.DeferRelease(m_droplet.heights);
+    device.DeferRelease(m_droplet.source);
+    device.DeferRelease(m_droplet.original);
+    device.DeferRelease(m_droplet.delta);
+    device.DeferRelease(m_droplet.flow);
+    device.DeferRelease(m_droplet.deposit);
+    device.DeferRelease(m_droplet.maxScratch);
+    m_droplet.resolution = 0;
+}
+
+// 水滴侵食の作業リソースも**使うときだけ**作る。解析グリッドが変わったら作り直す。
+bool MaterialEvaluator::EnsureDropletResources(rhi::Device& device, uint32_t resolution) {
+    if (m_droplet.resolution == resolution && m_droplet.IsValid()) {
+        return true;
+    }
+    ReleaseDropletResources(device);
+    const auto grid = [&](DXGI_FORMAT format, const wchar_t* name, rhi::GpuTexture& texture) {
+        return CreateChannelTexture(device, resolution, format, name, texture);
+    };
+    const bool ok = grid(DXGI_FORMAT_R32_FLOAT, L"DropletHeights", m_droplet.heights) &&
+                    grid(DXGI_FORMAT_R32_FLOAT, L"DropletSource", m_droplet.source) &&
+                    grid(DXGI_FORMAT_R32_FLOAT, L"DropletOriginal", m_droplet.original) &&
+                    grid(DXGI_FORMAT_R32_SINT, L"DropletDelta", m_droplet.delta) &&
+                    grid(DXGI_FORMAT_R32_SINT, L"DropletFlow", m_droplet.flow) &&
+                    grid(DXGI_FORMAT_R32_SINT, L"DropletDeposit", m_droplet.deposit) &&
+                    CreateChannelTexture(device, 1, DXGI_FORMAT_R32_UINT, L"DropletMax",
+                                         m_droplet.maxScratch);
+    if (!ok) {
+        TG_LOG_WARN("水滴侵食の作業リソースを作れませんでした（%u^2）", resolution);
+        ReleaseDropletResources(device);
+        return false;
+    }
+    m_droplet.resolution = resolution;
+    return true;
+}
+
+// 水滴侵食。terrain-editor の Droplet Erosion（GPU 版）の移植。段取りはシェーダの頭。
+//
+//   元の高さを控える → レベルごとに（落とす / 拡大 → 流量と堆積を 0 に →
+//   反復ごとに 差分を 0 に → 水滴を流す → 差分を飽和つきで足す）
+//   → 最終レベルの差分を合成解像度へ足し戻す → 法線を作り直す
+bool MaterialEvaluator::ApplyDroplet(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                     ID3D12GraphicsCommandList* commandList,
+                                     const MaterialLayer& layer, const MaterialStack& stack) {
+    const MaterialLayer::DropletSettings& params = layer.droplet;
+    const uint32_t resolution = std::clamp(params.resolution, 64u, 2048u);
+    if (!EnsureDropletResources(device, resolution)) {
+        return false;
+    }
+    const auto pipeline = [&](const wchar_t* entry) {
+        return pipelineCache.GetCompute(L"CompositeDroplet.hlsl", entry);
+    };
+    ID3D12PipelineState* originalPass = pipeline(L"CsOriginal");
+    ID3D12PipelineState* initPass = pipeline(L"CsInit");
+    ID3D12PipelineState* copyToSrcPass = pipeline(L"CsCopyToSrc");
+    ID3D12PipelineState* upsamplePass = pipeline(L"CsUpsample");
+    ID3D12PipelineState* clearLevelPass = pipeline(L"CsClearLevel");
+    ID3D12PipelineState* clearIterPass = pipeline(L"CsClearIter");
+    ID3D12PipelineState* tracePass = pipeline(L"CsTrace");
+    ID3D12PipelineState* applyPass = pipeline(L"CsApply");
+    ID3D12PipelineState* resolvePass = pipeline(L"CsResolve");
+    ID3D12PipelineState* normalPass =
+        pipelineCache.GetCompute(L"CompositeBlur.hlsl", L"CsNormalFromHeight");
+    if (originalPass == nullptr || initPass == nullptr || copyToSrcPass == nullptr ||
+        upsamplePass == nullptr || clearLevelPass == nullptr || clearIterPass == nullptr ||
+        tracePass == nullptr || applyPass == nullptr || resolvePass == nullptr ||
+        normalPass == nullptr) {
+        return false;
+    }
+
+    const float sizeMeters = (stack.SizeMeters() > 0.0f) ? stack.SizeMeters() : 1.0f;
+    const float heightMeters = (stack.HeightMeters() > 0.0f) ? stack.HeightMeters() : 1.0f;
+
+    // マルチグリッドのレベル（64² から倍々。最後は解析グリッドそのもの）。
+    std::vector<uint32_t> levels;
+    if (params.multigrid) {
+        for (uint32_t r = std::clamp(64u, 16u, resolution); r < resolution; r *= 2u) {
+            levels.push_back(r);
+        }
+    }
+    levels.push_back(resolution);
+    const bool singleLevel = levels.size() <= 1;
+
+    // 水滴の総数は密度 × セル数。粗いレベルは面積の比で減らす（密度を保つ）。
+    const double density = std::max(0.0f, params.dropletDensity);
+    const int targetParticles = std::clamp(
+        static_cast<int>(std::lround(density * static_cast<double>(resolution) *
+                                     static_cast<double>(resolution))),
+        1, 2000000);
+    const int iterations = std::clamp(params.iterations, 1, 200);
+    const float evaporation = std::clamp(params.evaporationPerMeter, 0.0f, 1.0f);
+    // 1 反復で 1 セルが動ける上限（セルの大きさに対する割合）と、端のフェードの幅（m）。
+    constexpr float kDeltaCapFactor = 0.20f;
+    constexpr float kEdgeFadeMeters = 24.0f;
+
+    DropletConstants base = {};
+    base.indices0[0] = m_droplet.heights.UavIndex();
+    base.indices0[1] = m_droplet.source.UavIndex();
+    base.indices0[2] = m_droplet.original.UavIndex();
+    base.indices0[3] = m_droplet.delta.UavIndex();
+    base.indices1[0] = m_droplet.flow.UavIndex();
+    base.indices1[1] = m_droplet.deposit.UavIndex();
+    base.indices1[2] = m_textures.height.SrvIndex();
+    base.indices1[3] = m_textures.height.UavIndex();
+    base.indices3[0] = static_cast<uint32_t>(params.seed);
+    base.indices3[3] = m_resolution;
+    base.indices4[3] = resolution;
+    base.indices5[0] = m_droplet.heights.SrvIndex();
+    base.indices5[1] = m_droplet.original.SrvIndex();
+    base.indices5[2] = m_droplet.flow.SrvIndex();
+    base.indices5[3] = m_droplet.deposit.SrvIndex();
+    base.params0[1] = std::clamp(params.inertia, 0.0f, 0.99f);
+    base.params0[2] = std::max(0.01f, params.sedimentCapacity);
+    base.params0[3] = std::max(0.0001f, params.minSlope);
+    base.params1[0] = std::clamp(params.erosionStrength, 0.0f, 1.0f);
+    base.params1[1] = std::clamp(params.depositionStrength, 0.0f, 1.0f);
+    base.params1[3] = std::max(0.0f, params.gravity);
+    base.params2[2] = heightMeters;
+    base.params2[3] = layer.maskOnly ? 0.0f : 1.0f;
+
+    const auto upload = [&](const DropletConstants& constants,
+                            D3D12_GPU_VIRTUAL_ADDRESS& outAddress) {
+        const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(DropletConstants));
+        if (!cb.IsValid()) {
+            return false;
+        }
+        std::memcpy(cb.cpu, &constants, sizeof(constants));
+        outAddress = cb.gpuAddress;
+        return true;
+    };
+    const auto barrier = [&]() {
+        const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+        commandList->ResourceBarrier(1, &uav);
+    };
+    const auto run = [&](ID3D12PipelineState* pipelineState, uint32_t groupCount) {
+        commandList->SetPipelineState(pipelineState);
+        commandList->Dispatch(groupCount, groupCount, 1);
+        barrier();
+    };
+
+    PIXBeginEvent(commandList, PIX_COLOR(90, 150, 200), "CompositeDroplet");
+
+    // 入力の Height は読み取り専用（落とすときに読む）。
+    TransitionIfNeeded(commandList, m_textures.height,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(commandList, m_droplet.heights, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, m_droplet.original, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, m_droplet.flow, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, m_droplet.deposit, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+    // 元の高さ（最終解像度）。差分を出すために控える。
+    {
+        DropletConstants constants = base;
+        constants.indices2[0] = resolution;
+        D3D12_GPU_VIRTUAL_ADDRESS address = 0;
+        if (!upload(constants, address)) {
+            PIXEndEvent(commandList);
+            return false;
+        }
+        commandList->SetComputeRootConstantBufferView(1, address);
+        run(originalPass, DispatchCount(resolution));
+    }
+
+    for (size_t levelIndex = 0; levelIndex < levels.size(); ++levelIndex) {
+        const uint32_t n = levels[levelIndex];
+        const float cellMeters = sizeMeters / static_cast<float>(n);
+        // このレベルの水滴の数。粗いレベルは面積の比で減らす（最低 1000）。
+        int levelParticles = targetParticles;
+        if (n < resolution) {
+            const double ratio = (static_cast<double>(n) * n) /
+                                 (static_cast<double>(resolution) * resolution);
+            levelParticles = std::max(
+                1000, static_cast<int>(static_cast<double>(targetParticles) * ratio));
+        }
+        const int particlesPerIteration = std::max(1, levelParticles / iterations);
+        // 歩数は移動距離をセルの大きさで割ったもの（解像度に依らず同じ距離を進む）。
+        const int steps = std::clamp(
+            static_cast<int>(std::lround(params.travelMeters / std::max(cellMeters, 1e-3f))),
+            1, 8192);
+
+        DropletConstants level = base;
+        level.indices2[0] = n;
+        level.indices2[1] = (levelIndex > 0) ? levels[levelIndex - 1] : n;
+        level.indices2[2] = static_cast<uint32_t>(particlesPerIteration);
+        level.indices2[3] = static_cast<uint32_t>(steps);
+        level.indices3[1] = singleLevel ? 0u : static_cast<uint32_t>(levelIndex + 1);
+        level.params0[0] = cellMeters;
+        // 蒸発は 1 m あたりで持ち、1 歩（1 セル）ぶんに直す。
+        level.params1[2] = std::pow(std::max(0.0f, 1.0f - evaporation), cellMeters);
+        level.params2[0] = kDeltaCapFactor * cellMeters;
+        level.params2[1] = std::clamp(kEdgeFadeMeters / std::max(cellMeters, 1e-3f), 2.0f,
+                                      static_cast<float>(n) * 0.25f);
+        D3D12_GPU_VIRTUAL_ADDRESS levelAddress = 0;
+        if (!upload(level, levelAddress)) {
+            PIXEndEvent(commandList);
+            return false;
+        }
+        commandList->SetComputeRootConstantBufferView(1, levelAddress);
+        const uint32_t groups = DispatchCount(n);
+        if (levelIndex == 0) {
+            run(initPass, groups);
+        } else {
+            run(copyToSrcPass, DispatchCount(levels[levelIndex - 1]));
+            run(upsamplePass, groups);
+        }
+        run(clearLevelPass, groups);
+
+        for (int iteration = 0; iteration < iterations; ++iteration) {
+            DropletConstants constants = level;
+            constants.indices3[2] = static_cast<uint32_t>(iteration);
+            D3D12_GPU_VIRTUAL_ADDRESS address = 0;
+            if (!upload(constants, address)) {
+                PIXEndEvent(commandList);
+                return false;
+            }
+            commandList->SetComputeRootConstantBufferView(1, address);
+            run(clearIterPass, groups);
+            commandList->SetPipelineState(tracePass);
+            commandList->Dispatch((static_cast<uint32_t>(particlesPerIteration) + 63u) / 64u, 1,
+                                  1);
+            barrier();
+            run(applyPass, groups);
+        }
+    }
+
+    // 合成解像度へ足し戻す。**Mask だけが目的のときは Height に書かない。**
+    if (!layer.maskOnly) {
+        TransitionIfNeeded(commandList, m_droplet.heights,
+                           D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        TransitionIfNeeded(commandList, m_droplet.original,
+                           D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        run(resolvePass, DispatchCount(m_resolution));
+        // 形が変わったので、法線も作り直す。
+        RebuildNormalsFromHeight(device, normalPass, commandList, stack);
+        TransitionIfNeeded(commandList, m_droplet.heights, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        TransitionIfNeeded(commandList, m_droplet.original, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
+    // 次のレイヤーは Height を UAV として書く。Mask だけのときも戻す。
+    TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    PIXEndEvent(commandList);
+    return true;
+}
+
+// 直前の水滴侵食レイヤーが残した流量 / 堆積を、マスクとして焼く。
+bool MaterialEvaluator::ApplyDropletMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                         ID3D12GraphicsCommandList* commandList,
+                                         const MaskOp& op, rhi::GpuTexture& target) {
+    if (!m_droplet.IsValid() || !target.IsValid()) {
+        return false;
+    }
+    const auto pipeline = [&](const wchar_t* entry) {
+        return pipelineCache.GetCompute(L"CompositeDroplet.hlsl", entry);
+    };
+    ID3D12PipelineState* clearPass = pipeline(L"CsMaskMaxClear");
+    ID3D12PipelineState* reducePass = pipeline(L"CsMaskMaxReduce");
+    ID3D12PipelineState* maskPass = pipeline(L"CsMask");
+    if (clearPass == nullptr || reducePass == nullptr || maskPass == nullptr) {
+        return false;
+    }
+
+    DropletConstants constants = {};
+    constants.indices3[3] = m_resolution;
+    constants.indices4[0] = m_droplet.maxScratch.UavIndex();
+    constants.indices4[1] = target.UavIndex();
+    constants.indices4[2] = (op.dropletMask.channel == 0u) ? 0u : 1u;
+    constants.indices4[3] = m_droplet.resolution;
+    constants.indices5[2] = m_droplet.flow.SrvIndex();
+    constants.indices5[3] = m_droplet.deposit.SrvIndex();
+    const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(DropletConstants));
+    if (!cb.IsValid()) {
+        return false;
+    }
+    std::memcpy(cb.cpu, &constants, sizeof(constants));
+
+    PIXBeginEvent(commandList, PIX_COLOR(90, 150, 200), "CompositeDropletMask");
+    TransitionIfNeeded(commandList, m_droplet.flow, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(commandList, m_droplet.deposit,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(commandList, m_droplet.maxScratch, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+    const auto barrier = [&]() {
+        const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+        commandList->ResourceBarrier(1, &uav);
+    };
+    commandList->SetPipelineState(clearPass);
+    commandList->Dispatch(1, 1, 1);
+    barrier();
+    commandList->SetPipelineState(reducePass);
+    commandList->Dispatch(DispatchCount(m_droplet.resolution), DispatchCount(m_droplet.resolution),
+                          1);
+    barrier();
+    commandList->SetPipelineState(maskPass);
+    commandList->Dispatch(DispatchCount(m_resolution), DispatchCount(m_resolution), 1);
+    barrier();
+
+    // 次に使うときは書き込みへ戻す。
+    TransitionIfNeeded(commandList, m_droplet.flow, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, m_droplet.deposit, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    PIXEndEvent(commandList);
+    return true;
+}
+
 bool MaterialEvaluator::ApplyCrumbling(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                                        ID3D12GraphicsCommandList* commandList,
                                        const MaterialLayer& layer, const MaterialStack& stack,
@@ -2524,7 +2852,8 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             if (op.kind == MaskOpKind::Fluvial || op.kind == MaskOpKind::Slope ||
                 op.kind == MaskOpKind::Curvature || op.kind == MaskOpKind::Sediment ||
                 op.kind == MaskOpKind::Crumbling || op.kind == MaskOpKind::Snow ||
-                op.kind == MaskOpKind::Height || op.kind == MaskOpKind::River) {
+                op.kind == MaskOpKind::Height || op.kind == MaskOpKind::River ||
+                op.kind == MaskOpKind::Droplet) {
                 after = std::max(after, op.heightSourceLayer);
                 const size_t layerCount = std::min<size_t>(
                     stack.Layers().size(),
@@ -2606,6 +2935,11 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::River) {
                 if (!ApplyRiver(device, pipelineCache, commandList, layer, stack,
                                 inputMaskIndex)) {
+                    complete = false;
+                }
+                ++m_evaluatedLayerCount;
+            } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::Droplet) {
+                if (!ApplyDroplet(device, pipelineCache, commandList, layer, stack)) {
                     complete = false;
                 }
                 ++m_evaluatedLayerCount;
