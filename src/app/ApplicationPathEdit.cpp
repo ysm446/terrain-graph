@@ -4,17 +4,22 @@
 // の 3 つを軸にする。設計の経緯は docs/design/node-graph.md の「パス」。
 //
 //   点をクリック            選択する（伸ばす起点になる）
-//   エッジをクリック        その位置に点を挿入して選択（そのままドラッグできる）
+//   エッジをクリック        選択する（Delete で消す、R で向きを反転）
 //   空をクリック            選択を外す
 //   Ctrl + 空をクリック     選択した点から新しい点へ線を伸ばす（選択が無ければ新しい線の始点）
 //   Ctrl + 点をクリック     選択した点とその点を繋ぐ
-//   Ctrl + エッジをクリック そこに点を挿入して、選択した点と繋ぐ
+//   Ctrl + エッジをクリック そこに点を挿入して選択（そのままドラッグできる。点を選んで
+//                           いればその点と繋ぐ）
 //   点をドラッグ            地形の表面に沿って動かす。他の点や線に重ねると吸着して結合
 //   右クリック              点 / エッジ / 空のメニュー（分離、削除、反転、挿入…）
-//   Delete                  選択した点を消す
-//   R                       選択した点に付くエッジの向きを反転
+//   Delete                  選択した点（またはエッジ）を消す
+//   R                       選択した点に付くエッジ（または選択したエッジ）の向きを反転
 //   Esc                     選択を外す
 //   Shift                   吸着しない
+//
+// **ふつうのクリックはデータを変えない**（選ぶだけ）。増やす / 繋ぐは Ctrl、動かすは
+// ドラッグ、消す / 分ける / 反転はキーとメニュー。線のそばに点を置きたかったのに
+// 挿入されてしまう、という誤操作を無くすため。
 //
 // **仮のエッジ（選択した点からカーソルへ）は Ctrl を押している間だけ出す。**
 // 常に出ていると「まだ終わっていない」と急かされる感じになる。伸ばす意思があるときにだけ
@@ -324,6 +329,9 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
     std::erase_if(state.selected, [&path](graph::PathElementId id) {
         return path.FindPoint(id) == nullptr;
     });
+    if (state.selectedEdge != 0 && path.FindEdge(state.selectedEdge) == nullptr) {
+        state.selectedEdge = 0;
+    }
     if (state.dragPoint != 0 && path.FindPoint(state.dragPoint) == nullptr) {
         state.dragPoint = 0;
         state.dragging = false;
@@ -357,11 +365,17 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
     }
 
     bool changed = false;
+    // 点の選択とエッジの選択は排他。
     const auto selectOnly = [&](graph::PathElementId id) {
         state.selected.clear();
+        state.selectedEdge = 0;
         if (id != 0) {
             state.selected.push_back(id);
         }
+    };
+    const auto selectEdge = [&](graph::PathElementId edgeId) {
+        state.selected.clear();
+        state.selectedEdge = edgeId;
     };
     // 伸ばす起点。選択している点（複数なら先頭）。
     const graph::PathElementId anchor = state.selected.empty() ? 0 : state.selected.front();
@@ -401,6 +415,7 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
                 }
                 selectOnly(state.hoverPoint);
             } else if (state.hoverEdge != 0) {
+                // エッジの途中に点を挿入して掴む。点を選んでいれば、その点とも繋ぐ。
                 const graph::PathElementId inserted =
                     graph::InsertPathPointOnEdge(path, state.hoverEdge, state.hoverEdgeT);
                 if (inserted != 0) {
@@ -408,6 +423,8 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
                         graph::ConnectPathPoints(path, anchor, inserted);
                     }
                     selectOnly(inserted);
+                    state.dragPoint = inserted;
+                    state.dragging = true;
                     changed = true;
                 }
             } else if (onTerrain) {
@@ -427,15 +444,8 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
             state.dragPoint = state.hoverPoint;
             state.dragging = true;
         } else if (state.hoverEdge != 0) {
-            // エッジの途中に点を挿入して、その点を掴む。
-            const graph::PathElementId inserted =
-                graph::InsertPathPointOnEdge(path, state.hoverEdge, state.hoverEdgeT);
-            if (inserted != 0) {
-                selectOnly(inserted);
-                state.dragPoint = inserted;
-                state.dragging = true;
-                changed = true;
-            }
+            // エッジを選ぶ。挿入は Ctrl + クリック。
+            selectEdge(state.hoverEdge);
         } else {
             // 空の所。選択を外す（次の Ctrl + クリックは新しい線の始点）。
             selectOnly(0);
@@ -497,13 +507,21 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
             selectOnly(0);
         }
-        if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && !state.selected.empty()) {
-            for (const graph::PathElementId id : state.selected) {
-                changed |= graph::DeletePathPoint(path, id);
+        if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
+            if (state.selectedEdge != 0) {
+                changed |= graph::DeletePathEdge(path, state.selectedEdge);
+                selectOnly(0);
+            } else if (!state.selected.empty()) {
+                for (const graph::PathElementId id : state.selected) {
+                    changed |= graph::DeletePathPoint(path, id);
+                }
+                selectOnly(0);
             }
-            selectOnly(0);
         }
         if (ImGui::IsKeyPressed(ImGuiKey_R, false) && !io.KeyCtrl) {
+            if (state.selectedEdge != 0) {
+                changed |= graph::ReversePathEdge(path, state.selectedEdge);
+            }
             for (const graph::PathElementId id : state.selected) {
                 changed |= graph::ReversePathEdgesAt(path, id);
             }
@@ -520,6 +538,8 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
         state.menuV = terrainV;
         if (state.menuPoint != 0) {
             selectOnly(state.menuPoint);
+        } else if (state.menuEdge != 0) {
+            selectEdge(state.menuEdge);
         }
         ImGui::OpenPopup("##pathContextMenu");
     }
@@ -577,6 +597,7 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
             }
             if (ImGui::MenuItem("削除")) {
                 changed |= graph::DeletePathEdge(path, edgeId);
+                selectOnly(0);
             }
         } else {
             ImGui::TextDisabled("パス");
@@ -643,14 +664,17 @@ void Application::DrawPathOverlay(const graph::Node& node, const ImVec2& viewpor
     for (const PathScreenEdge& edge : cache.edges) {
         const bool hovered = (edge.id == state.hoverEdge && !state.dragging);
         const bool snapping = (edge.id == state.snapEdge);
-        const ImU32 color = snapping ? snapColor : (hovered ? hoverColor : lineColor);
+        const bool selectedEdge = (edge.id == state.selectedEdge);
+        const ImU32 color = snapping ? snapColor
+                                     : ((hovered || selectedEdge) ? hoverColor : lineColor);
+        const float width = selectedEdge ? lineWidth + ui::Scaled(1.5f) : lineWidth;
         for (size_t i = 0; i + 1 < edge.polyline.size(); ++i) {
             if (!edge.visible[i] || !edge.visible[i + 1]) {
                 continue;
             }
             drawList->AddLine(edge.polyline[i], edge.polyline[i + 1], lineShadow,
-                              lineWidth + ui::Scaled(2.0f));
-            drawList->AddLine(edge.polyline[i], edge.polyline[i + 1], color, lineWidth);
+                              width + ui::Scaled(2.0f));
+            drawList->AddLine(edge.polyline[i], edge.polyline[i + 1], color, width);
         }
         // 向きの矢印。線の真ん中に小さく置く。
         const size_t mid = edge.polyline.size() / 2;
@@ -760,23 +784,31 @@ void Application::DrawPathOverlay(const graph::Node& node, const ImVec2& viewpor
     if (io.KeyCtrl) {
         if (anchor != 0) {
             rows = {{"クリック", "点を置いて伸ばす"},
-                    {"点 / 線をクリック", "繋ぐ"},
+                    {"点をクリック", "繋ぐ"},
+                    {"線をクリック", "点を挿入して繋ぐ"},
                     {"Ctrl を離す", "戻る"}};
         } else {
-            rows = {{"クリック", "線を始める"}};
+            rows = {{"クリック", "線を始める"},
+                    {"線をクリック", "点を挿入"},
+                    {"Ctrl を離す", "戻る"}};
         }
     } else if (state.dragging) {
         rows = {{"点 / 線に重ねる", "繋ぐ"}, {"Shift", "吸着しない"}};
+    } else if (state.selectedEdge != 0) {
+        rows = {{"Ctrl + 線をクリック", "点を挿入"},
+                {"右クリック", "挿入 / 切り離し / 反転 / 削除"},
+                {"Delete / R", "消す / 向きを反転"},
+                {"Esc", "選択を外す"}};
     } else if (!state.selected.empty()) {
-        rows = {{"Ctrl + クリック", "伸ばす"},
+        rows = {{"Ctrl + クリック", "伸ばす（点や線の上で繋ぐ）"},
                 {"ドラッグ", "動かす"},
                 {"右クリック", "分離 / 反転 / 削除"},
                 {"Delete / R", "消す / 向きを反転"},
                 {"Esc", "選択を外す"}};
     } else {
-        rows = {{"クリック", "点を選ぶ"},
-                {"線をクリック", "点を挿入"},
+        rows = {{"クリック", "点や線を選ぶ"},
                 {"Ctrl + クリック", "線を始める"},
+                {"Ctrl + 線をクリック", "点を挿入"},
                 {"Alt + ドラッグ", "視点"}};
     }
     {
@@ -886,6 +918,26 @@ bool Application::DrawPathSettings(graph::Node& node) {
                 point->heightOffsetMeters = edit.heightOffsetMeters;
             }
             changed = true;
+        }
+    }
+
+    if (m_pathEdit.nodeId == node.id && m_pathEdit.selectedEdge != 0) {
+        if (const graph::PathEdge* edge = path.FindEdge(m_pathEdit.selectedEdge)) {
+            ui::SectionHeader("選択したエッジ");
+            if (ui::BeginPropertyTable("graphPathEdgeRows")) {
+                ui::PropertyValue("向き", "点 %d → 点 %d", edge->from, edge->to);
+                ui::PropertyLabelEmpty("pathEdgeButtons");
+                if (ui::Button("反転")) {
+                    changed |= graph::ReversePathEdge(path, edge->id);
+                }
+                ImGui::SameLine();
+                if (ui::Button("削除")) {
+                    changed |= graph::DeletePathEdge(path, edge->id);
+                    m_pathEdit.selectedEdge = 0;
+                }
+                ui::PropertyEnd();
+                ui::EndPropertyTable();
+            }
         }
     }
 
