@@ -252,6 +252,9 @@ public:
     // 表側の結果がどの版のスタックかは EvaluatedRevision() で見分ける。
     // ImGui へ渡すハンドル。まだ無ければ ptr が 0。
     D3D12_GPU_DESCRIPTOR_HANDLE MaskOpThumbnailHandle(size_t opIndex) const;
+    // そのレイヤーまで合成した結果（アルベド + Height の勾配の陰影）の 64² のサムネイル。
+    // 添字は評価したスタックのレイヤーの添字。まだ無ければ ptr が 0。
+    D3D12_GPU_DESCRIPTOR_HANDLE LayerThumbnailHandle(size_t layerIndex) const;
     // 表側の結果が、どの版のスタックを評価したものか。
     uint64_t EvaluatedRevision() const { return m_evaluatedRevision; }
 
@@ -429,6 +432,16 @@ private:
         rhi::DescriptorHandle grayView;
     };
     void ReleaseMaskOpThumbnails(rhi::Device& device, std::vector<MaskOpThumbnail>& thumbnails);
+    // レイヤーの数ぶんの結果サムネイル（評価先＝裏側）を用意する。
+    void EnsureLayerThumbnails(rhi::Device& device, size_t layerCount);
+    // そのレイヤーまで合成した BaseColor と Height から結果サムネイルを焼く。
+    // 合成ループの中で、レイヤーを走らせた直後に呼ぶ。
+    void BakeLayerThumbnail(rhi::Device& device, ID3D12PipelineState* pipeline,
+                            ID3D12GraphicsCommandList* commandList, const MaterialStack& stack,
+                            size_t layerIndex);
+    const std::vector<rhi::GpuTexture>& DisplayedLayerThumbnails() const {
+        return m_frontTextures.IsValid() ? m_frontLayerThumbnails : m_layerThumbnails;
+    }
     const std::vector<MaskOpThumbnail>& DisplayedMaskOpThumbnails() const {
         return m_frontTextures.IsValid() ? m_frontMaskOpThumbnails : m_maskOpThumbnails;
     }
@@ -445,6 +458,8 @@ private:
     // ノード用のサムネイルも ImGui（ピクセルシェーダ）が読むので同じ扱い。
     void TransitionThumbnailsForDisplay(ID3D12GraphicsCommandList* commandList,
                                         std::vector<MaskOpThumbnail>& thumbnails);
+    void TransitionThumbnailsForDisplay(ID3D12GraphicsCommandList* commandList,
+                                        std::vector<rhi::GpuTexture>& thumbnails);
 
     // 評価先。非同期のときは裏側で、終わったら m_frontTextures と入れ替わる。
     MaterialTextureSet m_textures;
@@ -458,6 +473,9 @@ private:
     // 合成結果と一緒に入れ替える（評価中に ImGui が読む側へ書かないため）。
     std::vector<MaskOpThumbnail> m_maskOpThumbnails;
     std::vector<MaskOpThumbnail> m_frontMaskOpThumbnails;
+    // レイヤーごとの結果サムネイル（RGBA8）。扱いはマスクの op のサムネイルと同じ。
+    std::vector<rhi::GpuTexture> m_layerThumbnails;
+    std::vector<rhi::GpuTexture> m_frontLayerThumbnails;
     uint32_t m_resolution = 0;
     uint64_t m_evaluatedRevision = 0;
     uint32_t m_evaluatedLayerCount = 0;

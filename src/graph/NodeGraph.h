@@ -178,6 +178,9 @@ struct CompiledGraph {
         size_t outputIndex = 0;
     };
     std::vector<MaskOpSource> maskOpSources;
+    // レイヤーごとの元ノードの ID（添字は layers と同じ。プレビュー用の塗りレイヤーは 0）。
+    // グラフパネルがノードに合成結果のサムネイルを出すのに使う。
+    std::vector<GraphId> layerSources;
 };
 
 // 出力。ここに繋いだチェーンがプレビューのマテリアルになる。
@@ -298,6 +301,8 @@ private:
     // 焼いた op の記録を、コンパイル結果の「出どころ」へ写す（ノードのポインタは外へ出さない）。
     static void RecordMaskOpSources(const std::vector<EmittedMaskOp>& emitted,
                                     CompiledGraph& compiled);
+    static void RecordLayerSources(const std::vector<const Node*>& layerNodes,
+                                   CompiledGraph& compiled);
     // top から「下地」チェーンを遡ってレイヤー列（下から上）にする共通部。
     CompiledGraph CompileChainFrom(const Node* top, ChainTrace* trace = nullptr) const;
     // マスクの木を辿って、**レイヤーでもある出どころ**（堆積 / 崩落 / 積雪）を集める。

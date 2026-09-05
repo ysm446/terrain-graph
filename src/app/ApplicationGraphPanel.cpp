@@ -286,10 +286,30 @@ void Application::SyncGraphStack() {
     GraphMaskOpSources sources;
     sources.revision = m_graphStack.Revision();
     sources.ops = std::move(compiled.maskOpSources);
+    sources.layers = std::move(compiled.layerSources);
     m_graphMaskOpSources.push_back(std::move(sources));
     while (m_graphMaskOpSources.size() > kKeepRevisions) {
         m_graphMaskOpSources.erase(m_graphMaskOpSources.begin());
     }
+}
+
+D3D12_GPU_DESCRIPTOR_HANDLE Application::GraphLayerThumbnail(graph::GraphId nodeId) const {
+    const compositor::MaterialEvaluator& evaluator = m_renderer.Evaluator();
+    const uint64_t revision = evaluator.EvaluatedRevision();
+    for (const GraphMaskOpSources& sources : m_graphMaskOpSources) {
+        if (sources.revision != revision) {
+            continue;
+        }
+        // 同じノードが Mask だけの差し込み（maskOnly）で先に並ぶことがあるので、
+        // 後ろから探して Result のほう（本流）を取る。
+        for (size_t i = sources.layers.size(); i-- > 0;) {
+            if (sources.layers[i] == nodeId) {
+                return evaluator.LayerThumbnailHandle(i);
+            }
+        }
+        break;
+    }
+    return D3D12_GPU_DESCRIPTOR_HANDLE{0};
 }
 
 D3D12_GPU_DESCRIPTOR_HANDLE Application::GraphMaskThumbnail(graph::GraphId nodeId,
@@ -514,33 +534,25 @@ void Application::DrawGraphNode(const graph::Node& node) {
     }
 
     // サムネイル。**繋ぎ替えずに中身が分かる**ようにするためのもの。
-    //   - マスクのノード / Mask 出力を持つ加工ノード: 焼いたマスク（白黒）。
-    //     プレビューしていない枝は op が無いので、枠だけの空き（未評価）になる。
-    //   - サーフェス: マテリアルのサムネイル。未割り当てなら定数色のスウォッチ
-    //     （レイヤー一覧と同じ見せ方）。
-    // シェイプ / 水面 / ハイトマップは絵にしても地形と区別が付かないので出さない。
+    //   - レイヤーのノード（Heightmap / Surface / Shape / 加工…）: そのレイヤーまで
+    //     合成した結果（アルベドに Height の勾配で陰影を付けたもの）。
+    //     Mask 出力を持つ加工ノードは、隣に最初の Mask（白黒）も出す。
+    //   - マスクのノード: 焼いたマスク（白黒）。
+    //   - プレビューしていない枝は評価されないので、枠だけの空き（未評価）になる。
     {
         const float thumbnailSize = ui::Scaled(ui::kNodeThumbnail);
-        if (graph::IsMaskNodeKind(node.kind) || graph::IsLayerMaskSourceKind(node.kind)) {
+        if (graph::IsMaskNodeKind(node.kind)) {
             ImGui::Dummy(ImVec2(kNodeWidth, 2.0f));
             const D3D12_GPU_DESCRIPTOR_HANDLE handle = GraphMaskThumbnail(node.id, 0);
             ui::ThumbnailImage(static_cast<ImTextureID>(handle.ptr), thumbnailSize);
-        } else if (node.kind == graph::NodeKind::Surface && layerSettings != nullptr) {
+        } else if (layerSettings != nullptr) {
             ImGui::Dummy(ImVec2(kNodeWidth, 2.0f));
-            const compositor::MaterialLayer& layer = layerSettings->layer;
-            const compositor::MaterialAsset* material = m_materialLibrary.Find(layer.material);
-            if (material != nullptr && material->thumbnail.IsValid()) {
-                ui::ThumbnailImage(static_cast<ImTextureID>(material->thumbnail.srv.gpu.ptr),
-                                   thumbnailSize);
-            } else {
-                ui::ColorSwatch(ImVec4(layer.baseColor.x, layer.baseColor.y,
-                                       layer.baseColor.z, 1.0f),
-                                thumbnailSize);
-            }
-            // マテリアル一覧からサムネイルへ落とすと、そのノードに割り当たる。
-            // プロパティを開かずに済ませるため。ID の無いアイテムでも
-            // BeginDragDropTarget は矩形から ID を作るので受けられる。
-            if (ImGui::BeginDragDropTarget()) {
+            const D3D12_GPU_DESCRIPTOR_HANDLE result = GraphLayerThumbnail(node.id);
+            ui::ThumbnailImage(static_cast<ImTextureID>(result.ptr), thumbnailSize);
+            // マテリアル一覧からサムネイルへ落とすと、そのノードに割り当たる
+            // （Surface だけ）。ID の無いアイテムでも BeginDragDropTarget は矩形から
+            // ID を作るので受けられる。
+            if (node.kind == graph::NodeKind::Surface && ImGui::BeginDragDropTarget()) {
                 if (const ImGuiPayload* payload =
                         ImGui::AcceptDragDropPayload(kMaterialDragDropType);
                     payload != nullptr) {
@@ -558,6 +570,11 @@ void Application::DrawGraphNode(const graph::Node& node) {
                     }
                 }
                 ImGui::EndDragDropTarget();
+            }
+            if (graph::IsLayerMaskSourceKind(node.kind)) {
+                ImGui::SameLine();
+                const D3D12_GPU_DESCRIPTOR_HANDLE mask = GraphMaskThumbnail(node.id, 0);
+                ui::ThumbnailImage(static_cast<ImTextureID>(mask.ptr), thumbnailSize);
             }
         }
     }

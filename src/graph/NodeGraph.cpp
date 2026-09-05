@@ -995,6 +995,16 @@ void NodeGraph::RecordMaskOpSources(const std::vector<EmittedMaskOp>& emitted,
     }
 }
 
+// レイヤー列の元ノードを、コンパイル結果へ写す。列のほうが長ければ（プレビュー用の
+// 塗りレイヤー）残りは 0。
+void NodeGraph::RecordLayerSources(const std::vector<const Node*>& layerNodes,
+                                   CompiledGraph& compiled) {
+    compiled.layerSources.assign(compiled.layers.size(), 0);
+    for (size_t i = 0; i < layerNodes.size() && i < compiled.layers.size(); ++i) {
+        compiled.layerSources[i] = (layerNodes[i] != nullptr) ? layerNodes[i]->id : 0;
+    }
+}
+
 CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace) const {
     const std::vector<const Node*> chain = ChainFrom(top);
 
@@ -1101,6 +1111,7 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace) co
     }
 
     RecordMaskOpSources(emitted, compiled);
+    RecordLayerSources(layerNodes, compiled);
     return compiled;
 }
 
@@ -1183,6 +1194,7 @@ CompiledGraph NodeGraph::CompileLayersTo(GraphId nodeId, GraphId outputPin) cons
         }
         compiled.layers.push_back(paint);
         RecordMaskOpSources(trace.emitted, compiled);
+        RecordLayerSources(trace.layerNodes, compiled);
         return compiled;
     }
     if (node->kind == NodeKind::Path) {

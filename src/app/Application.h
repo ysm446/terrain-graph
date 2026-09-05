@@ -95,6 +95,8 @@ private:
     // 表側の評価結果に無ければ ptr が 0。
     D3D12_GPU_DESCRIPTOR_HANDLE GraphMaskThumbnail(graph::GraphId nodeId,
                                                    size_t outputIndex) const;
+    // ノードに出す合成結果のサムネイル（そのノードのレイヤーまで合成した見た目）。
+    D3D12_GPU_DESCRIPTOR_HANDLE GraphLayerThumbnail(graph::GraphId nodeId) const;
     // グラフノードのレイヤー設定のプロパティ行。
     // 変更があれば true。isBase はマスクが効かない一番下のレイヤーのとき。
     // isSource は入力を持たないノード（ハイトマップ）。マスクの節を出さない。
@@ -284,6 +286,8 @@ private:
     struct GraphMaskOpSources {
         uint64_t revision = 0;
         std::vector<graph::CompiledGraph::MaskOpSource> ops;
+        // レイヤーごとの元ノード（添字はレイヤーの添字）。結果サムネイル用。
+        std::vector<graph::GraphId> layers;
     };
     std::vector<GraphMaskOpSources> m_graphMaskOpSources;
     graph::GraphId m_selectedGraphNode = 0;
