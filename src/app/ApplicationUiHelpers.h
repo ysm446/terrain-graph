@@ -260,6 +260,9 @@ inline constexpr float kTexturePreviewSize = 200.0f;
 
 // テクスチャ一覧からマップ欄へのドラッグ＆ドロップで使うペイロードの種別。
 inline constexpr const char* kTextureDragDropType = "TG_TEXTURE";
+// マテリアル一覧から Surface のマテリアル欄（プロパティの行 / ノードのサムネイル）へ
+// ドラッグ＆ドロップで割り当てるときのペイロードの種別。中身は MaterialAssetId。
+inline constexpr const char* kMaterialDragDropType = "TG_MATERIAL";
 inline constexpr const char* kTextureRemoveModalTitle = "テクスチャを削除";
 
 // テクスチャの一覧に出すフォーマット名。DXGI の名前は長いので短く言い換える。
@@ -350,6 +353,16 @@ inline bool DrawMaterialSlotRow(const char* label, compositor::MaterialAssetId& 
             ImGui::PopID();
         }
         ImGui::EndCombo();
+    }
+    // マテリアル一覧からドラッグしてきたものを受ける。テクスチャのコンボと同じ作りで、
+    // ドラッグ中にコンボは開けないので、直前のアイテムは必ずコンボ本体になる。
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kMaterialDragDropType);
+            payload != nullptr) {
+            slot = *static_cast<const compositor::MaterialAssetId*>(payload->Data);
+            changed = true;
+        }
+        ImGui::EndDragDropTarget();
     }
     ui::PropertyEnd();
     return changed;

@@ -75,6 +75,16 @@ void Application::DrawMaterialLibraryPanel() {
                 m_scrollToSelectedMaterial = false;
                 ImGui::SetScrollHereY(1.0f);
             }
+            // Surface のマテリアル欄（プロパティの行 / ノードのサムネイル）へ
+            // 落とすと、そのノードに割り当たる。テクスチャ一覧と同じ作り。
+            const bool dragging =
+                ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoHoldToOpenOthers);
+            if (dragging) {
+                ImGui::SetDragDropPayload(kMaterialDragDropType, &asset.id,
+                                          sizeof(compositor::MaterialAssetId));
+                ImGui::TextUnformatted(asset.name.c_str());
+                ImGui::EndDragDropSource();
+            }
             // 右クリックのメニュー。**押したサムネイルが対象**なので、
             // 開くときに選択もそちらへ移す。
             if (ImGui::BeginPopupContextItem("##materialMenu")) {
@@ -82,8 +92,10 @@ void Application::DrawMaterialLibraryPanel() {
                 DrawMaterialContextMenu(asset.id);
                 ImGui::EndPopup();
             }
-            if (thumbnail.hovered) {
-                ImGui::SetTooltip("%s\nダブルクリックで設定 / 右クリックでメニュー",
+            // ドラッグ中は ImGui 自身がプレビューを出すので、ツールチップは重ねない。
+            if (thumbnail.hovered && !dragging) {
+                ImGui::SetTooltip("%s\nダブルクリックで設定 / 右クリックでメニュー\n"
+                                  "Surface のマテリアル欄へドラッグで割り当て",
                                   asset.name.c_str());
             }
             ImGui::EndGroup();

@@ -536,6 +536,28 @@ void Application::DrawGraphNode(const graph::Node& node) {
                                        layer.baseColor.z, 1.0f),
                                 thumbnailSize);
             }
+            // マテリアル一覧からサムネイルへ落とすと、そのノードに割り当たる。
+            // プロパティを開かずに済ませるため。ID の無いアイテムでも
+            // BeginDragDropTarget は矩形から ID を作るので受けられる。
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* payload =
+                        ImGui::AcceptDragDropPayload(kMaterialDragDropType);
+                    payload != nullptr) {
+                    const auto dropped =
+                        *static_cast<const compositor::MaterialAssetId*>(payload->Data);
+                    if (graph::Node* mutableNode = m_graph.FindMutableNode(node.id)) {
+                        if (auto* mutableSettings =
+                                std::get_if<graph::LayerNodeSettings>(&mutableNode->settings);
+                            mutableSettings != nullptr &&
+                            mutableSettings->layer.material != dropped) {
+                            mutableSettings->layer.material = dropped;
+                            m_graph.MarkDirty();
+                            MarkDocumentChanged();
+                        }
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
         }
     }
 
