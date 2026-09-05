@@ -63,6 +63,10 @@ constexpr float kSnapRadius = 12.0f;
 constexpr float kDetachPixels = 14.0f;
 // これより動いたらクリックではなくドラッグ。
 constexpr float kDragThreshold = 3.0f;
+// 移動ギズモ。軸の長さ、当たり判定の幅、中央の平面ハンドルの半径（画面上）。
+constexpr float kGizmoLength = 64.0f;
+constexpr float kGizmoHitRadius = 8.0f;
+constexpr float kGizmoCenterRadius = 7.0f;
 
 float Distance(const ImVec2& a, const ImVec2& b) {
     return std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y));
@@ -270,6 +274,103 @@ graph::PathElementId NearestEdge(const PathScreenCache& cache, const ImVec2& mou
 
 }  // namespace
 
+// 移動ギズモの画面上の形。重心と、X（u）/ Z（v）の軸の先端。
+// 軸は地形の高さに沿わせず、重心の高さで水平に出す（傾いた軸だと向きが読めない）。
+struct PathGizmoScreen {
+    bool valid = false;
+    ImVec2 center{};
+    ImVec2 tip[2]{};
+    // 軸に沿って画面上を 1px 動いたときの UV の変化量。
+    float uvPerPixel[2] = {0.0f, 0.0f};
+    // 軸の画面上の単位ベクトル。
+    ImVec2 direction[2]{};
+};
+
+// 選択で動く点（点の集合、または鎖の両端と内側）。
+std::vector<graph::PathElementId> PathMovablePoints(const graph::PathSettings& path,
+                                                    const std::vector<graph::PathElementId>& selected,
+                                                    const std::vector<graph::PathElementId>& selectedEdges,
+                                                    const std::vector<graph::PathElementId>& interior) {
+    std::vector<graph::PathElementId> ids = selected;
+    const auto add = [&ids](graph::PathElementId id) {
+        if (id != 0 && std::find(ids.begin(), ids.end(), id) == ids.end()) {
+            ids.push_back(id);
+        }
+    };
+    for (const graph::PathElementId edgeId : selectedEdges) {
+        if (const graph::PathEdge* edge = path.FindEdge(edgeId)) {
+            add(edge->from);
+            add(edge->to);
+        }
+    }
+    for (const graph::PathElementId id : interior) {
+        add(id);
+    }
+    return ids;
+}
+
+template <typename WorldFn>
+PathGizmoScreen BuildPathGizmo(const graph::PathSettings& path,
+                               const std::vector<graph::PathElementId>& movable, float planeSize,
+                               const XMMATRIX& viewProjection, const ImVec2& viewportMin,
+                               const ImVec2& size, const WorldFn& worldOf) {
+    PathGizmoScreen gizmo;
+    float u = 0.0f;
+    float v = 0.0f;
+    if (movable.empty() || !graph::PathPointsCentroid(path, movable, u, v) || planeSize <= 0.0f) {
+        return gizmo;
+    }
+    const XMFLOAT3 center = worldOf(u, v, 0.0f);
+    const ProjectedPoint projectedCenter =
+        ProjectToViewport(viewProjection, center, viewportMin, size);
+    if (!projectedCenter.visible) {
+        return gizmo;
+    }
+    gizmo.center = projectedCenter.screen;
+    // 1m だけ進めて画面上の長さを測り、見た目の長さが一定になるよう伸ばす。
+    const XMFLOAT3 axes[2] = {XMFLOAT3{1.0f, 0.0f, 0.0f}, XMFLOAT3{0.0f, 0.0f, 1.0f}};
+    const float probeMeters = std::max(1.0f, planeSize * 0.01f);
+    for (int axis = 0; axis < 2; ++axis) {
+        const XMFLOAT3 probe{center.x + axes[axis].x * probeMeters, center.y,
+                             center.z + axes[axis].z * probeMeters};
+        const ProjectedPoint projected = ProjectToViewport(viewProjection, probe, viewportMin, size);
+        if (!projected.visible) {
+            return gizmo;
+        }
+        ImVec2 delta(projected.screen.x - gizmo.center.x, projected.screen.y - gizmo.center.y);
+        const float pixels = std::sqrt(delta.x * delta.x + delta.y * delta.y);
+        if (pixels < 1e-3f) {
+            return gizmo;
+        }
+        delta.x /= pixels;
+        delta.y /= pixels;
+        gizmo.direction[axis] = delta;
+        const float length = ui::Scaled(kGizmoLength);
+        gizmo.tip[axis] = ImVec2(gizmo.center.x + delta.x * length, gizmo.center.y + delta.y * length);
+        // probeMeters で pixels 動くので、1px は probeMeters / pixels（m）= その / planeSize（UV）。
+        gizmo.uvPerPixel[axis] = (probeMeters / pixels) / planeSize;
+    }
+    gizmo.valid = true;
+    return gizmo;
+}
+
+// ギズモのどこにカーソルがあるか。0 = X、1 = Z、2 = 平面（中央）、-1 = 無し。
+int PathGizmoHit(const PathGizmoScreen& gizmo, const ImVec2& mouse) {
+    if (!gizmo.valid) {
+        return -1;
+    }
+    if (Distance(mouse, gizmo.center) <= ui::Scaled(kGizmoCenterRadius + 2.0f)) {
+        return 2;
+    }
+    for (int axis = 0; axis < 2; ++axis) {
+        float t = 0.0f;
+        if (DistanceToSegment(mouse, gizmo.center, gizmo.tip[axis], t) <= ui::Scaled(kGizmoHitRadius)) {
+            return axis;
+        }
+    }
+    return -1;
+}
+
 graph::Node* Application::CurrentPathNode() {
     graph::Node* node = m_graph.FindMutableNode(m_selectedGraphNode);
     if (node == nullptr || node->kind != graph::NodeKind::Path) {
@@ -427,10 +528,22 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
     const bool onTerrain =
         mouseInside && PickTerrainUv(mouse, viewportMin, viewportMax, terrainU, terrainV);
 
+    // --- 移動ギズモ -------------------------------------------------------------
+    // 選択（点の集合 / 鎖）があれば重心にギズモを出し、掴んで動かす。
+    // Ctrl を押している間（伸ばす）は出さない（クリックを横取りしないため）。
+    const std::vector<graph::PathElementId> movable = PathMovablePoints(
+        path, state.selected, state.selectedEdges, state.selectedStrandInterior);
+    const PathGizmoScreen gizmo =
+        (!io.KeyCtrl && !state.dragging)
+            ? BuildPathGizmo(path, movable, m_renderer.PlaneSize(), viewProjection, viewportMin,
+                             size, worldOf)
+            : PathGizmoScreen{};
+    state.gizmoHover = (mouseInside && !state.gizmoDragging) ? PathGizmoHit(gizmo, mouse) : -1;
+
     // --- ホバー ---------------------------------------------------------------
     state.hoverPoint = 0;
     state.hoverEdge = 0;
-    if (mouseInside && !state.dragging) {
+    if (mouseInside && !state.dragging && !state.gizmoDragging && state.gizmoHover < 0) {
         state.hoverPoint = NearestPoint(cache, mouse, ui::Scaled(kPointHitRadius), 0);
         if (state.hoverPoint == 0) {
             state.hoverEdge =
@@ -489,7 +602,20 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
     };
 
     // --- 押した -----------------------------------------------------------------
-    if (mouseInside && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    if (mouseInside && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && state.gizmoHover >= 0) {
+        // ギズモを掴んだ。選択は変えず、各点の今の位置を控える。
+        state.gizmoAxis = state.gizmoHover;
+        state.gizmoDragging = true;
+        state.gizmoPressPos = mouse;
+        state.gizmoPressU = terrainU;
+        state.gizmoPressV = terrainV;
+        state.gizmoStart.clear();
+        for (const graph::PathElementId id : movable) {
+            if (const graph::PathPoint* point = path.FindPoint(id)) {
+                state.gizmoStart.push_back({id, point->u, point->v});
+            }
+        }
+    } else if (mouseInside && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         state.pressPos = mouse;
         state.dragMoved = false;
         state.snapPoint = 0;
@@ -539,6 +665,53 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
         }
     }
 
+    // --- ギズモのドラッグ ---------------------------------------------------------
+    bool released = false;
+    if (state.gizmoDragging && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        float du = 0.0f;
+        float dv = 0.0f;
+        bool haveDelta = false;
+        if (state.gizmoAxis == 2) {
+            // 平面。掴んだ所と今のカーソルの地形上の差。地形の外では動かさない。
+            if (onTerrain) {
+                du = terrainU - state.gizmoPressU;
+                dv = terrainV - state.gizmoPressV;
+                haveDelta = true;
+            }
+        } else if (gizmo.valid && state.gizmoAxis >= 0) {
+            // 軸。カーソルの動きを軸の向きへ落とし、画面上の距離を UV へ直す。
+            const ImVec2 delta(mouse.x - state.gizmoPressPos.x, mouse.y - state.gizmoPressPos.y);
+            const ImVec2 direction = gizmo.direction[state.gizmoAxis];
+            const float along = delta.x * direction.x + delta.y * direction.y;
+            const float amount = along * gizmo.uvPerPixel[state.gizmoAxis];
+            if (state.gizmoAxis == 0) {
+                du = amount;
+            } else {
+                dv = amount;
+            }
+            haveDelta = true;
+        }
+        if (haveDelta) {
+            for (const PathEditState::GizmoStart& start : state.gizmoStart) {
+                if (graph::PathPoint* point = path.FindPoint(start.id)) {
+                    const float u = std::clamp(start.u + du, 0.0f, 1.0f);
+                    const float v = std::clamp(start.v + dv, 0.0f, 1.0f);
+                    if (u != point->u || v != point->v) {
+                        point->u = u;
+                        point->v = v;
+                        changed = true;
+                    }
+                }
+            }
+        }
+    } else if (state.gizmoDragging) {
+        // 離した。両端が動いたエッジの経路は、点のドラッグと同じく離した時点で作り直す。
+        state.gizmoDragging = false;
+        state.gizmoAxis = -1;
+        state.gizmoStart.clear();
+        released = true;
+    }
+
     // --- ドラッグ -----------------------------------------------------------------
     if (state.dragging && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
         if (!state.dragMoved && Distance(mouse, state.pressPos) > ui::Scaled(kDragThreshold)) {
@@ -565,7 +738,6 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
     }
 
     // --- 離した -------------------------------------------------------------------
-    bool released = false;
     if (state.dragging && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
         if (state.dragMoved) {
             released = true;
@@ -591,19 +763,73 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
         state.snapEdge = 0;
     }
 
+    // コピー。選択している点の集合、または鎖（両端と内側の点、その間のエッジ）を控える。
+    const auto copySelection = [&]() {
+        graph::PathClip clip;
+        if (graph::ExtractPathClip(path, movable, state.selectedEdges, clip)) {
+            m_pathClipboard = std::move(clip);
+            TG_LOG_INFO("パスをコピーしました: 点 %zu / エッジ %zu", m_pathClipboard.points.size(),
+                        m_pathClipboard.edges.size());
+        }
+    };
+    // 貼り付け。重心がカーソルの地形上の位置へ来るように置き、貼った点を選択にする
+    // （そのままギズモで動かせる）。カーソルが地形の外なら、元の位置から少しずらして置く。
+    const auto pasteClipboard = [&](bool atCursor, float atU, float atV) {
+        if (m_pathClipboard.points.empty()) {
+            return;
+        }
+        float du = 0.02f;
+        float dv = 0.02f;
+        if (atCursor) {
+            float sumU = 0.0f;
+            float sumV = 0.0f;
+            for (const graph::PathPoint& point : m_pathClipboard.points) {
+                sumU += point.u;
+                sumV += point.v;
+            }
+            const float count = static_cast<float>(m_pathClipboard.points.size());
+            du = atU - sumU / count;
+            dv = atV - sumV / count;
+        }
+        std::vector<graph::PathElementId> pasted;
+        if (graph::PastePathClip(path, m_pathClipboard, du, dv, &pasted, nullptr)) {
+            selectOnly(0);
+            state.selected = pasted;
+            changed = true;
+            // 貼った直後は「動かした」のと同じ扱い。経路探索の鎖は貼った所で計算し直す。
+            released = true;
+        }
+    };
+
     // --- キー ---------------------------------------------------------------------
-    if (mouseInside && !io.WantTextInput && !state.dragging) {
+    if (mouseInside && !io.WantTextInput && !state.dragging && !state.gizmoDragging) {
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
             selectOnly(0);
         }
+        // Ctrl+C / Ctrl+V。グラフパネルのノードのコピーと同じキーだが、
+        // ビューポートの上にいるときだけパスが受け取る。
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C, false) && !movable.empty()) {
+            copySelection();
+        }
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V, false)) {
+            pasteClipboard(onTerrain, terrainU, terrainV);
+        }
         if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
             if (!state.selectedEdges.empty()) {
+                // 鎖の点（両端と内側）は、エッジが無くなれば一緒に消す。
+                // 両端が分岐（別の鎖が付いている）なら、そちらの鎖のために残る。
+                std::vector<graph::PathElementId> strandPoints = state.selectedStrandInterior;
+                for (const graph::PathElementId id : state.selectedEdges) {
+                    if (const graph::PathEdge* edge = path.FindEdge(id)) {
+                        strandPoints.push_back(edge->from);
+                        strandPoints.push_back(edge->to);
+                    }
+                }
                 for (const graph::PathElementId id : state.selectedEdges) {
                     changed |= graph::DeletePathEdge(path, id);
                 }
-                // 鎖の内側の点は、エッジが無くなれば一緒に消す。
-                for (const graph::PathElementId id : state.selectedStrandInterior) {
-                    if (path.EdgeCount(id) == 0) {
+                for (const graph::PathElementId id : strandPoints) {
+                    if (path.FindPoint(id) != nullptr && path.EdgeCount(id) == 0) {
                         changed |= graph::DeletePathPoint(path, id);
                     }
                 }
@@ -660,6 +886,9 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
                 changed |= graph::ReversePathEdgesAt(path, pointId);
             }
             ImGui::EndDisabled();
+            if (ImGui::MenuItem("コピー", "Ctrl+C")) {
+                copySelection();
+            }
             if (ImGui::MenuItem("削除")) {
                 changed |= graph::DeletePathPoint(path, pointId);
                 selectOnly(0);
@@ -695,6 +924,9 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
                     changed |= graph::ReversePathEdge(path, id);
                 }
             }
+            if (ImGui::MenuItem("鎖をコピー", "Ctrl+C")) {
+                copySelection();
+            }
             if (ImGui::MenuItem("このエッジを消す（ここで切る）")) {
                 changed |= graph::DeletePathEdge(path, edgeId);
                 selectOnly(0);
@@ -712,7 +944,12 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
                 }
             }
             ImGui::EndDisabled();
-            ImGui::BeginDisabled(state.selected.empty());
+            ImGui::BeginDisabled(m_pathClipboard.points.empty());
+            if (ImGui::MenuItem("ここに貼り付け", "Ctrl+V")) {
+                pasteClipboard(state.menuOnTerrain, state.menuU, state.menuV);
+            }
+            ImGui::EndDisabled();
+            ImGui::BeginDisabled(state.selected.empty() && state.selectedEdges.empty());
             if (ImGui::MenuItem("選択を外す")) {
                 selectOnly(0);
             }
@@ -730,7 +967,7 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
     if (released) {
         m_documentJoinsEdit = true;
     }
-    if ((changed || released) && !state.dragging) {
+    if ((changed || released) && !state.dragging && !state.gizmoDragging) {
         RecomputePathRoutes(node, false, nullptr);
     }
 }
@@ -924,6 +1161,45 @@ void Application::DrawPathOverlay(const graph::Node& node, const ImVec2& viewpor
         }
     }
 
+    // --- 移動ギズモ -------------------------------------------------------------
+    // 座標軸ギズモと同じ色（X = 赤、Z = 青）。掴める所は明るくする。
+    if (!io.KeyCtrl && !state.dragging) {
+        const std::vector<graph::PathElementId> movable = PathMovablePoints(
+            path, state.selected, state.selectedEdges, state.selectedStrandInterior);
+        const PathGizmoScreen gizmo =
+            BuildPathGizmo(path, movable, m_renderer.PlaneSize(), viewProjection, viewportMin,
+                           size, worldOf);
+        if (gizmo.valid) {
+            const ImU32 axisColors[2] = {IM_COL32(226, 96, 96, 255), IM_COL32(96, 146, 226, 255)};
+            const int active = state.gizmoDragging ? state.gizmoAxis : state.gizmoHover;
+            for (int axis = 0; axis < 2; ++axis) {
+                const ImU32 color = (active == axis) ? hoverColor : axisColors[axis];
+                const float width = ui::Scaled((active == axis) ? 3.0f : 2.0f);
+                drawList->AddLine(gizmo.center, gizmo.tip[axis], lineShadow, width + ui::Scaled(2.0f));
+                drawList->AddLine(gizmo.center, gizmo.tip[axis], color, width);
+                // 先端の矢じり。
+                const ImVec2 dir = gizmo.direction[axis];
+                const ImVec2 side(-dir.y, dir.x);
+                const float head = ui::Scaled(10.0f);
+                const float halfWidth = ui::Scaled(5.0f);
+                const ImVec2 tip = gizmo.tip[axis];
+                const ImVec2 base(tip.x - dir.x * head, tip.y - dir.y * head);
+                drawList->AddTriangleFilled(
+                    tip, ImVec2(base.x + side.x * halfWidth, base.y + side.y * halfWidth),
+                    ImVec2(base.x - side.x * halfWidth, base.y - side.y * halfWidth), color);
+            }
+            // 中央の平面ハンドル。
+            const float radius = ui::Scaled(kGizmoCenterRadius);
+            const ImU32 centerColor = (active == 2) ? hoverColor : IM_COL32(235, 235, 235, 220);
+            drawList->AddRectFilled(ImVec2(gizmo.center.x - radius, gizmo.center.y - radius),
+                                    ImVec2(gizmo.center.x + radius, gizmo.center.y + radius),
+                                    lineShadow, ui::Scaled(2.0f));
+            drawList->AddRect(ImVec2(gizmo.center.x - radius + 1.0f, gizmo.center.y - radius + 1.0f),
+                              ImVec2(gizmo.center.x + radius - 1.0f, gizmo.center.y + radius - 1.0f),
+                              centerColor, ui::Scaled(2.0f), 0, ui::Scaled(1.5f));
+        }
+    }
+
     // --- 操作の案内 ---------------------------------------------------------------
     // ビューポートの右下に、いまの状態でできることを「操作 → 意味」の小さな表で出す。
     // プロパティに書くと視線を外さないと読めないので、見ている場所へ重ねる。
@@ -945,22 +1221,29 @@ void Application::DrawPathOverlay(const graph::Node& node, const ImVec2& viewpor
         }
     } else if (state.dragging) {
         rows = {{"点 / 線に重ねる", "繋ぐ"}, {"Shift", "吸着しない"}};
+    } else if (state.gizmoDragging) {
+        rows = {{"離す", "確定（経路は作り直す）"}};
     } else if (!state.selectedEdges.empty()) {
         rows = {{"プロパティ", "曲線の種類 / 丸め / 向き"},
+                {"ギズモをドラッグ", "鎖を動かす（軸 / 中央で平面）"},
                 {"Ctrl + 線をクリック", "点を挿入"},
                 {"右クリック", "挿入 / 切り離し / ここで切る"},
+                {"Ctrl+C / Ctrl+V", "鎖をコピー / カーソルへ貼る"},
                 {"Delete / R", "鎖を消す / 向きを反転"},
                 {"Esc", "選択を外す"}};
     } else if (!state.selected.empty()) {
         rows = {{"Ctrl + クリック", "伸ばす（点や線の上で繋ぐ）"},
                 {"ドラッグ", "動かす"},
+                {"ギズモをドラッグ", "選択をまとめて動かす"},
                 {"右クリック", "分離 / 反転 / 削除"},
+                {"Ctrl+C / Ctrl+V", "コピー / カーソルへ貼る"},
                 {"Delete / R", "消す / 向きを反転"},
                 {"Esc", "選択を外す"}};
     } else {
         rows = {{"クリック", "点や線（鎖）を選ぶ"},
                 {"Ctrl + クリック", "線を始める"},
                 {"Ctrl + 線をクリック", "点を挿入"},
+                {"Ctrl+V", "コピーしたパスをカーソルへ貼る"},
                 {"Alt + ドラッグ", "視点"}};
     }
     {

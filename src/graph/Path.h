@@ -182,6 +182,29 @@ std::vector<PathPoint> PathEdgeControlPoints(const PathSettings& path, const Pat
 // 経路探索が有効で、経路が古い（両端が動いた / 未計算）エッジの数。
 size_t CountStalePathRoutes(const PathSettings& path);
 
+// --- まとめて動かす / コピーと貼り付け ---------------------------------------
+// 点をまとめて動かす（0〜1 へ丸める）。1 つでも動いたら真。
+bool MovePathPoints(PathSettings& path, const std::vector<PathElementId>& pointIds, float du,
+                    float dv);
+// 点の重心（UV）。1 つも無ければ偽。
+bool PathPointsCentroid(const PathSettings& path, const std::vector<PathElementId>& pointIds,
+                        float& outU, float& outV);
+
+// 切り出した部分。点と、その間のエッジ。ID はこの中でだけ一意（元のパスの ID のまま）。
+// 経路の内部点は持たない（貼った先の地形で計算し直す）。
+struct PathClip {
+    std::vector<PathPoint> points;
+    std::vector<PathEdge> edges;
+};
+// 点とエッジから切り出す。エッジは両端の点も連れていき、指定した点どうしを結ぶエッジも拾う。
+// 何も無ければ偽。
+bool ExtractPathClip(const PathSettings& path, const std::vector<PathElementId>& pointIds,
+                     const std::vector<PathElementId>& edgeIds, PathClip& out);
+// 貼り付ける。ID を振り直し、UV を (du, dv) だけずらして 0〜1 へ丸める。
+// 新しい点 / エッジの ID を返す。空なら偽。
+bool PastePathClip(PathSettings& path, const PathClip& clip, float du, float dv,
+                   std::vector<PathElementId>* outPoints, std::vector<PathElementId>* outEdges);
+
 // --- 鎖と曲線 -------------------------------------------------------------
 // 鎖を導出する。すべてのエッジがちょうど 1 つの鎖に入る。
 std::vector<PathStrand> BuildPathStrands(const PathSettings& path);

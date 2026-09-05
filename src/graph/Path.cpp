@@ -525,6 +525,145 @@ PathStrand WalkStrand(const PathSettings& path, PathElementId start, const PathE
 
 }  // namespace
 
+bool MovePathPoints(PathSettings& path, const std::vector<PathElementId>& pointIds, float du,
+                    float dv) {
+    bool moved = false;
+    for (const PathElementId id : pointIds) {
+        PathPoint* point = path.FindPoint(id);
+        if (point == nullptr) {
+            continue;
+        }
+        const float u = std::clamp(point->u + du, 0.0f, 1.0f);
+        const float v = std::clamp(point->v + dv, 0.0f, 1.0f);
+        if (u != point->u || v != point->v) {
+            point->u = u;
+            point->v = v;
+            moved = true;
+        }
+    }
+    return moved;
+}
+
+bool PathPointsCentroid(const PathSettings& path, const std::vector<PathElementId>& pointIds,
+                        float& outU, float& outV) {
+    float sumU = 0.0f;
+    float sumV = 0.0f;
+    int count = 0;
+    for (const PathElementId id : pointIds) {
+        if (const PathPoint* point = path.FindPoint(id)) {
+            sumU += point->u;
+            sumV += point->v;
+            ++count;
+        }
+    }
+    if (count == 0) {
+        return false;
+    }
+    outU = sumU / static_cast<float>(count);
+    outV = sumV / static_cast<float>(count);
+    return true;
+}
+
+bool ExtractPathClip(const PathSettings& path, const std::vector<PathElementId>& pointIds,
+                     const std::vector<PathElementId>& edgeIds, PathClip& out) {
+    out.points.clear();
+    out.edges.clear();
+    const auto hasPoint = [&out](PathElementId id) {
+        return std::any_of(out.points.begin(), out.points.end(),
+                           [id](const PathPoint& point) { return point.id == id; });
+    };
+    const auto hasEdge = [&out](PathElementId id) {
+        return std::any_of(out.edges.begin(), out.edges.end(),
+                           [id](const PathEdge& edge) { return edge.id == id; });
+    };
+    const auto addPoint = [&](PathElementId id) {
+        if (hasPoint(id)) {
+            return;
+        }
+        if (const PathPoint* point = path.FindPoint(id)) {
+            out.points.push_back(*point);
+        }
+    };
+    const auto addEdge = [&](const PathEdge& edge) {
+        if (hasEdge(edge.id)) {
+            return;
+        }
+        PathEdge copy = edge;
+        // 内部点は貼った先の地形で計算し直す。
+        copy.waypoints.clear();
+        copy.routed = false;
+        out.edges.push_back(copy);
+        addPoint(edge.from);
+        addPoint(edge.to);
+    };
+    for (const PathElementId id : pointIds) {
+        addPoint(id);
+    }
+    for (const PathElementId id : edgeIds) {
+        if (const PathEdge* edge = path.FindEdge(id)) {
+            addEdge(*edge);
+        }
+    }
+    // 指定した点どうしを結ぶエッジも連れていく（点の集合を選んでコピーしたとき）。
+    for (const PathEdge& edge : path.edges) {
+        const bool fromSelected =
+            std::find(pointIds.begin(), pointIds.end(), edge.from) != pointIds.end();
+        const bool toSelected =
+            std::find(pointIds.begin(), pointIds.end(), edge.to) != pointIds.end();
+        if (fromSelected && toSelected) {
+            addEdge(edge);
+        }
+    }
+    return !out.points.empty();
+}
+
+bool PastePathClip(PathSettings& path, const PathClip& clip, float du, float dv,
+                   std::vector<PathElementId>* outPoints, std::vector<PathElementId>* outEdges) {
+    if (clip.points.empty()) {
+        return false;
+    }
+    // 元の ID → 新しい ID。
+    std::vector<std::pair<PathElementId, PathElementId>> remap;
+    remap.reserve(clip.points.size());
+    for (const PathPoint& source : clip.points) {
+        PathPoint point = source;
+        point.id = path.nextId++;
+        point.u = std::clamp(source.u + du, 0.0f, 1.0f);
+        point.v = std::clamp(source.v + dv, 0.0f, 1.0f);
+        path.points.push_back(point);
+        remap.emplace_back(source.id, point.id);
+        if (outPoints != nullptr) {
+            outPoints->push_back(point.id);
+        }
+    }
+    const auto mapped = [&remap](PathElementId id) {
+        for (const auto& [from, to] : remap) {
+            if (from == id) {
+                return to;
+            }
+        }
+        return PathElementId{0};
+    };
+    for (const PathEdge& source : clip.edges) {
+        const PathElementId from = mapped(source.from);
+        const PathElementId to = mapped(source.to);
+        if (from == 0 || to == 0 || from == to) {
+            continue;
+        }
+        PathEdge edge = source;
+        edge.id = path.nextId++;
+        edge.from = from;
+        edge.to = to;
+        edge.waypoints.clear();
+        edge.routed = false;
+        path.edges.push_back(edge);
+        if (outEdges != nullptr) {
+            outEdges->push_back(edge.id);
+        }
+    }
+    return true;
+}
+
 std::vector<PathStrand> BuildPathStrands(const PathSettings& path) {
     std::vector<PathStrand> strands;
     std::unordered_set<PathElementId> visited;

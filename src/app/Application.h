@@ -382,6 +382,22 @@ private:
         graph::PathElementId snapPoint = 0;
         graph::PathElementId snapEdge = 0;
         float snapEdgeT = 0.0f;
+        // 移動ギズモ。選択（点の集合 / 鎖）の重心に置き、X（u）/ Z（v）の軸と中央の
+        // 平面ハンドルで選択をまとめて動かす。gizmoAxis は 0 = X、1 = Z、2 = 平面、-1 = 無し。
+        int gizmoHover = -1;
+        int gizmoAxis = -1;
+        bool gizmoDragging = false;
+        ImVec2 gizmoPressPos{};
+        // 平面ハンドルで掴んだときの地形上の UV。動かす量はここからの差。
+        float gizmoPressU = 0.0f;
+        float gizmoPressV = 0.0f;
+        // 掴んだときの各点の位置。差分を足すのではなく、ここから置き直す（丸め誤差を溜めない）。
+        struct GizmoStart {
+            graph::PathElementId id = 0;
+            float u = 0.0f;
+            float v = 0.0f;
+        };
+        std::vector<GizmoStart> gizmoStart;
         // 右クリックしたときの対象（メニューを描くフレームでは状況が変わっているため控える）。
         graph::PathElementId menuPoint = 0;
         graph::PathElementId menuEdge = 0;
@@ -391,6 +407,9 @@ private:
         float menuV = 0.0f;
     };
     PathEditState m_pathEdit;
+    // パスのクリップボード（アプリ内）。鎖や点の集合をコピーして、カーソルの所へ貼る。
+    // 別の Path ノードへも貼れる。
+    graph::PathClip m_pathClipboard;
     // 経路探索が読む地形。**Path ノードの Base に繋いだチェーン**を、プレビューとは別に
     // 焼いた Height の写し（プレビューが別の地形を見ていても Base を使う）。
     // 上流を変えても経路は勝手に作り直さないが、写し自体は編集中に追従させておく

@@ -6,6 +6,7 @@
 #include "TestSupport.h"
 
 #include <array>
+#include <cmath>
 
 namespace {
 
@@ -148,6 +149,76 @@ void RunNodeGraphTests() {
         Check(plainConnected && plainCompiled.layers.size() == 2 &&
                   plainCompiled.layers.back().mask.source != tg::compositor::MaskSource::Node,
               "Mask 未接続の Snow は降らせる場所を持たない");
+    }
+
+    Section("パス — まとめて動かす / コピーと貼り付け");
+    {
+        using tg::graph::PathClip;
+        using tg::graph::PathElementId;
+        using tg::graph::PathSettings;
+        PathSettings path;
+        const PathElementId a = tg::graph::AddPathPoint(path, 0.2f, 0.2f, 0);
+        const PathElementId b = tg::graph::AddPathPoint(path, 0.4f, 0.2f, a);
+        const PathElementId c = tg::graph::AddPathPoint(path, 0.4f, 0.4f, b);
+        const PathElementId lone = tg::graph::AddPathPoint(path, 0.9f, 0.9f, 0);
+        const tg::graph::PathEdge* ab = path.FindEdgeBetween(a, b);
+        const tg::graph::PathEdge* bc = path.FindEdgeBetween(b, c);
+        Check(ab != nullptr && bc != nullptr && lone != 0, "3 点の鎖と孤立点を作れる");
+
+        // まとめて動かす。0〜1 へ丸める。
+        const bool moved = tg::graph::MovePathPoints(path, {a, b, c}, 0.1f, -0.3f);
+        const tg::graph::PathPoint* pa = path.FindPoint(a);
+        const tg::graph::PathPoint* pc = path.FindPoint(c);
+        Check(moved && pa != nullptr && pc != nullptr && std::abs(pa->u - 0.3f) < 1e-5f &&
+                  pa->v == 0.0f && std::abs(pc->u - 0.5f) < 1e-5f && std::abs(pc->v - 0.1f) < 1e-5f,
+              "MovePathPoints は指定した点だけを動かし、0〜1 へ丸める");
+        float cu = 0.0f;
+        float cv = 0.0f;
+        Check(tg::graph::PathPointsCentroid(path, {a, b, c}, cu, cv) &&
+                  std::abs(cu - (0.3f + 0.5f + 0.5f) / 3.0f) < 1e-5f,
+              "PathPointsCentroid は重心を返す");
+
+        // 鎖を切り出す。エッジは両端の点を連れていき、内部点は持ち越さない。
+        if (ab != nullptr && bc != nullptr) {
+            tg::graph::PathEdge* mutableAb = const_cast<tg::graph::PathEdge*>(ab);
+            mutableAb->routed = true;
+            mutableAb->waypoints.push_back({0.35f, 0.1f});
+            mutableAb->curve = tg::graph::PathCurve::Cubic;
+        }
+        PathClip clip;
+        const bool extracted = tg::graph::ExtractPathClip(path, {}, {ab->id, bc->id}, clip);
+        Check(extracted && clip.points.size() == 3 && clip.edges.size() == 2 &&
+                  !clip.edges.front().routed && clip.edges.front().waypoints.empty() &&
+                  clip.edges.front().curve == tg::graph::PathCurve::Cubic,
+              "ExtractPathClip は鎖の点とエッジを切り出し、内部点は捨てて曲線の性質は残す");
+
+        // 点の集合から切り出すと、その間のエッジだけが付いてくる。
+        PathClip pointClip;
+        Check(tg::graph::ExtractPathClip(path, {a, b, lone}, {}, pointClip) &&
+                  pointClip.points.size() == 3 && pointClip.edges.size() == 1,
+              "点の集合の ExtractPathClip は点どうしを結ぶエッジだけを拾う");
+
+        // 貼り付け。ID は振り直され、ずらした位置に同じ形で入る。
+        const size_t pointsBefore = path.points.size();
+        const size_t edgesBefore = path.edges.size();
+        std::vector<PathElementId> pastedPoints;
+        std::vector<PathElementId> pastedEdges;
+        const bool pasted =
+            tg::graph::PastePathClip(path, clip, 0.2f, 0.5f, &pastedPoints, &pastedEdges);
+        bool idsFresh = true;
+        for (const PathElementId id : pastedPoints) {
+            idsFresh &= (id != a && id != b && id != c && id != lone);
+        }
+        const tg::graph::PathPoint* firstPasted =
+            pastedPoints.empty() ? nullptr : path.FindPoint(pastedPoints.front());
+        Check(pasted && path.points.size() == pointsBefore + 3 &&
+                  path.edges.size() == edgesBefore + 2 && pastedEdges.size() == 2 && idsFresh &&
+                  firstPasted != nullptr && std::abs(firstPasted->u - 0.5f) < 1e-5f &&
+                  std::abs(firstPasted->v - 0.5f) < 1e-5f &&
+                  path.FindEdgeBetween(pastedPoints[0], pastedPoints[1]) != nullptr,
+              "PastePathClip は新しい ID で同じ形を、ずらした位置に貼る");
+        Check(tg::graph::BuildPathStrands(path).size() == 2,
+              "貼った鎖は元の鎖と別の鎖になる");
     }
 
     Section("ノードグラフ — Path の Base");
