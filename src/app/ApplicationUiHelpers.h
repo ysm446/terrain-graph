@@ -524,6 +524,26 @@ inline bool DrawPathMaskRows(compositor::PathMaskParams& params) {
     return changed;
 }
 
+// Mask Area の行。閉じた鎖の内側を塗るので、縁の扱いだけを持つ。
+inline bool DrawAreaMaskRows(compositor::AreaMaskParams& params) {
+    const compositor::AreaMaskParams defaults;
+    bool changed = false;
+    changed |= ui::PropertyFloat("縁のぼかし", &params.featherMeters, 0.0f, 200.0f,
+                                 defaults.featherMeters,
+                                 "多角形の縁の外側を 0 へ落とす幅（m）。0 で二値", "%.1f m",
+                                 ImGuiSliderFlags_Logarithmic);
+    changed |= ui::PropertyFloat("縁のずれ", &params.offsetMeters, -200.0f, 200.0f,
+                                 defaults.offsetMeters,
+                                 "縁を外へ（正）/ 内へ（負）ずらす距離（m）。"
+                                 "線を引いた所より少し広く / 狭く取りたいときに",
+                                 "%.1f m");
+    changed |= ui::PropertyFloat("ガンマ", &params.gamma, 0.05f, 8.0f, defaults.gamma,
+                                 "ぼかしのカーブ。1 未満で外側まで明るく、1 より大きいと内側へ締まる",
+                                 "%.2f", ImGuiSliderFlags_Logarithmic);
+    changed |= ui::PropertyBool("反転", &params.invert, defaults.invert, "白黒を入れ替える");
+    return changed;
+}
+
 inline bool DrawHeightMaskRows(compositor::HeightParams& height) {
     const compositor::HeightParams defaults;
     bool changed = false;

@@ -279,8 +279,12 @@ private:
     // op ごとの結果テクスチャを用意する。数や解像度が変わった枚だけ作り直す。
     bool EnsureMaskOpTextures(rhi::Device& device, const MaskProgram& ops);
     // パスの足跡を焼く。線分は定数バッファに入るぶんずつ流す。
+    // パスの線分列を op のバッファへ写す（足りなければ作り直す）。SRV の添字を返す。
+    // 失敗なら kInvalidTextureIndex。
+    uint32_t UploadPathSegments(rhi::Device& device, size_t index,
+                                const std::vector<PathSegment>& segments);
     bool ApplyPathMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
-                       ID3D12GraphicsCommandList* commandList, const MaskOp& op,
+                       ID3D12GraphicsCommandList* commandList, const MaskOp& op, size_t index,
                        const MaterialStack& stack, rhi::GpuTexture& target);
     // 川筋の作業リソース（1 組を使い回す）。
     bool EnsureFluvialResources(rhi::Device& device, uint32_t workResolution);
@@ -402,6 +406,9 @@ private:
     ScatterResources m_scatter;
     // マスクの op の結果。添字は MaskProgram と同じ。
     std::vector<rhi::GpuTexture> m_maskOpTextures;
+    // パスの線分列（Path / Area の op だけ持つ。他は空）。アップロードヒープのバッファに
+    // 置き、ByteAddressBuffer として読む。焼き直すときに書き換える。
+    std::vector<rhi::GpuBuffer> m_maskOpBuffers;
     std::vector<uint32_t> m_maskOpResolutions;
     // 前回焼いたときの入力ハッシュ。**変わっていない op は焼き直さない。**
     // 川筋のように重い op を、無関係な編集のたびに走らせないための仕組み。

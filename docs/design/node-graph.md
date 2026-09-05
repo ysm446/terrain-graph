@@ -1,7 +1,7 @@
 # node-graph — ノードグラフの設計
 
 作成日時: 2026-09-02 12:50
-更新日時: 2026-09-06 14:00
+更新日時: 2026-09-06 18:00
 
 `src/graph/` とグラフパネル（`src/app/ApplicationGraphPanel.cpp`）の設計。
 **ノード 1 つずつの役割・ピン・パラメータは
@@ -53,6 +53,9 @@ terrain-editor から移植したのは**仕組み**であって、ノードの�
 | Mask Levels | `maskLevels` | Mask(入力) / Mask(出力) | `LevelsParams` |
 | Mask Blur | `maskBlur` | Mask(入力) / Mask(出力) | `MaskBlurParams` |
 | Mask Blend | `maskBlend` | Foreground / Background(入力) / Mask(出力) | `BlendParams` |
+| Path | `path` | Base(入力) / Path(出力) | `PathSettings`（点とエッジ） |
+| Mask Path | `maskPath` | Path(入力) / Mask(出力) | `PathMaskParams` |
+| Mask Area | `maskArea` | Path(入力) / Mask(出力) | `AreaMaskParams`（閉じた鎖の内側） |
 | Output | `output` | Material(入力) | なし |
 
 サーフェス / シェイプ / 水面は**旧レイヤーそのもの**をノード化したもの。

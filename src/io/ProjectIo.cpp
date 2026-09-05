@@ -523,6 +523,29 @@ compositor::PathMaskParams ReadPathMask(const json& parent, const char* key) {
     return params;
 }
 
+json WriteAreaMask(const compositor::AreaMaskParams& params) {
+    json node;
+    node["feather"] = params.featherMeters;
+    node["offset"] = params.offsetMeters;
+    node["gamma"] = params.gamma;
+    node["invert"] = params.invert;
+    return node;
+}
+
+compositor::AreaMaskParams ReadAreaMask(const json& parent, const char* key) {
+    const compositor::AreaMaskParams defaults;
+    const json* node = FindMember(parent, key);
+    if (node == nullptr || !node->is_object()) {
+        return defaults;
+    }
+    compositor::AreaMaskParams params;
+    params.featherMeters = ReadFloat(*node, "feather", defaults.featherMeters);
+    params.offsetMeters = ReadFloat(*node, "offset", defaults.offsetMeters);
+    params.gamma = ReadFloat(*node, "gamma", defaults.gamma);
+    params.invert = ReadBool(*node, "invert", defaults.invert);
+    return params;
+}
+
 // パス（Path ノード）。点とエッジをそのまま書く。座標は正規化 UV、寸法は m。
 json WritePath(const graph::PathSettings& path) {
     json node;
@@ -1096,6 +1119,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["blur"] = WriteMaskBlur(mask->blur);
             item["blend"] = WriteBlend(mask->blend);
             item["maskPath"] = WritePathMask(mask->pathMask);
+            item["maskArea"] = WriteAreaMask(mask->areaMask);
         } else if (const auto* path = std::get_if<graph::PathNodeSettings>(&node.settings)) {
             item["path"] = WritePath(path->path);
         }
@@ -1228,6 +1252,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                 settings.blur = ReadMaskBlur(item, "blur");
                 settings.blend = ReadBlend(item, "blend");
                 settings.pathMask = ReadPathMask(item, "maskPath");
+                settings.areaMask = ReadAreaMask(item, "maskArea");
                 created.settings = std::move(settings);
             } else if (created.kind == graph::NodeKind::Path) {
                 graph::PathNodeSettings settings;

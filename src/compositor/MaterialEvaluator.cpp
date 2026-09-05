@@ -127,15 +127,14 @@ struct RiverConstants {
     float params4[4];      // 水際のぼかし, 主流の半幅（m）, 岸の幅（m）, 標高差 / 一辺
 };
 
-// パスの線分を 1 回のディスパッチで流す上限。シェーダの TG_PATH_MAX_SEGMENTS と一致させること。
-// 3 float4 × 256 = 12 KB。定数バッファの 64 KB には十分に収まる。
-constexpr uint32_t kMaxPathSegments = 256;
+// パスの線分 1 本ぶんのバイト数（float 12 個）。シェーダの TG_PATH_SEGMENT_BYTES と一致させること。
+constexpr uint32_t kPathSegmentStride = 48;
 
 // GPU 側の PathMaskConstants と一致させること。
 struct PathMaskConstants {
-    uint32_t indices[4];  // 出力 UAV, 出力の一辺, 線分数, 前の結果と max
-    float params[4];      // 一辺（m）, ガンマ, 反転, 未使用
-    float segments[kMaxPathSegments * 3][4];
+    uint32_t indices[4];  // 出力 UAV, 出力の一辺, 線分数, 線分バッファの SRV
+    float params[4];      // 一辺（m）, ガンマ, 反転, 縁のぼかし（m。Area）
+    float params2[4];     // 縁のずれ（m。Area）, 未使用 x3
 };
 
 // CPU へ写すハイトの一辺。パスの投影と表示に使うだけなので粗くてよい
@@ -275,9 +274,12 @@ uint64_t HashMaskOpParams(uint64_t seed, const MaskOp& op) {
             return HashBytes(seed, &op.riverMask, sizeof(op.riverMask));
         case MaskOpKind::Droplet:
             return HashBytes(seed, &op.dropletMask, sizeof(op.dropletMask));
-        case MaskOpKind::Path: {
+        case MaskOpKind::Path:
+        case MaskOpKind::Area: {
             // 線分列の中身まで混ぜる（点を 1 つ動かしただけでも焼き直すため）。
-            uint64_t hash = HashBytes(seed, &op.pathMask, sizeof(op.pathMask));
+            uint64_t hash = (op.kind == MaskOpKind::Path)
+                                ? HashBytes(seed, &op.pathMask, sizeof(op.pathMask))
+                                : HashBytes(seed, &op.areaMask, sizeof(op.areaMask));
             const size_t count = op.pathSegments.size();
             hash = HashBytes(hash, &count, sizeof(count));
             if (!op.pathSegments.empty()) {
@@ -497,7 +499,12 @@ bool MaterialEvaluator::EnsureMaskOpTextures(rhi::Device& device, const MaskProg
         m_maskOpResolutions.pop_back();
         m_maskOpHashes.pop_back();
     }
+    while (m_maskOpBuffers.size() > ops.size()) {
+        device.DeferRelease(m_maskOpBuffers.back());
+        m_maskOpBuffers.pop_back();
+    }
     m_maskOpTextures.resize(ops.size());
+    m_maskOpBuffers.resize(ops.size());
     m_maskOpResolutions.resize(ops.size(), 0);
     m_maskOpHashes.resize(ops.size(), 0);
 
@@ -542,6 +549,10 @@ void MaterialEvaluator::Destroy(rhi::Device& device) {
         device.DeferRelease(texture);
     }
     m_maskOpTextures.clear();
+    for (rhi::GpuBuffer& buffer : m_maskOpBuffers) {
+        device.DeferRelease(buffer);
+    }
+    m_maskOpBuffers.clear();
     m_maskOpResolutions.clear();
     m_maskOpHashes.clear();
     ReleaseTextures(device);
@@ -790,8 +801,8 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
         return ApplyDropletMask(device, pipelineCache, commandList, op, target);
     }
     // パスは線分の列を定数で受ける専用のシェーダ。
-    if (op.kind == MaskOpKind::Path) {
-        return ApplyPathMask(device, pipelineCache, commandList, op, stack, target);
+    if (op.kind == MaskOpKind::Path || op.kind == MaskOpKind::Area) {
+        return ApplyPathMask(device, pipelineCache, commandList, op, index, stack, target);
     }
     // ぼかしは近傍を読むので、1 ディスパッチでは書けない（水平 / 垂直に分ける）。
     if (op.kind == MaskOpKind::Blur) {
@@ -979,73 +990,118 @@ bool MaterialEvaluator::EnsureMaskHeightRange(rhi::Device& device) {
     return true;
 }
 
-// パスの足跡。線分は kMaxPathSegments 本ずつ流し、2 回目以降は前の結果と max を取る。
-// ガンマと反転は最後のバッチだけに掛ける（途中で掛けると max の意味が変わる）。
+// パスの線分列を、その op のバッファへ写す。
+//
+// **定数バッファではなくバッファに置く。** 以前は 256 本ずつ定数で流して max で重ねて
+// いたが、面（Area）の偶奇判定はバッチをまたいで持ち越せない。アップロードヒープの
+// バッファなら CPU から書いてそのまま読めるので、線分数の上限も無くなる。
+// 書き換えるのは op を焼き直すときだけで、そのとき前の評価は終わっている
+// （評価は 1 本ずつしか走らない）。大きさが足りなければ作り直す（古いのは遅延解放）。
+uint32_t MaterialEvaluator::UploadPathSegments(rhi::Device& device, size_t index,
+                                               const std::vector<PathSegment>& segments) {
+    if (index >= m_maskOpBuffers.size() || segments.empty()) {
+        return kInvalidTextureIndex;
+    }
+    rhi::GpuBuffer& buffer = m_maskOpBuffers[index];
+    const uint64_t bytes = static_cast<uint64_t>(segments.size()) * kPathSegmentStride;
+    if (!buffer.IsValid() || buffer.sizeInBytes < bytes || !buffer.srv.IsValid()) {
+        device.DeferRelease(buffer);
+        // 少し余らせて作り、点を足すたびに作り直さないようにする。
+        const uint64_t capacity = std::max<uint64_t>(bytes + bytes / 2, 64 * kPathSegmentStride);
+        if (!device.Allocator().CreateUploadBuffer(capacity, L"MaskPathSegments", buffer)) {
+            return kInvalidTextureIndex;
+        }
+        buffer.srv = device.SrvHeap().Allocate();
+        if (!buffer.srv.IsValid()) {
+            device.DeferRelease(buffer);
+            return kInvalidTextureIndex;
+        }
+        // ByteAddressBuffer（RAW）。要素は 4 バイト単位で数える。
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+        srvDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.Buffer.FirstElement = 0;
+        srvDesc.Buffer.NumElements = static_cast<UINT>(buffer.sizeInBytes / 4);
+        srvDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_RAW;
+        device.GetDevice()->CreateShaderResourceView(buffer.resource.Get(), &srvDesc,
+                                                     buffer.srv.cpu);
+    }
+
+    void* mapped = nullptr;
+    const D3D12_RANGE readRange = {0, 0};
+    if (!TG_CHECK_HR(buffer.resource->Map(0, &readRange, &mapped))) {
+        return kInvalidTextureIndex;
+    }
+    auto* out = static_cast<float*>(mapped);
+    for (const PathSegment& segment : segments) {
+        out[0] = segment.ax;
+        out[1] = segment.ay;
+        out[2] = segment.bx;
+        out[3] = segment.by;
+        out[4] = segment.widthA;
+        out[5] = segment.widthB;
+        out[6] = segment.featherA;
+        out[7] = segment.featherB;
+        out[8] = segment.intensityA;
+        out[9] = segment.intensityB;
+        out[10] = 0.0f;
+        out[11] = 0.0f;
+        out += kPathSegmentStride / sizeof(float);
+    }
+    const D3D12_RANGE writtenRange = {0, static_cast<SIZE_T>(bytes)};
+    buffer.resource->Unmap(0, &writtenRange);
+    return buffer.srv.index;
+}
+
+// パスの足跡（Path）と面（Area）。線分列はバッファから 1 回で読む。
 bool MaterialEvaluator::ApplyPathMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                                       ID3D12GraphicsCommandList* commandList, const MaskOp& op,
-                                      const MaterialStack& stack, rhi::GpuTexture& target) {
+                                      size_t index, const MaterialStack& stack,
+                                      rhi::GpuTexture& target) {
     if (!target.IsValid()) {
         return false;
     }
+    const bool area = (op.kind == MaskOpKind::Area);
     ID3D12PipelineState* pipeline =
-        pipelineCache.GetCompute(L"CompositeMaskPath.hlsl", L"CsPath");
+        pipelineCache.GetCompute(L"CompositeMaskPath.hlsl", area ? L"CsArea" : L"CsPath");
     if (pipeline == nullptr) {
+        return false;
+    }
+    const uint32_t segmentsSrv = UploadPathSegments(device, index, op.pathSegments);
+    if (segmentsSrv == kInvalidTextureIndex) {
         return false;
     }
     const uint32_t resolution = m_resolution;
     const float sizeMeters = (stack.SizeMeters() > 0.0f) ? stack.SizeMeters() : 1.0f;
-    const size_t total = op.pathSegments.size();
-    const size_t batchCount =
-        std::max<size_t>(1, (total + kMaxPathSegments - 1) / kMaxPathSegments);
 
-    PIXBeginEvent(commandList, PIX_COLOR(170, 150, 220), "CompositeMaskPath");
+    const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(PathMaskConstants));
+    if (!cb.IsValid()) {
+        return false;
+    }
+    PathMaskConstants constants = {};
+    constants.indices[0] = target.UavIndex();
+    constants.indices[1] = resolution;
+    constants.indices[2] = static_cast<uint32_t>(op.pathSegments.size());
+    constants.indices[3] = segmentsSrv;
+    constants.params[0] = sizeMeters;
+    if (area) {
+        constants.params[1] = std::clamp(op.areaMask.gamma, 0.05f, 8.0f);
+        constants.params[2] = op.areaMask.invert ? 1.0f : 0.0f;
+        constants.params[3] = std::max(0.0f, op.areaMask.featherMeters);
+        constants.params2[0] = op.areaMask.offsetMeters;
+    } else {
+        constants.params[1] = std::clamp(op.pathMask.gamma, 0.05f, 8.0f);
+        constants.params[2] = op.pathMask.invert ? 1.0f : 0.0f;
+    }
+    std::memcpy(cb.cpu, &constants, sizeof(constants));
+
+    PIXBeginEvent(commandList, PIX_COLOR(170, 150, 220),
+                  area ? "CompositeMaskArea" : "CompositeMaskPath");
     TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     commandList->SetPipelineState(pipeline);
-
-    for (size_t batch = 0; batch < batchCount; ++batch) {
-        const size_t begin = batch * kMaxPathSegments;
-        const size_t end = std::min(total, begin + kMaxPathSegments);
-        const bool last = (batch + 1 == batchCount);
-
-        const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(PathMaskConstants));
-        if (!cb.IsValid()) {
-            PIXEndEvent(commandList);
-            return false;
-        }
-        // 線分の配列は大きいので、定数は置き場の上で直接組む（スタックに 12 KB 積まない）。
-        auto* constants = static_cast<PathMaskConstants*>(cb.cpu);
-        constants->indices[0] = target.UavIndex();
-        constants->indices[1] = resolution;
-        constants->indices[2] = static_cast<uint32_t>(end - begin);
-        constants->indices[3] = (batch == 0) ? 0u : 1u;
-        constants->params[0] = sizeMeters;
-        constants->params[1] = last ? std::clamp(op.pathMask.gamma, 0.05f, 8.0f) : 1.0f;
-        constants->params[2] = (last && op.pathMask.invert) ? 1.0f : 0.0f;
-        constants->params[3] = 0.0f;
-        for (size_t i = begin; i < end; ++i) {
-            const PathSegment& segment = op.pathSegments[i];
-            float* slot = constants->segments[(i - begin) * 3];
-            slot[0] = segment.ax;
-            slot[1] = segment.ay;
-            slot[2] = segment.bx;
-            slot[3] = segment.by;
-            slot[4] = segment.widthA;
-            slot[5] = segment.widthB;
-            slot[6] = segment.featherA;
-            slot[7] = segment.featherB;
-            slot[8] = segment.intensityA;
-            slot[9] = segment.intensityB;
-            slot[10] = 0.0f;
-            slot[11] = 0.0f;
-        }
-
-        commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
-        commandList->Dispatch(DispatchCount(resolution), DispatchCount(resolution), 1);
-        // 次のバッチは前の結果を読む。
-        const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(target.resource.Get());
-        commandList->ResourceBarrier(1, &uav);
-    }
-
+    commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+    commandList->Dispatch(DispatchCount(resolution), DispatchCount(resolution), 1);
     TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     PIXEndEvent(commandList);
     return true;

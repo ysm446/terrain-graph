@@ -54,6 +54,8 @@ enum class MaskOpKind : uint32_t {
     Scatter = 14,
     // マスクをぼかす。マスク 1 枚を受けて 1 枚返す加工。
     Blur = 15,
+    // パスの閉じた鎖を多角形とみなし、内側を 1 にする（面）。輪の中の輪は穴。
+    Area = 16,
 };
 
 // 曲率マスクの向き。シェーダの TG_CURVATURE_* と一致させること。
@@ -190,6 +192,15 @@ struct PathMaskParams {
     bool invert = false;
 };
 
+// パスの閉じた鎖を面にするときの調整。点ごとの幅とフェザーは線用なので読まず、
+// 縁はここで決める。
+struct AreaMaskParams {
+    float featherMeters = 8.0f;  // 縁の外側を 0 へ落とす幅（m）
+    float offsetMeters = 0.0f;   // 縁のずれ（m）。正で広がり、負で縮む
+    float gamma = 1.0f;
+    bool invert = false;
+};
+
 // マスクのぼかし（terrain-editor の Mask Blur）。
 //
 // **半径は実寸（m）。** マスクの op は合成解像度で焼くので、テクセル数で持つと
@@ -228,7 +239,9 @@ struct MaskOp {
     DropletMaskParams dropletMask;
     ScatterMaskParams scatterMask;
     PathMaskParams pathMask;
-    // Path のときだけ。コンパイルがパスから作る線分列（正規化 UV）。
+    AreaMaskParams areaMask;
+    // Path / Area のときだけ。コンパイルがパスから作る線分列（正規化 UV）。
+    // Area は閉じた鎖だけを多角形として並べたもの（幅などは読まない）。
     std::vector<PathSegment> pathSegments;
 };
 

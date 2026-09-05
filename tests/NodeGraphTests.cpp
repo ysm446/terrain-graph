@@ -6,6 +6,7 @@
 #include "TestSupport.h"
 
 #include <array>
+#include <variant>
 #include <cmath>
 
 namespace {
@@ -219,6 +220,73 @@ void RunNodeGraphTests() {
               "PastePathClip は新しい ID で同じ形を、ずらした位置に貼る");
         Check(tg::graph::BuildPathStrands(path).size() == 2,
               "貼った鎖は元の鎖と別の鎖になる");
+    }
+
+    Section("パス — 面の線分列と Mask Area");
+    {
+        using tg::graph::PathElementId;
+        using tg::graph::PathSettings;
+        // 開いた鎖だけなら面の線分は無い。
+        PathSettings open;
+        const PathElementId o1 = tg::graph::AddPathPoint(open, 0.2f, 0.2f, 0);
+        const PathElementId o2 = tg::graph::AddPathPoint(open, 0.8f, 0.2f, o1);
+        tg::graph::AddPathPoint(open, 0.8f, 0.8f, o2);
+        Check(tg::graph::BuildPathAreaSegments(open).empty(),
+              "開いた鎖だけの BuildPathAreaSegments は空");
+
+        // 三角形の輪。線分は輪を一周して先頭へ戻る。
+        PathSettings loop;
+        const PathElementId a = tg::graph::AddPathPoint(loop, 0.2f, 0.2f, 0);
+        const PathElementId b = tg::graph::AddPathPoint(loop, 0.8f, 0.2f, a);
+        const PathElementId c = tg::graph::AddPathPoint(loop, 0.5f, 0.8f, b);
+        tg::graph::ConnectPathPoints(loop, c, a);
+        const auto segments = tg::graph::BuildPathAreaSegments(loop);
+        bool chained = !segments.empty();
+        for (size_t i = 0; i + 1 < segments.size(); ++i) {
+            chained &= (segments[i].bx == segments[i + 1].ax && segments[i].by == segments[i + 1].ay);
+        }
+        const bool closed = !segments.empty() && segments.back().bx == segments.front().ax &&
+                            segments.back().by == segments.front().ay;
+        Check(segments.size() == 3 && chained && closed,
+              "閉じた鎖の BuildPathAreaSegments は輪を一周して先頭へ戻る");
+
+        // グラフ: Path → Mask Area → Surface の Mask。閉じた鎖があれば Area の op になる。
+        NodeGraph graph;
+        const tg::graph::GraphId baseId = graph.CreateNode(NodeKind::Heightmap);
+        const tg::graph::GraphId pathId = graph.CreateNode(NodeKind::Path);
+        const tg::graph::GraphId areaId = graph.CreateNode(NodeKind::MaskArea);
+        const tg::graph::GraphId surfaceId = graph.CreateNode(NodeKind::Surface);
+        tg::graph::Node* pathNode = graph.FindMutableNode(pathId);
+        if (auto* settings = std::get_if<tg::graph::PathNodeSettings>(&pathNode->settings)) {
+            settings->path = loop;
+        }
+        const tg::graph::Node* base = graph.FindNode(baseId);
+        const tg::graph::Node* area = graph.FindNode(areaId);
+        const tg::graph::Node* surface = graph.FindNode(surfaceId);
+        const bool linked =
+            graph.CreateLink(pathNode->outputs.front().id, area->inputs.front().id) &&
+            graph.CreateLink(base->outputs.front().id, surface->inputs[0].id) &&
+            graph.CreateLink(area->outputs.front().id, surface->inputs[1].id);
+        const tg::graph::CompiledGraph compiled = graph.CompileLayersTo(surfaceId);
+        const bool wired = compiled.layers.size() == 2 &&
+                           compiled.layers.back().mask.source == tg::compositor::MaskSource::Node &&
+                           compiled.layers.back().mask.maskOp >= 0 &&
+                           static_cast<size_t>(compiled.layers.back().mask.maskOp) <
+                               compiled.maskOps.size() &&
+                           compiled.maskOps[static_cast<size_t>(compiled.layers.back().mask.maskOp)]
+                                   .kind == tg::compositor::MaskOpKind::Area &&
+                           compiled.maskOps.front().pathSegments.size() == 3;
+        Check(linked && wired, "Mask Area は閉じた鎖から Area の op になる");
+
+        // 開いた鎖しか無ければ op は作られない（マスクは定数へ落ちる）。
+        if (auto* settings = std::get_if<tg::graph::PathNodeSettings>(&pathNode->settings)) {
+            settings->path = open;
+        }
+        graph.MarkDirty();
+        const tg::graph::CompiledGraph openCompiled = graph.CompileLayersTo(surfaceId);
+        Check(openCompiled.layers.size() == 2 &&
+                  openCompiled.layers.back().mask.source != tg::compositor::MaskSource::Node,
+              "閉じた鎖が無い Mask Area は op を作らない");
     }
 
     Section("ノードグラフ — Path の Base");

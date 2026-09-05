@@ -927,6 +927,19 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
             if (ImGui::MenuItem("鎖をコピー", "Ctrl+C")) {
                 copySelection();
             }
+            // 輪にする（Mask Area の面）。末尾から先頭へ繋ぐので、向きは鎖に沿う。
+            {
+                const graph::PathStrand* strand = graph::FindStrandOfEdge(cache.strands, edgeId);
+                const bool canClose = strand != nullptr && !strand->closed &&
+                                      strand->points.size() >= 3 &&
+                                      strand->points.front() != strand->points.back();
+                ImGui::BeginDisabled(!canClose);
+                if (ImGui::MenuItem("閉じる（末尾を先頭へ繋ぐ）")) {
+                    changed |= graph::ConnectPathPoints(path, strand->points.back(),
+                                                        strand->points.front());
+                }
+                ImGui::EndDisabled();
+            }
             if (ImGui::MenuItem("このエッジを消す（ここで切る）")) {
                 changed |= graph::DeletePathEdge(path, edgeId);
                 selectOnly(0);

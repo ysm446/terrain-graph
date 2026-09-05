@@ -74,6 +74,7 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
         case graph::NodeKind::Path:
             return ImVec4(0.52f, 0.74f, 0.84f, 1.0f);
         case graph::NodeKind::MaskPath:
+        case graph::NodeKind::MaskArea:
             return ImVec4(0.58f, 0.74f, 0.82f, 1.0f);
         case graph::NodeKind::Output:
         default:
@@ -850,6 +851,8 @@ void Application::DrawGraphEditor() {
                         "Path — 地形の上に線を引く（道路 / 川 / 氷河のガイド）");
         addNodeMenuItem(graph::NodeKind::MaskPath,
                         "Mask Path — パスの足跡をマスクにする");
+        addNodeMenuItem(graph::NodeKind::MaskArea,
+                        "Mask Area — パスの閉じた鎖の内側をマスクにする（エリア選択）");
         ImGui::Separator();
         addNodeMenuItem(graph::NodeKind::Output, "Output — ここに繋いだ結果をプレビューする");
         ImGui::EndPopup();
@@ -1094,6 +1097,11 @@ void Application::DrawGraphPanel() {
                 hint = "Path 入力の線を、点ごとの幅とフェザーでマスクにする。"
                        "形はパスの点が持ち、ここでは調整だけ";
                 break;
+            case graph::NodeKind::MaskArea:
+                header = "パスの面";
+                hint = "Path 入力の閉じた鎖を多角形とみなし、内側を 1 にする。"
+                       "輪の中に輪を描けば穴になる。開いた鎖と点ごとの幅は読まない";
+                break;
             default:
                 break;
         }
@@ -1127,6 +1135,9 @@ void Application::DrawGraphPanel() {
                 case graph::NodeKind::MaskPath:
                     changed |= DrawPathMaskRows(mask->pathMask);
                     break;
+                case graph::NodeKind::MaskArea:
+                    changed |= DrawAreaMaskRows(mask->areaMask);
+                    break;
                 default:
                     changed |= DrawMapSlotRow("画像", mask->map, m_textureLibrary);
                     break;
@@ -1134,6 +1145,25 @@ void Application::DrawGraphPanel() {
             ui::EndPropertyTable();
         }
         ui::HintText("%s", hint);
+        // Mask Area は閉じた鎖しか読まない。無いと黙って空のマスクになるので注意書きを出す。
+        if (selected->kind == graph::NodeKind::MaskArea) {
+            const graph::Node* pathNode = m_graph.FindUpstreamNodeForPin(selected->inputs.front().id);
+            const auto* pathSettings =
+                (pathNode != nullptr) ? std::get_if<graph::PathNodeSettings>(&pathNode->settings)
+                                      : nullptr;
+            bool hasClosed = false;
+            if (pathSettings != nullptr) {
+                for (const graph::PathStrand& strand : graph::BuildPathStrands(pathSettings->path)) {
+                    hasClosed |= strand.closed;
+                }
+            }
+            if (pathSettings == nullptr) {
+                ui::HintText("Path 入力が繋がっていないので、マスクは空になる");
+            } else if (!hasClosed) {
+                ui::HintText("閉じた鎖が無いので、マスクは空になる。端の点を始点へ重ねるか、"
+                             "鎖を右クリック → 閉じる");
+            }
+        }
         if (changed) {
             m_graph.MarkDirty();
             MarkDocumentChanged();

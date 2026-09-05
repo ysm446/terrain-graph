@@ -1103,4 +1103,36 @@ std::vector<compositor::PathSegment> BuildPathSegments(const PathSettings& path)
     return segments;
 }
 
+std::vector<compositor::PathSegment> BuildPathAreaSegments(const PathSettings& path) {
+    std::vector<compositor::PathSegment> segments;
+    constexpr int kSamplesPerSpan = 12;
+    for (const PathStrand& strand : BuildPathStrands(path)) {
+        if (!strand.closed) {
+            continue;
+        }
+        const std::vector<PathCurveSample> samples = SamplePathStrand(path, strand, kSamplesPerSpan);
+        if (samples.size() < 3) {
+            continue;
+        }
+        const auto push = [&segments](const PathCurveSample& a, const PathCurveSample& b) {
+            compositor::PathSegment segment;
+            segment.ax = a.u;
+            segment.ay = a.v;
+            segment.bx = b.u;
+            segment.by = b.v;
+            segments.push_back(segment);
+        };
+        for (size_t i = 0; i + 1 < samples.size(); ++i) {
+            push(samples[i], samples[i + 1]);
+        }
+        // 標本列が始点へ戻っていなければ閉じる（偶奇判定は輪が閉じていないと壊れる）。
+        const PathCurveSample& first = samples.front();
+        const PathCurveSample& last = samples.back();
+        if (std::abs(first.u - last.u) > 1e-6f || std::abs(first.v - last.v) > 1e-6f) {
+            push(last, first);
+        }
+    }
+    return segments;
+}
+
 }  // namespace tg::graph

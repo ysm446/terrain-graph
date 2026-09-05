@@ -88,6 +88,8 @@ enum class NodeKind : uint32_t {
     // 散布。単純な形（半球 / 円錐）をばら撒く加工。分布の Mask と、
     // 個体ごとに違う値を持つ Unique Mask も出す（terrain-editor の Scatter）。
     Scatter = 21,
+    // パスの閉じた鎖の内側をマスクにする（面。エリア選択）。輪の中の輪は穴。
+    MaskArea = 23,
     // マスクをぼかす。境界をなだらかにして、乗せたものを馴染ませる
     // （terrain-editor の Mask Blur）。
     MaskBlur = 22,
@@ -157,6 +159,7 @@ struct MaskNodeSettings {
     compositor::BlendParams blend;
     compositor::MaskBlurParams blur;
     compositor::PathMaskParams pathMask;
+    compositor::AreaMaskParams areaMask;
 };
 
 // パス（Path ノード）。点と向き付きのエッジ。中身は graph/Path.h。

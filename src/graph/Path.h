@@ -225,5 +225,9 @@ bool ReversePathStrand(PathSettings& path, const PathStrand& strand);
 // 評価用の線分列。座標は正規化 UV のまま（実寸への換算は評価器が一辺の長さで行う）。
 // 曲線の鎖は細かい直線に割って出す。エッジの無い孤立した点は、長さ 0 の線分（円）として出す。
 std::vector<compositor::PathSegment> BuildPathSegments(const PathSettings& path);
+// 面（Mask Area）用の線分列。**閉じた鎖だけ**を多角形として並べる（開いた鎖と孤立点は
+// 出さない）。曲線は BuildPathSegments と同じ細かさで割る。輪は必ず閉じる
+// （末尾の線分が先頭へ戻る）。閉じた鎖が無ければ空。
+std::vector<compositor::PathSegment> BuildPathAreaSegments(const PathSettings& path);
 
 }  // namespace tg::graph

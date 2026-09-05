@@ -138,7 +138,7 @@ constexpr std::array<PinDefinition, 1> kSourceNodePins = {{
     {PinKind::Output, ValueType::Material, "Result"},
 }};
 
-constexpr std::array<NodeDefinition, 23> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 24> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -161,6 +161,7 @@ constexpr std::array<NodeDefinition, 23> kNodeDefinitions = {{
     {NodeKind::MaskBlend, "maskBlend", "Mask Blend", kMaskBlendPins},
     {NodeKind::Path, "path", "Path", kPathPins},
     {NodeKind::MaskPath, "maskPath", "Mask Path", kMaskPathPins},
+    {NodeKind::MaskArea, "maskArea", "Mask Area", kMaskPathPins},
     {NodeKind::Output, "output", "Output", kOutputNodePins},
 }};
 
@@ -205,7 +206,8 @@ bool IsMaskNodeKind(NodeKind kind) {
            kind == NodeKind::MaskFluvial || kind == NodeKind::MaskHeight ||
            kind == NodeKind::MaskSlope || kind == NodeKind::MaskCurvature ||
            kind == NodeKind::MaskLevels || kind == NodeKind::MaskBlur ||
-           kind == NodeKind::MaskBlend || kind == NodeKind::MaskPath;
+           kind == NodeKind::MaskBlend || kind == NodeKind::MaskPath ||
+           kind == NodeKind::MaskArea;
 }
 
 // 下地の Height を読むマスクか。**チェーンのどこを読むか**を Base 入力で指す。
@@ -593,6 +595,7 @@ bool NodeGraph::MaskDependsOnHeight(const Node& maskNode, int depth) const {
         // パスは 2D で高さを読まないが、**地形の上に引いたもの**なので、
         // 平らな板ではなく地形の上に貼って見せる（線と地形の対応こそが見たいもの）。
         case NodeKind::MaskPath:
+        case NodeKind::MaskArea:
             return true;
         case NodeKind::MaskLevels:
         case NodeKind::MaskBlur:
@@ -887,6 +890,23 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
             op.kind = compositor::MaskOpKind::Path;
             op.pathMask = settings->pathMask;
             op.pathSegments = BuildPathSegments(pathSettings->path);
+            if (op.pathSegments.empty()) {
+                return -1;
+            }
+            break;
+        }
+        case NodeKind::MaskArea: {
+            // 閉じた鎖が無ければ「繋がっていない」のと同じ扱い（プロパティが注意書きを出す）。
+            const Node* pathNode = UpstreamOf(maskNode, ValueType::Path);
+            const auto* pathSettings = (pathNode != nullptr)
+                                           ? std::get_if<PathNodeSettings>(&pathNode->settings)
+                                           : nullptr;
+            if (pathSettings == nullptr) {
+                return -1;
+            }
+            op.kind = compositor::MaskOpKind::Area;
+            op.areaMask = settings->areaMask;
+            op.pathSegments = BuildPathAreaSegments(pathSettings->path);
             if (op.pathSegments.empty()) {
                 return -1;
             }
