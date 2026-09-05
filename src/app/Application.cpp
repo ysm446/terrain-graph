@@ -487,6 +487,12 @@ void Application::DrawUi() {
                 m_rebuildLayout = true;
             }
             ImGui::Separator();
+            // アセットの帯。畳むと帯のドックノードが空になり、ビューポートが縦に広がる。
+            // 設定に覚えさせる（区画の大きさと同じ扱い）。
+            if (ImGui::MenuItem("アセットの帯", "Ctrl+B", &m_settings.Display().showAssetBand)) {
+                m_settings.Save();
+            }
+            ImGui::Separator();
             ImGui::MenuItem("マテリアルプレビュー", nullptr, &m_showMaterialSphere);
             ImGui::MenuItem("テクスチャプレビュー", nullptr, &m_showTexturePreview);
             ImGui::MenuItem("天球プレビュー", nullptr, &m_showSkyPreview);
@@ -525,9 +531,13 @@ void Application::DrawUi() {
     // タブは submit した順に並ぶ**（ini に配置が無いとき）。
     // 作業の起点はグラフなので、右カラムの他のパネルより先に描く。
     DrawGraphPanel();
-    DrawMaterialLibraryPanel();
-    DrawSkyLibraryPanel();
-    DrawTextureLibraryPanel();
+    // アセットの帯は畳める。出さなければドックノードが空になり、中央（ビューポート）が
+    // その高さをもらう。ウィンドウはドック先を覚えているので、戻せば同じ所へ入る。
+    if (m_settings.Display().showAssetBand) {
+        DrawMaterialLibraryPanel();
+        DrawSkyLibraryPanel();
+        DrawTextureLibraryPanel();
+    }
     DrawMaterialPanel();
     DrawLightingPanel();
 

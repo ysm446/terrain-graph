@@ -40,6 +40,8 @@ struct DisplaySettings {
     bool showStats = false;
     // ハイトの範囲（height 0 / 0.5 / 1 の位置を示す枠）をビューポートに重ねるか。
     bool showHeightGuide = false;
+    // アセットの帯（テクスチャ / マテリアル / 天球）を出すか。畳むとビューポートが縦に広がる。
+    bool showAssetBand = true;
     // 前面にあるときの FPS 上限。0 で上限なし。
     int frameRateLimit = 0;
     // **背面にあるときの FPS 上限。** 見えていない絵に GPU を回し続けないため、
