@@ -279,6 +279,34 @@ void Application::SyncGraphStack() {
     m_graphStack.Layers() = std::move(compiled.layers);
     m_graphStack.MaskOps() = std::move(compiled.maskOps);
     m_graphStack.MarkDirty();
+
+    // op の出どころを版ごとに控える。評価が追いつくまでの数版ぶんあれば足りる。
+    constexpr size_t kKeepRevisions = 4;
+    GraphMaskOpSources sources;
+    sources.revision = m_graphStack.Revision();
+    sources.ops = std::move(compiled.maskOpSources);
+    m_graphMaskOpSources.push_back(std::move(sources));
+    while (m_graphMaskOpSources.size() > kKeepRevisions) {
+        m_graphMaskOpSources.erase(m_graphMaskOpSources.begin());
+    }
+}
+
+D3D12_GPU_DESCRIPTOR_HANDLE Application::GraphMaskThumbnail(graph::GraphId nodeId,
+                                                            size_t outputIndex) const {
+    const compositor::MaterialEvaluator& evaluator = m_renderer.Evaluator();
+    const uint64_t revision = evaluator.EvaluatedRevision();
+    for (const GraphMaskOpSources& sources : m_graphMaskOpSources) {
+        if (sources.revision != revision) {
+            continue;
+        }
+        for (size_t i = 0; i < sources.ops.size(); ++i) {
+            if (sources.ops[i].nodeId == nodeId && sources.ops[i].outputIndex == outputIndex) {
+                return evaluator.MaskOpThumbnailHandle(i);
+            }
+        }
+        break;
+    }
+    return D3D12_GPU_DESCRIPTOR_HANDLE{0};
 }
 
 // 選択中のノードを控える。**出力ノードは対象外**（1 つだけ繋ぐ前提のノードで、
@@ -481,6 +509,33 @@ void Application::DrawGraphNode(const graph::Node& node) {
             definition != nullptr && layerSettings != nullptr) {
             ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.55f, 1.0f), "%s%s", definition->title,
                                enabled ? "" : "（無効）");
+        }
+    }
+
+    // サムネイル。**繋ぎ替えずに中身が分かる**ようにするためのもの。
+    //   - マスクのノード / Mask 出力を持つ加工ノード: 焼いたマスク（白黒）。
+    //     プレビューしていない枝は op が無いので、枠だけの空き（未評価）になる。
+    //   - サーフェス: マテリアルのサムネイル。未割り当てなら定数色のスウォッチ
+    //     （レイヤー一覧と同じ見せ方）。
+    // シェイプ / 水面 / ハイトマップは絵にしても地形と区別が付かないので出さない。
+    {
+        const float thumbnailSize = ui::Scaled(ui::kNodeThumbnail);
+        if (graph::IsMaskNodeKind(node.kind) || graph::IsLayerMaskSourceKind(node.kind)) {
+            ImGui::Dummy(ImVec2(kNodeWidth, 2.0f));
+            const D3D12_GPU_DESCRIPTOR_HANDLE handle = GraphMaskThumbnail(node.id, 0);
+            ui::ThumbnailImage(static_cast<ImTextureID>(handle.ptr), thumbnailSize);
+        } else if (node.kind == graph::NodeKind::Surface && layerSettings != nullptr) {
+            ImGui::Dummy(ImVec2(kNodeWidth, 2.0f));
+            const compositor::MaterialLayer& layer = layerSettings->layer;
+            const compositor::MaterialAsset* material = m_materialLibrary.Find(layer.material);
+            if (material != nullptr && material->thumbnail.IsValid()) {
+                ui::ThumbnailImage(static_cast<ImTextureID>(material->thumbnail.srv.gpu.ptr),
+                                   thumbnailSize);
+            } else {
+                ui::ColorSwatch(ImVec4(layer.baseColor.x, layer.baseColor.y,
+                                       layer.baseColor.z, 1.0f),
+                                thumbnailSize);
+            }
         }
     }
 

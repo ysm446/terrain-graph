@@ -246,6 +246,15 @@ public:
     // ImGui へ渡すハンドル。まだ無ければ ptr が 0。
     D3D12_GPU_DESCRIPTOR_HANDLE MaskThumbnailHandle(size_t layerIndex) const;
 
+    // --- ノードのマスクサムネイル ------------------------------------------
+    // マスクの op ごとの結果を小さく落としたもの。グラフのノードに出す。
+    // 添字は op の添字（評価したスタックの MaskOps）。評価は非同期なので、
+    // 表側の結果がどの版のスタックかは EvaluatedRevision() で見分ける。
+    // ImGui へ渡すハンドル。まだ無ければ ptr が 0。
+    D3D12_GPU_DESCRIPTOR_HANDLE MaskOpThumbnailHandle(size_t opIndex) const;
+    // 表側の結果が、どの版のスタックを評価したものか。
+    uint64_t EvaluatedRevision() const { return m_evaluatedRevision; }
+
     // 変更を検知していなくても次回に評価し直す。
     void Invalidate() { m_evaluatedRevision = 0; }
 
@@ -401,6 +410,21 @@ private:
     void ReleaseTextures(rhi::Device& device);
     // レイヤー枚数ぶんのマスクサムネイルを用意する。増減した枚数だけ作る / 捨てる。
     void EnsureMaskThumbnails(rhi::Device& device, size_t layerCount);
+    // op の数ぶんのノード用サムネイル（評価先＝裏側）を用意する。
+    void EnsureMaskOpThumbnails(rhi::Device& device, size_t opCount);
+    // 焼き終えた op を全部サムネイルへ落とす。評価の最後に呼ぶ。
+    void BakeMaskOpThumbnails(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                              ID3D12GraphicsCommandList* commandList, size_t opCount);
+    // ノード用のサムネイル 1 枚。マスクは 1 チャンネルなので、ImGui へは
+    // R を RGB へ配った SRV（grayView）を渡す。既定の SRV では赤一色になる。
+    struct MaskOpThumbnail {
+        rhi::GpuTexture texture;
+        rhi::DescriptorHandle grayView;
+    };
+    void ReleaseMaskOpThumbnails(rhi::Device& device, std::vector<MaskOpThumbnail>& thumbnails);
+    const std::vector<MaskOpThumbnail>& DisplayedMaskOpThumbnails() const {
+        return m_frontTextures.IsValid() ? m_frontMaskOpThumbnails : m_maskOpThumbnails;
+    }
 
     // 定数バッファの置き場。コンピュートキューへ記録している間はそのキューの
     // 置き場から、それ以外（同期評価 / 書き出し）はフレームのアップロードリングから取る。
@@ -411,6 +435,9 @@ private:
     // 描画（頂点 / ドメイン / ピクセル）から読める状態へ。**グラフィックスキューでだけ**
     // 記録できる（PIXEL_SHADER_RESOURCE はコンピュートキューでは使えない）。
     void TransitionForDisplay(ID3D12GraphicsCommandList* commandList, MaterialTextureSet& set);
+    // ノード用のサムネイルも ImGui（ピクセルシェーダ）が読むので同じ扱い。
+    void TransitionThumbnailsForDisplay(ID3D12GraphicsCommandList* commandList,
+                                        std::vector<MaskOpThumbnail>& thumbnails);
 
     // 評価先。非同期のときは裏側で、終わったら m_frontTextures と入れ替わる。
     MaterialTextureSet m_textures;
@@ -420,6 +447,10 @@ private:
     // ブラーの水平パスが使う。Height と同じ形式。評価先と一緒に使うので 1 枚でよい。
     rhi::GpuTexture m_scratch;
     std::vector<rhi::GpuTexture> m_maskThumbnails;
+    // ノード用のマスクサムネイル。評価先（裏側）と描画が読む表側を、
+    // 合成結果と一緒に入れ替える（評価中に ImGui が読む側へ書かないため）。
+    std::vector<MaskOpThumbnail> m_maskOpThumbnails;
+    std::vector<MaskOpThumbnail> m_frontMaskOpThumbnails;
     uint32_t m_resolution = 0;
     uint64_t m_evaluatedRevision = 0;
     uint32_t m_evaluatedLayerCount = 0;

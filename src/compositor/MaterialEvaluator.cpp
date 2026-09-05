@@ -40,6 +40,8 @@ constexpr uint32_t kFlagFlipNormalGreen = 0x20u;
 
 // レイヤー一覧に出すマスクサムネイルの一辺。行の高さに対して十分な細かさがあればよい。
 constexpr uint32_t kMaskThumbnailSize = 64;
+// ノードに出すマスクの op のサムネイル。ノード上では 64px で描くので同じ大きさ。
+constexpr uint32_t kMaskOpThumbnailSize = 64;
 // マスクは 1 チャンネルだが、R8 のまま ImGui へ渡すと赤一色で描かれる。
 // 灰色として見せたいので RGB へ同じ値を書く。
 constexpr DXGI_FORMAT kMaskThumbnailFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -547,6 +549,8 @@ void MaterialEvaluator::Destroy(rhi::Device& device) {
         device.DeferRelease(thumbnail);
     }
     m_maskThumbnails.clear();
+    ReleaseMaskOpThumbnails(device, m_maskOpThumbnails);
+    ReleaseMaskOpThumbnails(device, m_frontMaskOpThumbnails);
     m_resolution = 0;
     m_evaluatedRevision = 0;
 }
@@ -576,6 +580,98 @@ void MaterialEvaluator::EnsureMaskThumbnails(rhi::Device& device, size_t layerCo
         }
         m_maskThumbnails.push_back(std::move(thumbnail));
     }
+}
+
+// ノード用のサムネイルは op の数に合わせる。合成解像度に依らないので作り直しは増減分だけ。
+void MaterialEvaluator::EnsureMaskOpThumbnails(rhi::Device& device, size_t opCount) {
+    while (m_maskOpThumbnails.size() > opCount) {
+        MaskOpThumbnail& last = m_maskOpThumbnails.back();
+        device.DeferRelease(last.texture);
+        if (last.grayView.IsValid()) {
+            device.DeferFree(device.SrvHeap(), last.grayView);
+        }
+        m_maskOpThumbnails.pop_back();
+    }
+    while (m_maskOpThumbnails.size() < opCount) {
+        MaskOpThumbnail thumbnail;
+        if (!CreateChannelTexture(device, kMaskOpThumbnailSize, kMaskFormat, L"MaskOpThumbnail",
+                                  thumbnail.texture)) {
+            TG_LOG_WARN("マスクのサムネイルを作れませんでした");
+            break;
+        }
+        // R を RGB へ配り、A は定数 1（5）。テクスチャ一覧のチャンネル表示と同じ作り。
+        thumbnail.grayView = device.SrvHeap().Allocate();
+        if (thumbnail.grayView.IsValid()) {
+            D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+            srvDesc.Format = kMaskFormat;
+            srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            srvDesc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(0, 0, 0, 5);
+            srvDesc.Texture2D.MipLevels = 1;
+            device.GetDevice()->CreateShaderResourceView(thumbnail.texture.resource.Get(),
+                                                         &srvDesc, thumbnail.grayView.cpu);
+        }
+        m_maskOpThumbnails.push_back(std::move(thumbnail));
+    }
+}
+
+void MaterialEvaluator::ReleaseMaskOpThumbnails(rhi::Device& device,
+                                                std::vector<MaskOpThumbnail>& thumbnails) {
+    for (MaskOpThumbnail& thumbnail : thumbnails) {
+        device.DeferRelease(thumbnail.texture);
+        if (thumbnail.grayView.IsValid()) {
+            device.DeferFree(device.SrvHeap(), thumbnail.grayView);
+        }
+    }
+    thumbnails.clear();
+}
+
+// **op を焼き直したかどうかに関わらず毎回落とす。** op のハッシュは 1 組しか
+// 持たないのに、サムネイルは表裏の 2 組で入れ替わる。裏側の添字 i は 2 回前の
+// 評価の op なので、「焼き直していないから前のまま」とは限らない。
+// 64² × op 数の仕事なので、毎回でも合成本体には埋もれる。
+void MaterialEvaluator::BakeMaskOpThumbnails(rhi::Device& device,
+                                             rhi::PipelineCache& pipelineCache,
+                                             ID3D12GraphicsCommandList* commandList,
+                                             size_t opCount) {
+    ID3D12PipelineState* pipeline =
+        pipelineCache.GetCompute(L"CompositeBlur.hlsl", L"CsDownsample");
+    if (pipeline == nullptr) {
+        return;
+    }
+    PIXBeginEvent(commandList, PIX_COLOR(120, 140, 160), "MaskOpThumbnails");
+    commandList->SetPipelineState(pipeline);
+    for (size_t i = 0; i < opCount && i < m_maskOpThumbnails.size(); ++i) {
+        if (!m_maskOpTextures[i].IsValid() || !m_maskOpThumbnails[i].texture.IsValid()) {
+            continue;
+        }
+        BlurConstants constants = {};
+        constants.sourceIndex = m_maskOpTextures[i].SrvIndex();
+        constants.outputIndex = m_maskOpThumbnails[i].texture.UavIndex();
+        constants.resolution[0] = kMaskOpThumbnailSize;
+        constants.resolution[1] = kMaskOpThumbnailSize;
+        const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(BlurConstants));
+        if (!cb.IsValid()) {
+            break;
+        }
+        std::memcpy(cb.cpu, &constants, sizeof(constants));
+        TransitionIfNeeded(commandList, m_maskOpTextures[i],
+                           D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        TransitionIfNeeded(commandList, m_maskOpThumbnails[i].texture,
+                           D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+        commandList->Dispatch(DispatchCount(kMaskOpThumbnailSize),
+                              DispatchCount(kMaskOpThumbnailSize), 1);
+    }
+    PIXEndEvent(commandList);
+}
+
+D3D12_GPU_DESCRIPTOR_HANDLE MaterialEvaluator::MaskOpThumbnailHandle(size_t opIndex) const {
+    const std::vector<MaskOpThumbnail>& thumbnails = DisplayedMaskOpThumbnails();
+    if (opIndex >= thumbnails.size() || !thumbnails[opIndex].texture.IsValid() ||
+        !thumbnails[opIndex].grayView.IsValid()) {
+        return D3D12_GPU_DESCRIPTOR_HANDLE{0};
+    }
+    return thumbnails[opIndex].grayView.gpu;
 }
 
 D3D12_GPU_DESCRIPTOR_HANDLE MaterialEvaluator::MaskThumbnailHandle(size_t layerIndex) const {
@@ -633,6 +729,16 @@ std::vector<TileRect> MaterialEvaluator::MakeTiles() const {
 // メッシュの描画から読めるようにする。Height は頂点 / ドメインシェーダ
 // （ディスプレイスメント）からも読まれるため、NON_PIXEL も含める。
 // 状態の食い違いを避けるため 4 枚とも同じ状態に揃える。
+void MaterialEvaluator::TransitionThumbnailsForDisplay(
+    ID3D12GraphicsCommandList* commandList, std::vector<MaskOpThumbnail>& thumbnails) {
+    constexpr D3D12_RESOURCE_STATES kDisplayReadState =
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE |
+        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    for (MaskOpThumbnail& thumbnail : thumbnails) {
+        TransitionIfNeeded(commandList, thumbnail.texture, kDisplayReadState);
+    }
+}
+
 void MaterialEvaluator::TransitionForDisplay(ID3D12GraphicsCommandList* commandList,
                                              MaterialTextureSet& set) {
     constexpr D3D12_RESOURCE_STATES kDisplayReadState =
@@ -3140,6 +3246,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
     std::vector<uint64_t> maskOpHash(maskOps.size(), 0);
     std::vector<bool> maskOpDone(maskOps.size(), false);
     bool maskOpsReady = maskOps.empty();
+    EnsureMaskOpThumbnails(device, maskOps.size());
     if (!maskOps.empty()) {
         maskOpsReady = EnsureMaskOpTextures(device, maskOps);
         if (!maskOpsReady) {
@@ -3622,6 +3729,14 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
     for (rhi::GpuTexture& thumbnail : m_maskThumbnails) {
         TransitionIfNeeded(commandList, thumbnail, kOutputReadState);
     }
+    // ノード用のマスクサムネイル。焼けた op を全部落としてから NON_PIXEL へ。
+    // 表側へ入れ替えたときに Update がグラフィックス側で PIXEL へ遷移させる。
+    if (maskOpsReady) {
+        BakeMaskOpThumbnails(device, pipelineCache, commandList, maskOps.size());
+    }
+    for (MaskOpThumbnail& thumbnail : m_maskOpThumbnails) {
+        TransitionIfNeeded(commandList, thumbnail.texture, kOutputReadState);
+    }
 
     // プレビュー用の評価器だけ、Height を CPU へ写す（パスの編集に使う）。
     if (m_asynchronous && complete) {
@@ -3658,9 +3773,11 @@ void MaterialEvaluator::Update(rhi::Device& device, rhi::PipelineCache& pipeline
         // まだ描画中のフレームが古い表側を読んでいるかもしれないが、次の評価は
         // 投入時のフレームを GPU 側で待ってから走るので、書き込みが追い越すことはない。
         std::swap(m_textures, m_frontTextures);
+        std::swap(m_maskOpThumbnails, m_frontMaskOpThumbnails);
         m_evaluatedRevision = m_asyncRevision;
         m_hasResult = true;
         TransitionForDisplay(commandList, m_frontTextures);
+        TransitionThumbnailsForDisplay(commandList, m_frontMaskOpThumbnails);
     }
 
     if (m_evaluatedRevision == stack.Revision() || m_asyncInFlight) {
@@ -3682,10 +3799,14 @@ void MaterialEvaluator::Update(rhi::Device& device, rhi::PipelineCache& pipeline
             m_evaluatedRevision = stack.Revision();
             if (m_frontTextures.IsValid()) {
                 std::swap(m_textures, m_frontTextures);
+                std::swap(m_maskOpThumbnails, m_frontMaskOpThumbnails);
             }
             m_hasResult = true;
             TransitionForDisplay(commandList, m_frontTextures.IsValid() ? m_frontTextures
                                                                         : m_textures);
+            TransitionThumbnailsForDisplay(commandList, m_frontTextures.IsValid()
+                                                            ? m_frontMaskOpThumbnails
+                                                            : m_maskOpThumbnails);
         }
         return;
     }
@@ -3710,6 +3831,10 @@ void MaterialEvaluator::Update(rhi::Device& device, rhi::PipelineCache& pipeline
     TransitionIfNeeded(commandList, m_textures.normal, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     TransitionIfNeeded(commandList, m_textures.surface, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    // ノード用のサムネイルも同じ（裏側は前回まで ImGui が読んでいた PIXEL の状態）。
+    for (MaskOpThumbnail& thumbnail : m_maskOpThumbnails) {
+        TransitionIfNeeded(commandList, thumbnail.texture, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
 
     ID3D12GraphicsCommandList* computeList = m_compute.Begin(device);
     if (computeList == nullptr) {

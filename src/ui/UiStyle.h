@@ -33,6 +33,10 @@ inline constexpr float kMaxFontSize = 28.0f;
 // 素材名は長い（`T_Rocky_Soil_..._D.EXR`）ので、小さいほど省略が減る。
 inline constexpr float kCaptionFontSize = 12.0f;
 
+// グラフのノードに出すサムネイル（マスクの結果 / マテリアル）の一辺。
+// レイヤー一覧の 40 では模様が読めず、一覧の 84 ではノードが縦に伸びすぎる。
+inline constexpr float kNodeThumbnail = 64.0f;
+
 // 列の境界を掴める幅（96 DPI 基準）。線そのものより広く取らないと狙って掴めない。
 inline constexpr float kSplitterGrabWidth = 8.0f;
 // 境界の線と、その左右の列との間に空ける幅。

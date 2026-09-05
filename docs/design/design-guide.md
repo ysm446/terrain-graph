@@ -1,7 +1,7 @@
 # design-guide — UI の設計ガイド
 
 作成日時: 2026-08-31 14:36
-更新日時: 2026-09-05 10:05
+更新日時: 2026-09-06 14:00
 
 `src/ui/` と各パネルの見た目・レイアウト・配色・部品のルール。
 
@@ -381,6 +381,7 @@ Yu Gothic Medium → Meiryo → MS ゴシック の順で読み込む。
 | `kWideButtonWidth` | 148 | TextScaled | 単独で置くボタン（視点をリセット など） |
 | `kSplitterGrabWidth` | 8 | Scaled | 列の境界を掴める幅。線より広く取る |
 | `kCaptionFontSize` | 12 | FontScale | 一覧のサムネイルに添える名前（唯一の例外サイズ） |
+| `kNodeThumbnail` | 64 | Scaled | グラフのノードに出すサムネイル（マスクの結果 / マテリアル） |
 
 ---
 

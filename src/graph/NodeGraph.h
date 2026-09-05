@@ -168,6 +168,13 @@ struct PathNodeSettings {
 struct CompiledGraph {
     std::vector<compositor::MaterialLayer> layers;
     compositor::MaskProgram maskOps;
+    // op ごとの出どころ（ノード ID と、そのノードの何番目の Mask 出力か）。
+    // 添字は maskOps と同じ。グラフパネルがノードにマスクのサムネイルを出すのに使う。
+    struct MaskOpSource {
+        GraphId nodeId = 0;
+        size_t outputIndex = 0;
+    };
+    std::vector<MaskOpSource> maskOpSources;
 };
 
 // 出力。ここに繋いだチェーンがプレビューのマテリアルになる。
@@ -285,6 +292,9 @@ private:
         // 焼いた op（添字が op の添字と一致する）。
         std::vector<EmittedMaskOp> emitted;
     };
+    // 焼いた op の記録を、コンパイル結果の「出どころ」へ写す（ノードのポインタは外へ出さない）。
+    static void RecordMaskOpSources(const std::vector<EmittedMaskOp>& emitted,
+                                    CompiledGraph& compiled);
     // top から「下地」チェーンを遡ってレイヤー列（下から上）にする共通部。
     CompiledGraph CompileChainFrom(const Node* top, ChainTrace* trace = nullptr) const;
     // マスクの木を辿って、**レイヤーでもある出どころ**（堆積 / 崩落 / 積雪）を集める。

@@ -91,6 +91,10 @@ private:
     void DrawGraphEditor();
     // グラフのノード 1 枚。カード・ピン・リンクの当たり判定を描く。
     void DrawGraphNode(const graph::Node& node);
+    // ノードに出すマスクのサムネイル（そのノードの outputIndex 番目の Mask 出力）。
+    // 表側の評価結果に無ければ ptr が 0。
+    D3D12_GPU_DESCRIPTOR_HANDLE GraphMaskThumbnail(graph::GraphId nodeId,
+                                                   size_t outputIndex) const;
     // グラフノードのレイヤー設定のプロパティ行。
     // 変更があれば true。isBase はマスクが効かない一番下のレイヤーのとき。
     // isSource は入力を持たないノード（ハイトマップ）。マスクの節を出さない。
@@ -274,6 +278,14 @@ private:
     // 前回コンパイルしたプレビュー対象。選択が変わっても再コンパイルするために持つ。
     graph::GraphId m_compiledGraphTarget = 0;
     graph::GraphId m_compiledGraphTargetPin = 0;
+    // コンパイルした op の出どころを、スタックの版ごとに控える。評価は非同期なので、
+    // 表側にある結果はいまのコンパイルより古いことがある。ノードのサムネイルは
+    // 「表側の結果の版」に合う対応で引かないと、別のノードの模様が出る。
+    struct GraphMaskOpSources {
+        uint64_t revision = 0;
+        std::vector<graph::CompiledGraph::MaskOpSource> ops;
+    };
+    std::vector<GraphMaskOpSources> m_graphMaskOpSources;
     graph::GraphId m_selectedGraphNode = 0;
     // エディタで選ばれているノード全部。コピーはこれを見る
     // （プロパティに出すのは先頭の 1 つ = m_selectedGraphNode）。

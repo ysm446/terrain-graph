@@ -962,6 +962,19 @@ compositor::MaterialLayer MakeMaskPreviewLayer(const char* name,
 
 }  // namespace
 
+// 焼いた op の記録を、コンパイル結果の「出どころ」へ写す（ノードのポインタは外へ出さない）。
+void NodeGraph::RecordMaskOpSources(const std::vector<EmittedMaskOp>& emitted,
+                                    CompiledGraph& compiled) {
+    compiled.maskOpSources.clear();
+    compiled.maskOpSources.reserve(emitted.size());
+    for (const EmittedMaskOp& op : emitted) {
+        CompiledGraph::MaskOpSource source;
+        source.nodeId = (op.node != nullptr) ? op.node->id : 0;
+        source.outputIndex = op.outputIndex;
+        compiled.maskOpSources.push_back(source);
+    }
+}
+
 CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace) const {
     const std::vector<const Node*> chain = ChainFrom(top);
 
@@ -1067,6 +1080,7 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace) co
         }
     }
 
+    RecordMaskOpSources(emitted, compiled);
     return compiled;
 }
 
@@ -1148,6 +1162,7 @@ CompiledGraph NodeGraph::CompileLayersTo(GraphId nodeId, GraphId outputPin) cons
             paint.mask.maskOp = op;
         }
         compiled.layers.push_back(paint);
+        RecordMaskOpSources(trace.emitted, compiled);
         return compiled;
     }
     if (node->kind == NodeKind::Path) {
