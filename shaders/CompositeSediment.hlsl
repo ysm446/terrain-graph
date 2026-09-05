@@ -25,7 +25,8 @@ struct SedimentConstants
     // x: グリッドの一辺、y: 地形を土砂として扱うか、
     // z: 合成の Height の UAV、w: 合成解像度
     uint4 indices2;
-    // x: 最大値をためる R32_UINT の UAV、y: マスクの出力 UAV、zw: 未使用
+    // x: 最大値をためる R32_UINT の UAV、y: マスクの出力 UAV、
+    // z: 供給元のマスク（SRV。kInvalidTextureIndex なら全面へ一様に供給）、w: 未使用
     uint4 indices3;
     // x: 安息角ぶんの落差（正規化ハイト）、y: 1 反復あたりの供給量、
     // z: マスクのコントラスト、w: マスクが 1 になる厚み（正規化ハイト。0 なら最大値で正規化）
@@ -89,14 +90,28 @@ void CsSetup(uint3 dispatchThreadId : SV_DispatchThreadID)
     }
 }
 
-// 供給。全セルへ一様に土砂を積む。
+// 供給元のマスク。繋いでいなければ 1（全面へ一様に供給）。
+// マスクの op の結果は解析グリッドと解像度が違うので、添字ではなく UV で引く。
+float SampleSedimentEmission(uint2 cell)
+{
+    if (g_sediment.indices3.z == kInvalidTextureIndex)
+    {
+        return 1.0f;
+    }
+    Texture2D<float> emission = ResourceDescriptorHeap[g_sediment.indices3.z];
+    const float2 uv = (float2(cell) + 0.5f) / float(SedimentResolution());
+    return saturate(emission.SampleLevel(g_samplerLinearClamp, uv, 0.0f));
+}
+
+// 供給。土砂を積む。**供給量はマスクの明るさに比例する**（1 の所で指定量）。
+// マスクが暗い所には積まないので、注ぎ口から流れてきたぶんだけが届く。
 [numthreads(8, 8, 1)]
 void CsEmit(uint3 dispatchThreadId : SV_DispatchThreadID)
 {
     const uint2 cell = dispatchThreadId.xy;
     if (OutsideSediment(cell)) { return; }
     RWTexture2D<float> sediment = ResourceDescriptorHeap[g_sediment.indices0.y];
-    sediment[cell] += g_sediment.params.y;
+    sediment[cell] += g_sediment.params.y * SampleSedimentEmission(cell);
 }
 
 // 掃引 1。各セルが 4 近傍へ出す量を決める。

@@ -290,9 +290,10 @@ private:
 
     // 堆積レイヤー 1 枚ぶん。土砂を重力で再分配し、差分を Height へ足し戻して
     // 法線を作り直す。**タイルには分けない**（グリッド全体を何度も舐めるため）。
+    // emissionIndex は供給元のマスク（Emission 入力）の SRV。無ければ全面へ一様に供給する。
     bool ApplySediment(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                        ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
-                       const MaterialStack& stack);
+                       const MaterialStack& stack, uint32_t emissionIndex);
     bool EnsureSedimentResources(rhi::Device& device, uint32_t resolution);
     void ReleaseSedimentResources(rhi::Device& device);
     // 直前の堆積レイヤーが積もらせた厚みを、マスクとして焼く。

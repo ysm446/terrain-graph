@@ -66,6 +66,48 @@ void RunNodeGraphTests() {
               "Base 接続中の加工ノードは入力と加工を保つ");
     }
 
+    Section("ノードグラフ — Sediment の Emission 入力");
+    {
+        // Emission に繋いだマスクは、堆積レイヤーの Mask 入力（供給元）として op へ落ちる。
+        NodeGraph graph;
+        const tg::graph::GraphId baseId = graph.CreateNode(NodeKind::Heightmap);
+        const tg::graph::GraphId noiseId = graph.CreateNode(NodeKind::MaskNoise);
+        const tg::graph::GraphId sedimentId = graph.CreateNode(NodeKind::Sediment);
+        const tg::graph::Node* base = graph.FindNode(baseId);
+        const tg::graph::Node* noise = graph.FindNode(noiseId);
+        const tg::graph::Node* sediment = graph.FindNode(sedimentId);
+        const bool hasPins = base != nullptr && noise != nullptr && sediment != nullptr &&
+                             !base->outputs.empty() && !noise->outputs.empty() &&
+                             sediment->inputs.size() == 2 &&
+                             sediment->inputs[1].valueType == tg::graph::ValueType::Mask;
+        const bool connected =
+            hasPins && graph.CreateLink(base->outputs.front().id, sediment->inputs[0].id) &&
+            graph.CreateLink(noise->outputs.front().id, sediment->inputs[1].id);
+        const tg::graph::CompiledGraph compiled = graph.CompileLayersTo(sedimentId);
+        const bool wired = compiled.layers.size() == 2 &&
+                           compiled.layers.back().kind == tg::compositor::LayerKind::Sediment &&
+                           compiled.layers.back().mask.source == tg::compositor::MaskSource::Node &&
+                           compiled.layers.back().mask.maskOp >= 0 &&
+                           static_cast<size_t>(compiled.layers.back().mask.maskOp) <
+                               compiled.maskOps.size();
+        Check(connected && wired, "Sediment の Emission 入力は供給元のマスク op になる");
+
+        // 繋がなければ供給元は無し（全面へ一様）。
+        NodeGraph plain;
+        const tg::graph::GraphId plainBaseId = plain.CreateNode(NodeKind::Heightmap);
+        const tg::graph::GraphId plainSedimentId = plain.CreateNode(NodeKind::Sediment);
+        const tg::graph::Node* plainBase = plain.FindNode(plainBaseId);
+        const tg::graph::Node* plainSediment = plain.FindNode(plainSedimentId);
+        const bool plainConnected =
+            plainBase != nullptr && plainSediment != nullptr && !plainBase->outputs.empty() &&
+            !plainSediment->inputs.empty() &&
+            plain.CreateLink(plainBase->outputs.front().id, plainSediment->inputs[0].id);
+        const tg::graph::CompiledGraph plainCompiled = plain.CompileLayersTo(plainSedimentId);
+        Check(plainConnected && plainCompiled.layers.size() == 2 &&
+                  plainCompiled.layers.back().mask.source != tg::compositor::MaskSource::Node,
+              "Emission 未接続の Sediment は供給元を持たない");
+    }
+
     Section("ノードグラフ — Path の Base");
     {
         NodeGraph graph;

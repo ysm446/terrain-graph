@@ -44,10 +44,19 @@ constexpr std::array<PinDefinition, 2> kMaskFromHeightPins = {{
     {PinKind::Output, ValueType::Mask, "Mask"},
 }};
 
-// 堆積 / 積雪のピン。ハイトの加工に加えて、**積もった量を Mask として出す**。
+// 積雪のピン。ハイトの加工に加えて、**積もった量を Mask として出す**。
 // 積もった所へ別のマテリアルを乗せられるようにするため。
 constexpr std::array<PinDefinition, 3> kDepositPins = {{
     {PinKind::Input, ValueType::Material, "Base"},
+    {PinKind::Output, ValueType::Material, "Result"},
+    {PinKind::Output, ValueType::Mask, "Mask"},
+}};
+
+// 堆積のピン。積雪と同じ形に加えて、**土砂を供給する場所**（Emission、省略可）を受ける。
+// 繋がなければ全面へ一様に供給する。注ぎ口を絞ると「そこから流した液体」になる。
+constexpr std::array<PinDefinition, 4> kSedimentPins = {{
+    {PinKind::Input, ValueType::Material, "Base"},
+    {PinKind::Input, ValueType::Mask, "Emission"},
     {PinKind::Output, ValueType::Material, "Result"},
     {PinKind::Output, ValueType::Mask, "Mask"},
 }};
@@ -132,7 +141,7 @@ constexpr std::array<NodeDefinition, 23> kNodeDefinitions = {{
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
     {NodeKind::Liquid, "liquid", "Liquid", kLayerNodePins},
     {NodeKind::Blur, "heightmapBlur", "Heightmap Blur", kBlurPins},
-    {NodeKind::Sediment, "sediment", "Sediment", kDepositPins},
+    {NodeKind::Sediment, "sediment", "Sediment", kSedimentPins},
     {NodeKind::Crumbling, "crumbling", "Crumbling", kCrumblingPins},
     {NodeKind::Snow, "snow", "Snow", kDepositPins},
     {NodeKind::River, "river", "River", kRiverPins},

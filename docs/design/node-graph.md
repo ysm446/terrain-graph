@@ -1,7 +1,7 @@
 # node-graph — ノードグラフの設計
 
 作成日時: 2026-09-02 12:50
-更新日時: 2026-09-05 07:30
+更新日時: 2026-09-05 13:40
 
 `src/graph/` とグラフパネル（`src/app/ApplicationGraphPanel.cpp`）の設計。
 **ノード 1 つずつの役割・ピン・パラメータは
@@ -42,7 +42,7 @@ terrain-editor から移植したのは**仕組み**であって、ノードの�
 | Shape | `shape` | 同上 | `MaterialLayer`（kind=Shape） |
 | Liquid | `liquid` | 同上 | `MaterialLayer`（kind=Liquid) |
 | Heightmap Blur | `heightmapBlur` | Base(入力) / Result(出力) | `MaterialLayer`（kind=Blur）の `blur` |
-| Sediment | `sediment` | Base(入力) / Result / Mask(出力) | `MaterialLayer`（kind=Sediment）の `sediment` |
+| Sediment | `sediment` | Base / Emission(入力) / Result / Mask(出力) | `MaterialLayer`（kind=Sediment）の `sediment` |
 | Crumbling | `crumbling` | Base / Emission(入力) / Result / Mask / Unique(出力) | `MaterialLayer`（kind=Crumbling）の `crumbling` |
 | Snow | `snow` | Base(入力) / Result / Mask(出力) | `MaterialLayer`（kind=Snow）の `snow` |
 | River | `river` | Base / Seed(入力) / Result / Water / Bank / Depth(出力) | `MaterialLayer`（kind=River）の `river` |
@@ -282,6 +282,9 @@ terrain-editor の Mask Fluvial。**下地の川筋**（水が集まる所）を
 - Emission 入力は**レイヤーの Mask 入力そのもの**。コンパイルが
   `MaskSource::Node` + op の添字を入れ、評価器はそれを発生源として読む。
   段取り上、崩落レイヤーへ来る時点でその op は焼き終わっている。
+  Sediment の Emission（供給元）も同じ配線で、`ApplySediment` が供給量に掛ける。
+  旧ファイル（Emission ピンが無い版）はピンの ID が後から振られるだけで、
+  未接続＝全面へ一様、として同じ結果になる。
 
 ### パス（Path / Mask Path）
 

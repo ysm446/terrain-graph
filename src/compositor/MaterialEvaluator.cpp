@@ -1438,7 +1438,8 @@ void MaterialEvaluator::RebuildNormalsFromHeight(rhi::Device& device,
 // 合成解像度の細部は残る。
 bool MaterialEvaluator::ApplySediment(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                                       ID3D12GraphicsCommandList* commandList,
-                                      const MaterialLayer& layer, const MaterialStack& stack) {
+                                      const MaterialLayer& layer, const MaterialStack& stack,
+                                      uint32_t emissionIndex) {
     const MaterialLayer::SedimentSettings& params = layer.sediment;
     const uint32_t resolution = std::clamp(params.resolution, 64u, 2048u);
     if (!EnsureSedimentResources(device, resolution)) {
@@ -1498,6 +1499,8 @@ bool MaterialEvaluator::ApplySediment(rhi::Device& device, rhi::PipelineCache& p
     constants.indices2[2] = m_textures.height.UavIndex();
     constants.indices2[3] = m_resolution;
     constants.indices3[0] = m_sediment.maxScratch.UavIndex();
+    // 供給元のマスク。op の結果は既に SRV になっている（段取りで焼き終わっている）。
+    constants.indices3[2] = emissionIndex;
     constants.params[0] = talus;
 
     // 定数は「供給あり / なし」の 2 本だけ確保して使い回す。
@@ -3231,7 +3234,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         if (IsHeightOperationKind(layer.kind)) {
             const bool hasUnderlying = (baseIndex != static_cast<size_t>(-1)) &&
                                        (layerIndex > baseIndex);
-            // 崩落と河川は Mask 入力を**発生源 / 川の出どころ**として使うので、先に引いておく。
+            // 崩落・堆積・河川は Mask 入力を**発生源 / 川の出どころ**として使うので、先に引いておく。
             // 段取り上、ここへ来る時点でその op は焼き終わっている。
             uint32_t inputMaskIndex = kInvalidTextureIndex;
             if (layer.mask.source == MaskSource::Node && layer.mask.maskOp >= 0 &&
@@ -3264,7 +3267,8 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 }
                 ++m_evaluatedLayerCount;
             } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::Sediment) {
-                if (!ApplySediment(device, pipelineCache, commandList, layer, stack)) {
+                if (!ApplySediment(device, pipelineCache, commandList, layer, stack,
+                                   inputMaskIndex)) {
                     complete = false;
                 }
                 ++m_evaluatedLayerCount;

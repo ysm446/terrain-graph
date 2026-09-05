@@ -62,7 +62,9 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                 "切ると入力は動かない基盤になり、供給量で足したぶんだけが流れる");
             changed |= ui::PropertyFloat("供給量", &layer.sediment.emissionMeters, 0.0f, 20.0f,
                                          sedimentDefaults.emissionMeters,
-                                         "全体へ上乗せする土砂の厚み（m）", "%.2f m");
+                                         "上乗せする土砂の厚み（m）。Emission 入力を繋ぐと"
+                                         "その明るさに比例して積む（繋がなければ全面へ一様）",
+                                         "%.2f m");
             changed |= ui::PropertyFloat(
                 "供給時間", &layer.sediment.emissionTime, 0.0f, 1.0f,
                 sedimentDefaults.emissionTime,
@@ -113,6 +115,8 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
             ui::EndPropertyTable();
         }
         ui::HintText("重力で土砂を再分配する。谷底に厚く積もり、尾根は痩せる。"
+                     "Emission 入力で供給する場所を絞れる（「地形を土砂にする」を切り、"
+                     "粘性を下げると、注ぎ口から流した液体になる）。"
                      "Mask 出力は積もった厚みなので、堆積した所へ別のマテリアルを乗せられる");
         return changed;
     }
