@@ -108,6 +108,48 @@ void RunNodeGraphTests() {
               "Emission 未接続の Sediment は供給元を持たない");
     }
 
+    Section("ノードグラフ — Snow の Mask 入力");
+    {
+        // Mask に繋いだマスクは、積雪レイヤーの Mask 入力（降らせる場所）として op へ落ちる。
+        NodeGraph graph;
+        const tg::graph::GraphId baseId = graph.CreateNode(NodeKind::Heightmap);
+        const tg::graph::GraphId heightId = graph.CreateNode(NodeKind::MaskHeight);
+        const tg::graph::GraphId snowId = graph.CreateNode(NodeKind::Snow);
+        const tg::graph::Node* base = graph.FindNode(baseId);
+        const tg::graph::Node* height = graph.FindNode(heightId);
+        const tg::graph::Node* snow = graph.FindNode(snowId);
+        const bool hasPins = base != nullptr && height != nullptr && snow != nullptr &&
+                             !base->outputs.empty() && !height->outputs.empty() &&
+                             snow->inputs.size() == 2 &&
+                             snow->inputs[1].valueType == tg::graph::ValueType::Mask;
+        const bool connected =
+            hasPins && graph.CreateLink(base->outputs.front().id, snow->inputs[0].id) &&
+            graph.CreateLink(height->outputs.front().id, snow->inputs[1].id);
+        const tg::graph::CompiledGraph compiled = graph.CompileLayersTo(snowId);
+        const bool wired = compiled.layers.size() == 2 &&
+                           compiled.layers.back().kind == tg::compositor::LayerKind::Snow &&
+                           compiled.layers.back().mask.source == tg::compositor::MaskSource::Node &&
+                           compiled.layers.back().mask.maskOp >= 0 &&
+                           static_cast<size_t>(compiled.layers.back().mask.maskOp) <
+                               compiled.maskOps.size();
+        Check(connected && wired, "Snow の Mask 入力は降らせる場所のマスク op になる");
+
+        // 繋がなければ全面へ一様。
+        NodeGraph plain;
+        const tg::graph::GraphId plainBaseId = plain.CreateNode(NodeKind::Heightmap);
+        const tg::graph::GraphId plainSnowId = plain.CreateNode(NodeKind::Snow);
+        const tg::graph::Node* plainBase = plain.FindNode(plainBaseId);
+        const tg::graph::Node* plainSnow = plain.FindNode(plainSnowId);
+        const bool plainConnected =
+            plainBase != nullptr && plainSnow != nullptr && !plainBase->outputs.empty() &&
+            !plainSnow->inputs.empty() &&
+            plain.CreateLink(plainBase->outputs.front().id, plainSnow->inputs[0].id);
+        const tg::graph::CompiledGraph plainCompiled = plain.CompileLayersTo(plainSnowId);
+        Check(plainConnected && plainCompiled.layers.size() == 2 &&
+                  plainCompiled.layers.back().mask.source != tg::compositor::MaskSource::Node,
+              "Mask 未接続の Snow は降らせる場所を持たない");
+    }
+
     Section("ノードグラフ — Path の Base");
     {
         NodeGraph graph;

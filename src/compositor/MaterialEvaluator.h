@@ -321,9 +321,10 @@ private:
 
     // 積雪レイヤー 1 枚ぶん。雪を降らせて滑らせ、積雪厚を Height へ足し戻して
     // 法線を作り直す。**タイルには分けない**（堆積と同じ理由）。
+    // maskIndex は降らせる場所のマスク（Mask 入力）の SRV。無ければ全面へ一様に降らせる。
     bool ApplySnow(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                    ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
-                   const MaterialStack& stack);
+                   const MaterialStack& stack, uint32_t maskIndex);
     bool EnsureSnowResources(rhi::Device& device, uint32_t resolution);
     void ReleaseSnowResources(rhi::Device& device);
     // 直前の積雪レイヤーが積もらせた厚みを、被覆のマスクとして焼く。

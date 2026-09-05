@@ -139,7 +139,9 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
         if (ui::BeginPropertyTable("snowRows")) {
             changed |= ui::PropertyFloat("積雪量", &layer.snow.emissionMeters, 0.0f, 50.0f,
                                          snowDefaults.emissionMeters,
-                                         "地形へ降らせる雪の総量。0 なら入力をそのまま通す",
+                                         "地形へ降らせる雪の総量。0 なら入力をそのまま通す。"
+                                         "Mask 入力を繋ぐとその明るさに比例して降らせる"
+                                         "（繋がなければ全面へ一様）",
                                          "%.2f m", ImGuiSliderFlags_Logarithmic);
             changed |= ui::PropertyFloat(
                 "供給時間", &layer.snow.emissionTime, 0.0f, 1.0f, snowDefaults.emissionTime,
@@ -197,7 +199,9 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                 ImGuiSliderFlags_Logarithmic);
             ui::EndPropertyTable();
         }
-        ui::HintText("雪を一様に降らせ、急な雪面から低い所へ滑らせて溜める。"
+        ui::HintText("雪を降らせ、急な雪面から低い所へ滑らせて溜める。"
+                     "Mask 入力で降らせる場所を絞れる（Mask Height を繋げば雪線になる。"
+                     "滑った雪はマスクの外へも出る）。"
                      "Mask 出力は雪の被覆なので、積もった所へ雪のマテリアルを乗せられる");
         return changed;
     }

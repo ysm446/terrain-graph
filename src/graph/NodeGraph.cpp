@@ -46,8 +46,11 @@ constexpr std::array<PinDefinition, 2> kMaskFromHeightPins = {{
 
 // 積雪のピン。ハイトの加工に加えて、**積もった量を Mask として出す**。
 // 積もった所へ別のマテリアルを乗せられるようにするため。
-constexpr std::array<PinDefinition, 3> kDepositPins = {{
+// Mask 入力（省略可）は**雪を降らせる場所**（標高で雪線を切るなど）。
+// 降った後の滑落はマスクの外へも出る（縁から下へ流れ出るのは自然な形）。
+constexpr std::array<PinDefinition, 4> kDepositPins = {{
     {PinKind::Input, ValueType::Material, "Base"},
+    {PinKind::Input, ValueType::Mask, "Mask"},
     {PinKind::Output, ValueType::Material, "Result"},
     {PinKind::Output, ValueType::Mask, "Mask"},
 }};

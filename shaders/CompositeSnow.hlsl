@@ -29,7 +29,8 @@ struct SnowConstants
     uint4 indices1;
     // x: グリッドの一辺、y: 合成の Height の UAV、z: 合成解像度、w: マスクの出力 UAV
     uint4 indices2;
-    // x: 歩幅（セル）、y: ならしの向き（0 = 横 / 1 = 縦）、z: ならしの半径（セル）、w: 未使用
+    // x: 歩幅（セル）、y: ならしの向き（0 = 横 / 1 = 縦）、z: ならしの半径（セル）、
+    // w: 降らせる場所のマスク（SRV。kInvalidTextureIndex なら全面へ一様に降らせる）
     uint4 indices3;
     // x: 安息角ぶんの落差（1 セル距離あたりの正規化ハイト）、y: 1 段あたりの供給量、
     // z: 流動率、w: 雪面のならしの強さ
@@ -106,14 +107,28 @@ void CsSetup(uint3 dispatchThreadId : SV_DispatchThreadID)
     thickness[cell] = 0.0f;
 }
 
-// 供給。全セルへ一様に雪を積む。
+// 降らせる場所のマスク。繋いでいなければ 1（全面へ一様に降らせる）。
+// マスクの op の結果は解析グリッドと解像度が違うので、添字ではなく UV で引く。
+float SampleSnowMask(uint2 cell)
+{
+    if (g_snow.indices3.w == kInvalidTextureIndex)
+    {
+        return 1.0f;
+    }
+    Texture2D<float> mask = ResourceDescriptorHeap[g_snow.indices3.w];
+    const float2 uv = (float2(cell) + 0.5f) / float(SnowResolution());
+    return saturate(mask.SampleLevel(g_samplerLinearClamp, uv, 0.0f));
+}
+
+// 供給。雪を積む。**降る量はマスクの明るさに比例する**（1 の所で指定量）。
+// 降った後の滑落はマスクを見ないので、縁からは外へ流れ出る。
 [numthreads(8, 8, 1)]
 void CsEmit(uint3 dispatchThreadId : SV_DispatchThreadID)
 {
     const uint2 cell = dispatchThreadId.xy;
     if (OutsideSnow(cell)) { return; }
     RWTexture2D<float> thickness = ResourceDescriptorHeap[g_snow.indices0.y];
-    thickness[cell] += g_snow.params0.y;
+    thickness[cell] += g_snow.params0.y * SampleSnowMask(cell);
 }
 
 // 掃引 1。**一番急な下り 1 方向**を選び、そこへ出す量を決める。

@@ -100,7 +100,7 @@ struct SnowConstants {
     uint32_t indices0[4];  // UAV: 基盤, 積雪厚, 流出, ならしの作業用
     uint32_t indices1[4];  // SRV: 基盤, 積雪厚, ならしの作業用, 合成の Height
     uint32_t indices2[4];  // グリッドの一辺, Height の UAV, 合成解像度, マスクの UAV
-    uint32_t indices3[4];  // 歩幅, ならしの向き, ならしの半径, 未使用
+    uint32_t indices3[4];  // 歩幅, ならしの向き, ならしの半径, 降らせる場所のマスク（SRV）
     float params0[4];      // 安息角ぶんの落差, 1 段あたりの供給量, 流動率, ならしの強さ
     float params1[4];      // マスクのしきい値, マスクのぼかし, 未使用 x2
 };
@@ -1719,7 +1719,8 @@ bool MaterialEvaluator::EnsureSnowResources(rhi::Device& device, uint32_t resolu
 // 同じく、`最大ディテール` から 1 セルまで半分ずつ縮めながら滑らせる。
 bool MaterialEvaluator::ApplySnow(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                                   ID3D12GraphicsCommandList* commandList,
-                                  const MaterialLayer& layer, const MaterialStack& stack) {
+                                  const MaterialLayer& layer, const MaterialStack& stack,
+                                  uint32_t maskIndex) {
     const MaterialLayer::SnowSettings& params = layer.snow;
     const uint32_t resolution = std::clamp(params.resolution, 64u, 2048u);
     if (!EnsureSnowResources(device, resolution)) {
@@ -1791,6 +1792,8 @@ bool MaterialEvaluator::ApplySnow(rhi::Device& device, rhi::PipelineCache& pipel
     constants.indices2[1] = m_textures.height.UavIndex();
     constants.indices2[2] = m_resolution;
     constants.indices3[2] = static_cast<uint32_t>(std::clamp(maxStride, 1, 32));
+    // 降らせる場所のマスク。op の結果は既に SRV になっている（段取りで焼き終わっている）。
+    constants.indices3[3] = maskIndex;
     constants.params0[0] = talus;
     constants.params0[2] = std::clamp(params.transportRate, 0.0f, 1.0f);
     constants.params0[3] = std::clamp(params.surfaceSmoothing, 0.0f, 1.0f);
@@ -3234,7 +3237,8 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         if (IsHeightOperationKind(layer.kind)) {
             const bool hasUnderlying = (baseIndex != static_cast<size_t>(-1)) &&
                                        (layerIndex > baseIndex);
-            // 崩落・堆積・河川は Mask 入力を**発生源 / 川の出どころ**として使うので、先に引いておく。
+            // 崩落・堆積・積雪・河川は Mask 入力を**発生源 / 降る場所 / 川の出どころ**として
+            // 使うので、先に引いておく。
             // 段取り上、ここへ来る時点でその op は焼き終わっている。
             uint32_t inputMaskIndex = kInvalidTextureIndex;
             if (layer.mask.source == MaskSource::Node && layer.mask.maskOp >= 0 &&
@@ -3273,7 +3277,8 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 }
                 ++m_evaluatedLayerCount;
             } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::Snow) {
-                if (!ApplySnow(device, pipelineCache, commandList, layer, stack)) {
+                if (!ApplySnow(device, pipelineCache, commandList, layer, stack,
+                               inputMaskIndex)) {
                     complete = false;
                 }
                 ++m_evaluatedLayerCount;
