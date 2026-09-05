@@ -411,6 +411,7 @@ void PaintMaskStore::ProcessPendingWork(rhi::Device& device, rhi::PipelineCache&
     ReleaseSnapshots(device, m_redo);
 
     m_resolution = resolution;
+    ++m_revision;
 }
 
 void PaintMaskStore::QueueStroke(const BrushStroke& stroke) {
@@ -677,6 +678,9 @@ bool PaintMaskStore::Process(rhi::Device& device, rhi::PipelineCache& pipelineCa
         device.DeferRelease(texture);
     }
 
+    if (recorded) {
+        ++m_revision;
+    }
     return recorded;
 }
 

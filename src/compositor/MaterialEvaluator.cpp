@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <functional>
 #include <vector>
 
 using namespace DirectX;
@@ -3145,19 +3146,58 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             complete = false;
         }
 
-        // 「そのレイヤーまで合成した結果」の巡回ハッシュ。**Height に効く値だけ**
-        // を混ぜるので、色やラフネスを触っても川筋は焼き直さずに済む。
-        std::vector<uint64_t> heightStateHash(stack.Layers().size() + 1, 0xcbf29ce484222325ull);
-        for (size_t i = 0; i < stack.Layers().size(); ++i) {
-            heightStateHash[i + 1] = HashHeightState(heightStateHash[i], stack.Layers()[i]);
-        }
         // 実寸はマスクの効き方（傾斜の角度、川筋の半径）に入るのでハッシュに混ぜる。
         const float sizeMeters = stack.SizeMeters();
         const float heightMeters = stack.HeightMeters();
         uint64_t scaleHash = HashBytes(0xcbf29ce484222325ull, &sizeMeters, sizeof(float));
         scaleHash = HashBytes(scaleHash, &heightMeters, sizeof(float));
 
-        for (size_t i = 0; i < maskOps.size(); ++i) {
+        // 「そのレイヤーまで合成した結果」の巡回ハッシュ。**Height に効く値だけ**
+        // を混ぜるので、色やラフネスを触っても川筋は焼き直さずに済む。
+        //
+        // **レイヤーが Mask 入力で読む op の中身も混ぜる。** 崩落の発生源や堆積の
+        // 供給元は Height を変えるので、繋いだ Mask Noise のつまみを回したら、
+        // そのレイヤーの Mask 出力や下流の傾斜マスクも焼き直さないと古いまま
+        // 固まる。op の添字だけでは中身が変わっても同じ値になってしまう。
+        // op のハッシュはそれが読む Height の状態（＝手前のレイヤー）に依り、
+        // レイヤーのハッシュはそれが読む op に依るので、互いに引きながら
+        // 必要なぶんだけ求める（op は自分より前しか参照しないので循環しない。
+        // 万一の循環は計算中の印で切る）。
+        std::vector<uint64_t> heightStateHash(stack.Layers().size() + 1, 0xcbf29ce484222325ull);
+        std::vector<uint8_t> heightStateDone(stack.Layers().size() + 1, 0);
+        std::vector<uint8_t> maskOpHashDone(maskOps.size(), 0);
+        heightStateDone[0] = 1;
+        std::function<uint64_t(size_t)> heightStateUpTo;
+        std::function<uint64_t(size_t)> maskOpHashOf;
+        heightStateUpTo = [&](size_t layerCount) -> uint64_t {
+            layerCount = std::min(layerCount, stack.Layers().size());
+            if (heightStateDone[layerCount] != 0) {
+                return heightStateHash[layerCount];
+            }
+            // 計算中は種の値を返す（循環したときだけ通る）。
+            heightStateDone[layerCount] = 2;
+            const MaterialLayer& layer = stack.Layers()[layerCount - 1];
+            uint64_t hash = HashHeightState(heightStateUpTo(layerCount - 1), layer);
+            // ペイントは ID が同じまま中身が変わる。塗ったら世代が進むので、それを混ぜる。
+            if (layer.mask.source == MaskSource::Paint) {
+                const uint64_t paintRevision = paintMasks.Revision();
+                hash = HashBytes(hash, &paintRevision, sizeof(paintRevision));
+            }
+            if (layer.mask.source == MaskSource::Node && layer.mask.maskOp >= 0 &&
+                static_cast<size_t>(layer.mask.maskOp) < maskOps.size() &&
+                maskOpHashDone[static_cast<size_t>(layer.mask.maskOp)] != 2) {
+                const uint64_t inputHash = maskOpHashOf(static_cast<size_t>(layer.mask.maskOp));
+                hash = HashBytes(hash, &inputHash, sizeof(inputHash));
+            }
+            heightStateHash[layerCount] = hash;
+            heightStateDone[layerCount] = 1;
+            return hash;
+        };
+        maskOpHashOf = [&](size_t i) -> uint64_t {
+            if (maskOpHashDone[i] != 0) {
+                return maskOpHash[i];
+            }
+            maskOpHashDone[i] = 2;
             const MaskOp& op = maskOps[i];
             int after = -1;
             uint64_t hash = HashBytes(0xcbf29ce484222325ull, &op.kind, sizeof(op.kind));
@@ -3178,12 +3218,15 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 const size_t layerCount = std::min<size_t>(
                     stack.Layers().size(),
                     (op.heightSourceLayer >= 0) ? (op.heightSourceLayer + 1) : 0);
-                hash = HashBytes(hash, &heightStateHash[layerCount], sizeof(uint64_t));
+                const uint64_t stateHash = heightStateUpTo(layerCount);
+                hash = HashBytes(hash, &stateHash, sizeof(uint64_t));
             }
             for (const int input : {op.inputA, op.inputB}) {
-                if (input >= 0 && static_cast<size_t>(input) < maskOps.size()) {
+                if (input >= 0 && static_cast<size_t>(input) < maskOps.size() &&
+                    maskOpHashDone[static_cast<size_t>(input)] != 2) {
+                    const uint64_t inputHash = maskOpHashOf(static_cast<size_t>(input));
                     after = std::max(after, maskOpComputeAfter[input]);
-                    hash = HashBytes(hash, &maskOpHash[input], sizeof(uint64_t));
+                    hash = HashBytes(hash, &inputHash, sizeof(uint64_t));
                 }
             }
             // 下地より前は何も合成されていない。そこまで戻ることはできない。
@@ -3192,7 +3235,12 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             }
             maskOpComputeAfter[i] = after;
             maskOpHash[i] = hash;
+            maskOpHashDone[i] = 1;
+            return hash;
+        };
 
+        for (size_t i = 0; i < maskOps.size(); ++i) {
+            const uint64_t hash = maskOpHashOf(i);
             // **入力が前回と同じなら焼き直さない。** 川筋のように重い op を、
             // 無関係な編集のたびに走らせないための仕組み。
             if (maskOpsReady && m_maskOpHashes[i] == hash && m_maskOpTextures[i].IsValid()) {

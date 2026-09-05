@@ -79,6 +79,10 @@ public:
     // 持っているマスクの ID。参照されなくなったものを掃除するのに使う。
     std::vector<PaintMaskId> Ids() const;
     uint32_t Resolution() const { return m_resolution; }
+    // 中身の世代。塗る / 埋める / アンドゥ / 解像度の作り直しで進む。
+    // ID は変わらないのに中身が変わるので、合成側はこれをハッシュに混ぜて
+    // 「塗ったマスクで乗せた地形」から作るマスク（傾斜など）を焼き直す。
+    uint64_t Revision() const { return m_revision; }
 
     // 解像度の変更要求。作り直しは GPU 待機を伴うため、フレームの外で処理する。
     void RequestResolution(uint32_t resolution) { m_requestedResolution = resolution; }
@@ -147,6 +151,7 @@ private:
     std::vector<Snapshot> m_redo;
     PaintMaskId m_nextId = 1;
     uint32_t m_resolution = 1024;
+    uint64_t m_revision = 1;
     uint32_t m_requestedResolution = 1024;
 };
 
