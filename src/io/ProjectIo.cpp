@@ -150,7 +150,7 @@ const char* const kMaskSourceNames[] = {"constant", "noise",     "texture", "hei
 const char* const kFluvialCurveNames[] = {"log", "threshold", "linear"};
 // 曲率マスクの向き。compositor::CurvatureMode の並びと一致させること。
 const char* const kCurvatureModeNames[] = {"ridges", "valleys", "absolute"};
-const char* const kMaskBlendModeNames[] = {"add", "multiply", "min", "max"};
+const char* const kMaskBlendModeNames[] = {"add", "multiply", "min", "max", "subtract"};
 const char* const kChannelNames[] = {"baseColor", "normal", "surface", "height"};
 const char* const kLayerKindNames[] = {"surface",   "shape", "liquid", "blur",    "sediment",
                                        "crumbling", "snow",  "river",  "droplet", "scatter"};

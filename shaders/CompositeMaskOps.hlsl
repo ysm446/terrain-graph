@@ -18,6 +18,7 @@
 #define TG_BLEND_MULTIPLY 1
 #define TG_BLEND_MIN      2
 #define TG_BLEND_MAX      3
+#define TG_BLEND_SUBTRACT 4
 
 struct MaskOpConstants
 {
@@ -320,6 +321,8 @@ void CsBlend(uint3 dispatchThreadId : SV_DispatchThreadID)
     if (mode == TG_BLEND_ADD)      { blended = foreground + background; }
     else if (mode == TG_BLEND_MIN) { blended = min(foreground, background); }
     else if (mode == TG_BLEND_MAX) { blended = max(foreground, background); }
+    // 減算は 0 で切る（最後の saturate に任せると強さの補間が負の値を読む）。
+    else if (mode == TG_BLEND_SUBTRACT) { blended = max(foreground - background, 0.0f); }
 
     // 強さは「前景そのまま」と「合成結果」の間の補間。
     output[texel] = saturate(lerp(foreground, blended, saturate(g_op.params1.x)));

@@ -203,7 +203,8 @@ inline const char* const kMaskSourceLabels[] = {
     "下地の傾斜", "下地の曲率", "下地の窪み", "ペイント",
 };
 // マスクの合成。compositor::MaskBlendMode の並びと一致させること。
-inline const char* const kMaskBlendModeLabels[] = {"加算", "乗算", "小さいほう", "大きいほう"};
+inline const char* const kMaskBlendModeLabels[] = {"加算", "乗算", "小さいほう", "大きいほう",
+                                                   "減算"};
 // 川筋マスクの出力カーブ。compositor::FluvialCurve の並びと一致させること。
 inline const char* const kFluvialCurveLabels[] = {"対数", "しきい値", "線形"};
 // 川筋マスクの計算グリッド。合成解像度とは別に持つ。
@@ -599,7 +600,8 @@ inline bool DrawBlendRows(compositor::BlendParams& blend) {
     if (ui::PropertyCombo("種類", &mode, kMaskBlendModeLabels,
                           IM_ARRAYSIZE(kMaskBlendModeLabels), static_cast<int>(defaults.mode),
                           "乗算は絞り込み（両方が立つ所だけ）、加算は合算、"
-                          "小さいほう / 大きいほうは飽和させずに寄せる")) {
+                          "小さいほう / 大きいほうは飽和させずに寄せる。"
+                          "減算は前景から背景を引く（背景が立つ所を除く。0 で切る）")) {
         blend.mode = static_cast<compositor::MaskBlendMode>(mode);
         changed = true;
     }

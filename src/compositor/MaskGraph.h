@@ -81,6 +81,8 @@ enum class MaskBlendMode : uint32_t {
     Multiply = 1,
     Min = 2,
     Max = 3,
+    // 前景 − 背景。0 で切る。「A から B の所を除く」絞り込み。
+    Subtract = 4,
 };
 
 // 標高マスク。**メートルで指定する。** ハイト 0〜1 の全幅が標高差なので、
