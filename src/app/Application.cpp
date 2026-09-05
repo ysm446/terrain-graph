@@ -373,9 +373,16 @@ int Application::Run() {
         }
 
         // ブラシは前フレームの UV バッファを読むため、合成の評価より前に流す。
+        //
+        // **合成の評価が走っている間は流さない。** 評価はコンピュートキューで
+        // ペイントマスクを SRV として読んでいる。その最中にこちら（グラフィックス）で
+        // UAV へ遷移して書き込むと、別キューどうしで同じテクスチャを触ることになり、
+        // 読み取り結果が壊れる。積んだ操作は捨てず、評価が終わったフレームでまとめて流す
+        // （IsEvaluating はフェンスを見るので、終わった直後のフレームには通る）。
         const compositor::PaintContext paintContext =
             m_renderer.PrepareUvBufferForRead(commandList);
-        if (m_paintMasks.Process(m_device, m_pipelineCache, commandList, paintContext)) {
+        if (!m_renderer.Evaluator().IsEvaluating() &&
+            m_paintMasks.Process(m_device, m_pipelineCache, commandList, paintContext)) {
             // マスクの中身が変わったので合成をやり直す。
             m_graphStack.MarkDirty();
         }
