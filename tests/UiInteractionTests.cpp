@@ -197,6 +197,81 @@ SplitterResult RunSplitterDrag(float startHeight, float dragToY, float minHeight
     return result;
 }
 
+// --- 数値の直接入力（Enter で確定） -----------------------------------------
+//
+// Ctrl + クリックで入る直接入力は、打っている途中で値を書き戻さないこと。
+// 途中で書き戻すと、そのたびに合成が走って画面が切り替わる。
+
+struct TypingResult {
+    float value = 1.0f;
+    int changedCount = 0;        // PropertyFloat が true を返した回数
+    bool changedWhileTyping = false;
+    float valueWhileTyping = 1.0f;  // 打っている最中に見えた値
+};
+
+TypingResult RunSliderTyping(bool confirmWithEnter) {
+    TypingResult result;
+    ImGuiIO& io = ImGui::GetIO();
+    ImRect sliderRect;
+    bool typing = false;
+
+    // 1 フレーム描いて、スライダーの矩形を取る（テーブルの値列）。
+    const auto draw = [&]() {
+        BeginPanel();
+        ImGui::SetCursorScreenPos(kSourcePos);
+        if (tg::ui::BeginPropertyTable("rows")) {
+            if (tg::ui::PropertyFloat("値", &result.value, 0.0f, 100.0f, 1.0f, "テスト", "%.1f")) {
+                ++result.changedCount;
+                if (typing) {
+                    result.changedWhileTyping = true;
+                }
+            }
+            sliderRect = ImGui::TableGetCellBgRect(ImGui::GetCurrentTable(), 1);
+            tg::ui::EndPropertyTable();
+        }
+        ImGui::End();
+        ImGui::Render();
+    };
+
+    Frame(0.0f, 0.0f, false);
+    draw();
+    const ImVec2 target(sliderRect.Min.x + 20.0f, (sliderRect.Min.y + sliderRect.Max.y) * 0.5f);
+
+    // ホバー → Ctrl + クリック → 離す。これで直接入力に入る。
+    Frame(target.x, target.y, false);
+    draw();
+    io.AddKeyEvent(ImGuiMod_Ctrl, true);
+    Frame(target.x, target.y, true);
+    draw();
+    Frame(target.x, target.y, false);
+    draw();
+    io.AddKeyEvent(ImGuiMod_Ctrl, false);
+    Frame(target.x, target.y, false);
+    draw();
+
+    // 「4」「2」と打つ。打っている最中は値が動かないこと。
+    typing = true;
+    io.AddInputCharacter('4');
+    Frame(target.x, target.y, false);
+    draw();
+    io.AddInputCharacter('2');
+    Frame(target.x, target.y, false);
+    draw();
+    result.valueWhileTyping = result.value;
+    typing = false;
+
+    // Enter で確定（または Esc で取り消し）。
+    io.AddKeyEvent(confirmWithEnter ? ImGuiKey_Enter : ImGuiKey_Escape, true);
+    Frame(target.x, target.y, false);
+    draw();
+    io.AddKeyEvent(confirmWithEnter ? ImGuiKey_Enter : ImGuiKey_Escape, false);
+    Frame(target.x, target.y, false);
+    draw();
+    Frame(target.x, target.y, false);
+    draw();
+    return result;
+}
+
 }  // namespace
 
 void RunUiInteractionTests() {
@@ -230,6 +305,16 @@ void RunUiInteractionTests() {
     Check(hoverOn.tooltipShown, "マップ欄をホバーするとツールチップが出る");
     const Result hoverOff = RunHover(false);
     Check(!hoverOff.tooltipShown, "ツールチップを積まなければ出ない（対照）");
+
+    Section("数値の直接入力（Enter で確定）");
+    const TypingResult typed = RunSliderTyping(true);
+    Check(!typed.changedWhileTyping && typed.valueWhileTyping == 1.0f,
+          "打っている最中は値を書き戻さない");
+    Check(typed.changedCount == 1 && typed.value == 42.0f,
+          "Enter で 1 回だけ確定し、打った値になる");
+    const TypingResult cancelled = RunSliderTyping(false);
+    Check(cancelled.changedCount == 0 && cancelled.value == 1.0f,
+          "Esc で取り消すと元の値のまま");
 
     Section("区画の境界（ドラッグで高さを変える）");
     // 下へ 80 動かす。掴んだ位置から素直に広がること。

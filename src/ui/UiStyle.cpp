@@ -2,6 +2,8 @@
 
 #include "core/ColorSpace.h"
 
+#include <imgui_internal.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdarg>
@@ -9,6 +11,7 @@
 #include <array>
 #include <cstring>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace tg::ui {
@@ -528,6 +531,73 @@ void PropertyEnd() {
     ImGui::PopID();
 }
 
+namespace {
+
+// Ctrl + クリックの直接入力は、**Enter で確定するまで値を書き戻さない。**
+//
+// ImGui は打つたびに値を適用するので、そのままだと「1」「12」「120」と途中の値で
+// 合成が走り、打っている最中に画面が切り替わる。スライダーには値の写しを渡し、
+// 入力中はその写しを ImGui の状態置き場に控えておいて、入力が終わったフレーム
+// （Enter / フォーカスを外した）で 1 回だけ書き戻す。Esc で取り消したときは書き戻さない。
+// ドラッグやキーボードでの変更（直接入力ではない）は今までどおりその場で書き戻す。
+//
+// 直前に置いたスライダーについて呼ぶこと（GetItemID / IsItemDeactivatedAfterEdit を見る）。
+template <typename T>
+bool CommitDeferredInput(T* value, T shown, bool edited, T minValue, T maxValue) {
+    ImGuiStorage* storage = ImGui::GetStateStorage();
+    const ImGuiID id = ImGui::GetItemID();
+    const ImGuiID typingKey = id ^ 0x5F0F1A2Bu;
+    const ImGuiID valueKey = id ^ 0x2C6D9E45u;
+    const auto store = [&](T v) {
+        if constexpr (std::is_same_v<T, float>) {
+            storage->SetFloat(valueKey, v);
+        } else {
+            storage->SetInt(valueKey, v);
+        }
+    };
+    const auto load = [&](T fallback) -> T {
+        if constexpr (std::is_same_v<T, float>) {
+            return storage->GetFloat(valueKey, fallback);
+        } else {
+            return storage->GetInt(valueKey, fallback);
+        }
+    };
+
+    if (ImGui::TempInputIsActive(id)) {
+        if (!storage->GetBool(typingKey, false)) {
+            storage->SetBool(typingKey, true);
+            store(*value);
+        }
+        if (edited) {
+            store(shown);
+        }
+        return false;
+    }
+    if (storage->GetBool(typingKey, false)) {
+        // 直前まで打っていた。このフレームで入力が終わった。
+        storage->SetBool(typingKey, false);
+        // Esc は取り消し。ImGui は文字列を元へ戻すだけで「編集した」印は残るので、
+        // 押されたキーで見分ける。
+        if (!ImGui::IsItemDeactivatedAfterEdit() || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            return false;
+        }
+        const T typed = edited ? shown : load(*value);
+        const T next = std::clamp(typed, minValue, maxValue);
+        if (next == *value) {
+            return false;
+        }
+        *value = next;
+        return true;
+    }
+    if (edited) {
+        *value = shown;
+        return true;
+    }
+    return false;
+}
+
+}  // namespace
+
 bool PropertyFloat(const char* label, float* value, float minValue, float maxValue,
                    float defaultValue, const char* tooltip, const char* format,
                    ImGuiSliderFlags flags, float snapStep) {
@@ -536,13 +606,15 @@ bool PropertyFloat(const char* label, float* value, float minValue, float maxVal
 
     PropertyLabel(label, NumericTooltip(tooltip));
     ImGui::SetNextItemWidth(ValueWidth(kSliderMinWidth, kSliderMaxWidth));
-    bool changed = ImGui::SliderFloat("##value", value, minValue, maxValue, format, flags);
+    float shown = *value;
+    const bool edited = ImGui::SliderFloat("##value", &shown, minValue, maxValue, format, flags);
 
     // ドラッグ中だけ刻みへ吸着させる。マウスを押していないときの変更
     // （Ctrl + クリックの直接入力、キーボード）は丸めない。
-    if (changed && snapStep > 0.0f && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-        *value = std::clamp(std::round(*value / snapStep) * snapStep, minValue, maxValue);
+    if (edited && snapStep > 0.0f && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        shown = std::clamp(std::round(shown / snapStep) * snapStep, minValue, maxValue);
     }
+    bool changed = CommitDeferredInput(value, shown, edited, minValue, maxValue);
 
     if (ResetDot(NearlyEqual(*value, defaultValue), FormatFloat(defaultValue, format))) {
         *value = std::clamp(defaultValue, minValue, maxValue);
@@ -558,7 +630,9 @@ bool PropertyInt(const char* label, int* value, int minValue, int maxValue, int 
 
     PropertyLabel(label, NumericTooltip(tooltip));
     ImGui::SetNextItemWidth(ValueWidth(kSliderMinWidth, kSliderMaxWidth));
-    bool changed = ImGui::SliderInt("##value", value, minValue, maxValue);
+    int shown = *value;
+    const bool edited = ImGui::SliderInt("##value", &shown, minValue, maxValue);
+    bool changed = CommitDeferredInput(value, shown, edited, minValue, maxValue);
 
     if (ResetDot(*value == defaultValue, std::to_string(defaultValue))) {
         *value = std::clamp(defaultValue, minValue, maxValue);
