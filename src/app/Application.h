@@ -142,6 +142,17 @@ private:
     void DrawTextureContextMenu(compositor::TextureId target);
     // 削除の確認モーダルを開く。参照が無くても必ず通す。
     void RequestTextureRemove(compositor::TextureId id);
+    // --- リンク切れの解消 ---------------------------------------------------
+    // ファイルを選ぶダイアログを出し、選ばれたら再リンクを予約する
+    // （読み込みは GPU 待機を伴うのでフレームの外で行う）。
+    void RequestTextureRelink(compositor::TextureId id);
+    // フォルダを選び、そこにあるリンク切れのファイル名をまとめて繋ぎ直す予約をする。
+    // 素材のフォルダごと移した（別の PC で開いた）ときの入口。
+    void RequestTextureRelinkFolder();
+    // 予約した再リンクを処理する。繋ぎ直せたら、参照しているサムネイルと合成を作り直す。
+    void ProcessPendingTextureRelinks();
+    // マテリアルが参照しているテクスチャのどれかがリンク切れか。一覧の目印に使う。
+    bool MaterialHasMissingTexture(const compositor::MaterialAsset& asset) const;
     // テクスチャプレビューの窓（拡大表示 + 詳細）。
     // 一覧のサムネイルをダブルクリックするか、ウィンドウメニューから開く。
     void DrawTexturePreviewWindow();
@@ -494,6 +505,13 @@ private:
     std::filesystem::path m_pendingMaterialImport;
     compositor::MaterialAssetId m_pendingExportMaterial = compositor::kNoMaterialAsset;
     compositor::TextureId m_pendingTextureRemove = compositor::kNoTexture;
+    // 繋ぎ直しの予約（対象のテクスチャと新しいパス）。ダイアログで選んだものと、
+    // フォルダ指定で見つけたものの両方がここへ積まれる。
+    struct TextureRelink {
+        compositor::TextureId id = compositor::kNoTexture;
+        std::filesystem::path path;
+    };
+    std::vector<TextureRelink> m_pendingTextureRelinks;
     // 削除要求のあったマテリアル。一覧の描画中に消すと、描画側が erase 済みの
     // 要素を読んでしまうため、フレームの外で処理する。
     compositor::MaterialAssetId m_pendingMaterialRemove = compositor::kNoMaterialAsset;

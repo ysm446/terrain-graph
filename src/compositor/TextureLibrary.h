@@ -21,6 +21,14 @@ struct LibraryTexture {
     uint32_t srgbSrvIndex = kInvalidTextureIndex;
     // 16bit float（EXR 由来）かどうか。破棄のときに SRV を二重解放しないためにも使う。
     bool isFloat = false;
+    // **リンク切れ。** 読み込み元のファイルが見つからない（か読めない）まま
+    // プロジェクトから復元したもの。GPU リソースは持たず、パスと名前だけを保つ。
+    //
+    // 消してしまうと、マテリアルやノードからの参照が「なし」に落ちて、保存した時点で
+    // どのファイルを指していたかが失われる。残しておけば、ファイルを戻すか
+    // 別のファイルを指定して繋ぎ直せる（Relink）。
+    // シェーダへ渡すインデックスは無効値になるので、合成では「マップなし」と同じに扱われる。
+    bool missing = false;
     // 一覧に出すための表示用テクスチャ。**リニアなテクスチャのときだけ作る。**
     // ImGui は値をそのまま描くので、リニアのまま渡すと極端に暗く見える。
     rhi::GpuTexture preview;
@@ -65,6 +73,21 @@ public:
     TextureId Load(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                    const std::filesystem::path& path);
 
+    // 読めなかった画像を、パスと名前だけの「リンク切れ」として登録する。
+    // プロジェクトを開いたときに参照を失わないために使う。
+    // 同じパスがすでにあれば、読み直さずにその ID を返す。
+    TextureId AddMissing(const std::filesystem::path& path, const std::string& name);
+
+    // ID を保ったまま別のファイル（か同じファイル）を読み直す。**リンク切れの解消に使う。**
+    // 名前が元のファイル名のままなら、新しいファイル名に付け替える（付けた名前は残す）。
+    // 失敗したら false を返し、元の状態（リンク切れならリンク切れのまま）に戻す。
+    // 読み込みは GPU 待機を伴うため、フレームの外で呼ぶこと。
+    bool Relink(rhi::Device& device, rhi::PipelineCache& pipelineCache, TextureId id,
+                const std::filesystem::path& path);
+
+    // リンク切れの数。一覧に警告を出すかどうかを決めるために使う。
+    size_t MissingCount() const;
+
     void Remove(rhi::Device& device, TextureId id);
     // すべて破棄する。プロジェクトを開く前に呼ぶ。フレームの外で呼ぶこと。
     void Clear(rhi::Device& device);
@@ -81,6 +104,12 @@ public:
     TextureId FindByPath(const std::filesystem::path& path) const;
 
 private:
+    // 画像を読み込んで entry に GPU リソースを作る。ID と missing には触らない。
+    // 失敗したら確保したものをすべて返して false。
+    bool LoadInto(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                  const std::filesystem::path& path, LibraryTexture& entry);
+    // entry の GPU リソースとディスクリプタをすべて返す。リンク切れなら何もしない。
+    void ReleaseResources(rhi::Device& device, LibraryTexture& entry);
     bool GenerateMips(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                       rhi::GpuTexture& texture);
     // リニアなテクスチャを sRGB へ直した表示用テクスチャを作る。

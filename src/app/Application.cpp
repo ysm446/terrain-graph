@@ -350,6 +350,9 @@ int Application::Run() {
             }
         }
 
+        // リンク切れの繋ぎ直しも読み込みなので、同じくフレームの外で行う。
+        ProcessPendingTextureRelinks();
+
         // サムネイルの生成も GPU 待機を伴う。
         m_materialLibrary.ProcessPendingWork(m_device, m_pipelineCache, m_textureLibrary);
         // 天球のサムネイルは HDR ファイルの読み込みを伴うので、1 フレームに 1 枚だけ作る。

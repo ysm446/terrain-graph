@@ -196,8 +196,14 @@ bool MaterialLibrary::BuildThumbnail(rhi::Device& device, rhi::PipelineCache& pi
         desc.height = kThumbnailSize;
         desc.format = DXGI_FORMAT_R8G8B8A8_UNORM;
         desc.allowUnorderedAccess = true;
+        // 初回は Discard で初期化してから書く（TextureLibrary::BuildPreview と同じ理由）。
+        // D3D12MA の配置リソースは解放跡のメモリを再利用するため、初期化せずに
+        // UAV で書くと GPU ベースバリデーションが「レイアウト COMMON のまま書いた」と
+        // 報告する。Discard は直接キューでは RENDER_TARGET 状態を要求するので
+        // RTV フラグも付ける。
+        desc.allowRenderTarget = true;
         desc.createSrv = true;
-        desc.initialState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+        desc.initialState = D3D12_RESOURCE_STATE_COMMON;
         desc.debugName = L"MaterialThumbnail";
         if (!device.Allocator().CreateTexture2D(desc, asset.thumbnail)) {
             return false;
@@ -229,12 +235,13 @@ bool MaterialLibrary::BuildThumbnail(rhi::Device& device, rhi::PipelineCache& pi
     const bool executed = device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {
         PIXBeginEvent(commandList, PIX_COLOR(120, 200, 200), "MaterialThumbnail");
 
-        if (thumbnail.state != D3D12_RESOURCE_STATE_UNORDERED_ACCESS) {
-            const auto toUav = CD3DX12_RESOURCE_BARRIER::Transition(
-                thumbnail.resource.Get(), thumbnail.state,
-                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-            commandList->ResourceBarrier(1, &toUav);
+        // 作った直後（COMMON）は Discard で初期化してから UAV へ。
+        // 中身はディスパッチが全画素を書き潰すので、初期化は Discard で十分。
+        if (thumbnail.state == D3D12_RESOURCE_STATE_COMMON) {
+            rhi::TransitionIfNeeded(commandList, thumbnail, D3D12_RESOURCE_STATE_RENDER_TARGET);
+            commandList->DiscardResource(thumbnail.resource.Get(), nullptr);
         }
+        rhi::TransitionIfNeeded(commandList, thumbnail, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
         commandList->SetComputeRootSignature(pipelineCache.GlobalRootSignature());
         commandList->SetPipelineState(pipeline);
@@ -243,10 +250,8 @@ bool MaterialLibrary::BuildThumbnail(rhi::Device& device, rhi::PipelineCache& pi
         commandList->Dispatch(DispatchCount(kThumbnailSize), DispatchCount(kThumbnailSize), 1);
 
         // ImGui から SRV として読むので、ピクセルシェーダ可視の状態へ移す。
-        const auto toRead = CD3DX12_RESOURCE_BARRIER::Transition(
-            thumbnail.resource.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-        commandList->ResourceBarrier(1, &toRead);
+        rhi::TransitionIfNeeded(commandList, thumbnail,
+                                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
         PIXEndEvent(commandList);
     });
@@ -254,7 +259,6 @@ bool MaterialLibrary::BuildThumbnail(rhi::Device& device, rhi::PipelineCache& pi
     if (!executed) {
         return false;
     }
-    thumbnail.state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
     return true;
 }
 

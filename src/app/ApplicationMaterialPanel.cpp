@@ -60,6 +60,12 @@ void Application::DrawMaterialLibraryPanel() {
                     : static_cast<ImTextureID>(0);
             const ui::Thumbnail thumbnail =
                 ui::ThumbnailButton("##thumbnail", textureId, thumbnailSize, selected);
+            // 参照しているテクスチャにリンク切れがあれば、目印を重ねる。
+            // サムネイルは残りのマップで作れるので絵は出るが、それだけだと欠けに気づけない。
+            const bool hasMissing = MaterialHasMissingTexture(asset);
+            if (hasMissing) {
+                ui::MissingBadge(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+            }
             if (thumbnail.clicked) {
                 m_selectedMaterial = i;
             }
@@ -94,9 +100,10 @@ void Application::DrawMaterialLibraryPanel() {
             }
             // ドラッグ中は ImGui 自身がプレビューを出すので、ツールチップは重ねない。
             if (thumbnail.hovered && !dragging) {
-                ImGui::SetTooltip("%s\nダブルクリックで設定 / 右クリックでメニュー\n"
+                ImGui::SetTooltip("%s%s\nダブルクリックで設定 / 右クリックでメニュー\n"
                                   "Surface のマテリアル欄へドラッグで割り当て",
-                                  asset.name.c_str());
+                                  asset.name.c_str(),
+                                  hasMissing ? "\nリンク切れのテクスチャを参照している" : "");
             }
             ImGui::EndGroup();
 

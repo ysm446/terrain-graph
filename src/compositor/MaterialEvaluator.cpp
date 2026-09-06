@@ -3442,6 +3442,14 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 const uint64_t inputHash = maskOpHashOf(static_cast<size_t>(layer.mask.maskOp));
                 hash = HashBytes(hash, &inputHash, sizeof(inputHash));
             }
+            // テクスチャは ID が同じまま中身が変わることがある（リンク切れの繋ぎ直し）。
+            // ID ではなく、いま実際に読む SRV を混ぜて、繋ぎ直したら焼き直されるようにする。
+            {
+                const uint32_t heightSrv = textures.SrvIndex(layer.heightTexture.texture, false);
+                const uint32_t maskSrv = textures.SrvIndex(layer.mask.texture.texture, false);
+                hash = HashBytes(hash, &heightSrv, sizeof(heightSrv));
+                hash = HashBytes(hash, &maskSrv, sizeof(maskSrv));
+            }
             heightStateHash[layerCount] = hash;
             heightStateDone[layerCount] = 1;
             return hash;
@@ -3457,6 +3465,12 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             hash = HashMaskOpParams(hash, op);
             hash = HashBytes(hash, &scaleHash, sizeof(scaleHash));
             hash = HashBytes(hash, &m_maskOpResolutions[i], sizeof(uint32_t));
+            // 画像は ID が同じまま差し替わることがある（リンク切れの繋ぎ直し）。
+            // 実際に読む SRV を混ぜて、繋ぎ直したら焼き直されるようにする。
+            if (op.kind == MaskOpKind::Image) {
+                const uint32_t srv = textures.SrvIndex(op.map.texture, false);
+                hash = HashBytes(hash, &srv, sizeof(srv));
+            }
             // **下地の Height か、レイヤーの作業用テクスチャを読む op はここへ足すこと。**
             // 抜けると 2 つ壊れる。(1) 焼く位置が「ループ前」になり、出どころの
             // レイヤーが走る前の（＝前回の評価の）作業用テクスチャを読む。

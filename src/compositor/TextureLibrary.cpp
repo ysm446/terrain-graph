@@ -56,16 +56,25 @@ std::vector<uint8_t> ConvertToHalf4(const HdrImage& image) {
 
 void TextureLibrary::Destroy(rhi::Device& device) {
     for (LibraryTexture& entry : m_entries) {
-        ReleaseChannelViews(device, entry);
-        device.DeferRelease(entry.preview);
-        // float は sRGB 用の SRV を別に張っていない（linear と同じものを指す）。
-        // 二重解放しないよう、別に張ったときだけ返す。
-        if (!entry.isFloat && entry.srgbSrvIndex != kInvalidTextureIndex) {
-            device.DeferFree(device.SrvHeap(), device.SrvHeap().At(entry.srgbSrvIndex));
-        }
-        device.DeferRelease(entry.texture);
+        ReleaseResources(device, entry);
     }
     m_entries.clear();
+}
+
+void TextureLibrary::ReleaseResources(rhi::Device& device, LibraryTexture& entry) {
+    ReleaseChannelViews(device, entry);
+    device.DeferRelease(entry.preview);
+    // float は sRGB 用の SRV を別に張っていない（linear と同じものを指す）。
+    // 二重解放しないよう、別に張ったときだけ返す。
+    if (!entry.isFloat && entry.srgbSrvIndex != kInvalidTextureIndex &&
+        entry.srgbSrvIndex != entry.linearSrvIndex) {
+        device.DeferFree(device.SrvHeap(), device.SrvHeap().At(entry.srgbSrvIndex));
+    }
+    device.DeferRelease(entry.texture);
+    entry.texture = rhi::GpuTexture{};
+    entry.preview = rhi::GpuTexture{};
+    entry.linearSrvIndex = kInvalidTextureIndex;
+    entry.srgbSrvIndex = kInvalidTextureIndex;
 }
 
 const LibraryTexture* TextureLibrary::Find(TextureId id) const {
@@ -117,15 +126,59 @@ void TextureLibrary::Remove(rhi::Device& device, TextureId id) {
     if (it == m_entries.end()) {
         return;
     }
-
-    ReleaseChannelViews(device, *it);
-    device.DeferRelease(it->preview);
-    // Destroy と同じ理由で、別に張ったときだけ返す。
-    if (!it->isFloat && it->srgbSrvIndex != kInvalidTextureIndex) {
-        device.DeferFree(device.SrvHeap(), device.SrvHeap().At(it->srgbSrvIndex));
-    }
-    device.DeferRelease(it->texture);
+    ReleaseResources(device, *it);
     m_entries.erase(it);
+}
+
+size_t TextureLibrary::MissingCount() const {
+    return static_cast<size_t>(std::count_if(
+        m_entries.begin(), m_entries.end(), [](const LibraryTexture& e) { return e.missing; }));
+}
+
+TextureId TextureLibrary::AddMissing(const std::filesystem::path& path, const std::string& name) {
+    if (const TextureId existing = FindByPath(path); existing != kNoTexture) {
+        return existing;
+    }
+    LibraryTexture entry;
+    entry.path = path;
+    entry.name = name.empty() ? ToUtf8Display(path.filename()) : name;
+    entry.isFloat = IsExrPath(path);
+    entry.missing = true;
+    entry.id = m_nextId++;
+    m_entries.push_back(std::move(entry));
+    return m_entries.back().id;
+}
+
+bool TextureLibrary::Relink(rhi::Device& device, rhi::PipelineCache& pipelineCache, TextureId id,
+                            const std::filesystem::path& path) {
+    LibraryTexture* entry = FindMutable(id);
+    if (entry == nullptr || path.empty()) {
+        return false;
+    }
+    // 別の項目がすでに同じ画像を持っているなら、二重に持たない。
+    // 参照の付け替えは呼び出し側の仕事（ここでは断るだけ）。
+    if (const TextureId other = FindByPath(path); other != kNoTexture && other != id) {
+        TG_LOG_WARN("同じ画像はすでに読み込まれています: %s", ToUtf8Portable(path).c_str());
+        return false;
+    }
+
+    // 新しい中身を別の入れ物へ読み、成功したときだけ差し替える。
+    // 失敗しても元の項目（リンク切れならそのまま）を壊さない。
+    LibraryTexture loaded;
+    if (!LoadInto(device, pipelineCache, path, loaded)) {
+        TG_LOG_WARN("テクスチャを読み込めませんでした: %s", ToUtf8Portable(path).c_str());
+        return false;
+    }
+
+    // 名前は「元のファイル名のまま」なら新しいファイル名へ。付けた名前は残す。
+    const bool defaultName = entry->name == ToUtf8Display(entry->path.filename());
+    ReleaseResources(device, *entry);
+    loaded.id = entry->id;
+    loaded.name = defaultName ? ToUtf8Display(path.filename()) : entry->name;
+    loaded.missing = false;
+    *entry = std::move(loaded);
+    TG_LOG_INFO("テクスチャを繋ぎ直しました: %s", ToUtf8Portable(path).c_str());
+    return true;
 }
 
 TextureId TextureLibrary::Load(rhi::Device& device, rhi::PipelineCache& pipelineCache,
@@ -133,9 +186,25 @@ TextureId TextureLibrary::Load(rhi::Device& device, rhi::PipelineCache& pipeline
     // 同じ画像を二重に持たない。プロジェクトやマテリアルの読み込みでは、
     // 複数のマップが同じファイル（Megascans の _ORD など）を指すのが普通。
     if (const TextureId existing = FindByPath(path); existing != kNoTexture) {
+        // リンク切れとして登録してあった画像を改めて読むなら、その場で繋ぎ直す。
+        const LibraryTexture* entry = Find(existing);
+        if (entry != nullptr && entry->missing && !Relink(device, pipelineCache, existing, path)) {
+            return kNoTexture;
+        }
         return existing;
     }
 
+    LibraryTexture entry;
+    if (!LoadInto(device, pipelineCache, path, entry)) {
+        return kNoTexture;
+    }
+    entry.id = m_nextId++;
+    m_entries.push_back(std::move(entry));
+    return m_entries.back().id;
+}
+
+bool TextureLibrary::LoadInto(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                              const std::filesystem::path& path, LibraryTexture& entry) {
     // EXR は 16bit float のまま持つ。8bit へ落とすとハイトに階段が出る。
     // それ以外（PNG / TGA / JPG）は 8bit で読む。
     const bool isFloat = IsExrPath(path);
@@ -148,7 +217,7 @@ TextureId TextureLibrary::Load(rhi::Device& device, rhi::PipelineCache& pipeline
     if (isFloat) {
         HdrImage image;
         if (!LoadExrImage(path, image)) {
-            return kNoTexture;
+            return false;
         }
         width = image.width;
         height = image.height;
@@ -157,7 +226,7 @@ TextureId TextureLibrary::Load(rhi::Device& device, rhi::PipelineCache& pipeline
     } else {
         LdrImage image;
         if (!LoadLdrImage(path, image)) {
-            return kNoTexture;
+            return false;
         }
         width = image.width;
         height = image.height;
@@ -165,7 +234,6 @@ TextureId TextureLibrary::Load(rhi::Device& device, rhi::PipelineCache& pipeline
         sourceRowPitch = static_cast<size_t>(width) * 4;
     }
 
-    LibraryTexture entry;
     entry.path = path;
     // 名前は UTF-8 で持つ（string() の ACP 変換は日本語名を壊す）。
     entry.name = ToUtf8Display(path.filename());
@@ -173,14 +241,9 @@ TextureId TextureLibrary::Load(rhi::Device& device, rhi::PipelineCache& pipeline
 
     // ここから先の失敗では、確保済みのリソースとディスクリプタを必ず返す。
     // 返し漏れると、読み込み失敗を繰り返すだけで SRV ヒープが枯渇していく。
-    const auto failCleanup = [&]() -> TextureId {
-        if (!entry.isFloat && entry.srgbSrvIndex != kInvalidTextureIndex &&
-            entry.srgbSrvIndex != entry.linearSrvIndex) {
-            device.DeferFree(device.SrvHeap(), device.SrvHeap().At(entry.srgbSrvIndex));
-        }
-        device.DeferRelease(entry.preview);
-        device.DeferRelease(entry.texture);
-        return kNoTexture;
+    const auto failCleanup = [&]() {
+        ReleaseResources(device, entry);
+        return false;
     };
 
     rhi::TextureDesc desc;
@@ -203,7 +266,7 @@ TextureId TextureLibrary::Load(rhi::Device& device, rhi::PipelineCache& pipeline
     desc.initialState = D3D12_RESOURCE_STATE_COPY_DEST;
     desc.debugName = L"LibraryTexture";
     if (!device.Allocator().CreateTexture2D(desc, entry.texture)) {
-        return kNoTexture;
+        return false;
     }
     entry.linearSrvIndex = entry.texture.SrvIndex();
 
@@ -284,10 +347,8 @@ TextureId TextureLibrary::Load(rhi::Device& device, rhi::PipelineCache& pipeline
 
     // チャンネルを分けて見る SRV は、描く相手が決まってから張る。
     CreateChannelViews(device, entry);
-
-    entry.id = m_nextId++;
-    m_entries.push_back(std::move(entry));
-    return m_entries.back().id;
+    entry.missing = false;
+    return true;
 }
 
 // 1 チャンネルだけを灰色で読む SRV を 4 本張る。

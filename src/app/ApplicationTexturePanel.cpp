@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cwctype>
 #include <filesystem>
 #include <string>
 #include <system_error>
@@ -208,6 +209,13 @@ void Application::DrawTextureLibraryPanel() {
             //
             // ThumbnailButton は ID を持つアイテムとして置く。ImGui::Image() では
             // ID が無く、この後の BeginDragDropSource() がドラッグを始められない。
+            //
+            // リンク切れは絵が無いので、警告のタイルを先に敷いてから枠だけを重ねる
+            // （ThumbnailButton は ptr が 0 なら絵を描かない）。
+            if (entry.missing) {
+                const ImVec2 min = ImGui::GetCursorScreenPos();
+                ui::MissingThumbnail(min, ImVec2(min.x + thumbnailSize, min.y + thumbnailSize));
+            }
             const ui::Thumbnail thumbnail =
                 ui::ThumbnailButton("##thumbnail",
                                     static_cast<ImTextureID>(entry.PreviewHandle().ptr),
@@ -235,8 +243,14 @@ void Application::DrawTextureLibraryPanel() {
                 ImGui::TextUnformatted(entry.name.c_str());
                 ImGui::EndDragDropSource();
             } else if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s\nダブルクリックで詳細 / 右クリックでメニュー",
-                                  entry.name.c_str());
+                if (entry.missing) {
+                    ImGui::SetTooltip("%s\nリンク切れ: ファイルが見つかりません\n%s\n"
+                                      "右クリックのメニューから繋ぎ直す",
+                                      entry.name.c_str(), ToUtf8Display(entry.path).c_str());
+                } else {
+                    ImGui::SetTooltip("%s\nダブルクリックで詳細 / 右クリックでメニュー",
+                                      entry.name.c_str());
+                }
             }
             // 右クリックのメニュー。**押したサムネイルが対象。**
             if (ImGui::BeginPopupContextItem("##textureMenu")) {
@@ -246,7 +260,14 @@ void Application::DrawTextureLibraryPanel() {
             }
             // 名前を添える。素材名は末尾で見分けが付くことが多く、
             // ホバーしないと分からないと一覧として使いにくい。
+            // リンク切れは名前も警告色にして、離れて見ても分かるようにする。
+            if (entry.missing) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ui::WarnColor());
+            }
             ui::GridCaption(entry.name.c_str(), thumbnailSize);
+            if (entry.missing) {
+                ImGui::PopStyleColor();
+            }
             ImGui::EndGroup();
 
             ImGui::PopID();
@@ -299,9 +320,140 @@ void Application::DrawTextureContextMenu(compositor::TextureId target) {
         if (!exists && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
             ImGui::SetTooltip("読み込み元のファイルが見つかりません");
         }
+
+        if (entry->missing) {
+            // リンク切れの解消。**一覧から消さずに残してあるのは、ここへ来るため。**
+            ImGui::Separator();
+            ImGui::PushStyleColor(ImGuiCol_Text, ui::WarnColor());
+            ImGui::TextUnformatted("リンク切れ");
+            ImGui::PopStyleColor();
+            if (ImGui::MenuItem("ファイルを指定して繋ぎ直す…")) {
+                RequestTextureRelink(target);
+            }
+            // 元の場所にファイルが戻っていれば、選び直さずにそのまま読める。
+            ImGui::BeginDisabled(!exists);
+            if (ImGui::MenuItem("元の場所から読み直す")) {
+                m_pendingTextureRelinks.push_back({target, entry->path});
+            }
+            ImGui::EndDisabled();
+            if (!exists && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("元の場所にまだファイルがない\n%s",
+                                  ToUtf8Display(entry->path).c_str());
+            }
+        }
     }
-    if (entry != nullptr && ImGui::MenuItem("削除")) {
-        RequestTextureRemove(target);
+    // リンク切れが 1 つでもあれば、フォルダごと繋ぎ直す入口を出す。
+    // 素材のフォルダを丸ごと移したときに、1 枚ずつ選ばなくて済むようにする。
+    if (m_textureLibrary.MissingCount() > 0) {
+        if (entry == nullptr || !entry->missing) {
+            ImGui::Separator();
+        }
+        if (ImGui::MenuItem("フォルダを指定してまとめて繋ぎ直す…")) {
+            RequestTextureRelinkFolder();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("選んだフォルダ（とその下）から、リンク切れと同じ名前の"
+                              "ファイルを探して繋ぎ直す");
+        }
+    }
+    if (entry != nullptr) {
+        ImGui::Separator();
+        if (ImGui::MenuItem("削除")) {
+            RequestTextureRemove(target);
+        }
+    }
+}
+
+// ファイルを選ばせて、繋ぎ直しを予約する。読み込みはフレームの外で行う。
+void Application::RequestTextureRelink(compositor::TextureId id) {
+    const compositor::LibraryTexture* entry = m_textureLibrary.Find(id);
+    if (entry == nullptr) {
+        return;
+    }
+    const std::filesystem::path path =
+        ShowOpenFileDialog(L"繋ぎ直すファイルを選ぶ", ImageFileFilters());
+    if (!path.empty()) {
+        m_pendingTextureRelinks.push_back({id, path});
+    }
+}
+
+// フォルダを選ばせ、その下にリンク切れと同じファイル名があれば繋ぎ直しを予約する。
+//
+// 探すのはファイル名だけ。元のフォルダ構成まで一致させる必要はない
+// （素材をまとめて別のフォルダへ移すのが普通で、階層は変わりがち）。
+// 同じ名前が複数あるときは最初に見つかったものを使う。
+void Application::RequestTextureRelinkFolder() {
+    const std::filesystem::path folder = ShowPickFolderDialog(L"素材のフォルダを選ぶ");
+    if (folder.empty()) {
+        return;
+    }
+
+    // 先にフォルダの中身を 1 度だけ歩いて、名前 → パスの表を作る。
+    // リンク切れごとに歩き直すと、大きな素材集では待たされる。
+    std::vector<std::pair<std::wstring, std::filesystem::path>> files;
+    std::error_code error;
+    for (std::filesystem::recursive_directory_iterator it(
+             folder, std::filesystem::directory_options::skip_permission_denied, error),
+         end;
+         !error && it != end; it.increment(error)) {
+        if (it->is_regular_file(error)) {
+            std::wstring name = it->path().filename().wstring();
+            std::transform(name.begin(), name.end(), name.begin(), ::towlower);
+            files.emplace_back(std::move(name), it->path());
+        }
+    }
+
+    size_t matched = 0;
+    for (const compositor::LibraryTexture& entry : m_textureLibrary.Entries()) {
+        if (!entry.missing) {
+            continue;
+        }
+        std::wstring wanted = entry.path.filename().wstring();
+        std::transform(wanted.begin(), wanted.end(), wanted.begin(), ::towlower);
+        const auto found = std::find_if(files.begin(), files.end(),
+                                        [&](const auto& file) { return file.first == wanted; });
+        if (found != files.end()) {
+            m_pendingTextureRelinks.push_back({entry.id, found->second});
+            ++matched;
+        }
+    }
+    if (matched == 0) {
+        TG_LOG_WARN("フォルダにリンク切れと同じ名前のファイルがありません: %s",
+                    ToUtf8Portable(folder).c_str());
+    }
+}
+
+bool Application::MaterialHasMissingTexture(const compositor::MaterialAsset& asset) const {
+    const auto missing = [this](compositor::TextureId id) {
+        const compositor::LibraryTexture* entry = m_textureLibrary.Find(id);
+        return entry != nullptr && entry->missing;
+    };
+    return missing(asset.baseColor) || missing(asset.normal) || missing(asset.roughness.texture) ||
+           missing(asset.metallic.texture) || missing(asset.ambientOcclusion.texture) ||
+           missing(asset.height.texture);
+}
+
+// 予約した繋ぎ直しを処理する。**フレームの外で呼ぶこと**（読み込みは GPU 待機を伴う）。
+void Application::ProcessPendingTextureRelinks() {
+    if (m_pendingTextureRelinks.empty()) {
+        return;
+    }
+    std::vector<TextureRelink> relinks;
+    relinks.swap(m_pendingTextureRelinks);
+
+    bool relinked = false;
+    for (const TextureRelink& relink : relinks) {
+        if (m_textureLibrary.Relink(m_device, m_pipelineCache, relink.id, relink.path)) {
+            relinked = true;
+        }
+    }
+    if (relinked) {
+        // 繋ぎ直した画像を参照しているサムネイルと合成を作り直す。
+        // どれが参照しているかを追うより、全部を予約する方が確実で安い。
+        for (const compositor::MaterialAsset& asset : m_materialLibrary.Entries()) {
+            m_materialLibrary.MarkThumbnailDirty(asset.id);
+        }
+        m_graphStack.MarkDirty();
     }
 }
 
@@ -360,8 +512,16 @@ void Application::DrawTexturePreviewWindow() {
             std::max(std::min(ImGui::GetContentRegionAvail().x, paneSize), ui::Scaled(32.0f));
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
                              std::max(0.0f, (ImGui::GetContentRegionAvail().x - imageSize) * 0.5f));
-        ImGui::Image(static_cast<ImTextureID>(selected.ChannelHandle(m_previewChannel - 1).ptr),
-                     ImVec2(imageSize, imageSize));
+        if (selected.missing) {
+            // 絵が無い。ImGui::Image に 0 を渡すとアサートで落ちるので、警告のタイルを出す。
+            const ImVec2 min = ImGui::GetCursorScreenPos();
+            ui::MissingThumbnail(min, ImVec2(min.x + imageSize, min.y + imageSize));
+            ImGui::Dummy(ImVec2(imageSize, imageSize));
+        } else {
+            ImGui::Image(
+                static_cast<ImTextureID>(selected.ChannelHandle(m_previewChannel - 1).ptr),
+                ImVec2(imageSize, imageSize));
+        }
     }
     ImGui::EndChild();
 
@@ -388,9 +548,20 @@ void Application::DrawTexturePreviewWindow() {
                 mutableEntry->name = nameBuffer;
             }
         }
-        ui::PropertyValue("解像度", "%u x %u", selected.texture.width, selected.texture.height);
-        ui::PropertyValue("ミップ", "%u 段", selected.texture.mipLevels);
-        ui::PropertyValue("形式", "%s", TextureFormatLabel(selected));
+        if (selected.missing) {
+            // 中身が無いので解像度などは出せない。代わりに状態と、繋ぎ直す入口を置く。
+            ui::PropertyLabel("状態", "読み込み元のファイルが見つからない。"
+                                      "参照は保ってあるので、繋ぎ直せば元どおりになる");
+            ImGui::PushStyleColor(ImGuiCol_Text, ui::WarnColor());
+            ImGui::TextUnformatted("リンク切れ");
+            ImGui::PopStyleColor();
+            ui::PropertyEnd();
+        } else {
+            ui::PropertyValue("解像度", "%u x %u", selected.texture.width,
+                              selected.texture.height);
+            ui::PropertyValue("ミップ", "%u 段", selected.texture.mipLevels);
+            ui::PropertyValue("形式", "%s", TextureFormatLabel(selected));
+        }
         ui::PropertyValue("参照", "%zu か所", CountTextureUsers(selected.id));
 
         ui::PropertyLabel("場所", "プロジェクトにはここへの相対パスを記録する");
@@ -400,6 +571,14 @@ void Application::DrawTexturePreviewWindow() {
             ImGui::SetTooltip("%s", ToUtf8Display(selected.path).c_str());
         }
         ui::PropertyEnd();
+
+        if (selected.missing) {
+            ui::PropertyLabelEmpty("relink");
+            if (ui::Button("繋ぎ直す…", ui::kWideButtonWidth)) {
+                RequestTextureRelink(selected.id);
+            }
+            ui::PropertyEnd();
+        }
         ui::EndPropertyTable();
     }
     ui::HintText("一覧のサムネイルをマテリアルのマップ欄へドラッグすると割り当てられる");

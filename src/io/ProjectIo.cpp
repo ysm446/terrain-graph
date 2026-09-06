@@ -1882,20 +1882,24 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
             if (index <= 0 || texturePath.empty()) {
                 continue;
             }
-            const compositor::TextureId id =
-                refs.textures.Load(device, pipelineCache, texturePath);
+            const std::string name = ReadString(node, "name");
+            compositor::TextureId id = refs.textures.Load(device, pipelineCache, texturePath);
             if (id == compositor::kNoTexture) {
-                // 画像が見つからなくても、残りは読み込む。割り当ては「なし」になる。
-                TG_LOG_WARN("テクスチャを読み込めませんでした: %s",
+                // 画像が見つからなくても、残りは読み込む。**参照は捨てない。**
+                // パスと名前だけの「リンク切れ」として登録し、マテリアルやノードの
+                // 割り当てはそこへ繋いでおく。消してしまうと、次に保存した時点で
+                // どのファイルを指していたかが失われ、繋ぎ直せなくなる。
+                TG_LOG_WARN("テクスチャが見つかりません（リンク切れ）: %s",
                             ToUtf8Portable(texturePath).c_str());
-                continue;
+                id = refs.textures.AddMissing(texturePath, name);
+                if (id == compositor::kNoTexture) {
+                    continue;
+                }
             }
             textureIds[index] = id;
             if (compositor::LibraryTexture* entry = refs.textures.FindMutable(id);
-                entry != nullptr) {
-                if (const std::string name = ReadString(node, "name"); !name.empty()) {
-                    entry->name = name;
-                }
+                entry != nullptr && !name.empty()) {
+                entry->name = name;
             }
         }
     }
@@ -2119,7 +2123,10 @@ compositor::MaterialAssetId LoadMaterial(const std::filesystem::path& path, rhi:
         }
         const compositor::TextureId id = textures.Load(device, pipelineCache, texturePath);
         if (id == compositor::kNoTexture) {
-            TG_LOG_WARN("テクスチャを読み込めませんでした: %s", ToUtf8Portable(texturePath).c_str());
+            // プロジェクトと同じく、見つからない画像はリンク切れとして残す。
+            TG_LOG_WARN("テクスチャが見つかりません（リンク切れ）: %s",
+                        ToUtf8Portable(texturePath).c_str());
+            return textures.AddMissing(texturePath, std::string());
         }
         return id;
     };

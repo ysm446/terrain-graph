@@ -143,6 +143,18 @@ Thumbnail ThumbnailButton(const char* id, ImTextureID texture, float size, bool 
 // texture の ptr が 0 なら中身の代わりに枠だけを描く。
 void ThumbnailImage(ImTextureID texture, float size);
 
+// リンク切れのサムネイル。**画像が無いので、絵の代わりに警告の三角を描く。**
+//
+// 読み込み元のファイルが見つからないテクスチャは一覧から消さず、
+// この見た目で残す（繋ぎ直すための入口を保つ）。タイルは枠の色で塗り、
+// 警告色の枠と三角（字形の無い記号なので図形で描く）を載せる。
+// ThumbnailButton / ThumbnailImage と同じ矩形を渡す。
+void MissingThumbnail(const ImVec2& min, const ImVec2& max);
+
+// リンク切れの目印。**絵のある**サムネイルの右下に小さく重ねる。
+// 参照先の一部が欠けているマテリアルのように、絵は出せるが不完全なものに使う。
+void MissingBadge(const ImVec2& min, const ImVec2& max);
+
 // 一覧の行に置く単色のサムネイル。テクスチャを持たないもの
 // （マテリアルを割り当てていないレイヤーなど）の代わりに使う。
 void ColorSwatch(const ImVec4& color, float size);

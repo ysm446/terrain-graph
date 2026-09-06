@@ -372,22 +372,39 @@ inline bool DrawMaterialSlotRow(const char* label, compositor::MaterialAssetId& 
 inline bool DrawTextureCombo(const char* id, compositor::TextureId& slot,
                       const compositor::TextureLibrary& library, float width) {
     std::string preview = "なし";
+    bool missing = false;
     if (const compositor::LibraryTexture* current = library.Find(slot); current != nullptr) {
         preview = current->name;
+        missing = current->missing;
     }
 
     bool changed = false;
     ImGui::SetNextItemWidth(width);
-    if (ImGui::BeginCombo(id, preview.c_str())) {
+    // リンク切れの画像を指しているときは、名前を警告色で出す。
+    // 割り当ては保ってあるので「なし」とは違い、繋ぎ直せば戻る。
+    if (missing) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::WarnColor());
+    }
+    const bool open = ImGui::BeginCombo(id, preview.c_str());
+    if (missing) {
+        ImGui::PopStyleColor();
+    }
+    if (open) {
         if (ImGui::Selectable("なし", slot == compositor::kNoTexture)) {
             slot = compositor::kNoTexture;
             changed = true;
         }
         for (const compositor::LibraryTexture& entry : library.Entries()) {
             ImGui::PushID(static_cast<int>(entry.id));
+            if (entry.missing) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ui::WarnColor());
+            }
             if (ImGui::Selectable(entry.name.c_str(), slot == entry.id)) {
                 slot = entry.id;
                 changed = true;
+            }
+            if (entry.missing) {
+                ImGui::PopStyleColor();
             }
             ImGui::PopID();
         }
@@ -415,8 +432,14 @@ inline bool DrawTextureCombo(const char* id, compositor::TextureId& slot,
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort) &&
         ImGui::GetDragDropPayload() == nullptr) {
         if (const compositor::LibraryTexture* current = library.Find(slot); current != nullptr) {
-            ImGui::SetTooltip("%s\n%u x %u", current->name.c_str(), current->texture.width,
-                              current->texture.height);
+            if (current->missing) {
+                ImGui::SetTooltip("%s\nリンク切れ: ファイルが見つかりません。"
+                                  "テクスチャ一覧の右クリックから繋ぎ直す",
+                                  current->name.c_str());
+            } else {
+                ImGui::SetTooltip("%s\n%u x %u", current->name.c_str(), current->texture.width,
+                                  current->texture.height);
+            }
         } else {
             ImGui::SetTooltip("なし\nテクスチャ一覧からドラッグしても割り当てられる");
         }

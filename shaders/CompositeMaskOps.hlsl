@@ -147,6 +147,13 @@ void CsImage(uint3 dispatchThreadId : SV_DispatchThreadID)
     if (OutsideMask(texel)) { return; }
 
     RWTexture2D<float> output = ResourceDescriptorHeap[g_op.indices.x];
+    // 画像がリンク切れ（ファイルが見つからないまま参照だけ残っている）だと SRV が無い。
+    // 繋がっていないマスクと同じく全面 1 にして、繋ぎ直すまで合成を止めない。
+    if (g_op.indices.w == kInvalidTextureIndex)
+    {
+        output[texel] = ApplyInvert(1.0f);
+        return;
+    }
     Texture2D<float4> source = ResourceDescriptorHeap[g_op.indices.w];
 
     const float4 sampled = source.SampleLevel(g_samplerLinearClamp, MaskUv(texel), 0.0f);
