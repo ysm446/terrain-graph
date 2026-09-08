@@ -655,7 +655,7 @@ void Application::PushStatus(LogLevel level, const char* text) {
     m_status.valid = true;
 }
 
-// 画面下端のステータスバー。左に直近の通知、右にいま何を持っているか。
+// 画面下端のステータスバー。操作モード・評価中の状態と直近の通知を表示する。
 //
 // メニューバーと同じ仕組み（BeginViewportSideBar）で作業領域を狭めるので、
 // **ドックスペースより前に呼ぶこと。** 後だとドックがバーの下へはみ出す。
@@ -711,27 +711,6 @@ void Application::DrawStatusBar() {
                         ImGui::SetTooltip("%s", m_status.text.c_str());
                     }
                 }
-            }
-
-            // --- 右: いま何を持っているか -----------------------------------
-            const std::string project =
-                m_projectPath.empty() ? std::string("未保存のプロジェクト")
-                                      : ToUtf8Display(m_projectPath.filename());
-            char summary[320] = {};
-            std::snprintf(summary, sizeof(summary),
-                          "%s   ノード %zu / マテリアル %zu / テクスチャ %zu   合成 %u^2   "
-                          "%.0f FPS",
-                          project.c_str(), m_graph.Nodes().size(),
-                          m_materialLibrary.Entries().size(), m_textureLibrary.Entries().size(),
-                          m_renderer.MaterialResolution(), ImGui::GetIO().Framerate);
-
-            const float summaryWidth = ImGui::CalcTextSize(summary).x;
-            const float right = ImGui::GetWindowWidth() - summaryWidth -
-                                ImGui::GetStyle().ItemSpacing.x * 2.0f;
-            // 通知が長いときは重ねない。右寄せできる余白があるときだけ出す。
-            if (right > ImGui::GetCursorPosX()) {
-                ImGui::SetCursorPosX(right);
-                ImGui::TextDisabled("%s", summary);
             }
 
             ImGui::EndMenuBar();
@@ -937,6 +916,13 @@ void Application::DrawInfoWindow() {
 
     if (ui::BeginPropertyTable("infoRows")) {
         ui::PropertyValue("バージョン", "%s", TG_APP_VERSION);
+        const std::string project = m_projectPath.empty()
+                                        ? std::string("未保存のプロジェクト")
+                                        : ToUtf8Display(m_projectPath.filename());
+        ui::PropertyValue("プロジェクト", "%s", project.c_str());
+        ui::PropertyValue("ノード", "%zu 個", m_graph.Nodes().size());
+        ui::PropertyValue("マテリアル", "%zu 個", m_materialLibrary.Entries().size());
+        ui::PropertyValue("テクスチャ", "%zu 枚", m_textureLibrary.Entries().size());
         ui::PropertyValue("フレーム", "%.1f FPS (%.3f ms)", io.Framerate,
                           1000.0f / io.Framerate);
         ui::PropertyValue("バックバッファ", "%u x %u", m_device.Width(), m_device.Height());

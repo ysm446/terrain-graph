@@ -180,7 +180,7 @@ private:
     void DrawRecentMenu();
     // saveAs が偽でも、まだ保存先が決まっていなければダイアログを出す。
     void RequestSaveProject(bool saveAs);
-    // 画面下端のステータスバー。直近の通知と、いま何を持っているかを出す。
+    // 画面下端のステータスバー。操作モード・評価中の状態と直近の通知を出す。
     // ドックスペースより前に呼ぶこと（作業領域をバーのぶん狭める）。
     void DrawStatusBar();
     // ログをステータスバーへ流す。Initialize で SetLogSink に登録する。
