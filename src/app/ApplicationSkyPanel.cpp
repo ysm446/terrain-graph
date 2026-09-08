@@ -77,6 +77,9 @@ void Application::DrawSkyLibraryPanel() {
                 DrawSkyContextMenu(asset.id);
                 ImGui::EndPopup();
             }
+            // 名前を添える（マテリアル / テクスチャの一覧と同じ）。
+            // 空の絵は似たものが多く、ホバーしないと分からないと一覧として使いにくい。
+            ui::GridCaption(asset.name.c_str(), thumbnailSize);
             ImGui::EndGroup();
 
             ImGui::PopID();

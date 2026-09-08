@@ -105,6 +105,16 @@ void Application::DrawMaterialLibraryPanel() {
                                   asset.name.c_str(),
                                   hasMissing ? "\nリンク切れのテクスチャを参照している" : "");
             }
+            // 名前を添える（テクスチャ一覧と同じ）。球の絵だけでは似た素材を
+            // 見分けにくく、ホバーしないと分からないと一覧として使いにくい。
+            // リンク切れを含むものは名前も警告色にして、離れて見ても分かるようにする。
+            if (hasMissing) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ui::WarnColor());
+            }
+            ui::GridCaption(asset.name.c_str(), thumbnailSize);
+            if (hasMissing) {
+                ImGui::PopStyleColor();
+            }
             ImGui::EndGroup();
 
             ImGui::PopID();
