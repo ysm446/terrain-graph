@@ -1,6 +1,7 @@
 #include "compositor/MaterialEvaluator.h"
 
 #include "core/Log.h"
+#include "compositor/MultiScaleBreaching.h"
 
 #include <pix3.h>
 
@@ -232,6 +233,29 @@ uint64_t HashHeightState(uint64_t seed, const MaterialLayer& layer) {
     hash = HashBytes(hash, &layer.snow, sizeof(layer.snow));
     hash = HashBytes(hash, &layer.river, sizeof(layer.river));
     hash = HashBytes(hash, &layer.droplet, sizeof(layer.droplet));
+    // bool の後ろのパディングをハッシュに含めない。
+    hash = HashBytes(hash, &layer.multiScaleErosion.resolution, sizeof(layer.multiScaleErosion.resolution));
+    hash = HashBytes(hash, &layer.multiScaleErosion.baseResolution, sizeof(layer.multiScaleErosion.baseResolution));
+    hash = HashBytes(hash, &layer.multiScaleErosion.erosionIterations, sizeof(layer.multiScaleErosion.erosionIterations));
+    hash = HashBytes(hash, &layer.multiScaleErosion.thermalIterations, sizeof(layer.multiScaleErosion.thermalIterations));
+    hash = HashBytes(hash, &layer.multiScaleErosion.depositionIterations, sizeof(layer.multiScaleErosion.depositionIterations));
+    hash = HashBytes(hash, &layer.multiScaleErosion.coarseDepthMeters, sizeof(layer.multiScaleErosion.coarseDepthMeters));
+    hash = HashBytes(hash, &layer.multiScaleErosion.detailDecay, sizeof(layer.multiScaleErosion.detailDecay));
+    hash = HashBytes(hash, &layer.multiScaleErosion.flowExponent, sizeof(layer.multiScaleErosion.flowExponent));
+    hash = HashBytes(hash, &layer.multiScaleErosion.slopeExponent, sizeof(layer.multiScaleErosion.slopeExponent));
+    hash = HashBytes(hash, &layer.multiScaleErosion.drainageExponent, sizeof(layer.multiScaleErosion.drainageExponent));
+    hash = HashBytes(hash, &layer.multiScaleErosion.maximumSlope, sizeof(layer.multiScaleErosion.maximumSlope));
+    hash = HashBytes(hash, &layer.multiScaleErosion.maximumDrainageArea, sizeof(layer.multiScaleErosion.maximumDrainageArea));
+    hash = HashBytes(hash, &layer.multiScaleErosion.talusDegrees, sizeof(layer.multiScaleErosion.talusDegrees));
+    hash = HashBytes(hash, &layer.multiScaleErosion.thermalStepMeters, sizeof(layer.multiScaleErosion.thermalStepMeters));
+    hash = HashBytes(hash, &layer.multiScaleErosion.sedimentCreation, sizeof(layer.multiScaleErosion.sedimentCreation));
+    hash = HashBytes(hash, &layer.multiScaleErosion.depositionRate, sizeof(layer.multiScaleErosion.depositionRate));
+    hash = HashBytes(hash, &layer.multiScaleErosion.sedimentHeightScale, sizeof(layer.multiScaleErosion.sedimentHeightScale));
+    hash = HashBytes(hash, &layer.multiScaleErosion.ridgeRestoration, sizeof(layer.multiScaleErosion.ridgeRestoration));
+    hash = HashBytes(hash, &layer.multiScaleErosion.ridgeAreaThreshold, sizeof(layer.multiScaleErosion.ridgeAreaThreshold));
+    hash = HashBytes(hash, &layer.multiScaleErosion.restorationIterations, sizeof(layer.multiScaleErosion.restorationIterations));
+    hash = HashBytes(hash, &layer.multiScaleErosion.drainageCorrection, sizeof(layer.multiScaleErosion.drainageCorrection));
+    hash = HashBytes(hash, &layer.multiScaleErosion.breachingRadius, sizeof(layer.multiScaleErosion.breachingRadius));
     hash = HashBytes(hash, &layer.scatter, sizeof(layer.scatter));
     hash = HashBytes(hash, &layer.maskOnly, sizeof(layer.maskOnly));
     // マスクは「どこに載せるか」を決めるので Height にも効く。
@@ -552,6 +576,17 @@ void MaterialEvaluator::Destroy(rhi::Device& device) {
     ReleaseSnowResources(device);
     ReleaseRiverResources(device);
     ReleaseDropletResources(device);
+    for (auto& texture : m_multiScaleErosion.state) {
+        device.DeferRelease(texture);
+    }
+    m_multiScaleErosion.resolution = 0;
+    for (auto& cache : m_breachCaches) {
+        device.DeferRelease(cache.readback);
+        device.DeferRelease(cache.upload);
+    }
+    m_breachCaches.clear();
+    m_postprocessRevision = 0;
+    m_postprocessPending = false;
     ReleaseScatterResources(device);
     for (rhi::GpuTexture& texture : m_maskOpTextures) {
         device.DeferRelease(texture);
@@ -785,7 +820,7 @@ bool MaterialEvaluator::Resize(rhi::Device& device, uint32_t resolution) {
 }
 
 bool MaterialEvaluator::IsEvaluating() const {
-    return m_asyncInFlight && m_compute.IsBusy();
+    return m_postprocessPending || (m_asyncInFlight && m_compute.IsBusy());
 }
 
 void MaterialEvaluator::WaitForEvaluation() {
@@ -2617,6 +2652,244 @@ bool MaterialEvaluator::ApplyRiverMask(rhi::Device& device, rhi::PipelineCache& 
 // 読むのは合成の Height（この時点までの合成結果）だけ。
 
 // 水滴侵食の定数。シェーダ側の DropletConstants と一致させること。
+// 論文の E / T / D を各解像度で順番に走らせる。作業領域は GPU に常駐する。
+bool MaterialEvaluator::ApplyMultiScaleErosion(
+    rhi::Device& device, rhi::PipelineCache& pipelineCache,
+    ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
+    const MaterialStack& stack, uint32_t maskIndex) {
+    const auto& params = layer.multiScaleErosion;
+    const int erosionIterations = std::clamp(params.erosionIterations, 0, 4000);
+    const int thermalIterations = std::clamp(params.thermalIterations, 0, 1000);
+    const int depositionIterations = std::clamp(params.depositionIterations, 0, 2000);
+    if ((erosionIterations == 0 || params.coarseDepthMeters <= 0.0f) &&
+        (thermalIterations == 0 || params.thermalStepMeters <= 0.0f) &&
+        (depositionIterations == 0 || params.sedimentCreation <= 0.0f ||
+         params.depositionRate <= 0.0f || params.sedimentHeightScale <= 0.0f) &&
+        !params.drainageCorrection) {
+        return true;
+    }
+    const uint32_t resolution = std::clamp(params.resolution, 64u, 2048u);
+    const uint32_t firstResolution = std::clamp(params.baseResolution, 16u, resolution);
+    // 同じコマンドリスト内でサイズの違うノードが続いても、先行ノードが参照する
+    // テクスチャを解放しない。列全体の最大サイズを最初に確保し、領域だけ切り替える。
+    uint32_t allocationResolution = resolution;
+    for (const auto& candidate : stack.Layers()) {
+        if (candidate.enabled && candidate.kind == LayerKind::MultiScaleErosion)
+            allocationResolution = std::max(allocationResolution,
+                std::clamp(candidate.multiScaleErosion.resolution, 64u, 2048u));
+    }
+    if (m_multiScaleErosion.resolution != allocationResolution) {
+        for (auto& texture : m_multiScaleErosion.state) device.DeferRelease(texture);
+        m_multiScaleErosion.resolution = 0;
+        for (auto& texture : m_multiScaleErosion.state) {
+            if (!CreateChannelTexture(device, allocationResolution, DXGI_FORMAT_R32G32B32A32_FLOAT,
+                                      L"MultiScaleErosionState", texture)) {
+                return false;
+            }
+        }
+        m_multiScaleErosion.resolution = allocationResolution;
+    }
+    const wchar_t* entries[] = {L"CsInit", L"CsUpsample", L"CsErode", L"CsThermal",
+                                L"CsDeposit", L"CsResolve", L"CsRouting", L"CsFlowReset",
+                                L"CsFlowOnly", L"CsRetargetInit", L"CsRetargetStep", L"CsRetargetApply"};
+    ID3D12PipelineState* passes[12] = {};
+    for (size_t i = 0; i < std::size(entries); ++i) {
+        passes[i] = pipelineCache.GetCompute(L"CompositeMultiScaleErosion.hlsl", entries[i]);
+        if (passes[i] == nullptr) return false;
+    }
+    auto* normals = pipelineCache.GetCompute(L"CompositeBlur.hlsl", L"CsNormalFromHeight");
+    if (normals == nullptr) return false;
+
+    struct Constants {
+        uint32_t indices[4];
+        uint32_t sizes[4];
+        float erosion[4];
+        float limits[4];
+        float sediment[4];
+        float conversion[4];
+    };
+    static_assert(sizeof(Constants) == 96);
+    Constants constants = {};
+    constants.indices[2] = m_textures.height.SrvIndex();
+    constants.indices[3] = m_textures.height.UavIndex();
+    constants.sizes[2] = m_resolution;
+    constants.sizes[3] = maskIndex;
+    constants.erosion[2] = std::clamp(params.flowExponent, 1.0f, 8.0f);
+    constants.erosion[3] = std::clamp(params.slopeExponent, 0.1f, 4.0f);
+    constants.limits[0] = std::clamp(params.drainageExponent, 0.1f, 2.0f);
+    constants.limits[1] = std::clamp(params.maximumSlope, 0.01f, 10.0f);
+    constants.limits[2] = std::clamp(params.maximumDrainageArea, 1.0f, 1000000.0f);
+    constants.limits[3] = std::max(stack.HeightMeters(), 0.001f);
+    constants.sediment[0] = std::tan(XMConvertToRadians(std::clamp(params.talusDegrees, 1.0f, 85.0f)));
+    constants.sediment[2] = std::clamp(params.sedimentCreation, 0.0f, 1.0f);
+    constants.sediment[3] = std::clamp(params.depositionRate, 0.0f, 1.0f);
+    constants.conversion[0] = std::clamp(params.sedimentHeightScale, 0.0f, 1.0f);
+    constants.conversion[1] = std::clamp(params.ridgeRestoration, 0.0f, 1.0f);
+    constants.conversion[2] = std::clamp(params.ridgeAreaThreshold, 1.01f, 8.0f);
+    const auto upload = [&](const Constants& value) {
+        const auto allocation = AllocateConstants(device, sizeof(value));
+        if (!allocation.IsValid()) return D3D12_GPU_VIRTUAL_ADDRESS(0);
+        std::memcpy(allocation.cpu, &value, sizeof(value));
+        return allocation.gpuAddress;
+    };
+    const auto run = [&](int pass, D3D12_GPU_VIRTUAL_ADDRESS address, uint32_t n) {
+        commandList->SetComputeRootConstantBufferView(1, address);
+        commandList->SetPipelineState(passes[pass]);
+        commandList->Dispatch(DispatchCount(n), DispatchCount(n), 1);
+        const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+        commandList->ResourceBarrier(1, &barrier);
+    };
+    PIXBeginEvent(commandList, PIX_COLOR(90, 150, 200), "MultiScaleErosion");
+    TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    for (auto& texture : m_multiScaleErosion.state)
+        TransitionIfNeeded(commandList, texture, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+    const size_t layerIndex = static_cast<size_t>(&layer - stack.Layers().data());
+    auto& cache = m_breachCaches[layerIndex];
+    // 次の評価でフェンス完了後に回収する。記録中のコマンドリストを CPU で待たない。
+    if (params.drainageCorrection && cache.readback.IsValid() && !cache.ready) {
+        if (cache.fence->GetCompletedValue() < cache.fenceValue) {
+            m_postprocessPending = true;
+            TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            PIXEndEvent(commandList);
+            return true;
+        }
+        void* mapped = nullptr;
+        const D3D12_RANGE readRange = {0, static_cast<SIZE_T>(cache.bytes)};
+        if (!TG_CHECK_HR(cache.readback.resource->Map(0, &readRange, &mapped))) {
+            PIXEndEvent(commandList); return false;
+        }
+        std::vector<float> heights(size_t(resolution) * resolution);
+        for (uint32_t y = 0; y < resolution; ++y) {
+            const auto* row = reinterpret_cast<const float*>(static_cast<const uint8_t*>(mapped) +
+                size_t(y) * cache.footprint.Footprint.RowPitch);
+            for (uint32_t x = 0; x < resolution; ++x) heights[size_t(y) * resolution + x] = row[4 * x];
+        }
+        const D3D12_RANGE empty = {0, 0};
+        cache.readback.resource->Unmap(0, &empty);
+        if (!MultiScaleBreach(heights, resolution, static_cast<uint32_t>(std::clamp(params.breachingRadius, 1, 64))) ||
+            !device.Allocator().CreateUploadBuffer(cache.bytes, L"MultiScaleBreachUpload", cache.upload)) {
+            PIXEndEvent(commandList); return false;
+        }
+        if (!TG_CHECK_HR(cache.upload.resource->Map(0, &empty, &mapped))) {
+            PIXEndEvent(commandList); return false;
+        }
+        std::memset(mapped, 0, static_cast<size_t>(cache.bytes));
+        for (uint32_t y = 0; y < resolution; ++y) {
+            auto* row = reinterpret_cast<float*>(static_cast<uint8_t*>(mapped) +
+                size_t(y) * cache.footprint.Footprint.RowPitch);
+            for (uint32_t x = 0; x < resolution; ++x) row[4 * x] = heights[size_t(y) * resolution + x];
+        }
+        cache.upload.resource->Unmap(0, nullptr);
+        cache.ready = true;
+        device.DeferRelease(cache.readback);
+    }
+    if (params.drainageCorrection && cache.ready) {
+        auto& target = m_multiScaleErosion.state[0];
+        TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_COPY_DEST);
+        const CD3DX12_TEXTURE_COPY_LOCATION src(cache.upload.resource.Get(), cache.footprint);
+        const CD3DX12_TEXTURE_COPY_LOCATION dst(target.resource.Get(), 0);
+        commandList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+        TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        constants.sizes[0] = resolution;
+        constants.indices[0] = target.UavIndex();
+        const auto address = upload(constants);
+        if (address != 0 && !layer.maskOnly) {
+            run(5, address, m_resolution);
+            RebuildNormalsFromHeight(device, normals, commandList, stack);
+        }
+        PIXEndEvent(commandList);
+        return address != 0;
+    }
+
+    uint32_t previous = firstResolution;
+    uint32_t current = 0;
+    float depth = std::clamp(params.coarseDepthMeters, 0.0f, 1000.0f);
+    bool complete = true;
+    for (uint32_t n = firstResolution;; n = std::min(n * 2u, resolution)) {
+        constants.sizes[0] = n;
+        constants.sizes[1] = previous;
+        constants.erosion[0] = std::max(stack.SizeMeters(), 0.001f) / static_cast<float>(n);
+        constants.erosion[1] = depth / static_cast<float>(std::max(erosionIterations, 1));
+        // 固定量の移動がセルを飛び越えないよう、セル寸法で上限を付ける。
+        constants.sediment[1] = std::clamp(params.thermalStepMeters, 0.0f,
+                                         constants.erosion[0] * 0.01f);
+        D3D12_GPU_VIRTUAL_ADDRESS addresses[2] = {};
+        for (uint32_t i = 0; i < 2; ++i) {
+            constants.indices[0] = m_multiScaleErosion.state[i].UavIndex();
+            constants.indices[1] = m_multiScaleErosion.state[1u-i].UavIndex();
+            addresses[i] = upload(constants);
+        }
+        if (addresses[0] == 0 || addresses[1] == 0) { complete = false; break; }
+        run(n == firstResolution ? 0 : 1, addresses[current], n);
+        current = 1u-current;
+        const int counts[] = {erosionIterations, thermalIterations, depositionIterations};
+        for (int stage = 0; stage < 3; ++stage) {
+            for (int i = 0; i < counts[stage]; ++i) {
+                if (stage != 1) {
+                    run(6, addresses[current], n);
+                    current = 1u-current;
+                }
+                run(stage+2, addresses[current], n);
+                current = 1u-current;
+            }
+        }
+        if (n == resolution) break;
+        previous = n;
+        depth *= std::clamp(params.detailDecay, 0.0f, 1.0f);
+    }
+    if (complete && constants.conversion[1] > 0.0f) {
+        D3D12_GPU_VIRTUAL_ADDRESS addresses[2] = {};
+        for (uint32_t i = 0; i < 2; ++i) {
+            constants.indices[0] = m_multiScaleErosion.state[i].UavIndex();
+            constants.indices[1] = m_multiScaleErosion.state[1u-i].UavIndex();
+            addresses[i] = upload(constants);
+        }
+        if (addresses[0] == 0 || addresses[1] == 0) complete = false;
+        else {
+            const auto step = [&](int pass) { run(pass, addresses[current], resolution); current = 1u-current; };
+            step(7); // 集水面積を最終地形で再計算（地形は固定）。
+            step(6);
+            // 閾値が最大 8 セルなので、尾根の判定に遠方の完全収束は不要。
+            for (int i = 0; i < 32; ++i) step(8);
+            step(9);
+            for (int i = 0; i < std::clamp(params.restorationIterations, 1, 2000); ++i) step(10);
+            step(11);
+        }
+    }
+    if (complete && params.drainageCorrection && !layer.maskOnly) {
+        auto& source = m_multiScaleErosion.state[current];
+        const auto desc = source.resource->GetDesc();
+        device.GetDevice()->GetCopyableFootprints(&desc, 0, 1, 0, &cache.footprint, nullptr, nullptr, &cache.bytes);
+        if (!device.Allocator().CreateReadbackBuffer(cache.bytes, L"MultiScaleBreachReadback", cache.readback))
+            complete = false;
+        else {
+            TransitionIfNeeded(commandList, source, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            const CD3DX12_TEXTURE_COPY_LOCATION src(source.resource.Get(), 0);
+            const CD3DX12_TEXTURE_COPY_LOCATION dst(cache.readback.resource.Get(), cache.footprint);
+            commandList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+            TransitionIfNeeded(commandList, source, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            cache.fence = m_recordingAsync ? m_compute.Fence() : device.FrameFence();
+            cache.fenceValue = m_recordingAsync ? m_compute.SubmittedValue() + 1 : device.NextFenceValue();
+            m_postprocessPending = true;
+        }
+    }
+    TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    if (complete && !layer.maskOnly) {
+        constants.indices[0] = m_multiScaleErosion.state[current].UavIndex();
+        const auto address = upload(constants);
+        if (address != 0) {
+            run(5, address, m_resolution);
+            RebuildNormalsFromHeight(device, normals, commandList, stack);
+        } else {
+            complete = false;
+        }
+    }
+    PIXEndEvent(commandList);
+    return complete;
+}
+
 struct DropletConstants {
     uint32_t indices0[4];
     uint32_t indices1[4];
@@ -3344,6 +3617,16 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                                  const MaterialLibrary& materials,
                                  const PaintMaskStore& paintMasks,
                                  const std::vector<TileRect>& tiles) {
+    m_postprocessPending = false;
+    if (m_postprocessRevision != stack.Revision()) {
+        for (auto& cache : m_breachCaches) {
+            device.DeferRelease(cache.readback);
+            device.DeferRelease(cache.upload);
+        }
+        m_breachCaches.clear();
+        m_breachCaches.resize(stack.Layers().size());
+        m_postprocessRevision = stack.Revision();
+    }
     if (!m_textures.IsValid() || tiles.empty()) {
         return false;
     }
@@ -3583,6 +3866,13 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                                 inputMaskIndex)) {
                     complete = false;
                 }
+                ++m_evaluatedLayerCount;
+            } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::MultiScaleErosion) {
+                if (!ApplyMultiScaleErosion(device, pipelineCache, commandList, layer, stack,
+                                           inputMaskIndex)) {
+                    complete = false;
+                }
+                if (m_postprocessPending) break;
                 ++m_evaluatedLayerCount;
             } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::Droplet) {
                 if (!ApplyDroplet(device, pipelineCache, commandList, layer, stack,
@@ -3909,7 +4199,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
     }
 
     // プレビュー用の評価器だけ、Height を CPU へ写す（パスの編集に使う）。
-    if (m_asynchronous && complete) {
+    if (m_asynchronous && complete && !m_postprocessPending) {
         RecordHeightfieldReadback(device, pipelineCache, commandList);
     }
 
@@ -3939,17 +4229,20 @@ void MaterialEvaluator::Update(rhi::Device& device, rhi::PipelineCache& pipeline
     // --- 回収 -----------------------------------------------------------------
     if (m_asyncInFlight && !m_compute.IsBusy()) {
         m_asyncInFlight = false;
-        // 裏側に新しい結果が入った。表側と入れ替える。古い表側は次の評価先になる。
-        // まだ描画中のフレームが古い表側を読んでいるかもしれないが、次の評価は
-        // 投入時のフレームを GPU 側で待ってから走るので、書き込みが追い越すことはない。
-        std::swap(m_textures, m_frontTextures);
-        std::swap(m_maskOpThumbnails, m_frontMaskOpThumbnails);
-        std::swap(m_layerThumbnails, m_frontLayerThumbnails);
-        m_evaluatedRevision = m_asyncRevision;
-        m_hasResult = true;
-        TransitionForDisplay(commandList, m_frontTextures);
-        TransitionThumbnailsForDisplay(commandList, m_frontMaskOpThumbnails);
-        TransitionThumbnailsForDisplay(commandList, m_frontLayerThumbnails);
+        // 後処理や後続ノードが残る間は前回の完成結果を表示し続ける。
+        if (!m_postprocessPending) {
+            // 裏側に新しい結果が入った。表側と入れ替える。古い表側は次の評価先になる。
+            // まだ描画中のフレームが古い表側を読んでいるかもしれないが、次の評価は
+            // 投入時のフレームを GPU 側で待ってから走るので、書き込みが追い越すことはない。
+            std::swap(m_textures, m_frontTextures);
+            std::swap(m_maskOpThumbnails, m_frontMaskOpThumbnails);
+            std::swap(m_layerThumbnails, m_frontLayerThumbnails);
+            m_evaluatedRevision = m_asyncRevision;
+            m_hasResult = true;
+            TransitionForDisplay(commandList, m_frontTextures);
+            TransitionThumbnailsForDisplay(commandList, m_frontMaskOpThumbnails);
+            TransitionThumbnailsForDisplay(commandList, m_frontLayerThumbnails);
+        }
     }
 
     if (m_evaluatedRevision == stack.Revision() || m_asyncInFlight) {
@@ -3968,7 +4261,7 @@ void MaterialEvaluator::Update(rhi::Device& device, rhi::PipelineCache& pipeline
         // 次のフレームで評価し直す（タイルの継ぎ目が残ったまま確定するのを防ぐ）。
         if (Evaluate(device, pipelineCache, commandList, stack, textures, materials, paintMasks,
                      tiles)) {
-            m_evaluatedRevision = stack.Revision();
+            m_evaluatedRevision = m_postprocessPending ? 0 : stack.Revision();
             if (m_frontTextures.IsValid()) {
                 std::swap(m_textures, m_frontTextures);
                 std::swap(m_maskOpThumbnails, m_frontMaskOpThumbnails);
@@ -4029,6 +4322,8 @@ void MaterialEvaluator::Update(rhi::Device& device, rhi::PipelineCache& pipeline
     m_recordingAsync = false;
     if (!recorded) {
         m_compute.Abort();
+        m_postprocessRevision = 0;
+        m_postprocessPending = false;
         if (m_maskOpHashes.size() == savedMaskOpHashes.size()) {
             m_maskOpHashes = savedMaskOpHashes;
         } else {
@@ -4037,6 +4332,8 @@ void MaterialEvaluator::Update(rhi::Device& device, rhi::PipelineCache& pipeline
         return;
     }
     if (!m_compute.Submit(device)) {
+        m_postprocessRevision = 0;
+        m_postprocessPending = false;
         std::fill(m_maskOpHashes.begin(), m_maskOpHashes.end(), 0ull);
         return;
     }

@@ -141,7 +141,7 @@ constexpr std::array<PinDefinition, 1> kSourceNodePins = {{
     {PinKind::Output, ValueType::Material, "Result"},
 }};
 
-constexpr std::array<NodeDefinition, 24> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 25> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -152,6 +152,7 @@ constexpr std::array<NodeDefinition, 24> kNodeDefinitions = {{
     {NodeKind::Snow, "snow", "Snow", kDepositPins},
     {NodeKind::River, "river", "River", kRiverPins},
     {NodeKind::Droplet, "droplet", "Droplet Erosion", kDropletPins},
+    {NodeKind::MultiScaleErosion, "multiScaleErosion", "Multi-Scale Erosion", kBlurPins},
     {NodeKind::Scatter, "scatter", "Scatter", kScatterPins},
     {NodeKind::MaskImage, "maskImage", "Mask Image", kMaskSourcePins},
     {NodeKind::MaskNoise, "maskNoise", "Mask Noise", kMaskSourcePins},
@@ -193,7 +194,7 @@ const NodeDefinition* FindNodeDefinitionByName(std::string_view name) {
 }
 
 bool IsLayerNodeKind(NodeKind kind) {
-    return kind == NodeKind::Surface || kind == NodeKind::Shape || kind == NodeKind::Liquid ||
+    return kind == NodeKind::MultiScaleErosion || kind == NodeKind::Surface || kind == NodeKind::Shape || kind == NodeKind::Liquid ||
            kind == NodeKind::Heightmap || kind == NodeKind::Blur ||
            kind == NodeKind::Sediment || kind == NodeKind::Crumbling ||
            kind == NodeKind::Snow || kind == NodeKind::River || kind == NodeKind::Droplet ||
@@ -233,6 +234,8 @@ bool IsPreviewableNodeKind(NodeKind kind) {
 
 compositor::LayerKind LayerKindFor(NodeKind kind) {
     switch (kind) {
+        case NodeKind::MultiScaleErosion:
+            return compositor::LayerKind::MultiScaleErosion;
         // ハイトマップは合成規則としてはシェイプ（高さへの加算）。
         // 先頭に置く前提なので、加算がそのまま地形になる。
         case NodeKind::Heightmap:

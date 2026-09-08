@@ -1609,15 +1609,21 @@ bool Application::BakePathRouteTerrain(const graph::Node& node) {
     std::vector<compositor::TileRect> tiles(1);
     tiles[0].width = kResolution;
     tiles[0].height = kResolution;
+    // ここで毎回作る stack は改版番号を使い回すため、別の地形のキャッシュを切る。
+    m_pathRouteEvaluator.Invalidate();
     bool evaluated = false;
-    const bool submitted = m_device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {
-        PIXBeginEvent(commandList, PIX_COLOR(120, 200, 240), "PathRouteTerrain");
-        evaluated = m_pathRouteEvaluator.Evaluate(m_device, m_pipelineCache, commandList, stack,
-                                                  m_textureLibrary, m_materialLibrary,
-                                                  m_paintMasks, tiles);
-        PIXEndEvent(commandList);
-    });
-    if (!submitted || !evaluated ||
+    bool submitted = true;
+    for (size_t attempt = 0; attempt <= stack.Layers().size(); ++attempt) {
+        submitted = m_device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {
+            PIXBeginEvent(commandList, PIX_COLOR(120, 200, 240), "PathRouteTerrain");
+            evaluated = m_pathRouteEvaluator.Evaluate(m_device, m_pipelineCache, commandList, stack,
+                                                      m_textureLibrary, m_materialLibrary,
+                                                      m_paintMasks, tiles);
+            PIXEndEvent(commandList);
+        });
+        if (!submitted || !evaluated || !m_pathRouteEvaluator.HasPendingPostprocess()) break;
+    }
+    if (!submitted || !evaluated || m_pathRouteEvaluator.HasPendingPostprocess() ||
         !m_pathRouteEvaluator.ReadbackHeight(m_device, cache.heightfield)) {
         TG_LOG_WARN("経路探索用の地形を焼けませんでした");
         cache.valid = false;

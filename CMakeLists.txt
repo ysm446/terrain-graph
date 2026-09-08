@@ -109,6 +109,8 @@ set(tg_sources
     src/compositor/MaterialLayer.h
     src/compositor/MaterialLibrary.cpp
     src/compositor/MaterialLibrary.h
+    src/compositor/MultiScaleBreaching.cpp
+    src/compositor/MultiScaleBreaching.h
     src/compositor/MaterialStack.cpp
     src/compositor/MaterialStack.h
     src/compositor/PaintMask.cpp
@@ -268,12 +270,15 @@ add_executable(terrain_graph_tests
     tests/TestSupport.h
     tests/FrameLimiterTests.cpp
     tests/NodeGraphTests.cpp
+    tests/MultiScaleBreachingTests.cpp
     tests/UiInteractionTests.cpp
     tests/UndoHistoryTests.cpp
     src/app/UndoHistory.cpp
     src/app/UndoHistory.h
     src/core/FrameLimiter.cpp
     src/core/FrameLimiter.h
+    src/compositor/MultiScaleBreaching.cpp
+    src/compositor/MultiScaleBreaching.h
     src/compositor/MaterialStack.cpp
     src/compositor/MaterialStack.h
     src/graph/NodeGraph.cpp

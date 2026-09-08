@@ -93,6 +93,7 @@ enum class NodeKind : uint32_t {
     // マスクをぼかす。境界をなだらかにして、乗せたものを馴染ませる
     // （terrain-editor の Mask Blur）。
     MaskBlur = 22,
+    MultiScaleErosion = 24,
 };
 
 struct PinDefinition {

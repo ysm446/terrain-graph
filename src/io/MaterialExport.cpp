@@ -242,13 +242,19 @@ uint32_t ExportMaterialTextures(rhi::Device& device, rhi::PipelineCache& pipelin
     }
 
     bool evaluated = false;
-    const bool submitted = device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {
-        PIXBeginEvent(commandList, PIX_COLOR(200, 160, 80), "ExportEvaluate");
-        evaluated = evaluator.Evaluate(device, pipelineCache, commandList, refs.stack,
-                                       refs.textures, refs.materials, refs.paintMasks, tiles);
-        PIXEndEvent(commandList);
-    });
-    if (!submitted || !evaluated) {
+    bool submitted = true;
+    // CPU 排水路補正の読み戻しがあるときは、完了したノードを再利用して続きを評価する。
+    // 各ノードにつき読み戻し 1 回と最終評価 1 回まで。
+    for (size_t attempt = 0; attempt <= refs.stack.Layers().size(); ++attempt) {
+        submitted = device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {
+            PIXBeginEvent(commandList, PIX_COLOR(200, 160, 80), "ExportEvaluate");
+            evaluated = evaluator.Evaluate(device, pipelineCache, commandList, refs.stack,
+                                           refs.textures, refs.materials, refs.paintMasks, tiles);
+            PIXEndEvent(commandList);
+        });
+        if (!submitted || !evaluated || !evaluator.HasPendingPostprocess()) break;
+    }
+    if (!submitted || !evaluated || evaluator.HasPendingPostprocess()) {
         TG_LOG_ERROR("書き出し用の合成に失敗しました");
         device.DeferRelease(packed);
         evaluator.Destroy(device);

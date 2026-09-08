@@ -44,6 +44,7 @@ void RunNodeGraphTests() {
     constexpr std::array kOperationKinds = {
         NodeKind::Blur,      NodeKind::Sediment, NodeKind::Crumbling,
         NodeKind::Snow,      NodeKind::River,    NodeKind::Droplet,
+        NodeKind::MultiScaleErosion,
     };
     for (const NodeKind kind : kOperationKinds) {
         NodeGraph graph;

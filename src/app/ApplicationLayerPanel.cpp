@@ -399,6 +399,101 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
     }
 
     // 水滴侵食も合成レイヤーではなく「水滴で削って運んで積む加工」。マスク入力は持たない。
+    if (layer.kind == compositor::LayerKind::MultiScaleErosion) {
+        auto& params = layer.multiScaleErosion;
+        const compositor::MaterialLayer::MultiScaleErosionSettings mseDefaults;
+        ui::SectionHeader("基本");
+        if (ui::BeginPropertyTable("multiScaleBasicRows")) {
+            char name[128] = {};
+            std::snprintf(name, sizeof(name), "%s", layer.name.c_str());
+            if (ui::PropertyTextInput("名前", name, sizeof(name))) {
+                layer.name = name;
+                changed = true;
+            }
+            ui::EndPropertyTable();
+        }
+        ui::SectionHeader("段階と侵食量");
+        if (ui::BeginPropertyTable("multiScaleErosionRows")) {
+            const uint32_t resolutions[] = {64, 128, 256, 512, 1024, 2048};
+            const char* labels[] = {"64", "128", "256", "512", "1024", "2048"};
+            const auto resolutionRow = [&](const char* label, uint32_t& value, uint32_t defaultValue) {
+                int selected = 0, defaultIndex = 0;
+                for (int i = 0; i < IM_ARRAYSIZE(resolutions); ++i) {
+                    if (resolutions[i] == value) selected = i;
+                    if (resolutions[i] == defaultValue) defaultIndex = i;
+                }
+                if (ui::PropertyCombo(label, &selected, labels, IM_ARRAYSIZE(labels), defaultIndex,
+                                      "粗い解像度から倍々に上げて計算する。合成解像度とは独立")) {
+                    value = resolutions[selected];
+                    changed = true;
+                }
+            };
+            resolutionRow("開始解像度", params.baseResolution, mseDefaults.baseResolution);
+            resolutionRow("最終解像度", params.resolution, mseDefaults.resolution);
+            params.baseResolution = std::min(params.baseResolution, params.resolution);
+            changed |= ui::PropertyFloat("最大侵食深さ", &params.coarseDepthMeters, 0.0f, 100.0f,
+                mseDefaults.coarseDepthMeters, "最も粗い段階で河川侵食が削れる深さの上限。崩落と堆積は別", "%.2f m");
+            changed |= ui::PropertyFloat("細部の強さ", &params.detailDecay, 0.0f, 1.0f,
+                mseDefaults.detailDecay, "解像度を倍にするたび、最大侵食深さに掛ける割合", "%.2f");
+            changed |= ui::PropertyInt("侵食の反復", &params.erosionIterations, 0, 4000,
+                mseDefaults.erosionIterations, "各段階の反復数。深さの上限は変えず、水系を育てる。0 で河川侵食なし");
+            ui::EndPropertyTable();
+        }
+        ui::SectionHeader("水の流れ");
+        if (ui::BeginPropertyTable("multiScaleFlowRows")) {
+            changed |= ui::PropertyFloat("流れの集中", &params.flowExponent, 1.0f, 8.0f,
+                mseDefaults.flowExponent, "大きいほど急な方向へ集中する。論文の既定は 1.3", "%.2f");
+            changed |= ui::PropertyFloat("傾斜の指数", &params.slopeExponent, 0.1f, 4.0f,
+                mseDefaults.slopeExponent, "侵食の強さに対する傾斜の効き方", "%.2f");
+            changed |= ui::PropertyFloat("集水の指数", &params.drainageExponent, 0.1f, 2.0f,
+                mseDefaults.drainageExponent, "侵食の強さに対する集水面積の効き方", "%.2f");
+            changed |= ui::PropertyFloat("傾斜の上限", &params.maximumSlope, 0.01f, 10.0f,
+                mseDefaults.maximumSlope, "これより急でも河川侵食は強くならない。1 で 45 度", "%.2f");
+            changed |= ui::PropertyFloat("集水の上限", &params.maximumDrainageArea, 1.0f, 1000000.0f,
+                mseDefaults.maximumDrainageArea,
+                "これより水が集まっても河川侵食は強くならない。開始時のセル面積"
+                "（地形の一辺 ÷ 開始解像度）の二乗より小さいと、尾根と谷の差が出なくなる",
+                "%.0f m²",
+                ImGuiSliderFlags_Logarithmic);
+            ui::EndPropertyTable();
+        }
+        ui::SectionHeader("斜面と堆積");
+        if (ui::BeginPropertyTable("multiScaleSedimentRows")) {
+            changed |= ui::PropertyFloat("安息角", &params.talusDegrees, 1.0f, 85.0f,
+                mseDefaults.talusDegrees, "これより急な隣接斜面から土砂を下へ動かす", "%.1f 度");
+            changed |= ui::PropertyFloat("土砂の移動量", &params.thermalStepMeters, 0.0f, 0.1f,
+                mseDefaults.thermalStepMeters, "1 反復で隣接セルへ移す高さ。セル幅の 1% を上限にする", "%.4f m");
+            changed |= ui::PropertyInt("斜面の反復", &params.thermalIterations, 0, 1000,
+                mseDefaults.thermalIterations, "河川侵食の後に斜面を安定させる回数。0 で無効");
+            changed |= ui::PropertyFloat("土砂の供給", &params.sedimentCreation, 0.0f, 1.0f,
+                mseDefaults.sedimentCreation, "水の侵食力に比例して供給する浮遊土砂の係数", "%.3f");
+            changed |= ui::PropertyFloat("堆積率", &params.depositionRate, 0.0f, 1.0f,
+                mseDefaults.depositionRate, "運べる量を超えた浮遊土砂が積もる割合", "%.3f");
+            changed |= ui::PropertyFloat("堆積の高さ", &params.sedimentHeightScale, 0.0f, 0.1f,
+                mseDefaults.sedimentHeightScale, "堆積する土砂の内部量を高さに換算する倍率。大きいほど厚く積もる",
+                "%.4f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyInt("堆積の反復", &params.depositionIterations, 0, 2000,
+                mseDefaults.depositionIterations, "斜面安定化の後に土砂を流して積む回数。0 で無効");
+            ui::EndPropertyTable();
+        }
+        ui::SectionHeader("地形の仕上げ");
+        if (ui::BeginPropertyTable("multiScaleFinishingRows")) {
+            changed |= ui::PropertyFloat("稜線の高さ復元", &params.ridgeRestoration, 0.0f, 1.0f,
+                mseDefaults.ridgeRestoration, "尾根・山頂を元の高さへ戻す強さ。0 で無効", "%.2f");
+            changed |= ui::PropertyFloat("尾根の集水閾値", &params.ridgeAreaThreshold, 1.01f, 8.0f,
+                mseDefaults.ridgeAreaThreshold, "集水面積がこのセル数未満の点を復元する。大きいほど対象が広がる", "%.2f セル");
+            changed |= ui::PropertyInt("復元の反復", &params.restorationIterations, 1, 2000,
+                mseDefaults.restorationIterations, "尾根の標高差を周囲へ滑らかに広げる回数");
+            changed |= ui::PropertyBool("排水路補正", &params.drainageCorrection,
+                mseDefaults.drainageCorrection, "窪地から外周へ排水路を掘る。湖を残したい場合は無効にする");
+            changed |= ui::PropertyInt("排水路の補正幅", &params.breachingRadius, 1, 64,
+                mseDefaults.breachingRadius, "最終グリッドのセル数。広い幅から半分ずつ狭める半径。1 で細い流路のみ");
+            ui::EndPropertyTable();
+        }
+        ui::HintText("粗い地形から段階的に谷筋を作る。開始解像度より細かな元の凹凸は再構成される。"
+                     "Mask は結果を適用する範囲（白で適用）。");
+        return changed;
+    }
     if (layer.kind == compositor::LayerKind::Droplet) {
         const compositor::MaterialLayer::DropletSettings dropletDefaults;
         ui::SectionHeader("基本");

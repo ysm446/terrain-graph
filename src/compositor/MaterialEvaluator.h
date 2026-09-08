@@ -98,9 +98,23 @@ struct RiverResources {
     bool IsValid() const { return surface.IsValid(); }
 };
 
-// 水滴侵食（Droplet）の作業リソース。堆積と同じく**合成解像度とは別のグリッド**で回し、
-// 差分を合成解像度へ足し戻す。マルチグリッドのレベルは同じテクスチャの左上 n×n を使う。
-// 作業ハイトは m 単位。差分 / 流量 / 堆積は固定小数点の int（InterlockedAdd で積む）。
+// 論文に基づく多段侵食。レベルはテクスチャの左上 n×n を使う。
+struct MultiScaleBreachCache {
+    rhi::GpuBuffer readback;
+    rhi::GpuBuffer upload;
+    rhi::ComPtr<ID3D12Fence> fence;
+    uint64_t fenceValue = 0;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+    uint64_t bytes = 0;
+    bool ready = false;
+};
+
+struct MultiScaleErosionResources {
+    rhi::GpuTexture state[2]; // RGBA32: 高さ(m)、集水面積(m²)、浮遊土砂、流出重みの分母
+    uint32_t resolution = 0;
+};
+
+// 水滴侵食の作業リソース。差分 / 流量 / 堆積は固定小数点の int で積む。
 struct DropletResources {
     rhi::GpuTexture heights;     // R32_FLOAT 作業ハイト（m）
     rhi::GpuTexture source;      // R32_FLOAT レベル間の拡大元
@@ -189,8 +203,10 @@ public:
     // ループはレイヤー優先。1 レイヤーぶんを全タイルで終えてから次へ進む。
     // 中間結果由来のマスクは近傍を参照するため、タイル優先で回すと
     // まだ評価されていない隣のタイルを読んでしまい、境界に継ぎ目が出る。
-    // 全レイヤー・全タイルを記録できたら true。false のときは結果が半端なので、
-    // 呼び出し側は「評価済み」にせず、次のフレームで評価し直すこと。
+    // 記録できたら true。CPU 後処理の途中は HasPendingPostprocess() が true になる。
+    // その場合は記録したリストを投入し、完了後に同じスタックで再評価すること。
+    // false は記録失敗。投入せず再試行すること。別のスタックを同じ改版番号で
+    // 渡す呼び出し側は、事前に Invalidate() して後処理キャッシュを破棄する。
     bool Evaluate(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                   ID3D12GraphicsCommandList* commandList, const MaterialStack& stack,
                   const TextureLibrary& textures, const MaterialLibrary& materials,
@@ -210,6 +226,7 @@ public:
 
     // 非同期の評価が走っている最中か（UI の「評価中」表示と、開発用の撮影の待ちに使う）。
     bool IsEvaluating() const;
+    bool HasPendingPostprocess() const { return m_postprocessPending; }
     // 合成の Height の CPU 側の写し（プレビュー用。書き出し用の評価器は持たない）。
     // 評価が 1 度も終わっていなければ IsValid() が偽。
     const CpuHeightfield& Heightfield() const { return m_heightfield; }
@@ -259,7 +276,7 @@ public:
     uint64_t EvaluatedRevision() const { return m_evaluatedRevision; }
 
     // 変更を検知していなくても次回に評価し直す。
-    void Invalidate() { m_evaluatedRevision = 0; }
+    void Invalidate() { m_evaluatedRevision = 0; m_postprocessRevision = 0; }
 
 private:
     // ブラーレイヤー 1 枚ぶん。Height を分離型ガウスでならし、
@@ -407,6 +424,14 @@ private:
     SnowResources m_snow;
     RiverResources m_river;
     DropletResources m_droplet;
+    MultiScaleErosionResources m_multiScaleErosion;
+    std::vector<MultiScaleBreachCache> m_breachCaches;
+    uint64_t m_postprocessRevision = 0;
+    bool m_postprocessPending = false;
+    bool ApplyMultiScaleErosion(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                               ID3D12GraphicsCommandList* commandList,
+                               const MaterialLayer& layer, const MaterialStack& stack,
+                               uint32_t maskIndex);
     ScatterResources m_scatter;
     // マスクの op の結果。添字は MaskProgram と同じ。
     std::vector<rhi::GpuTexture> m_maskOpTextures;

@@ -1,7 +1,7 @@
 # plan — 実装方針と優先順位
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-04 17:30
+更新日時: 2026-09-09 03:46
 
 進捗管理の入口。実装の詳細な設計は [docs/design/](../design/) に置く。
 
@@ -156,7 +156,8 @@ tests/
 
 terrain-editor の売りのノード群。まず CPU 実装をそのまま移植する。
 
-- Multi-Scale Erosion / Fluvial Erosion / Mask Fluvial。
+- **Multi-Scale Erosion（侵食本体は 2026-09-09 実装）。** terrain-editor を参照せず、SIGGRAPH 2024 の論文から GPU 実装。高さ復元 / 多段 breaching も追加済み。
+- Fluvial Erosion / Mask Fluvial。
 - **Droplet Erosion（2026-09-04 完了）。** GPU 版（スナップショット方式）を解析グリッド +
   差分の足し戻しで移した。Flow / Deposit の Mask を出す。
 - Sediment / Snow / Soil / Crumbling / Rock。

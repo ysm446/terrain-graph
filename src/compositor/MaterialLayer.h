@@ -59,6 +59,7 @@ enum class LayerKind : uint32_t {
     // 散布。単純な形（半球 / 円錐）をばら撒き、分布のマスクを出す
     // （terrain-editor の Scatter）。
     Scatter = 9,
+    MultiScaleErosion = 10,
 };
 
 // 散布する形。terrain-editor の ScatterShapeType と同じ。
@@ -88,7 +89,7 @@ inline bool IsHeightOperationKind(LayerKind kind) {
     return kind == LayerKind::Blur || kind == LayerKind::Sediment ||
            kind == LayerKind::Crumbling || kind == LayerKind::Snow ||
            kind == LayerKind::River || kind == LayerKind::Droplet ||
-           kind == LayerKind::Scatter;
+           kind == LayerKind::Scatter || kind == LayerKind::MultiScaleErosion;
 }
 
 // ハイトの基準面。ソースの値がこの値のとき、そのテクセルは「基準の高さ」ちょうどになる。
@@ -439,6 +440,35 @@ struct MaterialLayer {
         uint32_t resolution = 1024;
     };
     DropletSettings droplet;
+
+    // Schott et al. (SIGGRAPH 2024), Sections 3–4 の独立した侵食段階。
+    // 各レベルの最大侵食深さは coarseDepthMeters * detailDecay^level。
+    struct MultiScaleErosionSettings {
+        uint32_t resolution = 1024;
+        uint32_t baseResolution = 128;
+        int erosionIterations = 1200;
+        int thermalIterations = 100;
+        int depositionIterations = 100;
+        float coarseDepthMeters = 80.0f;
+        float detailDecay = 0.7f;
+        float flowExponent = 1.3f;
+        float slopeExponent = 2.0f;
+        float drainageExponent = 0.8f;
+        float maximumSlope = 1.0f;
+        // m²。代表的な 2 km 四方 / 128² の入力でも、セル面積より十分大きくする。
+        float maximumDrainageArea = 4096.0f;
+        float talusDegrees = 35.0f;
+        float thermalStepMeters = 0.01f;
+        float sedimentCreation = 0.1f;
+        float depositionRate = 0.1f;
+        float sedimentHeightScale = 0.001f;
+        float ridgeRestoration = 1.0f; // 0 で無効、1 で制約点を元の高さへ戻す
+        float ridgeAreaThreshold = 2.0f; // セル数（面積をセル面積で割った値）
+        int restorationIterations = 500;
+        bool drainageCorrection = true;
+        int breachingRadius = 16; // 最終グリッド上のセル数
+    };
+    MultiScaleErosionSettings multiScaleErosion;
 
     // 散布（kind == LayerKind::Scatter のときだけ意味を持つ）。
     //

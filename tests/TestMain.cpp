@@ -8,6 +8,7 @@
 
 void RunFrameLimiterTests();
 void RunNodeGraphTests();
+void RunMultiScaleBreachingTests();
 void RunUiInteractionTests();
 void RunUndoHistoryTests();
 
@@ -16,6 +17,7 @@ int main() {
     RunUndoHistoryTests();
     RunFrameLimiterTests();
     RunNodeGraphTests();
+    RunMultiScaleBreachingTests();
 
     std::printf("\n%s\n", (tg::tests::g_failures == 0) ? "すべて成功" : "失敗あり");
     return (tg::tests::g_failures == 0) ? 0 : 1;

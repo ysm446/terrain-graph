@@ -153,7 +153,7 @@ const char* const kCurvatureModeNames[] = {"ridges", "valleys", "absolute"};
 const char* const kMaskBlendModeNames[] = {"add", "multiply", "min", "max", "subtract"};
 const char* const kChannelNames[] = {"baseColor", "normal", "surface", "height"};
 const char* const kLayerKindNames[] = {"surface",   "shape", "liquid", "blur",    "sediment",
-                                       "crumbling", "snow",  "river",  "droplet", "scatter"};
+                                       "crumbling", "snow",  "river",  "droplet", "scatter", "multiScaleErosion"};
 // 散布の形 / 向き。compositor::ScatterShape / ScatterOrientation の並びと一致させること。
 const char* const kScatterShapeNames[] = {"hemisphere", "cone"};
 const char* const kScatterOrientationNames[] = {"flat", "followGround", "slopeOriented"};
@@ -821,6 +821,31 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     node["river"] = std::move(river);
 
     // 水滴侵食（水滴侵食レイヤーだけが使う）。
+    json multiScaleErosion;
+    multiScaleErosion["resolution"] = layer.multiScaleErosion.resolution;
+    multiScaleErosion["baseResolution"] = layer.multiScaleErosion.baseResolution;
+    multiScaleErosion["erosionIterations"] = layer.multiScaleErosion.erosionIterations;
+    multiScaleErosion["thermalIterations"] = layer.multiScaleErosion.thermalIterations;
+    multiScaleErosion["depositionIterations"] = layer.multiScaleErosion.depositionIterations;
+    multiScaleErosion["coarseDepthMeters"] = layer.multiScaleErosion.coarseDepthMeters;
+    multiScaleErosion["detailDecay"] = layer.multiScaleErosion.detailDecay;
+    multiScaleErosion["flowExponent"] = layer.multiScaleErosion.flowExponent;
+    multiScaleErosion["slopeExponent"] = layer.multiScaleErosion.slopeExponent;
+    multiScaleErosion["drainageExponent"] = layer.multiScaleErosion.drainageExponent;
+    multiScaleErosion["maximumSlope"] = layer.multiScaleErosion.maximumSlope;
+    multiScaleErosion["maximumDrainageArea"] = layer.multiScaleErosion.maximumDrainageArea;
+    multiScaleErosion["talusDegrees"] = layer.multiScaleErosion.talusDegrees;
+    multiScaleErosion["thermalStepMeters"] = layer.multiScaleErosion.thermalStepMeters;
+    multiScaleErosion["sedimentCreation"] = layer.multiScaleErosion.sedimentCreation;
+    multiScaleErosion["depositionRate"] = layer.multiScaleErosion.depositionRate;
+    multiScaleErosion["sedimentHeightScale"] = layer.multiScaleErosion.sedimentHeightScale;
+    multiScaleErosion["ridgeRestoration"] = layer.multiScaleErosion.ridgeRestoration;
+    multiScaleErosion["ridgeAreaThreshold"] = layer.multiScaleErosion.ridgeAreaThreshold;
+    multiScaleErosion["restorationIterations"] = layer.multiScaleErosion.restorationIterations;
+    multiScaleErosion["drainageCorrection"] = layer.multiScaleErosion.drainageCorrection;
+    multiScaleErosion["breachingRadius"] = layer.multiScaleErosion.breachingRadius;
+    node["multiScaleErosion"] = std::move(multiScaleErosion);
+
     json droplet;
     droplet["density"] = layer.droplet.dropletDensity;
     droplet["travel"] = layer.droplet.travelMeters;
@@ -1000,6 +1025,31 @@ compositor::MaterialLayer ReadLayer(
         layer.crumbling.gravity = ReadFloat(*crumbling, "gravity", defaults.crumbling.gravity);
         layer.crumbling.spread = ReadFloat(*crumbling, "spread", defaults.crumbling.spread);
         layer.crumbling.seed = ReadInt(*crumbling, "seed", defaults.crumbling.seed);
+    }
+
+    if (const json* mse = FindMember(node, "multiScaleErosion"); mse != nullptr && mse->is_object()) {
+        layer.multiScaleErosion.resolution = static_cast<uint32_t>(std::clamp(ReadInt(*mse, "resolution", defaults.multiScaleErosion.resolution), 16, 2048));
+        layer.multiScaleErosion.baseResolution = static_cast<uint32_t>(std::clamp(ReadInt(*mse, "baseResolution", defaults.multiScaleErosion.baseResolution), 16, 2048));
+        layer.multiScaleErosion.erosionIterations = ReadInt(*mse, "erosionIterations", defaults.multiScaleErosion.erosionIterations);
+        layer.multiScaleErosion.thermalIterations = ReadInt(*mse, "thermalIterations", defaults.multiScaleErosion.thermalIterations);
+        layer.multiScaleErosion.depositionIterations = ReadInt(*mse, "depositionIterations", defaults.multiScaleErosion.depositionIterations);
+        layer.multiScaleErosion.coarseDepthMeters = ReadFloat(*mse, "coarseDepthMeters", defaults.multiScaleErosion.coarseDepthMeters);
+        layer.multiScaleErosion.detailDecay = ReadFloat(*mse, "detailDecay", defaults.multiScaleErosion.detailDecay);
+        layer.multiScaleErosion.flowExponent = ReadFloat(*mse, "flowExponent", defaults.multiScaleErosion.flowExponent);
+        layer.multiScaleErosion.slopeExponent = ReadFloat(*mse, "slopeExponent", defaults.multiScaleErosion.slopeExponent);
+        layer.multiScaleErosion.drainageExponent = ReadFloat(*mse, "drainageExponent", defaults.multiScaleErosion.drainageExponent);
+        layer.multiScaleErosion.maximumSlope = ReadFloat(*mse, "maximumSlope", defaults.multiScaleErosion.maximumSlope);
+        layer.multiScaleErosion.maximumDrainageArea = ReadFloat(*mse, "maximumDrainageArea", defaults.multiScaleErosion.maximumDrainageArea);
+        layer.multiScaleErosion.talusDegrees = ReadFloat(*mse, "talusDegrees", defaults.multiScaleErosion.talusDegrees);
+        layer.multiScaleErosion.thermalStepMeters = ReadFloat(*mse, "thermalStepMeters", defaults.multiScaleErosion.thermalStepMeters);
+        layer.multiScaleErosion.sedimentCreation = ReadFloat(*mse, "sedimentCreation", defaults.multiScaleErosion.sedimentCreation);
+        layer.multiScaleErosion.depositionRate = ReadFloat(*mse, "depositionRate", defaults.multiScaleErosion.depositionRate);
+        layer.multiScaleErosion.sedimentHeightScale = ReadFloat(*mse, "sedimentHeightScale", defaults.multiScaleErosion.sedimentHeightScale);
+        layer.multiScaleErosion.ridgeRestoration = ReadFloat(*mse, "ridgeRestoration", defaults.multiScaleErosion.ridgeRestoration);
+        layer.multiScaleErosion.ridgeAreaThreshold = ReadFloat(*mse, "ridgeAreaThreshold", defaults.multiScaleErosion.ridgeAreaThreshold);
+        layer.multiScaleErosion.restorationIterations = ReadInt(*mse, "restorationIterations", defaults.multiScaleErosion.restorationIterations);
+        layer.multiScaleErosion.drainageCorrection = ReadBool(*mse, "drainageCorrection", defaults.multiScaleErosion.drainageCorrection);
+        layer.multiScaleErosion.breachingRadius = ReadInt(*mse, "breachingRadius", defaults.multiScaleErosion.breachingRadius);
     }
 
     if (const json* droplet = FindMember(node, "droplet");
