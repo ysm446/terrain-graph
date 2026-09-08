@@ -366,9 +366,10 @@ private:
 
     // 水滴侵食レイヤー 1 枚ぶん。解析グリッドで水滴を流し、差分を Height へ足し戻して
     // 法線を作り直す。**タイルには分けない**（堆積と同じ理由）。
+    // `maskIndex` は Mask 入力（効かせる範囲）の SRV。無ければ kInvalidTextureIndex。
     bool ApplyDroplet(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                       ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
-                      const MaterialStack& stack);
+                      const MaterialStack& stack, uint32_t maskIndex);
     bool EnsureDropletResources(rhi::Device& device, uint32_t resolution);
     void ReleaseDropletResources(rhi::Device& device);
     // 直前の水滴侵食レイヤーが残した流量 / 堆積を、マスクとして焼く。

@@ -2624,6 +2624,7 @@ struct DropletConstants {
     uint32_t indices3[4];
     uint32_t indices4[4];
     uint32_t indices5[4];
+    uint32_t indices6[4];
     float params0[4];
     float params1[4];
     float params2[4];
@@ -2673,7 +2674,8 @@ bool MaterialEvaluator::EnsureDropletResources(rhi::Device& device, uint32_t res
 //   → 最終レベルの差分を合成解像度へ足し戻す → 法線を作り直す
 bool MaterialEvaluator::ApplyDroplet(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                                      ID3D12GraphicsCommandList* commandList,
-                                     const MaterialLayer& layer, const MaterialStack& stack) {
+                                     const MaterialLayer& layer, const MaterialStack& stack,
+                                     uint32_t maskIndex) {
     const MaterialLayer::DropletSettings& params = layer.droplet;
     const uint32_t resolution = std::clamp(params.resolution, 64u, 2048u);
     if (!EnsureDropletResources(device, resolution)) {
@@ -2741,6 +2743,8 @@ bool MaterialEvaluator::ApplyDroplet(rhi::Device& device, rhi::PipelineCache& pi
     base.indices5[1] = m_droplet.original.SrvIndex();
     base.indices5[2] = m_droplet.flow.SrvIndex();
     base.indices5[3] = m_droplet.deposit.SrvIndex();
+    // Mask 入力。足し戻す差分に掛ける（無ければ全面 1）。
+    base.indices6[0] = maskIndex;
     base.params0[1] = std::clamp(params.inertia, 0.0f, 0.99f);
     base.params0[2] = std::max(0.01f, params.sedimentCapacity);
     base.params0[3] = std::max(0.0001f, params.minSlope);
@@ -3552,8 +3556,8 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         if (IsHeightOperationKind(layer.kind)) {
             const bool hasUnderlying = (baseIndex != static_cast<size_t>(-1)) &&
                                        (layerIndex > baseIndex);
-            // 崩落・堆積・積雪・河川は Mask 入力を**発生源 / 降る場所 / 川の出どころ**として
-            // 使うので、先に引いておく。
+            // 崩落・堆積・積雪・河川は Mask 入力を**発生源 / 降る場所 / 川の出どころ**として、
+            // 水滴侵食は**効かせる範囲**として使うので、先に引いておく。
             // 段取り上、ここへ来る時点でその op は焼き終わっている。
             uint32_t inputMaskIndex = kInvalidTextureIndex;
             if (layer.mask.source == MaskSource::Node && layer.mask.maskOp >= 0 &&
@@ -3581,7 +3585,8 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 }
                 ++m_evaluatedLayerCount;
             } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::Droplet) {
-                if (!ApplyDroplet(device, pipelineCache, commandList, layer, stack)) {
+                if (!ApplyDroplet(device, pipelineCache, commandList, layer, stack,
+                                  inputMaskIndex)) {
                     complete = false;
                 }
                 ++m_evaluatedLayerCount;

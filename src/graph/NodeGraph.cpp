@@ -85,9 +85,12 @@ constexpr std::array<PinDefinition, 6> kRiverPins = {{
     {PinKind::Output, ValueType::Mask, "Depth"},
 }};
 
-// 水滴侵食のピン。地形に加えて**流量**（水の通った量）と**堆積量**を出す。
-constexpr std::array<PinDefinition, 4> kDropletPins = {{
+// 水滴侵食のピン。効かせる範囲を絞る Mask（省略可）を受け、地形に加えて
+// **流量**（水の通った量）と**堆積量**を出す。Mask は削り / 積みの差分に
+// 掛けるだけで、水滴の落とし方は変えない。
+constexpr std::array<PinDefinition, 5> kDropletPins = {{
     {PinKind::Input, ValueType::Material, "Base"},
+    {PinKind::Input, ValueType::Mask, "Mask"},
     {PinKind::Output, ValueType::Material, "Result"},
     {PinKind::Output, ValueType::Mask, "Flow"},
     {PinKind::Output, ValueType::Mask, "Deposit"},

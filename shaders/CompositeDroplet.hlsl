@@ -51,6 +51,8 @@ struct DropletConstants
     uint4 indices4;
     // SRV: x: 作業ハイト、y: 元の高さ、z: 流量、w: 堆積
     uint4 indices5;
+    // x: Mask 入力の SRV（効かせる範囲。無ければ kInvalidTextureIndex）
+    uint4 indices6;
     // x: セルの大きさ（m）、y: 慣性、z: 容量係数、w: 最小傾斜
     float4 params0;
     // x: 侵食率、y: 堆積率、z: 1 歩の蒸発係数、w: 重力
@@ -362,8 +364,14 @@ void CsResolve(uint3 dispatchThreadId : SV_DispatchThreadID)
     RWTexture2D<float> heightTarget = ResourceDescriptorHeap[g_droplet.indices1.w];
 
     const float2 uv = (float2(texel) + 0.5f) / float(resolution);
-    const float delta = heights.SampleLevel(g_samplerLinearClamp, uv, 0.0f) -
-                        original.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
+    float delta = heights.SampleLevel(g_samplerLinearClamp, uv, 0.0f) -
+                  original.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
+    // Mask 入力があれば、その範囲だけに効かせる（境界はマスク側でぼかす前提）。
+    if (g_droplet.indices6.x != kInvalidTextureIndex)
+    {
+        Texture2D<float> mask = ResourceDescriptorHeap[g_droplet.indices6.x];
+        delta *= saturate(mask.Load(int3(texel, 0)));
+    }
     heightTarget[texel] = saturate(heightTarget[texel] + delta / g_droplet.params2.z);
 }
 

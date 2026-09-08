@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-06 21:30
+更新日時: 2026-09-09 02:00
 
 ## 現在の状況
 
@@ -93,6 +93,14 @@ UI はグレー基調に整理し、ルールを [design/design-guide.md](../des
   - 検証: `data/scatter-test.tgproj`（sample の Output 直前へ挟む）で地形に盛れること、
     `data/scatter-mask-test.tgproj`（高さ 0 + Mask を Surface のマスクへ）で分布だけを
     使えることを `--screenshot-ui` で確認。DXC で 3 エントリを単体コンパイル。
+
+- 2026-09-09 02:00 — **Droplet Erosion の Mask 入力**（効かせる範囲）。
+  - `kDropletPins` に Mask を足し、`ApplyDroplet` へ焼いたマスクの SRV を渡す
+    （他の加工ノードと同じ `inputMaskIndex` の経路）。`CsResolve` で差分にマスクを掛けるだけで、
+    `CsTrace` の始点は変えない。`DropletConstants` に `indices6` を足した（C++ / HLSL 両方）。
+  - 検証: `data/droplet-mask-test.tgproj`（droplet-test に Mask Noise を繋いだ）で
+    `--screenshot`。マスクの外で谷が消えるのを droplet-test と見比べて確認。
+    DXC で CsTrace / CsResolve / CsMask を単体コンパイル。デバッグレイヤーの警告なし。
 
 - 2026-09-04 17:30 — **Droplet Erosion ノード**（terrain-editor の GPU 版の移植）。
   - `shaders/CompositeDroplet.hlsl`: スナップショット方式（凍らせた地形に全水滴 → 固定小数点の
