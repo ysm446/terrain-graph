@@ -153,7 +153,7 @@ const char* const kCurvatureModeNames[] = {"ridges", "valleys", "absolute"};
 const char* const kMaskBlendModeNames[] = {"add", "multiply", "min", "max", "subtract"};
 const char* const kChannelNames[] = {"baseColor", "normal", "surface", "height"};
 const char* const kLayerKindNames[] = {"surface",   "shape", "liquid", "blur",    "sediment",
-                                       "crumbling", "snow",  "river",  "droplet", "scatter", "multiScaleErosion"};
+                                       "crumbling", "snow",  "river",  "droplet", "scatter", "multiScaleErosion", "fluvialErosion", "flattenBorders"};
 // 散布の形 / 向き。compositor::ScatterShape / ScatterOrientation の並びと一致させること。
 const char* const kScatterShapeNames[] = {"hemisphere", "cone"};
 const char* const kScatterOrientationNames[] = {"flat", "followGround", "slopeOriented"};
@@ -821,6 +821,42 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     node["river"] = std::move(river);
 
     // 水滴侵食（水滴侵食レイヤーだけが使う）。
+    json fluvialErosion;
+    fluvialErosion["resolution"] = layer.fluvialErosion.resolution;
+    fluvialErosion["iterations"] = layer.fluvialErosion.iterations;
+    fluvialErosion["featureSize"] = layer.fluvialErosion.featureSize;
+    fluvialErosion["geologicalAge"] = layer.fluvialErosion.geologicalAge;
+    fluvialErosion["channelLength"] = layer.fluvialErosion.channelLength;
+    fluvialErosion["strength"] = layer.fluvialErosion.strength;
+    fluvialErosion["channeling"] = layer.fluvialErosion.channeling;
+    fluvialErosion["friction"] = layer.fluvialErosion.friction;
+    fluvialErosion["wearAngle"] = layer.fluvialErosion.wearAngle;
+    fluvialErosion["depositAngle"] = layer.fluvialErosion.depositAngle;
+    fluvialErosion["maxAngle"] = layer.fluvialErosion.maxAngle;
+    fluvialErosion["granularity"] = layer.fluvialErosion.granularity;
+    fluvialErosion["flowVolume"] = layer.fluvialErosion.flowVolume;
+    fluvialErosion["smallChannels"] = layer.fluvialErosion.smallChannels;
+    fluvialErosion["velocity"] = layer.fluvialErosion.velocity;
+    fluvialErosion["detailMeters"] = layer.fluvialErosion.detailMeters;
+    fluvialErosion["detailSmoothing"] = layer.fluvialErosion.detailSmoothing;
+    fluvialErosion["forceX"] = layer.fluvialErosion.forceX;
+    fluvialErosion["forceZ"] = layer.fluvialErosion.forceZ;
+    fluvialErosion["shearX"] = layer.fluvialErosion.shearX;
+    fluvialErosion["shearZ"] = layer.fluvialErosion.shearZ;
+    fluvialErosion["hardness"] = layer.fluvialErosion.hardness;
+    node["fluvialErosion"] = std::move(fluvialErosion);
+
+    json flattenBorders;
+    flattenBorders["falloffMeters"] = layer.flattenBorders.falloffMeters;
+    flattenBorders["elevationMeters"] = layer.flattenBorders.elevationMeters;
+    flattenBorders["liftMeters"] = layer.flattenBorders.liftMeters;
+    flattenBorders["strength"] = layer.flattenBorders.strength;
+    flattenBorders["lowerX"] = layer.flattenBorders.lowerX;
+    flattenBorders["upperX"] = layer.flattenBorders.upperX;
+    flattenBorders["lowerZ"] = layer.flattenBorders.lowerZ;
+    flattenBorders["upperZ"] = layer.flattenBorders.upperZ;
+    node["flattenBorders"] = std::move(flattenBorders);
+
     json multiScaleErosion;
     multiScaleErosion["resolution"] = layer.multiScaleErosion.resolution;
     multiScaleErosion["baseResolution"] = layer.multiScaleErosion.baseResolution;
@@ -1027,6 +1063,40 @@ compositor::MaterialLayer ReadLayer(
         layer.crumbling.seed = ReadInt(*crumbling, "seed", defaults.crumbling.seed);
     }
 
+    if (const json* value = FindMember(node, "fluvialErosion"); value != nullptr && value->is_object()) {
+        layer.fluvialErosion.resolution = static_cast<uint32_t>(std::clamp(ReadInt(*value, "resolution", defaults.fluvialErosion.resolution), 64, 2048));
+        layer.fluvialErosion.iterations = ReadInt(*value, "iterations", defaults.fluvialErosion.iterations);
+        layer.fluvialErosion.featureSize = ReadFloat(*value, "featureSize", defaults.fluvialErosion.featureSize);
+        layer.fluvialErosion.geologicalAge = ReadFloat(*value, "geologicalAge", defaults.fluvialErosion.geologicalAge);
+        layer.fluvialErosion.channelLength = ReadFloat(*value, "channelLength", defaults.fluvialErosion.channelLength);
+        layer.fluvialErosion.strength = ReadFloat(*value, "strength", defaults.fluvialErosion.strength);
+        layer.fluvialErosion.channeling = ReadFloat(*value, "channeling", defaults.fluvialErosion.channeling);
+        layer.fluvialErosion.friction = ReadFloat(*value, "friction", defaults.fluvialErosion.friction);
+        layer.fluvialErosion.wearAngle = ReadFloat(*value, "wearAngle", defaults.fluvialErosion.wearAngle);
+        layer.fluvialErosion.depositAngle = ReadFloat(*value, "depositAngle", defaults.fluvialErosion.depositAngle);
+        layer.fluvialErosion.maxAngle = ReadFloat(*value, "maxAngle", defaults.fluvialErosion.maxAngle);
+        layer.fluvialErosion.granularity = ReadFloat(*value, "granularity", defaults.fluvialErosion.granularity);
+        layer.fluvialErosion.flowVolume = ReadFloat(*value, "flowVolume", defaults.fluvialErosion.flowVolume);
+        layer.fluvialErosion.smallChannels = ReadFloat(*value, "smallChannels", defaults.fluvialErosion.smallChannels);
+        layer.fluvialErosion.velocity = ReadFloat(*value, "velocity", defaults.fluvialErosion.velocity);
+        layer.fluvialErosion.detailMeters = ReadFloat(*value, "detailMeters", defaults.fluvialErosion.detailMeters);
+        layer.fluvialErosion.detailSmoothing = ReadFloat(*value, "detailSmoothing", defaults.fluvialErosion.detailSmoothing);
+        layer.fluvialErosion.forceX = ReadFloat(*value, "forceX", defaults.fluvialErosion.forceX);
+        layer.fluvialErosion.forceZ = ReadFloat(*value, "forceZ", defaults.fluvialErosion.forceZ);
+        layer.fluvialErosion.shearX = ReadFloat(*value, "shearX", defaults.fluvialErosion.shearX);
+        layer.fluvialErosion.shearZ = ReadFloat(*value, "shearZ", defaults.fluvialErosion.shearZ);
+        layer.fluvialErosion.hardness = ReadFloat(*value, "hardness", defaults.fluvialErosion.hardness);
+    }
+    if (const json* value = FindMember(node, "flattenBorders"); value != nullptr && value->is_object()) {
+        layer.flattenBorders.falloffMeters = ReadFloat(*value, "falloffMeters", defaults.flattenBorders.falloffMeters);
+        layer.flattenBorders.elevationMeters = ReadFloat(*value, "elevationMeters", defaults.flattenBorders.elevationMeters);
+        layer.flattenBorders.liftMeters = ReadFloat(*value, "liftMeters", defaults.flattenBorders.liftMeters);
+        layer.flattenBorders.strength = ReadFloat(*value, "strength", defaults.flattenBorders.strength);
+        layer.flattenBorders.lowerX = ReadBool(*value, "lowerX", defaults.flattenBorders.lowerX);
+        layer.flattenBorders.upperX = ReadBool(*value, "upperX", defaults.flattenBorders.upperX);
+        layer.flattenBorders.lowerZ = ReadBool(*value, "lowerZ", defaults.flattenBorders.lowerZ);
+        layer.flattenBorders.upperZ = ReadBool(*value, "upperZ", defaults.flattenBorders.upperZ);
+    }
     if (const json* mse = FindMember(node, "multiScaleErosion"); mse != nullptr && mse->is_object()) {
         layer.multiScaleErosion.resolution = static_cast<uint32_t>(std::clamp(ReadInt(*mse, "resolution", defaults.multiScaleErosion.resolution), 16, 2048));
         layer.multiScaleErosion.baseResolution = static_cast<uint32_t>(std::clamp(ReadInt(*mse, "baseResolution", defaults.multiScaleErosion.baseResolution), 16, 2048));

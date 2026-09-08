@@ -60,6 +60,8 @@ enum class LayerKind : uint32_t {
     // （terrain-editor の Scatter）。
     Scatter = 9,
     MultiScaleErosion = 10,
+    FluvialErosion = 11,
+    FlattenBorders = 12,
 };
 
 // 散布する形。terrain-editor の ScatterShapeType と同じ。
@@ -89,7 +91,8 @@ inline bool IsHeightOperationKind(LayerKind kind) {
     return kind == LayerKind::Blur || kind == LayerKind::Sediment ||
            kind == LayerKind::Crumbling || kind == LayerKind::Snow ||
            kind == LayerKind::River || kind == LayerKind::Droplet ||
-           kind == LayerKind::Scatter || kind == LayerKind::MultiScaleErosion;
+           kind == LayerKind::Scatter || kind == LayerKind::MultiScaleErosion ||
+           kind == LayerKind::FluvialErosion || kind == LayerKind::FlattenBorders;
 }
 
 // ハイトの基準面。ソースの値がこの値のとき、そのテクセルは「基準の高さ」ちょうどになる。
@@ -469,6 +472,48 @@ struct MaterialLayer {
         int breachingRadius = 16; // 最終グリッド上のセル数
     };
     MultiScaleErosionSettings multiScaleErosion;
+
+    struct FluvialErosionSettings {
+        uint32_t resolution = 1024;
+        int iterations = 25;
+        float featureSize = 8.0f;
+        float geologicalAge = 20.0f;
+        float channelLength = 128.0f;
+        float strength = 1.0f;
+        float channeling = 0.25f;
+        float friction = 0.1f;
+        float wearAngle = 15.0f;
+        float depositAngle = 0.0f;
+        float maxAngle = 30.0f;
+        float granularity = 10.0f;
+        float flowVolume = 0.0f;
+        float smallChannels = 0.0f;
+        float velocity = 1.0f;
+        float detailMeters = 1.0f;
+        float detailSmoothing = 1.0f;
+        float forceX = 0.0f;
+        float forceZ = 0.0f;
+        float shearX = 0.0f;
+        float shearZ = 0.0f;
+        float hardness = 0.0f;
+    };
+    FluvialErosionSettings fluvialErosion;
+
+    struct FlattenBordersSettings {
+        float falloffMeters = 128.0f;
+        float elevationMeters = 0.0f;
+        float liftMeters = 0.0f;
+        float strength = 1.0f;
+        bool lowerX = true;
+        bool upperX = true;
+        bool lowerZ = true;
+        bool upperZ = true;
+    };
+    FlattenBordersSettings flattenBorders;
+
+    int hardnessMaskOp = -1; // コンパイル時だけ設定する硬度マスク
+
+
 
     // 散布（kind == LayerKind::Scatter のときだけ意味を持つ）。
     //

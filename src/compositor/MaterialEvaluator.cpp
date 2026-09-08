@@ -234,6 +234,36 @@ uint64_t HashHeightState(uint64_t seed, const MaterialLayer& layer) {
     hash = HashBytes(hash, &layer.river, sizeof(layer.river));
     hash = HashBytes(hash, &layer.droplet, sizeof(layer.droplet));
     // bool の後ろのパディングをハッシュに含めない。
+    hash = HashBytes(hash, &layer.fluvialErosion.resolution, sizeof(layer.fluvialErosion.resolution));
+    hash = HashBytes(hash, &layer.fluvialErosion.iterations, sizeof(layer.fluvialErosion.iterations));
+    hash = HashBytes(hash, &layer.fluvialErosion.featureSize, sizeof(layer.fluvialErosion.featureSize));
+    hash = HashBytes(hash, &layer.fluvialErosion.geologicalAge, sizeof(layer.fluvialErosion.geologicalAge));
+    hash = HashBytes(hash, &layer.fluvialErosion.channelLength, sizeof(layer.fluvialErosion.channelLength));
+    hash = HashBytes(hash, &layer.fluvialErosion.strength, sizeof(layer.fluvialErosion.strength));
+    hash = HashBytes(hash, &layer.fluvialErosion.channeling, sizeof(layer.fluvialErosion.channeling));
+    hash = HashBytes(hash, &layer.fluvialErosion.friction, sizeof(layer.fluvialErosion.friction));
+    hash = HashBytes(hash, &layer.fluvialErosion.wearAngle, sizeof(layer.fluvialErosion.wearAngle));
+    hash = HashBytes(hash, &layer.fluvialErosion.depositAngle, sizeof(layer.fluvialErosion.depositAngle));
+    hash = HashBytes(hash, &layer.fluvialErosion.maxAngle, sizeof(layer.fluvialErosion.maxAngle));
+    hash = HashBytes(hash, &layer.fluvialErosion.granularity, sizeof(layer.fluvialErosion.granularity));
+    hash = HashBytes(hash, &layer.fluvialErosion.flowVolume, sizeof(layer.fluvialErosion.flowVolume));
+    hash = HashBytes(hash, &layer.fluvialErosion.smallChannels, sizeof(layer.fluvialErosion.smallChannels));
+    hash = HashBytes(hash, &layer.fluvialErosion.velocity, sizeof(layer.fluvialErosion.velocity));
+    hash = HashBytes(hash, &layer.fluvialErosion.detailMeters, sizeof(layer.fluvialErosion.detailMeters));
+    hash = HashBytes(hash, &layer.fluvialErosion.detailSmoothing, sizeof(layer.fluvialErosion.detailSmoothing));
+    hash = HashBytes(hash, &layer.fluvialErosion.forceX, sizeof(layer.fluvialErosion.forceX));
+    hash = HashBytes(hash, &layer.fluvialErosion.forceZ, sizeof(layer.fluvialErosion.forceZ));
+    hash = HashBytes(hash, &layer.fluvialErosion.shearX, sizeof(layer.fluvialErosion.shearX));
+    hash = HashBytes(hash, &layer.fluvialErosion.shearZ, sizeof(layer.fluvialErosion.shearZ));
+    hash = HashBytes(hash, &layer.fluvialErosion.hardness, sizeof(layer.fluvialErosion.hardness));
+    hash = HashBytes(hash, &layer.flattenBorders.falloffMeters, sizeof(layer.flattenBorders.falloffMeters));
+    hash = HashBytes(hash, &layer.flattenBorders.elevationMeters, sizeof(layer.flattenBorders.elevationMeters));
+    hash = HashBytes(hash, &layer.flattenBorders.liftMeters, sizeof(layer.flattenBorders.liftMeters));
+    hash = HashBytes(hash, &layer.flattenBorders.strength, sizeof(layer.flattenBorders.strength));
+    hash = HashBytes(hash, &layer.flattenBorders.lowerX, sizeof(layer.flattenBorders.lowerX));
+    hash = HashBytes(hash, &layer.flattenBorders.upperX, sizeof(layer.flattenBorders.upperX));
+    hash = HashBytes(hash, &layer.flattenBorders.lowerZ, sizeof(layer.flattenBorders.lowerZ));
+    hash = HashBytes(hash, &layer.flattenBorders.upperZ, sizeof(layer.flattenBorders.upperZ));
     hash = HashBytes(hash, &layer.multiScaleErosion.resolution, sizeof(layer.multiScaleErosion.resolution));
     hash = HashBytes(hash, &layer.multiScaleErosion.baseResolution, sizeof(layer.multiScaleErosion.baseResolution));
     hash = HashBytes(hash, &layer.multiScaleErosion.erosionIterations, sizeof(layer.multiScaleErosion.erosionIterations));
@@ -304,6 +334,7 @@ uint64_t HashMaskOpParams(uint64_t seed, const MaskOp& op) {
             return HashBytes(seed, &op.height, sizeof(op.height));
         case MaskOpKind::River:
             return HashBytes(seed, &op.riverMask, sizeof(op.riverMask));
+        case MaskOpKind::FluvialErosion:
         case MaskOpKind::Droplet:
             return HashBytes(seed, &op.dropletMask, sizeof(op.dropletMask));
         case MaskOpKind::Path:
@@ -576,6 +607,11 @@ void MaterialEvaluator::Destroy(rhi::Device& device) {
     ReleaseSnowResources(device);
     ReleaseRiverResources(device);
     ReleaseDropletResources(device);
+    for (auto* texture : {&m_fluvialErosion.state[0], &m_fluvialErosion.state[1],
+             &m_fluvialErosion.force, &m_fluvialErosion.sums, &m_fluvialErosion.owner,
+             &m_fluvialErosion.count}) device.DeferRelease(*texture);
+    m_fluvialErosion.allocation = 0;
+    m_fluvialErosion.resolution = 0;
     for (auto& texture : m_multiScaleErosion.state) {
         device.DeferRelease(texture);
     }
@@ -919,6 +955,12 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
         return ApplyRiverMask(device, pipelineCache, commandList, op, stack, target);
     }
     // 水滴侵食の流量 / 堆積も、直前に走った水滴侵食レイヤーの作業用テクスチャから焼く。
+    if (op.kind == MaskOpKind::FluvialErosion) {
+        const bool enabled = op.heightSourceLayer >= 0 &&
+            static_cast<size_t>(op.heightSourceLayer) < stack.Layers().size() &&
+            stack.Layers()[op.heightSourceLayer].enabled;
+        return ApplyFluvialErosionMask(device, pipelineCache, commandList, op, target, enabled);
+    }
     if (op.kind == MaskOpKind::Droplet) {
         return ApplyDropletMask(device, pipelineCache, commandList, op, target);
     }
@@ -2653,6 +2695,173 @@ bool MaterialEvaluator::ApplyRiverMask(rhi::Device& device, rhi::PipelineCache& 
 
 // 水滴侵食の定数。シェーダ側の DropletConstants と一致させること。
 // 論文の E / T / D を各解像度で順番に走らせる。作業領域は GPU に常駐する。
+
+namespace {
+struct FluvialErosionConstants {
+    uint32_t state[4]{}, work[4]{}, grid[4]{}, masks[4]{};
+    float scale[4]{}, erosion[4]{}, motion[4]{}, detail[4]{}, force[4]{};
+};
+static_assert(sizeof(FluvialErosionConstants) == 144);
+}
+
+bool MaterialEvaluator::ApplyFlattenBorders(rhi::Device& device, rhi::PipelineCache& cache,
+    ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
+    const MaterialStack& stack, uint32_t maskIndex) {
+    auto* pass = cache.GetCompute(L"CompositeFlattenBorders.hlsl", L"CsFlatten");
+    auto* normals = cache.GetCompute(L"CompositeBlur.hlsl", L"CsNormalFromHeight");
+    if (!pass || !normals) return false;
+    const auto& p = layer.flattenBorders;
+    struct Constants { uint32_t indices[4]; float shape[4]; float scale[4]; };
+    Constants c{{m_textures.height.UavIndex(), maskIndex, m_resolution,
+        uint32_t(p.lowerX) | (uint32_t(p.upperX)<<1) | (uint32_t(p.lowerZ)<<2) | (uint32_t(p.upperZ)<<3)},
+        {std::max(p.falloffMeters,0.0f),p.elevationMeters,p.liftMeters,std::clamp(p.strength,0.0f,1.0f)},
+        {std::max(stack.SizeMeters(),0.001f),std::max(stack.HeightMeters(),0.001f),0,0}};
+    const auto cb = AllocateConstants(device, sizeof(c));
+    if (!cb.IsValid()) return false;
+    std::memcpy(cb.cpu, &c, sizeof(c));
+    PIXBeginEvent(commandList, PIX_COLOR_DEFAULT, "FlattenBorders");
+    TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+    commandList->SetPipelineState(pass);
+    commandList->Dispatch(DispatchCount(m_resolution), DispatchCount(m_resolution), 1);
+    const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+    commandList->ResourceBarrier(1, &barrier);
+    RebuildNormalsFromHeight(device, normals, commandList, stack);
+    PIXEndEvent(commandList);
+    return true;
+}
+
+bool MaterialEvaluator::ApplyFluvialErosion(rhi::Device& device, rhi::PipelineCache& cache,
+    ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
+    const MaterialStack& stack, uint32_t maskIndex) {
+    const auto& p = layer.fluvialErosion;
+    const uint32_t n = std::clamp(p.resolution, 64u, 2048u);
+    auto& r = m_fluvialErosion;
+    uint32_t allocation = n;
+    // 同一コマンドリストにある先行ノードのリソースを途中で解放しない。
+    for (const auto& candidate : stack.Layers())
+        if (candidate.enabled && candidate.kind == LayerKind::FluvialErosion)
+            allocation = std::max(allocation, std::clamp(candidate.fluvialErosion.resolution,64u,2048u));
+    if (r.allocation != allocation) {
+        r.allocation = 0;
+        for (auto* t : {&r.state[0],&r.state[1],&r.force,&r.sums,&r.owner,&r.count}) device.DeferRelease(*t);
+        if (!CreateChannelTexture(device,allocation,DXGI_FORMAT_R32G32B32A32_FLOAT,L"FluvialStateA",r.state[0]) ||
+            !CreateChannelTexture(device,allocation,DXGI_FORMAT_R32G32B32A32_FLOAT,L"FluvialStateB",r.state[1]) ||
+            !CreateChannelTexture(device,allocation,DXGI_FORMAT_R32G32_FLOAT,L"FluvialForce",r.force) ||
+            !CreateChannelTexture(device,allocation*2,DXGI_FORMAT_R32_UINT,L"FluvialSums",r.sums) ||
+            !CreateChannelTexture(device,allocation,DXGI_FORMAT_R32_UINT,L"FluvialOwner",r.owner) ||
+            !CreateChannelTexture(device,allocation,DXGI_FORMAT_R32_UINT,L"FluvialCount",r.count)) return false;
+        r.allocation = allocation;
+    }
+    const wchar_t* entries[] = {L"CsInit",L"CsBoundary",L"CsForces",L"CsElect",L"CsTrace",L"CsApply",L"CsDelta",L"CsResolve"};
+    ID3D12PipelineState* passes[8]{};
+    for (int i=0;i<8;++i) { passes[i]=cache.GetCompute(L"CompositeFluvialErosion.hlsl",entries[i]); if (!passes[i]) return false; }
+    auto* normals=cache.GetCompute(L"CompositeBlur.hlsl",L"CsNormalFromHeight");
+    if (!normals) return false;
+    const float size=std::max(stack.SizeMeters(),0.001f), height=std::max(stack.HeightMeters(),0.001f);
+    const float reference=std::clamp(p.detailMeters,0.1f,32.0f);
+    const float levelsValue=std::clamp(std::log2(std::max(p.featureSize*reference/(size/n),1.0f))+1,1.0f,8.0f);
+    const uint32_t levelCount=static_cast<uint32_t>(std::ceil(levelsValue));
+    std::vector<uint32_t> levels;
+    // 最小 16 セルを維持する。元 HDA の空間パディングはアプリの固定領域に合わせる。
+    for (uint32_t i=levelCount; i>0; --i) {
+        uint32_t next=std::max(16u,n>>(i-1));
+        if (levels.empty() || levels.back()!=next) levels.push_back(next);
+    }
+    FluvialErosionConstants c{};
+    c.state[2]=r.force.UavIndex(); c.state[3]=r.sums.UavIndex();
+    c.work[0]=r.owner.UavIndex(); c.work[1]=r.count.UavIndex();
+    c.work[2]=m_textures.height.SrvIndex(); c.work[3]=m_textures.height.UavIndex();
+    c.grid[2]=m_resolution;
+    c.masks[0]=maskIndex; c.masks[1]=kInvalidTextureIndex;
+    if (layer.hardnessMaskOp>=0 && static_cast<size_t>(layer.hardnessMaskOp)<m_maskOpTextures.size())
+        c.masks[1]=m_maskOpTextures[layer.hardnessMaskOp].SrvIndex();
+    c.scale[1]=height; c.scale[2]=reference; c.scale[3]=std::clamp(p.detailSmoothing,0.0f,10.0f);
+    c.erosion[0]=std::clamp(p.strength,0.0f,1.0f); c.erosion[1]=std::clamp(p.channeling,0.0f,1.0f);
+    c.erosion[2]=std::clamp(p.friction,0.0f,1.0f); c.erosion[3]=std::clamp(p.granularity,0.0f,100.0f)+1;
+    const auto tangent=[](float degrees){return std::tan(std::clamp(degrees,0.0f,89.0f)*DirectX::XM_PI/180.0f);};
+    c.motion[0]=tangent(p.wearAngle); c.motion[1]=tangent(p.depositAngle); c.motion[2]=tangent(p.maxAngle);
+    c.motion[3]=std::clamp(p.velocity,0.0f,2.0f);
+    c.detail[0]=std::clamp(p.flowVolume,0.0f,1.0f); c.detail[1]=std::clamp(p.smallChannels,0.0f,1.0f);
+    c.detail[3]=std::clamp(p.hardness,0.0f,1.0f);
+    c.force[0]=std::clamp(p.forceX,-1.0f,1.0f); c.force[1]=std::clamp(p.forceZ,-1.0f,1.0f);
+    c.force[2]=std::clamp(p.shearX,-0.1f,0.1f); c.force[3]=std::clamp(p.shearZ,-0.1f,0.1f);
+    const auto run=[&](int pass,uint32_t resolution) {
+        const auto cb=AllocateConstants(device,sizeof(c));
+        if (!cb.IsValid()) return false;
+        std::memcpy(cb.cpu,&c,sizeof(c));
+        commandList->SetComputeRootConstantBufferView(1,cb.gpuAddress);
+        commandList->SetPipelineState(passes[pass]);
+        commandList->Dispatch(DispatchCount(resolution),DispatchCount(resolution),1);
+        const auto barrier=CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+        commandList->ResourceBarrier(1,&barrier);
+        return true;
+    };
+    PIXBeginEvent(commandList,PIX_COLOR_DEFAULT,"FluvialErosion");
+    for (auto* t : {&r.state[0],&r.state[1],&r.force,&r.sums,&r.owner,&r.count})
+        TransitionIfNeeded(commandList,*t,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList,m_textures.height,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    bool ok=true;
+    uint32_t current=0, previous=0, iteration=0;
+    // 無効時も出力マスクのため初期化する。粗密間の平滑化で入力を変えない。
+    const bool active=p.iterations>0 && p.strength>0 && p.channelLength>0 && p.hardness<1;
+    if (!active) levels={n};
+    for (uint32_t level : levels) {
+        c.grid[0]=level; c.grid[1]=previous; c.scale[0]=size/level;
+        c.state[0]=r.state[current].UavIndex(); c.state[1]=r.state[1-current].UavIndex();
+        if (!(ok=run(0,level))) break;
+        current=1-current;
+        const float ratio=c.scale[0]/reference;
+        const float ageFactor=std::clamp(std::pow(ratio,-std::clamp(p.geologicalAge,0.0f,20.0f)*0.1f),1.0f,100.0f);
+        const float fraction=levelsValue-std::floor(levelsValue);
+        const float firstWeight=previous==0 && fraction>0 ? fraction : 1;
+        const int count=active ? static_cast<int>(std::ceil(std::clamp(p.iterations,0,100)*ageFactor*firstWeight)) : 0;
+        c.detail[2]=std::clamp(std::ceil(std::clamp(p.channelLength,0.0f,512.0f)/ratio),0.0f,4096.0f);
+        for (int step=0;step<count && ok;++step) {
+            c.grid[3]=++iteration;
+            c.state[0]=r.state[current].UavIndex(); c.state[1]=r.state[1-current].UavIndex();
+            ok=run(1,level); current=1-current;
+            c.state[0]=r.state[current].UavIndex(); c.state[1]=r.state[1-current].UavIndex();
+            ok=ok && run(2,level) && run(3,level) && run(4,level) && run(5,level);
+            current=1-current;
+        }
+        if (!ok) break;
+        previous=level;
+    }
+    r.current=current; r.resolution=n; r.cellMeters=size/n;
+    c.state[0]=r.state[current].UavIndex();
+    if (ok && !layer.maskOnly && active) {
+        ok=run(6,n);
+        TransitionIfNeeded(commandList,m_textures.height,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        ok=ok && run(7,m_resolution);
+        if (ok) RebuildNormalsFromHeight(device,normals,commandList,stack);
+    }
+    TransitionIfNeeded(commandList,m_textures.height,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    PIXEndEvent(commandList);
+    return ok;
+}
+
+bool MaterialEvaluator::ApplyFluvialErosionMask(rhi::Device& device, rhi::PipelineCache& cache,
+    ID3D12GraphicsCommandList* commandList, const MaskOp& op, rhi::GpuTexture& target, bool enabled) {
+    auto& r=m_fluvialErosion;
+    auto* pass=cache.GetCompute(L"CompositeFluvialErosion.hlsl",L"CsMask");
+    if (!pass || (enabled && !r.resolution)) return false;
+    FluvialErosionConstants c{};
+    c.state[0]=r.state[r.current].UavIndex(); c.grid[0]=r.resolution;
+    c.grid[2]=target.width; c.masks[2]=target.UavIndex(); c.masks[3]=enabled ? op.dropletMask.channel : 3u;
+    c.scale[0]=r.cellMeters;
+    const auto cb=AllocateConstants(device,sizeof(c)); if (!cb.IsValid()) return false;
+    std::memcpy(cb.cpu,&c,sizeof(c));
+    PIXBeginEvent(commandList,PIX_COLOR_DEFAULT,"FluvialErosionMask");
+    TransitionIfNeeded(commandList,target,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    commandList->SetComputeRootConstantBufferView(1,cb.gpuAddress); commandList->SetPipelineState(pass);
+    commandList->Dispatch(DispatchCount(c.grid[2]),DispatchCount(c.grid[2]),1);
+    const auto barrier=CD3DX12_RESOURCE_BARRIER::UAV(nullptr); commandList->ResourceBarrier(1,&barrier);
+    TransitionIfNeeded(commandList,target,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    PIXEndEvent(commandList);
+    return true;
+}
+
 bool MaterialEvaluator::ApplyMultiScaleErosion(
     rhi::Device& device, rhi::PipelineCache& pipelineCache,
     ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
@@ -3729,6 +3938,11 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 const uint64_t inputHash = maskOpHashOf(static_cast<size_t>(layer.mask.maskOp));
                 hash = HashBytes(hash, &inputHash, sizeof(inputHash));
             }
+            if (layer.hardnessMaskOp >= 0 && static_cast<size_t>(layer.hardnessMaskOp) < maskOps.size() &&
+                maskOpHashDone[static_cast<size_t>(layer.hardnessMaskOp)] != 2) {
+                const uint64_t inputHash = maskOpHashOf(static_cast<size_t>(layer.hardnessMaskOp));
+                hash = HashBytes(hash, &inputHash, sizeof(inputHash));
+            }
             // テクスチャは ID が同じまま中身が変わることがある（リンク切れの繋ぎ直し）。
             // ID ではなく、いま実際に読む SRV を混ぜて、繋ぎ直したら焼き直されるようにする。
             {
@@ -3767,7 +3981,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 op.kind == MaskOpKind::Curvature || op.kind == MaskOpKind::Sediment ||
                 op.kind == MaskOpKind::Crumbling || op.kind == MaskOpKind::Snow ||
                 op.kind == MaskOpKind::Height || op.kind == MaskOpKind::River ||
-                op.kind == MaskOpKind::Droplet || op.kind == MaskOpKind::Scatter) {
+                op.kind == MaskOpKind::FluvialErosion || op.kind == MaskOpKind::Droplet || op.kind == MaskOpKind::Scatter) {
                 after = std::max(after, op.heightSourceLayer);
                 const size_t layerCount = std::min<size_t>(
                     stack.Layers().size(),
@@ -3866,6 +4080,16 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                                 inputMaskIndex)) {
                     complete = false;
                 }
+                ++m_evaluatedLayerCount;
+            } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::FluvialErosion) {
+                const int hardnessOp = layer.hardnessMaskOp;
+                const bool hardnessReady = hardnessOp < 0 ||
+                    (static_cast<size_t>(hardnessOp) < maskOpDone.size() && maskOpDone[hardnessOp]);
+                if (!hardnessReady || !ApplyFluvialErosion(device, pipelineCache, commandList,
+                                                         layer, stack, inputMaskIndex)) complete = false;
+                ++m_evaluatedLayerCount;
+            } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::FlattenBorders) {
+                if (!ApplyFlattenBorders(device, pipelineCache, commandList, layer, stack, inputMaskIndex)) complete = false;
                 ++m_evaluatedLayerCount;
             } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::MultiScaleErosion) {
                 if (!ApplyMultiScaleErosion(device, pipelineCache, commandList, layer, stack,

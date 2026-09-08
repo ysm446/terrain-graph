@@ -141,7 +141,17 @@ constexpr std::array<PinDefinition, 1> kSourceNodePins = {{
     {PinKind::Output, ValueType::Material, "Result"},
 }};
 
-constexpr std::array<NodeDefinition, 25> kNodeDefinitions = {{
+constexpr std::array<PinDefinition, 7> kFluvialErosionPins = {{
+    {PinKind::Input, ValueType::Material, "Base"},
+    {PinKind::Input, ValueType::Mask, "Mask"},
+    {PinKind::Input, ValueType::Mask, "Hardness"},
+    {PinKind::Output, ValueType::Material, "Result"},
+    {PinKind::Output, ValueType::Mask, "Wear"},
+    {PinKind::Output, ValueType::Mask, "Deposit"},
+    {PinKind::Output, ValueType::Mask, "Age"},
+}};
+
+constexpr std::array<NodeDefinition, 27> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -152,6 +162,8 @@ constexpr std::array<NodeDefinition, 25> kNodeDefinitions = {{
     {NodeKind::Snow, "snow", "Snow", kDepositPins},
     {NodeKind::River, "river", "River", kRiverPins},
     {NodeKind::Droplet, "droplet", "Droplet Erosion", kDropletPins},
+    {NodeKind::FluvialErosion, "fluvialErosion", "Fluvial Erosion", kFluvialErosionPins},
+    {NodeKind::FlattenBorders, "flattenBorders", "Flatten Borders", kBlurPins},
     {NodeKind::MultiScaleErosion, "multiScaleErosion", "Multi-Scale Erosion", kBlurPins},
     {NodeKind::Scatter, "scatter", "Scatter", kScatterPins},
     {NodeKind::MaskImage, "maskImage", "Mask Image", kMaskSourcePins},
@@ -194,11 +206,12 @@ const NodeDefinition* FindNodeDefinitionByName(std::string_view name) {
 }
 
 bool IsLayerNodeKind(NodeKind kind) {
-    return kind == NodeKind::MultiScaleErosion || kind == NodeKind::Surface || kind == NodeKind::Shape || kind == NodeKind::Liquid ||
+    return kind == NodeKind::Surface || kind == NodeKind::Shape || kind == NodeKind::Liquid ||
            kind == NodeKind::Heightmap || kind == NodeKind::Blur ||
            kind == NodeKind::Sediment || kind == NodeKind::Crumbling ||
            kind == NodeKind::Snow || kind == NodeKind::River || kind == NodeKind::Droplet ||
-           kind == NodeKind::Scatter;
+           kind == NodeKind::Scatter || kind == NodeKind::MultiScaleErosion ||
+           kind == NodeKind::FluvialErosion || kind == NodeKind::FlattenBorders;
 }
 
 bool IsSourceNodeKind(NodeKind kind) {
@@ -222,7 +235,7 @@ bool IsHeightMaskNodeKind(NodeKind kind) {
 
 bool IsLayerMaskSourceKind(NodeKind kind) {
     return kind == NodeKind::Sediment || kind == NodeKind::Crumbling ||
-           kind == NodeKind::Snow || kind == NodeKind::River || kind == NodeKind::Droplet ||
+           kind == NodeKind::Snow || kind == NodeKind::River || kind == NodeKind::FluvialErosion || kind == NodeKind::Droplet ||
            kind == NodeKind::Scatter;
 }
 
@@ -234,6 +247,10 @@ bool IsPreviewableNodeKind(NodeKind kind) {
 
 compositor::LayerKind LayerKindFor(NodeKind kind) {
     switch (kind) {
+        case NodeKind::FluvialErosion:
+            return compositor::LayerKind::FluvialErosion;
+        case NodeKind::FlattenBorders:
+            return compositor::LayerKind::FlattenBorders;
         case NodeKind::MultiScaleErosion:
             return compositor::LayerKind::MultiScaleErosion;
         // ハイトマップは合成規則としてはシェイプ（高さへの加算）。
@@ -596,6 +613,7 @@ bool NodeGraph::MaskDependsOnHeight(const Node& maskNode, int depth) const {
         case NodeKind::Snow:
         case NodeKind::River:
         case NodeKind::Droplet:
+        case NodeKind::FluvialErosion:
         case NodeKind::Scatter:
             return true;
         // パスは 2D で高さを読まないが、**地形の上に引いたもの**なので、
@@ -807,6 +825,9 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
             layerOp.riverMask.shoreFeather = river.shoreFeather;
             layerOp.riverMask.mainWidthMeters = river.mainWidthMeters;
             layerOp.riverMask.minWidthMeters = river.minWidthMeters;
+        } else if (maskNode.kind == NodeKind::FluvialErosion) {
+            layerOp.kind = compositor::MaskOpKind::FluvialErosion;
+            layerOp.dropletMask.channel = static_cast<uint32_t>(std::min<size_t>(source.outputIndex, 2));
         } else if (maskNode.kind == NodeKind::Droplet) {
             layerOp.kind = compositor::MaskOpKind::Droplet;
             // 0 番目の Mask 出力が流量、1 番目が堆積量。
@@ -1063,15 +1084,12 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace) co
     for (bool inserted = true; inserted;) {
         inserted = false;
         for (size_t i = 0; i < layerNodes.size() && !inserted; ++i) {
-            const MaskSourceRef mask = UpstreamMaskOf(*layerNodes[i]);
-            if (mask.node == nullptr) {
-                continue;
-            }
-            // **Mask Levels / Mask Blend の先にいる出どころも見つける。**
-            // 直上だけを見ていたので、レベルやブレンドを 1 枚挟むと
-            // 差し込まれずに黙って落ちていた。
             std::vector<const Node*> sources;
-            CollectLayerMaskSources(*mask.node, sources, 0);
+            const size_t maskCount = layerNodes[i]->kind == NodeKind::FluvialErosion ? 2 : 1;
+            for (size_t which = 0; which < maskCount; ++which) {
+                const MaskSourceRef mask = UpstreamMaskOf(*layerNodes[i], which);
+                if (mask.node != nullptr) CollectLayerMaskSources(*mask.node, sources, 0);
+            }
             for (const Node* sourceNode : sources) {
                 if (std::find(layerNodes.begin(), layerNodes.end(), sourceNode) !=
                     layerNodes.end()) {
@@ -1102,6 +1120,12 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace) co
     // 効き方（係数 / カーブ / レベル / 反転）はレイヤー側の設定のまま。
     std::vector<EmittedMaskOp>& emitted = state.emitted;
     for (size_t i = 0; i < compiled.layers.size(); ++i) {
+        if (layerNodes[i]->kind == NodeKind::FluvialErosion) {
+            const MaskSourceRef hardnessSource = UpstreamMaskOf(*layerNodes[i], 1);
+            if (hardnessSource.node != nullptr)
+                compiled.layers[i].hardnessMaskOp = EmitMaskOps(hardnessSource,
+                    i > 0 ? static_cast<int>(i) - 1 : 0, layerNodes, compiled.maskOps, emitted, 0);
+        }
         const MaskSourceRef maskSource = UpstreamMaskOf(*layerNodes[i]);
         if (maskSource.node == nullptr) {
             continue;

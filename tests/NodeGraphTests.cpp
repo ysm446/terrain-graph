@@ -45,6 +45,8 @@ void RunNodeGraphTests() {
         NodeKind::Blur,      NodeKind::Sediment, NodeKind::Crumbling,
         NodeKind::Snow,      NodeKind::River,    NodeKind::Droplet,
         NodeKind::MultiScaleErosion,
+        NodeKind::FluvialErosion,
+        NodeKind::FlattenBorders,
     };
     for (const NodeKind kind : kOperationKinds) {
         NodeGraph graph;
@@ -67,6 +69,32 @@ void RunNodeGraphTests() {
                   compiled.layers.front().kind == tg::compositor::LayerKind::Shape &&
                   compiled.layers.back().kind == tg::compositor::LayerKind::Blur,
               "Base 接続中の加工ノードは入力と加工を保つ");
+    }
+
+    Section("ノードグラフ — Fluvial Erosion の硬度と補助出力");
+    {
+        NodeGraph graph;
+        const auto baseId = graph.CreateNode(NodeKind::Heightmap);
+        const auto erosionId = graph.CreateNode(NodeKind::FluvialErosion);
+        const auto noiseId = graph.CreateNode(NodeKind::MaskNoise);
+        const auto* base = graph.FindNode(baseId);
+        const auto* erosion = graph.FindNode(erosionId);
+        const auto* noise = graph.FindNode(noiseId);
+        Check(erosion->inputs.size() == 3 && erosion->outputs.size() == 4,
+              "侵食範囲と硬度を受け、地形・侵食量・堆積量・Age を返す");
+        Check(graph.CreateLink(base->outputs[0].id, erosion->inputs[0].id), "地形入力を接続");
+        Check(graph.CreateLink(noise->outputs[0].id, erosion->inputs[2].id), "硬度入力を接続");
+        const auto compiled = graph.CompileLayersTo(erosionId);
+        Check(compiled.layers.size() == 2 && compiled.layers.back().hardnessMaskOp >= 0 &&
+              compiled.layers.back().mask.maskOp == -1,
+              "侵食範囲が未接続でも硬度を独立した op として評価する");
+        for (size_t i = 1; i < 4; ++i) {
+            const auto preview = graph.CompileLayersTo(erosionId, erosion->outputs[i].id);
+            bool found = false;
+            for (const auto& op : preview.maskOps)
+                found |= op.kind == tg::compositor::MaskOpKind::FluvialErosion && op.dropletMask.channel == i-1;
+            Check(found, "補助出力のプレビューが対応する成分を参照する");
+        }
     }
 
     Section("ノードグラフ — Sediment の Emission 入力");

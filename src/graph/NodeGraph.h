@@ -94,6 +94,8 @@ enum class NodeKind : uint32_t {
     // （terrain-editor の Mask Blur）。
     MaskBlur = 22,
     MultiScaleErosion = 24,
+    FluvialErosion = 25,
+    FlattenBorders = 26,
 };
 
 struct PinDefinition {

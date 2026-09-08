@@ -399,6 +399,70 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
     }
 
     // 水滴侵食も合成レイヤーではなく「水滴で削って運んで積む加工」。マスク入力は持たない。
+    if (layer.kind == compositor::LayerKind::FluvialErosion) {
+        auto& params = layer.fluvialErosion;
+        const compositor::MaterialLayer::FluvialErosionSettings erosionDefaults;
+        ui::SectionHeader("基本");
+        if (ui::BeginPropertyTable("fluvialErosionRows")) {
+            char name[128] = {};
+            std::snprintf(name, sizeof(name), "%s", layer.name.c_str());
+            if (ui::PropertyTextInput("名前", name, sizeof(name))) { layer.name = name; changed = true; }
+            const char* labels[] = {"64", "128", "256", "512", "1024", "2048"};
+            int selected = 0, defaultIndex = 0;
+            for (int i = 0; i < 6; ++i) {
+                if ((64u << i) == params.resolution) selected = i;
+                if ((64u << i) == erosionDefaults.resolution) defaultIndex = i;
+            }
+            if (ui::PropertyCombo("計算解像度", &selected, labels, 6, defaultIndex, "侵食を計算する格子。合成解像度とは独立")) {
+                params.resolution = 64u << selected; changed = true;
+            }
+            changed |= ui::PropertyInt("反復回数", &params.iterations, 0, 100, erosionDefaults.iterations, "");
+            changed |= ui::PropertyFloat("地形の特徴サイズ", &params.featureSize, 0.0f, 32.0f, erosionDefaults.featureSize, "");
+            changed |= ui::PropertyFloat("地質年代", &params.geologicalAge, 0.0f, 20.0f, erosionDefaults.geologicalAge, "");
+            changed |= ui::PropertyFloat("流路の長さ", &params.channelLength, 0.0f, 512.0f, erosionDefaults.channelLength, "");
+            changed |= ui::PropertyFloat("侵食の強さ", &params.strength, 0.0f, 1.0f, erosionDefaults.strength, "");
+            changed |= ui::PropertyFloat("流路の掘り込み", &params.channeling, 0.0f, 1.0f, erosionDefaults.channeling, "");
+            changed |= ui::PropertyFloat("摩擦", &params.friction, 0.0f, 1.0f, erosionDefaults.friction, "");
+            changed |= ui::PropertyFloat("侵食開始角度", &params.wearAngle, 0.0f, 89.0f, erosionDefaults.wearAngle, "");
+            changed |= ui::PropertyFloat("堆積停止角度", &params.depositAngle, 0.0f, 89.0f, erosionDefaults.depositAngle, "");
+            changed |= ui::PropertyFloat("侵食上限角度", &params.maxAngle, 0.0f, 89.0f, erosionDefaults.maxAngle, "");
+            changed |= ui::PropertyFloat("粒度", &params.granularity, 0.0f, 100.0f, erosionDefaults.granularity, "");
+            changed |= ui::PropertyFloat("侵食履歴の影響", &params.flowVolume, 0.0f, 1.0f, erosionDefaults.flowVolume, "");
+            changed |= ui::PropertyFloat("細い流路の影響", &params.smallChannels, 0.0f, 1.0f, erosionDefaults.smallChannels, "");
+            changed |= ui::PropertyFloat("移動速度", &params.velocity, 0.0f, 2.0f, erosionDefaults.velocity, "");
+            changed |= ui::PropertyFloat("基準のセル幅", &params.detailMeters, 0.1f, 32.0f, erosionDefaults.detailMeters, "");
+            changed |= ui::PropertyFloat("侵食部分の平滑化", &params.detailSmoothing, 0.0f, 10.0f, erosionDefaults.detailSmoothing, "");
+            changed |= ui::PropertyFloat("外力 X", &params.forceX, -1.0f, 1.0f, erosionDefaults.forceX, "");
+            changed |= ui::PropertyFloat("外力 Z", &params.forceZ, -1.0f, 1.0f, erosionDefaults.forceZ, "");
+            changed |= ui::PropertyFloat("せん断 X", &params.shearX, -0.1f, 0.1f, erosionDefaults.shearX, "");
+            changed |= ui::PropertyFloat("せん断 Z", &params.shearZ, -0.1f, 0.1f, erosionDefaults.shearZ, "");
+            changed |= ui::PropertyFloat("硬度", &params.hardness, 0.0f, 1.0f, erosionDefaults.hardness, "Hardness 入力と合わせて使う。1 で地形を保護する");
+        ui::EndPropertyTable();
+        }
+        return changed;
+    }
+
+    if (layer.kind == compositor::LayerKind::FlattenBorders) {
+        auto& params = layer.flattenBorders;
+        const compositor::MaterialLayer::FlattenBordersSettings erosionDefaults;
+        ui::SectionHeader("基本");
+        if (ui::BeginPropertyTable("flattenBordersRows")) {
+            char name[128] = {};
+            std::snprintf(name, sizeof(name), "%s", layer.name.c_str());
+            if (ui::PropertyTextInput("名前", name, sizeof(name))) { layer.name = name; changed = true; }
+            changed |= ui::PropertyFloat("外周の幅", &params.falloffMeters, 0.0f, 2048.0f, erosionDefaults.falloffMeters, "");
+            changed |= ui::PropertyFloat("外周の標高", &params.elevationMeters, -1000.0f, 4000.0f, erosionDefaults.elevationMeters, "");
+            changed |= ui::PropertyFloat("地形の持ち上げ", &params.liftMeters, -1000.0f, 4000.0f, erosionDefaults.liftMeters, "");
+            changed |= ui::PropertyFloat("強さ", &params.strength, 0.0f, 1.0f, erosionDefaults.strength, "");
+            changed |= ui::PropertyBool("X 下側", &params.lowerX, erosionDefaults.lowerX);
+            changed |= ui::PropertyBool("X 上側", &params.upperX, erosionDefaults.upperX);
+            changed |= ui::PropertyBool("Z 下側", &params.lowerZ, erosionDefaults.lowerZ);
+            changed |= ui::PropertyBool("Z 上側", &params.upperZ, erosionDefaults.upperZ);
+        ui::EndPropertyTable();
+        }
+        return changed;
+    }
+
     if (layer.kind == compositor::LayerKind::MultiScaleErosion) {
         auto& params = layer.multiScaleErosion;
         const compositor::MaterialLayer::MultiScaleErosionSettings mseDefaults;

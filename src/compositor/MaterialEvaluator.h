@@ -425,6 +425,20 @@ private:
     RiverResources m_river;
     DropletResources m_droplet;
     MultiScaleErosionResources m_multiScaleErosion;
+    struct FluvialErosionResources {
+        rhi::GpuTexture state[2], force, sums, owner, count;
+        uint32_t allocation = 0, resolution = 0, current = 0;
+        float cellMeters = 1.0f;
+    } m_fluvialErosion;
+    bool ApplyFluvialErosion(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+        ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
+        const MaterialStack& stack, uint32_t maskIndex);
+    bool ApplyFluvialErosionMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+        ID3D12GraphicsCommandList* commandList, const MaskOp& op, rhi::GpuTexture& target, bool enabled);
+    bool ApplyFlattenBorders(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+        ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
+        const MaterialStack& stack, uint32_t maskIndex);
+
     std::vector<MultiScaleBreachCache> m_breachCaches;
     uint64_t m_postprocessRevision = 0;
     bool m_postprocessPending = false;

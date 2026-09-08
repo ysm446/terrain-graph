@@ -158,6 +158,20 @@ inline const compositor::MaterialLayer kDefaultMultiScaleErosionLayer = [] {
     return layer;
 }();
 
+inline const compositor::MaterialLayer kDefaultFluvialErosionLayer = [] {
+    compositor::MaterialLayer layer;
+    layer.kind = compositor::LayerKind::FluvialErosion;
+    layer.name = "Fluvial Erosion";
+    return layer;
+}();
+
+inline const compositor::MaterialLayer kDefaultFlattenBordersLayer = [] {
+    compositor::MaterialLayer layer;
+    layer.kind = compositor::LayerKind::FlattenBorders;
+    layer.name = "Flatten Borders";
+    return layer;
+}();
+
 inline const compositor::MaterialLayer& DefaultLayerFor(compositor::LayerKind kind) {
     switch (kind) {
         case compositor::LayerKind::Shape:
@@ -174,6 +188,10 @@ inline const compositor::MaterialLayer& DefaultLayerFor(compositor::LayerKind ki
             return kDefaultSnowLayer;
         case compositor::LayerKind::River:
             return kDefaultRiverLayer;
+        case compositor::LayerKind::FluvialErosion:
+            return kDefaultFluvialErosionLayer;
+        case compositor::LayerKind::FlattenBorders:
+            return kDefaultFlattenBordersLayer;
         case compositor::LayerKind::MultiScaleErosion:
             return kDefaultMultiScaleErosionLayer;
         case compositor::LayerKind::Droplet:
@@ -188,7 +206,7 @@ inline const compositor::MaterialLayer& DefaultLayerFor(compositor::LayerKind ki
 // レイヤー一覧のツールチップなどで使う種類の表示名。LayerKind の並びと一致させること。
 inline const char* const kLayerKindLabels[] = {"サーフェス", "シェイプ", "水面", "ブラー",
                                                "堆積",       "崩落",     "積雪", "河川",
-                                               "水滴侵食", "散布", "マルチスケール侵食"};
+                                               "水滴侵食", "散布", "マルチスケール侵食", "Fluvial Erosion", "Flatten Borders"};
 // 曲率マスクの向き。compositor::CurvatureMode の並びと一致させること。
 inline const char* const kCurvatureModeLabels[] = {"尾根", "谷", "両方"};
 // 岩片の形。compositor::RockStyle の並びと一致させること。
