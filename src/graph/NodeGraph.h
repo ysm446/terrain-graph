@@ -203,6 +203,7 @@ struct CloudNodeSettings {
     int seed = 1;
     bool animate = false;
     int motionMode = 2; // 0: 雲全体、1: 範囲内の模様、2: 流れながら変化。
+    float noiseSpeedRatio = 0.75f; // 雲の移動速度に対する模様の速度。
     float windSpeed = 20.0f;
     float windDirection = 90.0f; // 度。0 は +Z、90 は +X。
 };

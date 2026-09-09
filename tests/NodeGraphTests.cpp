@@ -50,14 +50,25 @@ void RunNodeGraphTests() {
         motion.Advance(1.0, true, 10.0f, 1.570796327f);
         Check(std::abs(motion.x-10.0)<1e-5, "再開と風向変更は現在の位置から続く");
         using tg::renderer::CloudMotion;
-        Check(CloudMotion::LocalNoiseOffset(400.0, 100.0, 2) == -100.0f,
+        Check(CloudMotion::LocalNoiseOffset(100.0, 100.0, 2) == -100.0f,
               "移動 400m に対し模様は 300m 進み、範囲との相対位置が変わる");
-        Check(CloudMotion::LocalNoiseOffset(400.0, 100.0, 0) == 0.0f,
+        Check(CloudMotion::LocalNoiseOffset(100.0, 100.0, 0) == 0.0f,
               "従来の全体移動では模様を固定する");
-        Check(CloudMotion::LocalNoiseOffset(-400.0, 100.0, 2) == 100.0f,
+        Check(CloudMotion::LocalNoiseOffset(-100.0, 100.0, 2) == 100.0f,
               "逆風ではノイズの相対移動も反転する");
-        Check(CloudMotion::LocalNoiseOffset(40400.0, 100.0, 2) == -100.0f,
+        Check(CloudMotion::LocalNoiseOffset(10100.0, 100.0, 2) == -100.0f,
               "長時間の移流は両ノイズに共通の周期で折り返す");
+        CloudMotion ratioMotion;
+        ratioMotion.Advance(2.0, true, 10.0f, 0.0f, 0.75f);
+        Check(ratioMotion.driftZ == 5.0, "既定比率では相対移動が風の 25% になる");
+        ratioMotion.Advance(1.0, true, 10.0f, 0.0f, 1.0f);
+        Check(ratioMotion.driftZ == 5.0, "比率を 1 にしても現在の模様は飛ばず維持する");
+        ratioMotion.Advance(1.0, true, 10.0f, 0.0f, 0.0f);
+        Check(ratioMotion.driftZ == 15.0, "比率 0 は模様を空間に固定する相対速度になる");
+        ratioMotion.Advance(2.0, false, 10.0f, 0.0f, 0.0f);
+        Check(ratioMotion.driftZ == 15.0, "停止中は相対移動も止まる");
+        ratioMotion.Reset();
+        Check(ratioMotion.driftZ == 0.0, "リセットは模様の位相も戻す");
         motion.Reset();
         Check(motion.x==0 && motion.z==0, "開始位置への復帰は移動量を消す");
         NodeGraph graph;

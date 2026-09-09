@@ -1221,7 +1221,11 @@ void Application::DrawGraphPanel() {
                 "風で雲を動かします。オフでその位置に一時停止します。");
             const char* modes[] = {"雲全体を移動", "範囲内で模様を流す", "流れながら変化"};
             changed |= ui::PropertyCombo("動かし方", &cloud->motionMode, modes, 3, defaults.motionMode,
-                "全体移動、範囲内の移流、流れながら変化を選べます。変化では模様が雲の 75% の速さで進みます。切替時は開始位置へ戻ります。");
+                "全体移動、範囲内の移流、流れながら変化を選べます。変化では模様を雲より遅く進めます。切替時は開始位置へ戻ります。");
+            if (cloud->motionMode == 2) {
+                changed |= ui::PropertyFloat("模様の速度比", &cloud->noiseSpeedRatio, 0.0f, 1.0f, defaults.noiseSpeedRatio,
+                    "1 で雲と同じ速度（形を維持）、0 で模様を空間に固定。小さいほど移動に伴う形の変化が速くなります。", "%.2f");
+            }
             changed |= ui::PropertyFloat("風速", &cloud->windSpeed, 0.0f, 1000.0f, defaults.windSpeed,
                 "雲が進む速さ（m/s）。大きいほど速く動きます。", "%.1f m/s");
             changed |= ui::PropertyFloat("風向", &cloud->windDirection, -180.0f, 180.0f, defaults.windDirection,

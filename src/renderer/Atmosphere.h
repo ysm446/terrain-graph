@@ -33,7 +33,8 @@ struct AtmosphereSettings {
     float windOffsetX = 0.0f; // 実行時のみ。保存しない。
     float windOffsetZ = 0.0f;
     uint32_t lowerHemisphere = 1; // 0: 空の延長、1: 地面反射。
-    float padding[2]{};
+    float noiseSpeedRatio = 0.75f;
+    float padding = 0.0f;
     uint32_t localCloud = 0; // 実行時のみ。雲ノードが楕円体の密度を指定する。
     float radiusX = 600.0f, radiusZ = 400.0f, edgeSoftness = 0.2f;
     float shapeStrength = 0.65f, detailStrength = 0.3f;

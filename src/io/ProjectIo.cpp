@@ -1346,6 +1346,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["cloud"]["seed"] = cloud->seed;
             item["cloud"]["animate"] = cloud->animate;
             item["cloud"]["motionMode"] = cloud->motionMode == 2 ? "drift" : cloud->motionMode == 1 ? "flow" : "translate";
+            item["cloud"]["noiseSpeedRatio"] = cloud->noiseSpeedRatio;
             item["cloud"]["windSpeed"] = cloud->windSpeed;
             item["cloud"]["windDirection"] = cloud->windDirection;
         } else if (const auto* path = std::get_if<graph::PathNodeSettings>(&node.settings)) {
@@ -1489,6 +1490,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.animate = ReadBool(*cloud, "animate", settings.animate);
                     const auto motionMode = ReadString(*cloud, "motionMode", "translate");
                     settings.motionMode = motionMode == "drift" ? 2 : motionMode == "flow" ? 1 : 0;
+                    settings.noiseSpeedRatio = std::clamp(ReadFloat(*cloud, "noiseSpeedRatio", settings.noiseSpeedRatio), 0.0f, 1.0f);
                     settings.windSpeed = std::clamp(ReadFloat(*cloud, "windSpeed", settings.windSpeed), 0.0f, 1000.0f);
                     settings.windDirection = std::clamp(ReadFloat(*cloud, "windDirection", settings.windDirection), -180.0f, 180.0f);
                     settings.seed = std::clamp(ReadInt(*cloud, "seed", settings.seed), 0, 10000);

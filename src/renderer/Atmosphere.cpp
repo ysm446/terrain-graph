@@ -41,15 +41,15 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
         requested.cloudSource != m_requested.cloudSource ||
         requested.cloudMotionMode != m_requested.cloudMotionMode) m_motion.Reset();
     const bool playing = requested.clouds && requested.animateClouds && requested.windSpeed > 0;
-    m_motion.Advance(delta, playing, requested.windSpeed, requested.windDirection);
+    m_motion.Advance(delta, playing, requested.windSpeed, requested.windDirection, requested.noiseSpeedRatio);
     if (playing) m_cloudTime += delta;
     AtmosphereSettings settings = requested;
     if (requested.localCloud && requested.cloudMotionMode != 1) {
         settings.fieldCenterX += static_cast<float>(m_motion.x);
         settings.fieldCenterZ += static_cast<float>(m_motion.z);
         // 範囲より模様を遅く進める。追加サンプルなしで異なる場所の密度を読む。
-        settings.windOffsetX = m_motion.LocalNoiseOffset(m_motion.x, requested.cloudScale, requested.cloudMotionMode);
-        settings.windOffsetZ = m_motion.LocalNoiseOffset(m_motion.z, requested.cloudScale, requested.cloudMotionMode);
+        settings.windOffsetX = m_motion.LocalNoiseOffset(m_motion.driftX, requested.cloudScale, requested.cloudMotionMode);
+        settings.windOffsetZ = m_motion.LocalNoiseOffset(m_motion.driftZ, requested.cloudScale, requested.cloudMotionMode);
     } else {
         // ローカル雲の細部は周波数 3.1 倍なので、共通周期は基準周期の 10 倍。
         const double period = requested.cloudScale * (requested.localCloud ? 10.0 : 1.0);

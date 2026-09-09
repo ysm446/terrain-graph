@@ -331,6 +331,7 @@ int Application::Run() {
             cloudSettings.animateClouds = cloud.animate ? 1u : 0u;
             cloudSettings.cloudMotionMode = static_cast<uint32_t>(cloud.motionMode);
             cloudSettings.cloudSource = static_cast<uint32_t>(compiledCloud.sourceId);
+            cloudSettings.noiseSpeedRatio = cloud.noiseSpeedRatio;
             cloudSettings.windSpeed = cloud.windSpeed;
             cloudSettings.windDirection = cloud.windDirection * 3.14159265f / 180.0f;
             cloudSettings.fieldCenterX = cloud.centerX;

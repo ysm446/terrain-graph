@@ -10,7 +10,7 @@ struct AtmosphericParameters {
     float cloudThickness; float cloudScale; uint seed; uint samples;
     float fieldCenterX; float fieldCenterZ; float fieldRadius; float fieldFalloff;
     float windSpeed; float windDirection; uint animateClouds; float windOffsetX;
-    float windOffsetZ; uint lowerHemisphere; float2 padding;
+    float windOffsetZ; uint lowerHemisphere; float noiseSpeedRatio; float padding;
     uint localCloud; float radiusX; float radiusZ; float edgeSoftness;
     float shapeStrength; float detailStrength; uint cloudMotionMode; uint cloudSource;
 };
