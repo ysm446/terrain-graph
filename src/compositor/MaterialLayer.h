@@ -62,6 +62,7 @@ enum class LayerKind : uint32_t {
     MultiScaleErosion = 10,
     FluvialErosion = 11,
     FlattenBorders = 12,
+    SnowCover = 13,
 };
 
 // 散布する形。terrain-editor の ScatterShapeType と同じ。
@@ -89,7 +90,7 @@ enum class RockStyle : uint32_t {
 // 合成せずハイトを書き換える加工か。**下地にはなれない**（ならす相手が要る）。
 inline bool IsHeightOperationKind(LayerKind kind) {
     return kind == LayerKind::Blur || kind == LayerKind::Sediment ||
-           kind == LayerKind::Crumbling || kind == LayerKind::Snow ||
+           kind == LayerKind::Crumbling || kind == LayerKind::Snow || kind == LayerKind::SnowCover ||
            kind == LayerKind::River || kind == LayerKind::Droplet ||
            kind == LayerKind::Scatter || kind == LayerKind::MultiScaleErosion ||
            kind == LayerKind::FluvialErosion || kind == LayerKind::FlattenBorders;
@@ -472,6 +473,49 @@ struct MaterialLayer {
         int breachingRadius = 16; // 最終グリッド上のセル数
     };
     MultiScaleErosionSettings multiScaleErosion;
+
+    // KTT Snow Base の専用設定。旧 Snow とは共有しない。距離・高さは m。
+    struct SnowCoverSettings {
+        bool deepSnow = true;
+        float featureSize = 2.0f;
+        int settleIterations = 100;
+        float snowfallDepth = 1.0f;
+        float flowVolume = 0.0f;
+        float maxSlope = 60.0f;
+        float melt = 0.0f;
+        bool multigrid = true;
+        float referenceDetailScale = 1.0f;
+        bool snowLine = false;
+        float snowLineStrength = 1.0f;
+        float snowLineHeight = 100.0f;
+        float snowLineFalloff = 25.0f;
+        bool wind = false;
+        float windX = 1.0f;
+        float windY = 0.0f;
+        float windZ = 0.0f;
+        float windStrength = 1.0f;
+        bool blurWind = false;
+        float windBlurRadius = 5.0f;
+        bool dusting = false;
+        float dustingIntensity = 1.0f;
+        float slipoffAngle = 40.0f;
+        float slipoffFalloff = 10.0f;
+        float curvatureInfluence = 0.5f;
+        bool noise = false;
+        float noiseStrength = 1.0f;
+        float noiseScale = 25.0f;
+        float noiseRoughness = 0.8f;
+        int noiseOctaves = 8;
+        bool erodeDusting = true;
+        float advectionLength = 50.0f;
+        float advectionVolume = 1.0f;
+        float advectionStrength = 0.5f;
+        float valuePreservation = 0.9f;
+        struct RampPoint { float position = 0.0f; float value = 0.0f; int interpolation = 1; };
+        int rampCount = 2;
+        RampPoint ramp[8] = {{0.0f, 0.0f, 1}, {1.0f, 1.0f, 1}};
+    };
+    SnowCoverSettings snowCover;
 
     struct FluvialErosionSettings {
         uint32_t resolution = 1024;

@@ -45,6 +45,7 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
             return ImVec4(0.70f, 0.62f, 0.52f, 1.0f);
         case graph::NodeKind::Crumbling:
             return ImVec4(0.74f, 0.58f, 0.50f, 1.0f);
+        case graph::NodeKind::SnowCover:
         case graph::NodeKind::Snow:
             return ImVec4(0.72f, 0.76f, 0.82f, 1.0f);
         case graph::NodeKind::River:
@@ -839,6 +840,7 @@ void Application::DrawGraphEditor() {
                         "Sediment — 土砂を重力で再分配して谷に積もらせる");
         addNodeMenuItem(graph::NodeKind::Crumbling,
                         "Crumbling — 崩れた岩屑を斜面下へ流して積む");
+        addNodeMenuItem(graph::NodeKind::SnowCover, "Snow Cover — 積雪と薄雪を生成し、被覆・雪深・流動量を出す");
         addNodeMenuItem(graph::NodeKind::Snow,
                         "Snow — 雪を降らせ、急な雪面から落として積もらせる");
         addNodeMenuItem(graph::NodeKind::River,

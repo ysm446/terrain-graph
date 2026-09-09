@@ -123,6 +123,100 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
 
     // 積雪も合成レイヤーではなく「下地のハイトへ雪を積む加工」。
     // 降る量は一様なので、マスクの節は出さない（どこに積もるかは雪面が決める）。
+    if (layer.kind == compositor::LayerKind::SnowCover) {
+        auto& p = layer.snowCover;
+        const compositor::MaterialLayer::SnowCoverSettings d;
+        if (ui::BeginPropertyTable("snowCoverBasic")) {
+            char name[128]{};
+            std::snprintf(name, sizeof(name), "%s", layer.name.c_str());
+            if (ui::PropertyTextInput("名前", name, sizeof(name))) { layer.name=name; changed=true; }
+            ui::EndPropertyTable();
+        }
+        if (ImGui::CollapsingHeader("積雪##snowCover0", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ui::BeginPropertyTable("snowCover0")) {
+                changed |= ui::PropertyBool("厚い積雪", &p.deepSnow, d.deepSnow, "雪面を変形する積雪を有効にする");
+                changed |= ui::PropertyFloat("特徴サイズ", &p.featureSize, 0.01f, 128.0f, d.featureSize, "積雪の大きな形を計算するスケール", "%.3f");
+                changed |= ui::PropertyInt("安定化反復", &p.settleIterations, 0, 2000, d.settleIterations, "各解像度で雪面を落ち着かせる反復回数");
+                changed |= ui::PropertyFloat("降雪深", &p.snowfallDepth, 0.0f, 100.0f, d.snowfallDepth, "全面に降らせる雪の厚さ。Mask 入力で分布を指定する", "%.2f m");
+                changed |= ui::PropertyFloat("流量補正", &p.flowVolume, -10.0f, 10.0f, d.flowVolume, "流動量の差を雪面の移動に反映する", "%.3f");
+                changed |= ui::PropertyFloat("最大傾斜", &p.maxSlope, 0.0f, 89.0f, d.maxSlope, "雪が付着できる最大傾斜。安定化を開始する角度ではない", "%.1f 度");
+                changed |= ui::PropertyFloat("融雪", &p.melt, 0.0f, 1.0f, d.melt, "降雪深の 2 倍にこの値を掛けた厚さを最後に取り除く", "%.3f");
+                changed |= ui::PropertyBool("多段解像度", &p.multigrid, d.multigrid, "粗い格子から元の解像度まで段階的に積雪を計算する");
+                changed |= ui::PropertyFloat("基準スケール", &p.referenceDetailScale, 0.01f, 100.0f, d.referenceDetailScale, "特徴サイズに掛ける基準の距離", "%.2f m");
+                ui::EndPropertyTable();
+            }
+        }
+        if (ImGui::CollapsingHeader("降雪分布##snowCover1", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ui::BeginPropertyTable("snowCover1")) {
+                changed |= ui::PropertyBool("降雪線", &p.snowLine, d.snowLine, "低い標高で降雪を抑える");
+                changed |= ui::PropertyFloat("抑制の強さ", &p.snowLineStrength, 0.0f, 1.0f, d.snowLineStrength, "降雪線より低い場所で取り除く降雪量の割合", "%.3f");
+                changed |= ui::PropertyFloat("標高", &p.snowLineHeight, -10000.0f, 10000.0f, d.snowLineHeight, "降雪線の下端。Height 0.5 の基準面を標高 0 m とする", "%.2f m");
+                changed |= ui::PropertyFloat("遷移幅", &p.snowLineFalloff, 0.0f, 1000.0f, d.snowLineFalloff, "降雪線の下端から通常の降雪量に戻るまでの高さ", "%.2f m");
+                ui::EndPropertyTable();
+            }
+        }
+        if (ImGui::CollapsingHeader("風##snowCover2", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ui::BeginPropertyTable("snowCover2")) {
+                changed |= ui::PropertyBool("風", &p.wind, d.wind, "斜面の向きから降雪量を補正する");
+                changed |= ui::PropertyFloat("風向 X", &p.windX, -1.0f, 1.0f, d.windX, "風が進む方向の X 成分", "%.3f");
+                changed |= ui::PropertyFloat("風向 Y", &p.windY, -1.0f, 1.0f, d.windY, "風が進む方向の鉛直成分", "%.3f");
+                changed |= ui::PropertyFloat("風向 Z", &p.windZ, -1.0f, 1.0f, d.windZ, "風が進む方向の Z 成分", "%.3f");
+                changed |= ui::PropertyFloat("風の強さ", &p.windStrength, 0.0f, 1.0f, d.windStrength, "風向による降雪量の補正強度", "%.3f");
+                changed |= ui::PropertyBool("風判定をぼかす", &p.blurWind, d.blurWind, "風向の判定に使う地形だけをぼかす");
+                changed |= ui::PropertyFloat("ぼかし半径", &p.windBlurRadius, 0.0f, 512.0f, d.windBlurRadius, "風向の判定用の地形をならす半径", "%.2f m");
+                ui::EndPropertyTable();
+            }
+        }
+        if (ImGui::CollapsingHeader("薄雪##snowCover3", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ui::BeginPropertyTable("snowCover3")) {
+                changed |= ui::PropertyBool("薄雪", &p.dusting, d.dusting, "地形を変えずに薄雪の被覆を追加する");
+                changed |= ui::PropertyFloat("薄雪の強さ", &p.dustingIntensity, 0.0f, 1.0f, d.dustingIntensity, "薄雪の被覆マスクに掛ける強さ", "%.3f");
+                changed |= ui::PropertyFloat("滑落角", &p.slipoffAngle, 0.0f, 89.0f, d.slipoffAngle, "この角度以上では薄雪を付着させない", "%.1f 度");
+                changed |= ui::PropertyFloat("角度の遷移幅", &p.slipoffFalloff, 0.0f, 89.0f, d.slipoffFalloff, "滑落角に近づくにつれて被覆を弱める範囲", "%.1f 度");
+                changed |= ui::PropertyFloat("曲率の影響", &p.curvatureInfluence, 0.0f, 1.0f, d.curvatureInfluence, "凹部で薄雪を増やし、凸部で減らす", "%.3f");
+                ui::EndPropertyTable();
+            }
+        }
+        if (ImGui::CollapsingHeader("薄雪の移流##snowCover4", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ui::BeginPropertyTable("snowCover4")) {
+                changed |= ui::PropertyBool("薄雪を流す", &p.erodeDusting, d.erodeDusting, "降雪マスクを地形に沿って移流してから付着を判定する");
+                changed |= ui::PropertyFloat("流路の長さ", &p.advectionLength, 0.0f, 1000.0f, d.advectionLength, "薄雪マスクを運ぶ粒子の移動距離", "%.2f m");
+                changed |= ui::PropertyFloat("流路の分散", &p.advectionVolume, 0.0f, 10.0f, d.advectionVolume, "流れの集中した場所から粒子を逸らす補正", "%.3f");
+                changed |= ui::PropertyFloat("移流の強さ", &p.advectionStrength, 0.0f, 1.0f, d.advectionStrength, "粒子が通った場所へ運んだ値を混ぜる割合", "%.3f");
+                changed |= ui::PropertyFloat("値の保持率", &p.valuePreservation, 0.0f, 1.0f, d.valuePreservation, "粒子が出発地点のマスク値を保持する割合", "%.3f");
+                ui::EndPropertyTable();
+            }
+        }
+        if (ImGui::CollapsingHeader("薄雪のノイズ##snowCover5", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ui::BeginPropertyTable("snowCover5")) {
+                changed |= ui::PropertyBool("ノイズ", &p.noise, d.noise, "薄雪の付着判定をノイズで崩す");
+                changed |= ui::PropertyFloat("ノイズの強さ", &p.noiseStrength, 0.0f, 4.0f, d.noiseStrength, "傾斜に掛けるノイズの振幅", "%.3f");
+                changed |= ui::PropertyFloat("ノイズの大きさ", &p.noiseScale, 0.01f, 1000.0f, d.noiseScale, "薄雪の模様の基準サイズ", "%.2f m");
+                changed |= ui::PropertyFloat("ノイズの粗さ", &p.noiseRoughness, 0.0f, 1.0f, d.noiseRoughness, "細かいオクターブの振幅比", "%.3f");
+                changed |= ui::PropertyInt("オクターブ", &p.noiseOctaves, 0, 16, d.noiseOctaves, "基準ノイズに重ねる細かいノイズの段数");
+                ui::EndPropertyTable();
+            }
+        }
+        if (p.snowLine && ImGui::CollapsingHeader("降雪線のカーブ")) {
+            if (ui::BeginPropertyTable("snowCoverRampCount")) {
+                changed |= ui::PropertyInt("制御点数", &p.rampCount, 2, 8, d.rampCount, "位置と値で降雪量の遷移を設定する");
+                ui::EndPropertyTable();
+            }
+            const char* modes[] = {"一定", "線形", "滑らか"};
+            for (int i=0; i<std::clamp(p.rampCount,2,8); ++i) {
+                ImGui::PushID(i);
+                if (ui::BeginPropertyTable("snowCoverRamp")) {
+                    changed |= ui::PropertyFloat("位置", &p.ramp[i].position, 0, 1, d.ramp[i].position, "降雪線の下端が 0、上端が 1");
+                    changed |= ui::PropertyFloat("値", &p.ramp[i].value, 0, 1, d.ramp[i].value, "この位置での降雪量");
+                    changed |= ui::PropertyCombo("補間", &p.ramp[i].interpolation, modes, 3, d.ramp[i].interpolation, "次の制御点への繋ぎ方");
+                    ui::EndPropertyTable();
+                }
+                ImGui::PopID();
+            }
+        }
+        return changed;
+    }
+
     if (layer.kind == compositor::LayerKind::Snow) {
         const compositor::MaterialLayer::SnowSettings snowDefaults;
         ui::SectionHeader("基本");

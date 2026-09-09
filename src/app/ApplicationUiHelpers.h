@@ -116,6 +116,13 @@ inline const compositor::MaterialLayer kDefaultSedimentLayer = [] {
     return layer;
 }();
 
+// Snow Cover は KTT Snow Base の既定値を使う。
+inline const compositor::MaterialLayer kDefaultSnowCoverLayer = [] {
+    compositor::MaterialLayer layer;
+    layer.kind = compositor::LayerKind::SnowCover;
+    layer.name = "Snow Cover";
+    return layer;
+}();
 // 積雪ノードの既定値。値は terrain-editor の Snow に合わせてある。
 inline const compositor::MaterialLayer kDefaultSnowLayer = [] {
     compositor::MaterialLayer layer;
@@ -184,6 +191,8 @@ inline const compositor::MaterialLayer& DefaultLayerFor(compositor::LayerKind ki
             return kDefaultSedimentLayer;
         case compositor::LayerKind::Crumbling:
             return kDefaultCrumblingLayer;
+        case compositor::LayerKind::SnowCover:
+            return kDefaultSnowCoverLayer;
         case compositor::LayerKind::Snow:
             return kDefaultSnowLayer;
         case compositor::LayerKind::River:

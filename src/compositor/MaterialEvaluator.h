@@ -422,6 +422,15 @@ private:
     SedimentResources m_sediment;
     CrumblingResources m_crumbling;
     SnowResources m_snow;
+    struct SnowCoverResources {
+        rhi::GpuTexture state[2], output, weather, particles, sums;
+        uint32_t allocation = 0;
+    } m_snowCover;
+    bool ApplySnowCover(rhi::Device& device, rhi::PipelineCache& cache,
+        ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
+        const MaterialStack& stack, uint32_t maskIndex);
+    bool ApplySnowCoverMask(rhi::Device& device, rhi::PipelineCache& cache,
+        ID3D12GraphicsCommandList* commandList, const MaskOp& op, rhi::GpuTexture& target, bool enabled);
     RiverResources m_river;
     DropletResources m_droplet;
     MultiScaleErosionResources m_multiScaleErosion;

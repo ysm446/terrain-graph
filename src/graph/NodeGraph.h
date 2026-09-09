@@ -96,6 +96,7 @@ enum class NodeKind : uint32_t {
     MultiScaleErosion = 24,
     FluvialErosion = 25,
     FlattenBorders = 26,
+    SnowCover = 27,
 };
 
 struct PinDefinition {

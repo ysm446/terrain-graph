@@ -230,6 +230,47 @@ uint64_t HashHeightState(uint64_t seed, const MaterialLayer& layer) {
     hash = HashBytes(hash, &layer.blur, sizeof(layer.blur));
     hash = HashBytes(hash, &layer.sediment, sizeof(layer.sediment));
     hash = HashBytes(hash, &layer.crumbling, sizeof(layer.crumbling));
+    hash = HashBytes(hash, &layer.snowCover.erodeDusting, sizeof(layer.snowCover.erodeDusting));
+    hash = HashBytes(hash, &layer.snowCover.advectionLength, sizeof(layer.snowCover.advectionLength));
+    hash = HashBytes(hash, &layer.snowCover.advectionVolume, sizeof(layer.snowCover.advectionVolume));
+    hash = HashBytes(hash, &layer.snowCover.advectionStrength, sizeof(layer.snowCover.advectionStrength));
+    hash = HashBytes(hash, &layer.snowCover.valuePreservation, sizeof(layer.snowCover.valuePreservation));
+    hash = HashBytes(hash, &layer.snowCover.deepSnow, sizeof(layer.snowCover.deepSnow));
+    hash = HashBytes(hash, &layer.snowCover.featureSize, sizeof(layer.snowCover.featureSize));
+    hash = HashBytes(hash, &layer.snowCover.settleIterations, sizeof(layer.snowCover.settleIterations));
+    hash = HashBytes(hash, &layer.snowCover.snowfallDepth, sizeof(layer.snowCover.snowfallDepth));
+    hash = HashBytes(hash, &layer.snowCover.flowVolume, sizeof(layer.snowCover.flowVolume));
+    hash = HashBytes(hash, &layer.snowCover.maxSlope, sizeof(layer.snowCover.maxSlope));
+    hash = HashBytes(hash, &layer.snowCover.melt, sizeof(layer.snowCover.melt));
+    hash = HashBytes(hash, &layer.snowCover.multigrid, sizeof(layer.snowCover.multigrid));
+    hash = HashBytes(hash, &layer.snowCover.referenceDetailScale, sizeof(layer.snowCover.referenceDetailScale));
+    hash = HashBytes(hash, &layer.snowCover.snowLine, sizeof(layer.snowCover.snowLine));
+    hash = HashBytes(hash, &layer.snowCover.snowLineStrength, sizeof(layer.snowCover.snowLineStrength));
+    hash = HashBytes(hash, &layer.snowCover.snowLineHeight, sizeof(layer.snowCover.snowLineHeight));
+    hash = HashBytes(hash, &layer.snowCover.snowLineFalloff, sizeof(layer.snowCover.snowLineFalloff));
+    hash = HashBytes(hash, &layer.snowCover.wind, sizeof(layer.snowCover.wind));
+    hash = HashBytes(hash, &layer.snowCover.windX, sizeof(layer.snowCover.windX));
+    hash = HashBytes(hash, &layer.snowCover.windY, sizeof(layer.snowCover.windY));
+    hash = HashBytes(hash, &layer.snowCover.windZ, sizeof(layer.snowCover.windZ));
+    hash = HashBytes(hash, &layer.snowCover.windStrength, sizeof(layer.snowCover.windStrength));
+    hash = HashBytes(hash, &layer.snowCover.blurWind, sizeof(layer.snowCover.blurWind));
+    hash = HashBytes(hash, &layer.snowCover.windBlurRadius, sizeof(layer.snowCover.windBlurRadius));
+    hash = HashBytes(hash, &layer.snowCover.dusting, sizeof(layer.snowCover.dusting));
+    hash = HashBytes(hash, &layer.snowCover.dustingIntensity, sizeof(layer.snowCover.dustingIntensity));
+    hash = HashBytes(hash, &layer.snowCover.slipoffAngle, sizeof(layer.snowCover.slipoffAngle));
+    hash = HashBytes(hash, &layer.snowCover.slipoffFalloff, sizeof(layer.snowCover.slipoffFalloff));
+    hash = HashBytes(hash, &layer.snowCover.curvatureInfluence, sizeof(layer.snowCover.curvatureInfluence));
+    hash = HashBytes(hash, &layer.snowCover.noise, sizeof(layer.snowCover.noise));
+    hash = HashBytes(hash, &layer.snowCover.noiseStrength, sizeof(layer.snowCover.noiseStrength));
+    hash = HashBytes(hash, &layer.snowCover.noiseScale, sizeof(layer.snowCover.noiseScale));
+    hash = HashBytes(hash, &layer.snowCover.noiseRoughness, sizeof(layer.snowCover.noiseRoughness));
+    hash = HashBytes(hash, &layer.snowCover.noiseOctaves, sizeof(layer.snowCover.noiseOctaves));
+    hash = HashBytes(hash, &layer.snowCover.rampCount, sizeof(layer.snowCover.rampCount));
+    for (const auto& point : layer.snowCover.ramp) {
+        hash = HashBytes(hash, &point.position, sizeof(point.position));
+        hash = HashBytes(hash, &point.value, sizeof(point.value));
+        hash = HashBytes(hash, &point.interpolation, sizeof(point.interpolation));
+    }
     hash = HashBytes(hash, &layer.snow, sizeof(layer.snow));
     hash = HashBytes(hash, &layer.river, sizeof(layer.river));
     hash = HashBytes(hash, &layer.droplet, sizeof(layer.droplet));
@@ -334,6 +375,7 @@ uint64_t HashMaskOpParams(uint64_t seed, const MaskOp& op) {
             return HashBytes(seed, &op.height, sizeof(op.height));
         case MaskOpKind::River:
             return HashBytes(seed, &op.riverMask, sizeof(op.riverMask));
+        case MaskOpKind::SnowCover:
         case MaskOpKind::FluvialErosion:
         case MaskOpKind::Droplet:
             return HashBytes(seed, &op.dropletMask, sizeof(op.dropletMask));
@@ -605,6 +647,8 @@ void MaterialEvaluator::Destroy(rhi::Device& device) {
     ReleaseSedimentResources(device);
     ReleaseCrumblingResources(device);
     ReleaseSnowResources(device);
+    for (auto* texture : {&m_snowCover.state[0], &m_snowCover.state[1], &m_snowCover.output, &m_snowCover.weather, &m_snowCover.particles, &m_snowCover.sums}) device.DeferRelease(*texture);
+    m_snowCover.allocation = 0;
     ReleaseRiverResources(device);
     ReleaseDropletResources(device);
     for (auto* texture : {&m_fluvialErosion.state[0], &m_fluvialErosion.state[1],
@@ -955,6 +999,12 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
         return ApplyRiverMask(device, pipelineCache, commandList, op, stack, target);
     }
     // 水滴侵食の流量 / 堆積も、直前に走った水滴侵食レイヤーの作業用テクスチャから焼く。
+    if (op.kind == MaskOpKind::SnowCover) {
+        const bool enabled = op.heightSourceLayer >= 0 &&
+            static_cast<size_t>(op.heightSourceLayer) < stack.Layers().size() &&
+            stack.Layers()[op.heightSourceLayer].enabled;
+        return ApplySnowCoverMask(device, pipelineCache, commandList, op, target, enabled);
+    }
     if (op.kind == MaskOpKind::FluvialErosion) {
         const bool enabled = op.heightSourceLayer >= 0 &&
             static_cast<size_t>(op.heightSourceLayer) < stack.Layers().size() &&
@@ -2731,6 +2781,163 @@ bool MaterialEvaluator::ApplyFlattenBorders(rhi::Device& device, rhi::PipelineCa
     return true;
 }
 
+namespace {
+struct SnowCoverConstants {
+    uint32_t textures[4], inputs[4], grid[4], work[4];
+    float scale[4], snow[4], line[4], wind[4], dust[4], noise[4], advection[4];
+    float ramp[8][4];
+};
+static_assert(sizeof(SnowCoverConstants) == 304);
+}
+
+bool MaterialEvaluator::ApplySnowCover(rhi::Device& device, rhi::PipelineCache& cache,
+    ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
+    const MaterialStack& stack, uint32_t maskIndex) {
+    auto& r = m_snowCover;
+    const auto& p = layer.snowCover;
+    const uint32_t n = m_resolution;
+    if (r.allocation != n) {
+        r.allocation = 0;
+        for (auto* t : {&r.state[0], &r.state[1], &r.weather, &r.output, &r.particles, &r.sums})
+            device.DeferRelease(*t);
+        if (!CreateChannelTexture(device,n,DXGI_FORMAT_R32G32B32A32_FLOAT,L"SnowCoverStateA",r.state[0]) ||
+            !CreateChannelTexture(device,n,DXGI_FORMAT_R32G32B32A32_FLOAT,L"SnowCoverStateB",r.state[1]) ||
+            !CreateChannelTexture(device,n,DXGI_FORMAT_R32G32B32A32_FLOAT,L"SnowCoverWeather",r.weather) ||
+            !CreateChannelTexture(device,n,DXGI_FORMAT_R32G32B32A32_FLOAT,L"SnowCoverOutput",r.output) ||
+            !CreateChannelTexture(device,n,DXGI_FORMAT_R32G32B32A32_FLOAT,L"SnowCoverParticles",r.particles) ||
+            !CreateChannelTexture(device,n*2,DXGI_FORMAT_R32_UINT,L"SnowCoverSums",r.sums)) return false;
+        r.allocation = n;
+    }
+    const wchar_t* entries[] = {L"CsWindHorizontal",L"CsWindVertical",L"CsWeather",L"CsInit",
+        L"CsSettle",L"CsParticles",L"CsAdvect",L"CsAdvectApply",L"CsFinish",L"CsResolve"};
+    ID3D12PipelineState* passes[10]{};
+    for (size_t i=0;i<std::size(entries);++i) {
+        passes[i]=cache.GetCompute(L"CompositeSnowCover.hlsl",entries[i]);
+        if (!passes[i]) return false;
+    }
+    auto* normals=cache.GetCompute(L"CompositeBlur.hlsl",L"CsNormalFromHeight");
+    if (!normals) return false;
+    SnowCoverConstants c{};
+    c.textures[2]=r.weather.UavIndex(); c.textures[3]=r.output.UavIndex();
+    c.inputs[0]=m_textures.height.SrvIndex(); c.inputs[1]=m_textures.height.UavIndex(); c.inputs[2]=maskIndex;
+    c.grid[2]=n; c.work[0]=r.particles.UavIndex(); c.work[1]=r.sums.UavIndex();
+    // HDA の res_x * 1024 * Source_Particle_Density (0.1)。
+    c.work[2]=std::min(n*n,static_cast<uint32_t>(n*102.4f)+1u);
+    c.work[3]=static_cast<uint32_t>(std::clamp(p.rampCount,2,8));
+    c.scale[3]=std::max(stack.SizeMeters(),0.001f); c.scale[2]=std::max(stack.HeightMeters(),0.001f);
+    c.scale[1]=c.scale[3]/n;
+    c.snow[0]=p.deepSnow ? std::max(p.snowfallDepth,0.0f) : 0;
+    c.snow[1]=std::clamp(p.flowVolume,-10.0f,10.0f);
+    const auto tangent=[](float degrees) { return std::tan(std::clamp(degrees,-89.0f,89.99f)*DirectX::XM_PI/180.0f); };
+    c.snow[2]=tangent(p.maxSlope); c.snow[3]=std::clamp(p.melt,0.0f,1.0f);
+    c.line[0]=p.snowLine ? std::clamp(p.snowLineStrength,0.0f,1.0f) : -1;
+    c.line[1]=p.snowLineHeight; c.line[2]=std::max(p.snowLineFalloff,0.0f);
+    c.line[3]=p.wind && p.blurWind ? std::clamp(p.windBlurRadius/c.scale[1],0.0f,static_cast<float>(n)) : 0;
+    const float windLength=std::sqrt(p.windX*p.windX+p.windY*p.windY+p.windZ*p.windZ);
+    if (windLength > 1e-6f) { c.wind[0]=p.windX/windLength; c.wind[1]=p.windY/windLength; c.wind[2]=p.windZ/windLength; }
+    c.wind[3]=p.wind ? std::clamp(p.windStrength,0.0f,1.0f) : -1;
+    c.dust[0]=p.dusting ? std::max(p.dustingIntensity,0.0f) : -1;
+    c.dust[1]=tangent(p.slipoffAngle); c.dust[2]=tangent(p.slipoffAngle-std::max(p.slipoffFalloff,0.0f));
+    c.dust[3]=std::clamp(p.curvatureInfluence,0.0f,1.0f);
+    c.noise[0]=p.noise ? std::max(p.noiseStrength,0.0f) : -1;
+    c.noise[1]=std::max(p.noiseScale,0.001f); c.noise[2]=std::clamp(p.noiseRoughness,0.0f,1.0f);
+    c.noise[3]=static_cast<float>(std::clamp(p.noiseOctaves,0,16));
+    c.advection[0]=std::max(p.advectionLength,0.0f); c.advection[1]=std::max(p.advectionVolume,0.0f);
+    c.advection[2]=std::clamp(p.advectionStrength,0.0f,1.0f); c.advection[3]=std::clamp(p.valuePreservation,0.0f,1.0f);
+    auto ramp=p.ramp;
+    // 設定自体の点順は維持し、評価用の写しだけソートする。
+    std::vector<MaterialLayer::SnowCoverSettings::RampPoint> points(ramp,ramp+c.work[3]);
+    std::stable_sort(points.begin(),points.end(),[](const auto& a,const auto& b){return a.position<b.position;});
+    for (uint32_t i=0;i<c.work[3];++i) {
+        c.ramp[i][0]=std::clamp(points[i].position,0.0f,1.0f); c.ramp[i][1]=std::clamp(points[i].value,0.0f,1.0f);
+        c.ramp[i][2]=static_cast<float>(std::clamp(points[i].interpolation,0,2));
+    }
+    // 反復の中で同一の定数を再確保しない。
+    const auto upload=[&]() {
+        const auto allocation=AllocateConstants(device,sizeof(c));
+        if (allocation.IsValid()) std::memcpy(allocation.cpu,&c,sizeof(c));
+        return allocation.gpuAddress;
+    };
+    const auto run=[&](int pass,uint32_t resolution,D3D12_GPU_VIRTUAL_ADDRESS address) {
+        if (!address) return false;
+        commandList->SetComputeRootConstantBufferView(1,address);
+        commandList->SetPipelineState(passes[pass]);
+        commandList->Dispatch(DispatchCount(resolution),DispatchCount(resolution),1);
+        const auto barrier=CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+        commandList->ResourceBarrier(1,&barrier);
+        return true;
+    };
+    PIXBeginEvent(commandList,PIX_COLOR_DEFAULT,"SnowCover");
+    for (auto* t : {&r.state[0],&r.state[1],&r.weather,&r.output,&r.particles,&r.sums})
+        TransitionIfNeeded(commandList,*t,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList,m_textures.height,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    bool ok=true;
+    c.textures[0]=r.state[0].UavIndex(); c.textures[1]=r.state[1].UavIndex();
+    if (c.line[3]>0) {
+        ok=run(0,n,upload());
+        std::swap(c.textures[0],c.textures[1]);
+        ok=ok && run(1,n,upload());
+        std::swap(c.textures[0],c.textures[1]);
+    }
+    ok=ok && run(2,n,upload());
+    const float ratio=std::max(p.featureSize,0.0f)*std::max(p.referenceDetailScale,0.001f)/c.scale[1];
+    const float levelsValue=ratio<1 ? ratio : std::log2(ratio)+1;
+    const uint32_t maxLevels=static_cast<uint32_t>(std::floor(std::log2(static_cast<float>(n))))+1;
+    const uint32_t levelCount=p.deepSnow && p.multigrid ?
+        std::clamp(static_cast<uint32_t>(std::ceil(levelsValue)),1u,maxLevels) : 1u;
+    uint32_t current=0,previous=0;
+    for (uint32_t level=0;level<levelCount && ok;++level) {
+        const uint32_t resolution=std::max(1u,n>>(levelCount-1-level));
+        c.grid[0]=resolution; c.grid[1]=previous; c.scale[0]=c.scale[3]/resolution;
+        c.textures[0]=r.state[current].UavIndex(); c.textures[1]=r.state[1-current].UavIndex();
+        ok=run(3,resolution,upload()); current=1-current;
+        const float fraction=levelsValue-std::floor(levelsValue);
+        const float firstWeight=level==0 && p.multigrid && fraction>0 ? fraction : 1;
+        const int iterations=p.deepSnow && c.snow[0]>0 ? static_cast<int>(std::clamp(p.settleIterations,0,2000)*firstWeight) : 0;
+        D3D12_GPU_VIRTUAL_ADDRESS states[2]{};
+        for (uint32_t i=0;i<2;++i) {
+            c.textures[0]=r.state[i].UavIndex(); c.textures[1]=r.state[1-i].UavIndex(); states[i]=upload();
+        }
+        for (int step=0;step<iterations && ok;++step) { ok=run(4,resolution,states[current]); current=1-current; }
+        previous=resolution;
+    }
+    if (ok && p.dusting && p.erodeDusting && c.advection[0]>0 && c.advection[2]>0) {
+        const auto address=upload();
+        ok=run(5,n,address);
+        const int steps=static_cast<int>(std::ceil(std::min(c.advection[0]/c.scale[1],16384.0f)));
+        for (int step=0;step<steps && ok;++step) ok=run(6,n,address) && run(7,n,address);
+    }
+    c.textures[0]=r.state[current].UavIndex();
+    const auto finalAddress=upload();
+    ok=ok && run(8,n,finalAddress);
+    TransitionIfNeeded(commandList,m_textures.height,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    if (ok && !layer.maskOnly && p.deepSnow && c.snow[0]>0) {
+        ok=run(9,n,finalAddress);
+        if (ok) RebuildNormalsFromHeight(device,normals,commandList,stack);
+    }
+    PIXEndEvent(commandList);
+    return ok;
+}
+
+bool MaterialEvaluator::ApplySnowCoverMask(rhi::Device& device,rhi::PipelineCache& cache,
+    ID3D12GraphicsCommandList* commandList,const MaskOp& op,rhi::GpuTexture& target,bool enabled) {
+    auto* pass=cache.GetCompute(L"CompositeSnowCover.hlsl",L"CsMask");
+    if (!pass || (enabled && !m_snowCover.allocation)) return false;
+    SnowCoverConstants c{};
+    c.textures[3]=m_snowCover.output.UavIndex(); c.inputs[3]=target.UavIndex();
+    c.grid[2]=target.width; c.grid[3]=enabled ? op.dropletMask.channel : 3u;
+    const auto cb=AllocateConstants(device,sizeof(c)); if (!cb.IsValid()) return false;
+    std::memcpy(cb.cpu,&c,sizeof(c));
+    PIXBeginEvent(commandList,PIX_COLOR_DEFAULT,"SnowCoverMask");
+    TransitionIfNeeded(commandList,target,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    commandList->SetComputeRootConstantBufferView(1,cb.gpuAddress); commandList->SetPipelineState(pass);
+    commandList->Dispatch(DispatchCount(target.width),DispatchCount(target.height),1);
+    const auto barrier=CD3DX12_RESOURCE_BARRIER::UAV(nullptr); commandList->ResourceBarrier(1,&barrier);
+    TransitionIfNeeded(commandList,target,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    PIXEndEvent(commandList);
+    return true;
+}
+
 bool MaterialEvaluator::ApplyFluvialErosion(rhi::Device& device, rhi::PipelineCache& cache,
     ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
     const MaterialStack& stack, uint32_t maskIndex) {
@@ -3981,7 +4188,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 op.kind == MaskOpKind::Curvature || op.kind == MaskOpKind::Sediment ||
                 op.kind == MaskOpKind::Crumbling || op.kind == MaskOpKind::Snow ||
                 op.kind == MaskOpKind::Height || op.kind == MaskOpKind::River ||
-                op.kind == MaskOpKind::FluvialErosion || op.kind == MaskOpKind::Droplet || op.kind == MaskOpKind::Scatter) {
+                op.kind == MaskOpKind::SnowCover || op.kind == MaskOpKind::FluvialErosion || op.kind == MaskOpKind::Droplet || op.kind == MaskOpKind::Scatter) {
                 after = std::max(after, op.heightSourceLayer);
                 const size_t layerCount = std::min<size_t>(
                     stack.Layers().size(),
@@ -4109,6 +4316,9 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                                    inputMaskIndex)) {
                     complete = false;
                 }
+                ++m_evaluatedLayerCount;
+            } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::SnowCover) {
+                if (!ApplySnowCover(device, pipelineCache, commandList, layer, stack, inputMaskIndex)) complete = false;
                 ++m_evaluatedLayerCount;
             } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::Snow) {
                 if (!ApplySnow(device, pipelineCache, commandList, layer, stack,

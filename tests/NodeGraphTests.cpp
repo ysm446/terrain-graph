@@ -43,7 +43,7 @@ void RunNodeGraphTests() {
 
     constexpr std::array kOperationKinds = {
         NodeKind::Blur,      NodeKind::Sediment, NodeKind::Crumbling,
-        NodeKind::Snow,      NodeKind::River,    NodeKind::Droplet,
+        NodeKind::SnowCover, NodeKind::Snow, NodeKind::River,    NodeKind::Droplet,
         NodeKind::MultiScaleErosion,
         NodeKind::FluvialErosion,
         NodeKind::FlattenBorders,
@@ -94,6 +94,36 @@ void RunNodeGraphTests() {
             for (const auto& op : preview.maskOps)
                 found |= op.kind == tg::compositor::MaskOpKind::FluvialErosion && op.dropletMask.channel == i-1;
             Check(found, "補助出力のプレビューが対応する成分を参照する");
+        }
+    }
+
+    Section("ノードグラフ — Snow Cover の独立した出力");
+    {
+        NodeGraph graph;
+        const auto baseId = graph.CreateNode(NodeKind::Heightmap);
+        const auto snowId = graph.CreateNode(NodeKind::SnowCover);
+        const auto maskId = graph.CreateNode(NodeKind::MaskNoise);
+        const auto* base = graph.FindNode(baseId);
+        const auto* snow = graph.FindNode(snowId);
+        const auto* mask = graph.FindNode(maskId);
+        Check(snow->inputs.size() == 2 && snow->outputs.size() == 4,
+              "Base / Mask と Result / Cover / Depth / Flows を持つ");
+        Check(graph.CreateLink(base->outputs[0].id, snow->inputs[0].id) &&
+              graph.CreateLink(mask->outputs[0].id, snow->inputs[1].id), "降雪範囲を接続できる");
+        auto* settings = std::get_if<tg::graph::LayerNodeSettings>(&graph.FindMutableNode(snowId)->settings);
+        settings->layer.snowCover.dusting = true;
+        settings->layer.snowCover.snowfallDepth = 3.5f;
+        graph.MarkDirty();
+        const auto result = graph.CompileLayersTo(snowId);
+        Check(result.layers.size() == 2 && result.layers.back().kind == tg::compositor::LayerKind::SnowCover &&
+              result.layers.back().snowCover.dusting && result.layers.back().snowCover.snowfallDepth == 3.5f &&
+              result.layers.back().mask.maskOp >= 0, "専用設定と降雪マスクを保持する");
+        for (size_t i = 1; i < 4; ++i) {
+            const auto preview = graph.CompileLayersTo(snowId, snow->outputs[i].id);
+            bool found = false;
+            for (const auto& op : preview.maskOps)
+                found |= op.kind == tg::compositor::MaskOpKind::SnowCover && op.dropletMask.channel == i - 1;
+            Check(found, "被覆・雪深・流動量を取り違えずプレビューする");
         }
     }
 

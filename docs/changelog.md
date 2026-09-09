@@ -1,9 +1,15 @@
 # Changelog
 
 作成日時: 2026-08-31 06:18
-更新日時: 2026-09-09 06:01
+更新日時: 2026-09-09 11:58
 
 ## 未リリース
+
+### 2026-09-09 11:36 — Snow Cover
+
+- 独立ノード Snow Cover を追加。厚い積雪・薄雪・降雪線・風による降雪補正・融雪に対応。
+- 薄雪の Fluvial Advection、被覆・雪深・流動量の出力、設定とカーブの保存・読み込みを実装。
+- 元 HDA との計算環境の違いは [Snow Cover](reference/snow-cover.md) に記録。
 
 ### 2026-09-09 05:43 — Fluvial Erosion / Flatten Borders
 

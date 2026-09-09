@@ -57,6 +57,7 @@ enum class MaskOpKind : uint32_t {
     // パスの閉じた鎖を多角形とみなし、内側を 1 にする（面）。輪の中の輪は穴。
     Area = 16,
     FluvialErosion = 17,
+    SnowCover = 18,
 };
 
 // 曲率マスクの向き。シェーダの TG_CURVATURE_* と一致させること。

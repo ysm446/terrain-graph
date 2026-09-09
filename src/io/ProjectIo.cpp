@@ -153,7 +153,7 @@ const char* const kCurvatureModeNames[] = {"ridges", "valleys", "absolute"};
 const char* const kMaskBlendModeNames[] = {"add", "multiply", "min", "max", "subtract"};
 const char* const kChannelNames[] = {"baseColor", "normal", "surface", "height"};
 const char* const kLayerKindNames[] = {"surface",   "shape", "liquid", "blur",    "sediment",
-                                       "crumbling", "snow",  "river",  "droplet", "scatter", "multiScaleErosion", "fluvialErosion", "flattenBorders"};
+                                       "crumbling", "snow",  "river",  "droplet", "scatter", "multiScaleErosion", "fluvialErosion", "flattenBorders", "snowCover"};
 // 散布の形 / 向き。compositor::ScatterShape / ScatterOrientation の並びと一致させること。
 const char* const kScatterShapeNames[] = {"hemisphere", "cone"};
 const char* const kScatterOrientationNames[] = {"flat", "followGround", "slopeOriented"};
@@ -787,6 +787,50 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     node["crumbling"] = std::move(crumbling);
 
     // 積雪（積雪レイヤーだけが使う）。
+    json snowCover;
+    snowCover["erodeDusting"] = layer.snowCover.erodeDusting;
+    snowCover["advectionLength"] = layer.snowCover.advectionLength;
+    snowCover["advectionVolume"] = layer.snowCover.advectionVolume;
+    snowCover["advectionStrength"] = layer.snowCover.advectionStrength;
+    snowCover["valuePreservation"] = layer.snowCover.valuePreservation;
+
+    snowCover["deepSnow"] = layer.snowCover.deepSnow;
+    snowCover["featureSize"] = layer.snowCover.featureSize;
+    snowCover["settleIterations"] = layer.snowCover.settleIterations;
+    snowCover["snowfallDepth"] = layer.snowCover.snowfallDepth;
+    snowCover["flowVolume"] = layer.snowCover.flowVolume;
+    snowCover["maxSlope"] = layer.snowCover.maxSlope;
+    snowCover["melt"] = layer.snowCover.melt;
+    snowCover["multigrid"] = layer.snowCover.multigrid;
+    snowCover["referenceDetailScale"] = layer.snowCover.referenceDetailScale;
+    snowCover["snowLine"] = layer.snowCover.snowLine;
+    snowCover["snowLineStrength"] = layer.snowCover.snowLineStrength;
+    snowCover["snowLineHeight"] = layer.snowCover.snowLineHeight;
+    snowCover["snowLineFalloff"] = layer.snowCover.snowLineFalloff;
+    snowCover["wind"] = layer.snowCover.wind;
+    snowCover["windX"] = layer.snowCover.windX;
+    snowCover["windY"] = layer.snowCover.windY;
+    snowCover["windZ"] = layer.snowCover.windZ;
+    snowCover["windStrength"] = layer.snowCover.windStrength;
+    snowCover["blurWind"] = layer.snowCover.blurWind;
+    snowCover["windBlurRadius"] = layer.snowCover.windBlurRadius;
+    snowCover["dusting"] = layer.snowCover.dusting;
+    snowCover["dustingIntensity"] = layer.snowCover.dustingIntensity;
+    snowCover["slipoffAngle"] = layer.snowCover.slipoffAngle;
+    snowCover["slipoffFalloff"] = layer.snowCover.slipoffFalloff;
+    snowCover["curvatureInfluence"] = layer.snowCover.curvatureInfluence;
+    snowCover["noise"] = layer.snowCover.noise;
+    snowCover["noiseStrength"] = layer.snowCover.noiseStrength;
+    snowCover["noiseScale"] = layer.snowCover.noiseScale;
+    snowCover["noiseRoughness"] = layer.snowCover.noiseRoughness;
+    snowCover["noiseOctaves"] = layer.snowCover.noiseOctaves;
+    snowCover["ramp"] = json::array();
+    for (int i = 0; i < std::clamp(layer.snowCover.rampCount, 2, 8); ++i) {
+        const auto& point = layer.snowCover.ramp[i];
+        snowCover["ramp"].push_back({{"position", point.position}, {"value", point.value},
+                                      {"interpolation", point.interpolation}});
+    }
+    node["snowCover"] = std::move(snowCover);
     json snow;
     snow["emission"] = layer.snow.emissionMeters;
     snow["emissionTime"] = layer.snow.emissionTime;
@@ -999,6 +1043,52 @@ compositor::MaterialLayer ReadLayer(
                                                        defaults.sediment.maskThicknessMeters);
     }
 
+    if (const json* value = FindMember(node, "snowCover"); value != nullptr && value->is_object()) {
+        layer.snowCover.erodeDusting = ReadBool(*value, "erodeDusting", defaults.snowCover.erodeDusting);
+        layer.snowCover.advectionLength = ReadFloat(*value, "advectionLength", defaults.snowCover.advectionLength);
+        layer.snowCover.advectionVolume = ReadFloat(*value, "advectionVolume", defaults.snowCover.advectionVolume);
+        layer.snowCover.advectionStrength = ReadFloat(*value, "advectionStrength", defaults.snowCover.advectionStrength);
+        layer.snowCover.valuePreservation = ReadFloat(*value, "valuePreservation", defaults.snowCover.valuePreservation);
+        layer.snowCover.deepSnow = ReadBool(*value, "deepSnow", defaults.snowCover.deepSnow);
+        layer.snowCover.featureSize = ReadFloat(*value, "featureSize", defaults.snowCover.featureSize);
+        layer.snowCover.settleIterations = ReadInt(*value, "settleIterations", defaults.snowCover.settleIterations);
+        layer.snowCover.snowfallDepth = ReadFloat(*value, "snowfallDepth", defaults.snowCover.snowfallDepth);
+        layer.snowCover.flowVolume = ReadFloat(*value, "flowVolume", defaults.snowCover.flowVolume);
+        layer.snowCover.maxSlope = ReadFloat(*value, "maxSlope", defaults.snowCover.maxSlope);
+        layer.snowCover.melt = ReadFloat(*value, "melt", defaults.snowCover.melt);
+        layer.snowCover.multigrid = ReadBool(*value, "multigrid", defaults.snowCover.multigrid);
+        layer.snowCover.referenceDetailScale = ReadFloat(*value, "referenceDetailScale", defaults.snowCover.referenceDetailScale);
+        layer.snowCover.snowLine = ReadBool(*value, "snowLine", defaults.snowCover.snowLine);
+        layer.snowCover.snowLineStrength = ReadFloat(*value, "snowLineStrength", defaults.snowCover.snowLineStrength);
+        layer.snowCover.snowLineHeight = ReadFloat(*value, "snowLineHeight", defaults.snowCover.snowLineHeight);
+        layer.snowCover.snowLineFalloff = ReadFloat(*value, "snowLineFalloff", defaults.snowCover.snowLineFalloff);
+        layer.snowCover.wind = ReadBool(*value, "wind", defaults.snowCover.wind);
+        layer.snowCover.windX = ReadFloat(*value, "windX", defaults.snowCover.windX);
+        layer.snowCover.windY = ReadFloat(*value, "windY", defaults.snowCover.windY);
+        layer.snowCover.windZ = ReadFloat(*value, "windZ", defaults.snowCover.windZ);
+        layer.snowCover.windStrength = ReadFloat(*value, "windStrength", defaults.snowCover.windStrength);
+        layer.snowCover.blurWind = ReadBool(*value, "blurWind", defaults.snowCover.blurWind);
+        layer.snowCover.windBlurRadius = ReadFloat(*value, "windBlurRadius", defaults.snowCover.windBlurRadius);
+        layer.snowCover.dusting = ReadBool(*value, "dusting", defaults.snowCover.dusting);
+        layer.snowCover.dustingIntensity = ReadFloat(*value, "dustingIntensity", defaults.snowCover.dustingIntensity);
+        layer.snowCover.slipoffAngle = ReadFloat(*value, "slipoffAngle", defaults.snowCover.slipoffAngle);
+        layer.snowCover.slipoffFalloff = ReadFloat(*value, "slipoffFalloff", defaults.snowCover.slipoffFalloff);
+        layer.snowCover.curvatureInfluence = ReadFloat(*value, "curvatureInfluence", defaults.snowCover.curvatureInfluence);
+        layer.snowCover.noise = ReadBool(*value, "noise", defaults.snowCover.noise);
+        layer.snowCover.noiseStrength = ReadFloat(*value, "noiseStrength", defaults.snowCover.noiseStrength);
+        layer.snowCover.noiseScale = ReadFloat(*value, "noiseScale", defaults.snowCover.noiseScale);
+        layer.snowCover.noiseRoughness = ReadFloat(*value, "noiseRoughness", defaults.snowCover.noiseRoughness);
+        layer.snowCover.noiseOctaves = ReadInt(*value, "noiseOctaves", defaults.snowCover.noiseOctaves);
+        if (const json* ramp = FindMember(*value, "ramp"); ramp && ramp->is_array() && ramp->size() >= 2) {
+            layer.snowCover.rampCount = static_cast<int>(std::min<size_t>(ramp->size(), 8));
+            for (int i = 0; i < layer.snowCover.rampCount; ++i) {
+                auto& point = layer.snowCover.ramp[i];
+                point.position = std::clamp(ReadFloat((*ramp)[i], "position", point.position), 0.0f, 1.0f);
+                point.value = std::clamp(ReadFloat((*ramp)[i], "value", point.value), 0.0f, 1.0f);
+                point.interpolation = std::clamp(ReadInt((*ramp)[i], "interpolation", 1), 0, 2);
+            }
+        }
+    }
     if (const json* snow = FindMember(node, "snow"); snow != nullptr && snow->is_object()) {
         layer.snow.emissionMeters = ReadFloat(*snow, "emission", defaults.snow.emissionMeters);
         layer.snow.emissionTime =

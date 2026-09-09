@@ -141,6 +141,15 @@ constexpr std::array<PinDefinition, 1> kSourceNodePins = {{
     {PinKind::Output, ValueType::Material, "Result"},
 }};
 
+constexpr std::array<PinDefinition, 6> kSnowCoverPins = {{
+    {PinKind::Input, ValueType::Material, "Base"},
+    {PinKind::Input, ValueType::Mask, "Mask"},
+    {PinKind::Output, ValueType::Material, "Result"},
+    {PinKind::Output, ValueType::Mask, "Cover"},
+    {PinKind::Output, ValueType::Mask, "Depth"},
+    {PinKind::Output, ValueType::Mask, "Flows"},
+}};
+
 constexpr std::array<PinDefinition, 7> kFluvialErosionPins = {{
     {PinKind::Input, ValueType::Material, "Base"},
     {PinKind::Input, ValueType::Mask, "Mask"},
@@ -151,7 +160,7 @@ constexpr std::array<PinDefinition, 7> kFluvialErosionPins = {{
     {PinKind::Output, ValueType::Mask, "Age"},
 }};
 
-constexpr std::array<NodeDefinition, 27> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 28> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -159,6 +168,7 @@ constexpr std::array<NodeDefinition, 27> kNodeDefinitions = {{
     {NodeKind::Blur, "heightmapBlur", "Heightmap Blur", kBlurPins},
     {NodeKind::Sediment, "sediment", "Sediment", kSedimentPins},
     {NodeKind::Crumbling, "crumbling", "Crumbling", kCrumblingPins},
+    {NodeKind::SnowCover, "snowCover", "Snow Cover", kSnowCoverPins},
     {NodeKind::Snow, "snow", "Snow", kDepositPins},
     {NodeKind::River, "river", "River", kRiverPins},
     {NodeKind::Droplet, "droplet", "Droplet Erosion", kDropletPins},
@@ -209,7 +219,7 @@ bool IsLayerNodeKind(NodeKind kind) {
     return kind == NodeKind::Surface || kind == NodeKind::Shape || kind == NodeKind::Liquid ||
            kind == NodeKind::Heightmap || kind == NodeKind::Blur ||
            kind == NodeKind::Sediment || kind == NodeKind::Crumbling ||
-           kind == NodeKind::Snow || kind == NodeKind::River || kind == NodeKind::Droplet ||
+           kind == NodeKind::Snow || kind == NodeKind::SnowCover || kind == NodeKind::River || kind == NodeKind::Droplet ||
            kind == NodeKind::Scatter || kind == NodeKind::MultiScaleErosion ||
            kind == NodeKind::FluvialErosion || kind == NodeKind::FlattenBorders;
 }
@@ -235,7 +245,7 @@ bool IsHeightMaskNodeKind(NodeKind kind) {
 
 bool IsLayerMaskSourceKind(NodeKind kind) {
     return kind == NodeKind::Sediment || kind == NodeKind::Crumbling ||
-           kind == NodeKind::Snow || kind == NodeKind::River || kind == NodeKind::FluvialErosion || kind == NodeKind::Droplet ||
+           kind == NodeKind::Snow || kind == NodeKind::SnowCover || kind == NodeKind::River || kind == NodeKind::FluvialErosion || kind == NodeKind::Droplet ||
            kind == NodeKind::Scatter;
 }
 
@@ -266,6 +276,8 @@ compositor::LayerKind LayerKindFor(NodeKind kind) {
             return compositor::LayerKind::Sediment;
         case NodeKind::Crumbling:
             return compositor::LayerKind::Crumbling;
+        case NodeKind::SnowCover:
+            return compositor::LayerKind::SnowCover;
         case NodeKind::Snow:
             return compositor::LayerKind::Snow;
         case NodeKind::River:
@@ -610,6 +622,7 @@ bool NodeGraph::MaskDependsOnHeight(const Node& maskNode, int depth) const {
         case NodeKind::MaskCurvature:
         case NodeKind::Sediment:
         case NodeKind::Crumbling:
+        case NodeKind::SnowCover:
         case NodeKind::Snow:
         case NodeKind::River:
         case NodeKind::Droplet:
@@ -810,6 +823,9 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
             layerOp.sedimentMask.contrast = layerSettings->layer.sediment.maskContrast;
             layerOp.sedimentMask.thicknessMeters =
                 layerSettings->layer.sediment.maskThicknessMeters;
+        } else if (maskNode.kind == NodeKind::SnowCover) {
+            layerOp.kind = compositor::MaskOpKind::SnowCover;
+            layerOp.dropletMask.channel = static_cast<uint32_t>(std::min<size_t>(source.outputIndex, 2));
         } else if (maskNode.kind == NodeKind::Snow) {
             layerOp.kind = compositor::MaskOpKind::Snow;
             layerOp.snowMask.thresholdMeters = layerSettings->layer.snow.maskThresholdMeters;
