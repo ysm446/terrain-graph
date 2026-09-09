@@ -215,7 +215,9 @@ void Application::DrawLightingPanel() {
         if (ui::BeginPropertyTable("lightingModeRows")) {
             const char* modes[] = {"環境マップ (IBL)", "大気散乱スカイ"};
             int mode = m_renderer.AtmosphericMode() ? 1 : 0;
-            if (ui::PropertyCombo("モード", &mode, modes, 2, 0)) m_renderer.AtmosphericMode() = mode == 1;
+            if (ui::PropertyCombo("モード", &mode, modes, 2, 0,
+                                  "環境マップは天球アセットで照らします。大気散乱スカイは太陽と大気から空を生成し、雲も描画できます。\n"
+                                  "切り替えても、それぞれの天球・太陽設定は保持されます。")) m_renderer.AtmosphericMode() = mode == 1;
             ui::EndPropertyTable();
         }
         renderer::LightSettings& light = m_renderer.Light();
@@ -243,7 +245,7 @@ void Application::DrawLightingPanel() {
             ui::PropertyBool("影", &m_renderer.ShadowEnabled(),
                              renderer::kPreviewDefaults.shadowEnabled,
                              "ディレクショナルライトの影を落とす。"
-                             "ディスプレイスメントで押し出した形にも落ちる");
+                             "ディスプレイスメントで押し出した形にも落ちる。大気散乱スカイでは雲影も切り替える");
             ui::EndPropertyTable();
         }
 
@@ -254,29 +256,54 @@ void Application::DrawLightingPanel() {
             if (ui::BeginPropertyTable("atmosphereRows")) {
                 ui::PropertyBool("背景を表示", &m_renderer.ShowSkybox(), renderer::kPreviewDefaults.showSkybox,
                                  "空の背景を表示する。環境光と地形の手前の雲は残る");
-                ui::PropertyFloat("大気密度", &sky.density, 0.1f, 3.0f, defaults.density);
-                ui::PropertyFloat("霞の密度", &sky.mie, 0.0f, 2.0f, defaults.mie);
-                ui::PropertyFloat("前方散乱", &sky.eccentricity, 0.0f, 0.95f, defaults.eccentricity);
+                ui::PropertyFloat("大気密度", &sky.density, 0.1f, 3.0f, defaults.density,
+                                  "空の青さや夕焼けを生む大気の散乱量。1 が基準です。\n"
+                                  "大きくすると散乱と太陽光の減衰が強くなり、空の色と地形の照明が変わります。");
+                ui::PropertyFloat("霞の密度", &sky.mie, 0.0f, 2.0f, defaults.mie,
+                                  "細かな粒子による霞の量。大きくすると太陽の周囲や地平線が白っぽく霞み、直射光が弱まります。\n"
+                                  "地形を距離に応じて隠すフォグとは別の設定です。");
+                ui::PropertyFloat("前方散乱", &sky.eccentricity, 0.0f, 0.95f, defaults.eccentricity,
+                                  "霞の光が太陽の方向へ集中する度合い。\n"
+                                  "大きいほど太陽付近の光が鋭く集中し、小さいほど広い方向へ散らばります。");
                 ui::PropertyFloat("基準標高", &sky.altitude, 0.0f, 10000.0f, defaults.altitude,
-                                  "地形の原点の海抜。環境光の評価高度にも使う", "%.0f m");
-                ui::PropertyFloat("地面の反射率", &sky.groundAlbedo, 0.0f, 1.0f, defaults.groundAlbedo);
+                                  "地形の原点の海抜高度（m）。空と環境光を計算する基準です。\n"
+                                  "高くすると上空の薄い大気を通した空になります。地形やカメラ自体は移動しません。", "%.0f m");
+                ui::PropertyFloat("地面の反射率", &sky.groundAlbedo, 0.0f, 1.0f, defaults.groundAlbedo,
+                                  "地平線より下の環境を、地面からの反射としてどれだけ明るくするか。\n"
+                                  "0 は暗く、1 は強く反射します。地形マテリアルの色や反射率自体は変えません。");
                 ui::EndPropertyTable();
             }
             ui::SectionHeader("雲");
             if (ui::BeginPropertyTable("cloudRows")) {
                 bool clouds = sky.clouds != 0;
-                if (ui::PropertyBool("雲を描画", &clouds, defaults.clouds != 0)) sky.clouds = clouds ? 1u : 0u;
+                if (ui::PropertyBool("雲を描画", &clouds, defaults.clouds != 0,
+                                     "立体的な雲を描画し、環境光と反射にも反映します。\n"
+                                     "ライトの「影」がオンなら地形に雲影も落とします。オフにしても雲の設定は保持されます。")) sky.clouds = clouds ? 1u : 0u;
                 if (clouds) {
-                    ui::PropertyFloat("雲量", &sky.coverage, 0.0f, 1.0f, defaults.coverage);
-                    ui::PropertyFloat("密度", &sky.extinction, 0.0001f, 0.03f, defaults.extinction, nullptr, "%.4f");
-                    ui::PropertyFloat("雲底", &sky.cloudBottom, 100.0f, 10000.0f, defaults.cloudBottom, nullptr, "%.0f m");
-                    ui::PropertyFloat("厚さ", &sky.cloudThickness, 100.0f, 6000.0f, defaults.cloudThickness, nullptr, "%.0f m");
-                    ui::PropertyFloat("広がり", &sky.cloudScale, 1000.0f, 40000.0f, defaults.cloudScale, nullptr, "%.0f m");
+                    ui::PropertyFloat("雲量", &sky.coverage, 0.0f, 1.0f, defaults.coverage,
+                                      "雲のできる範囲を調整します。大きいほど雲が増えてつながり、小さいほど晴れ間が増えます。\n"
+                                      "空を覆う面積の割合そのものではありません。");
+                    ui::PropertyFloat("密度", &sky.extinction, 0.0001f, 0.03f, defaults.extinction,
+                                      "雲の中を進む光の減衰の強さ（1/m）。大きいほど光を通しにくく、雲と雲影が濃くなります。\n"
+                                      "雲の範囲は「雲量」、上下の寸法は「厚さ」で調整します。", "%.4f");
+                    ui::PropertyFloat("雲底", &sky.cloudBottom, 100.0f, 10000.0f, defaults.cloudBottom,
+                                      "地形の原点から雲の下端までの高さ（m）。山頂からの高さではありません。\n"
+                                      "低くすると雲が地形やカメラに近づきます。", "%.0f m");
+                    ui::PropertyFloat("厚さ", &sky.cloudThickness, 100.0f, 6000.0f, defaults.cloudThickness,
+                                      "雲層の上下方向の厚さ（m）。雲の上端は「雲底 + 厚さ」です。\n"
+                                      "厚くすると光が通る雲の距離が増え、同じ密度でも光を遮りやすくなります。", "%.0f m");
+                    ui::PropertyFloat("広がり", &sky.cloudScale, 1000.0f, 40000.0f, defaults.cloudScale,
+                                      "雲模様の水平方向の大きさ（m）。大きくすると大きな雲塊、小さくすると細かな雲になります。\n"
+                                      "雲を描く範囲の端や、雲量を変える設定ではありません。", "%.0f m");
                     int seed = static_cast<int>(sky.seed);
-                    if (ui::PropertyInt("シード", &seed, 0, 10000, static_cast<int>(defaults.seed))) sky.seed = static_cast<uint32_t>(seed);
+                    if (ui::PropertyInt("シード", &seed, 0, 10000, static_cast<int>(defaults.seed),
+                                        "雲模様の乱数の種。値を変えると雲の形と配置が変わります。\n"
+                                        "同じシードと設定なら同じ雲を再現できます。")) sky.seed = static_cast<uint32_t>(seed);
                     const char* quality[] = {"低", "標準", "高"};
                     int index = sky.samples <= 32 ? 0 : sky.samples <= 64 ? 1 : 2;
-                    if (ui::PropertyCombo("品質", &index, quality, 3, 1)) sky.samples = 32u << index;
+                    if (ui::PropertyCombo("品質", &index, quality, 3, 1,
+                                          "雲の奥行きを計算する細かさ。高くすると筋や段差が出にくくなりますが、描画が重くなります。\n"
+                                          "操作が重いときは「低」、仕上がりの確認には「高」を選びます。")) sky.samples = 32u << index;
                 }
                 ui::EndPropertyTable();
             }
