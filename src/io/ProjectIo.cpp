@@ -1594,6 +1594,7 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     atmosphereNode["cloudBottom"] = atmosphere.cloudBottom;
     atmosphereNode["cloudThickness"] = atmosphere.cloudThickness;
     atmosphereNode["cloudScale"] = atmosphere.cloudScale;
+    atmosphereNode["skylightIntensity"] = renderer.AtmosphericEnvironmentIntensity();
     atmosphereNode["animateClouds"] = atmosphere.animateClouds != 0;
     atmosphereNode["windSpeed"] = atmosphere.windSpeed;
     atmosphereNode["windDirection"] = atmosphere.windDirection;
@@ -1669,6 +1670,7 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
         auto& atmosphere = renderer.AtmosphericSettings();
         auto& sun = renderer.AtmosphericLight();
         const renderer::AtmosphereSettings defaults;
+        renderer.AtmosphericEnvironmentIntensity() = std::clamp(ReadFloat(source, "skylightIntensity", renderer::PreviewRenderer::DefaultSkylightIntensity), 0.0f, 8.0f);
         atmosphere.animateClouds = ReadBool(source, "animateClouds", false) ? 1u : 0u;
         atmosphere.windSpeed = std::clamp(ReadFloat(source, "windSpeed", defaults.windSpeed), 0.0f, 1000.0f);
         atmosphere.windDirection = std::clamp(ReadFloat(source, "windDirection", defaults.windDirection), -3.14159265f, 3.14159265f);

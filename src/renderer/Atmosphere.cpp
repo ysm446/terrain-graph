@@ -46,13 +46,13 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
             !CreateTarget(device, m_multiScatter, 32, DXGI_FORMAT_R16G16B16A16_FLOAT) ||
             !CreateTarget(device, m_noise, 64, DXGI_FORMAT_R16_FLOAT, 64) ||
             !CreateTarget(device, m_skyView, 512, DXGI_FORMAT_R16G16B16A16_FLOAT, 1, 256) ||
-            !CreateTarget(device, m_cloudLighting, 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 1)) {
+            !CreateTarget(device, m_cloudLighting, 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 1)) {
             Shutdown(device);
             return false;
         }
         m_initialized = true;
     }
-    const bool updateLut = !m_ready || settings.density != m_applied.density || settings.mie != m_applied.mie;
+    const bool updateLut = !m_ready || settings.density != m_applied.density || settings.mie != m_applied.mie || settings.groundAlbedo != m_applied.groundAlbedo;
     const bool updateNoise = !m_ready || settings.seed != m_applied.seed;
     auto* lutPipeline = pipelines.GetCompute(L"AtmosphereMultiScatter.hlsl", L"CSGenerate");
     auto* noisePipeline = pipelines.GetCompute(L"AtmosphereCloudDensity.hlsl", L"CSGenerate");
@@ -62,8 +62,8 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
         commands->SetComputeRootSignature(pipelines.GlobalRootSignature());
         if (updateLut) {
             TransitionIfNeeded(commands, m_multiScatter, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-            struct Constants { float density, mie, g; uint32_t output; };
-            const Constants constants{settings.density, settings.mie, settings.eccentricity, m_multiScatter.UavIndex()};
+            struct Constants { float density, mie, groundAlbedo; uint32_t output; };
+            const Constants constants{settings.density, settings.mie, settings.groundAlbedo, m_multiScatter.UavIndex()};
             commands->SetPipelineState(lutPipeline);
             commands->SetComputeRoot32BitConstants(0, 4, &constants, 0);
             commands->Dispatch(4, 4, 1);

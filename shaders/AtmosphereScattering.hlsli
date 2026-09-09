@@ -1,6 +1,7 @@
 // terrain-editor の Nishita / Hillaire 散乱モデルから移植。
 #ifndef ATMOSPHERE_HLSLI
 #define ATMOSPHERE_HLSLI
+#include "AtmosphereIntegration.hlsli"
 
 static const float kAtmEarthRadius      = 6360e3;
 static const float kAtmAtmosphereRadius = 6420e3;
@@ -10,7 +11,7 @@ static const float3 kAtmBetaR           = float3(5.802e-6, 13.558e-6, 33.1e-6); 
 static const float kAtmBetaM            = 21e-6;
 static const float kAtmSunIntensity     = 1.0;
 static const int   kAtmNumViewSteps = 32;
-static const int   kAtmNumSunSteps  = 8;
+static const int   kAtmNumSunSteps  = 32;
 
 // Two intersection ts of a ray (origin, dir) with a sphere centred at the
 // world origin of the supplied radius. .x = near, .y = far. Returns -1, -1
@@ -18,7 +19,8 @@ static const int   kAtmNumSunSteps  = 8;
 float2 AtmRaySphere(float3 origin, float3 dir, float radius)
 {
     float b = dot(origin, dir);
-    float c = dot(origin, origin) - radius * radius;
+    float height = length(origin);
+    float c = (height-radius)*(height+radius);
     float d = b * b - c;
     if (d < 0.0)
     {
@@ -28,11 +30,7 @@ float2 AtmRaySphere(float3 origin, float3 dir, float radius)
     return float2(-b - sq, -b + sq);
 }
 
-// Sample the multi-scatter LUT at (altitude, cos(sun zenith)). The LUT is
-// 32×32 float4 with U=cos(sunZenith) in [0,1] and V=altitude/atmosphereHeight
-// in [0,1]. Returns 0 if the caller passes a null sampler — used by the
-// multi-scatter LUT generator itself which obviously can't sample its own
-// output.
+// LUT は U=(cos(sunZenith)+1)/2、V=sqrt(altitude/atmosphereHeight)。
 float3 AtmSampleMultiScatter(Texture2D<float4> lut, SamplerState samp, float altitude, float cosSunZenith)
 {
     float u = saturate(cosSunZenith * 0.5 + 0.5);
@@ -40,139 +38,58 @@ float3 AtmSampleMultiScatter(Texture2D<float4> lut, SamplerState samp, float alt
     return lut.SampleLevel(samp, float2(u, v), 0).rgb;
 }
 
-// Atmospheric in-scattering integrated along the ray (origin, viewDir).
-// `density` multiplies the Rayleigh β coefficients — overall atmospheric
-//           thickness (1.0 = Earth-like).
-// `mieStrength` multiplies the Mie scattering coefficient (haze).
-// `mieG` is the Henyey-Greenstein eccentricity (sun glow tightness).
-// 出力は単位照度に対する RGB 放射輝度。呼び出し側で大気圏外照度を掛ける。
-//
-// The multi-scatter LUT, when valid, adds a Hillaire-style isotropic
-// second-order term at each ray-march step so the noon horizon comes out
-// closer to a UE5-like blue/white instead of single-scatter's warm cast.
-float3 AtmComputeScattering(float3 viewDir, float3 sunDir, float density, float mieStrength, float mieG,
-                            Texture2D<float4> multiScatterLut, SamplerState multiScatterSampler,
-                            bool useMultiScatter, float observerHeight)
-{
-    float3 origin = float3(0.0, kAtmEarthRadius + max(observerHeight, 1.0), 0.0);
-
-    float2 atmHit = AtmRaySphere(origin, viewDir, kAtmAtmosphereRadius);
-    if (atmHit.y <= 0.0)
-    {
-        return float3(0.0, 0.0, 0.0);
+// 太陽光の積分は地表近くへ点を集中させる。CPU の直接光も同じ配置を使う。
+float3 AtmSunTransmittanceAtPosition(float3 origin,float3 sunDir,float density,float mieStrength) {
+    float2 hit=AtmRaySphere(origin,sunDir,kAtmAtmosphereRadius);
+    if(hit.y<=0 || AtmRaySphere(origin,sunDir,kAtmEarthRadius).x>0) return 0;
+    float opticalR=0,opticalM=0;
+    [loop] for(uint i=0;i<kAtmNumSunSteps;++i) {
+        float start=hit.y*AtmosphereRayFraction((float)i/kAtmNumSunSteps);
+        float end=hit.y*AtmosphereRayFraction((float)(i+1)/kAtmNumSunSteps);
+        float h=length(origin+sunDir*(0.5*(start+end)))-kAtmEarthRadius;
+        if(h<0) return 0;
+        opticalR+=exp(-h/kAtmHeightR)*(end-start);
+        opticalM+=exp(-h/kAtmHeightM)*(end-start);
     }
-    float marchEnd = atmHit.y;
-
-    // If the view ray hits the planet (e.g. looking straight down past the
-    // horizon) end the march at the surface — keeps the lower hemisphere
-    // dark instead of integrating noise from clipped samples.
-    float2 earthHit = AtmRaySphere(origin, viewDir, kAtmEarthRadius);
-    if (earthHit.x > 0.0)
-    {
-        marchEnd = min(marchEnd, earthHit.x);
-    }
-
-    float3 betaR = kAtmBetaR * density;
-    float  betaM = kAtmBetaM * mieStrength;
-
-    float stepLen = marchEnd / (float)kAtmNumViewSteps;
-    float opticalR = 0.0;
-    float opticalM = 0.0;
-    float3 sumR = float3(0.0, 0.0, 0.0);
-    float3 sumM = float3(0.0, 0.0, 0.0);
-    float3 sumMS = float3(0.0, 0.0, 0.0);
-
-    [loop]
-    for (int i = 0; i < kAtmNumViewSteps; ++i)
-    {
-        float t = ((float)i + 0.5) * stepLen;
-        float3 p = origin + viewDir * t;
-        float h = length(p) - kAtmEarthRadius;
-        if (h < 0.0) break;
-
-        float dR = exp(-h / kAtmHeightR) * stepLen;
-        float dM = exp(-h / kAtmHeightM) * stepLen;
-        opticalR += dR;
-        opticalM += dM;
-
-        // Multi-scatter contribution accumulates at every step, even where
-        // the sun is blocked (in shadow regions multiple scatter still
-        // brings light from elsewhere in the sky — that's the whole point).
-        if (useMultiScatter)
-        {
-            float cosSunZenith = dot(normalize(p), sunDir);
-            float3 multi = AtmSampleMultiScatter(multiScatterLut, multiScatterSampler, h, cosSunZenith);
-            float3 viewTau = betaR * (opticalR - 0.5 * dR) + betaM * 1.1 * (opticalM - 0.5 * dM);
-            float3 viewTransmit = exp(-viewTau);
-            sumMS += viewTransmit * multi * (betaR * dR + betaM * dM);
-        }
-
-        float2 sunHit = AtmRaySphere(p, sunDir, kAtmAtmosphereRadius);
-        if (sunHit.y <= 0.0) continue;
-        if (AtmRaySphere(p, sunDir, kAtmEarthRadius).x > 0.0) continue;
-        float sunStep = sunHit.y / (float)kAtmNumSunSteps;
-        float sunR = 0.0;
-        float sunM = 0.0;
-        bool sunBlocked = false;
-        [loop]
-        for (int j = 0; j < kAtmNumSunSteps; ++j)
-        {
-            float st = ((float)j + 0.5) * sunStep;
-            float3 sp = p + sunDir * st;
-            float sh = length(sp) - kAtmEarthRadius;
-            if (sh < 0.0) { sunBlocked = true; break; }
-            sunR += exp(-sh / kAtmHeightR) * sunStep;
-            sunM += exp(-sh / kAtmHeightM) * sunStep;
-        }
-        if (sunBlocked) continue;
-
-        float3 tau = betaR * (opticalR - 0.5 * dR + sunR) +
-                     betaM * 1.1 * (opticalM - 0.5 * dM + sunM);
-        float3 atten = exp(-tau);
-        sumR += atten * dR;
-        sumM += atten * dM;
-    }
-
-    float cosTheta = dot(viewDir, sunDir);
-    float phaseR = 0.0596831 * (1.0 + cosTheta * cosTheta);  // 3 / (16π)
-    float g = mieG;
-    float gg = g * g;
-    float phaseM = 0.0795775 * (1.0 - gg) /
-                   pow(max(1.0 + gg - 2.0 * g * cosTheta, 1e-6), 1.5);  // 1 / (4π)
-
-    return kAtmSunIntensity *
-           (sumR * betaR * phaseR + sumM * betaM * phaseM) + sumMS;
+    return exp(-kAtmBetaR*density*opticalR-kAtmBetaM*mieStrength*1.1*opticalM);
 }
-
-// Atmospheric transmittance from sea-level along the sun direction —
-// gives the sun colour as seen from the ground. Multiply by the desired
-// sun base spectrum (typically white) to get a sun colour that warms up
-// at sunset and dims at horizon. `density` scales the Rayleigh β and
-// `mieStrength` scales the Mie β.
-float3 AtmComputeSunTransmittance(float3 sunDir, float density, float mieStrength, float observerHeight)
-{
-    float3 origin = float3(0.0, kAtmEarthRadius + max(observerHeight, 1.0), 0.0);
-    float2 hit = AtmRaySphere(origin, sunDir, kAtmAtmosphereRadius);
-    if (hit.y <= 0.0)
-    {
-        return float3(0.0, 0.0, 0.0);
-    }
-    if (AtmRaySphere(origin, sunDir, kAtmEarthRadius).x > 0.0) return 0.0;
-    float stepLen = hit.y / (float)kAtmNumSunSteps;
-    float opticalR = 0.0;
-    float opticalM = 0.0;
-    [loop]
-    for (int j = 0; j < kAtmNumSunSteps; ++j)
-    {
-        float st = ((float)j + 0.5) * stepLen;
-        float3 sp = origin + sunDir * st;
-        float sh = length(sp) - kAtmEarthRadius;
-        if (sh < 0.0) return float3(0.0, 0.0, 0.0);
-        opticalR += exp(-sh / kAtmHeightR) * stepLen;
-        opticalM += exp(-sh / kAtmHeightM) * stepLen;
-    }
-    float3 tau = kAtmBetaR * density * opticalR + kAtmBetaM * mieStrength * 1.1 * opticalM;
-    return exp(-tau);
+float3 AtmComputeSunTransmittance(float3 sunDir,float density,float mieStrength,float observerHeight) {
+    return AtmSunTransmittanceAtPosition(float3(0,kAtmEarthRadius+max(observerHeight,1),0),sunDir,density,mieStrength);
 }
-
-#endif // ATMOSPHERE_HLSLI
+float3 AtmSegmentWeight(float3 tau) {
+    return float3(AtmosphereSegmentWeight(tau.x),AtmosphereSegmentWeight(tau.y),AtmosphereSegmentWeight(tau.z));
+}
+// 単位大気圏外照度に対する輝度。地表に当たるレイには地面反射の境界条件を加える。
+float3 AtmComputeScattering(float3 viewDir,float3 sunDir,float density,float mieStrength,float mieG,
+    Texture2D<float4> multiScatterLut,SamplerState multiScatterSampler,bool useMultiScatter,
+    float observerHeight,float3 groundRadiance=0) {
+    float3 origin=float3(0,kAtmEarthRadius+max(observerHeight,1),0);
+    float2 atmHit=AtmRaySphere(origin,viewDir,kAtmAtmosphereRadius);
+    if(atmHit.y<=0) return 0;
+    float2 earthHit=AtmRaySphere(origin,viewDir,kAtmEarthRadius);
+    bool hitGround=earthHit.x>0;
+    float marchEnd=hitGround ? min(atmHit.y,earthHit.x) : atmHit.y;
+    float3 betaR=kAtmBetaR*density;
+    float betaM=kAtmBetaM*mieStrength;
+    float mu=dot(viewDir,sunDir);
+    float phaseR=0.0596831037*(1+mu*mu);
+    float phaseM=0.0795774715*(1-mieG*mieG)/pow(max(1+mieG*mieG-2*mieG*mu,1e-6),1.5);
+    float3 transmission=1,radiance=0;
+    [loop] for(uint i=0;i<kAtmNumViewSteps;++i) {
+        float u0=(float)i/kAtmNumViewSteps,u1=(float)(i+1)/kAtmNumViewSteps;
+        float start=marchEnd*(hitGround ? 1-AtmosphereRayFraction(1-u0) : AtmosphereRayFraction(u0));
+        float end=marchEnd*(hitGround ? 1-AtmosphereRayFraction(1-u1) : AtmosphereRayFraction(u1));
+        float3 position=origin+viewDir*(0.5*(start+end));
+        float height=max(length(position)-kAtmEarthRadius,0);
+        float3 rayleigh=betaR*exp(-height/kAtmHeightR);
+        float mie=betaM*exp(-height/kAtmHeightM);
+        float3 tau=(rayleigh+1.1*mie)*(end-start);
+        float3 source=AtmSunTransmittanceAtPosition(position,sunDir,density,mieStrength)*(rayleigh*phaseR+mie*phaseM);
+        if(useMultiScatter) source+=AtmSampleMultiScatter(multiScatterLut,multiScatterSampler,height,dot(normalize(position),sunDir))*(rayleigh+mie);
+        radiance+=transmission*source*(end-start)*AtmSegmentWeight(tau);
+        transmission*=exp(-tau);
+    }
+    if(hitGround) radiance+=transmission*groundRadiance;
+    return radiance;
+}
+#endif

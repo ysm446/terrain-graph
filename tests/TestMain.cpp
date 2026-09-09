@@ -6,6 +6,7 @@
 
 #include "TestSupport.h"
 
+void RunAtmosphereIntegrationTests();
 void RunCloudScatteringTests();
 void RunFrameLimiterTests();
 void RunNodeGraphTests();
@@ -14,6 +15,7 @@ void RunUiInteractionTests();
 void RunUndoHistoryTests();
 
 int main() {
+    RunAtmosphereIntegrationTests();
     RunCloudScatteringTests();
     RunUiInteractionTests();
     RunUndoHistoryTests();

@@ -269,8 +269,17 @@ void Application::DrawLightingPanel() {
                                   "地形の原点の海抜高度（m）。空と環境光を計算する基準です。\n"
                                   "高くすると上空の薄い大気を通した空になります。地形やカメラ自体は移動しません。", "%.0f m");
                 ui::PropertyFloat("グラウンドアルベド", &sky.groundAlbedo, 0.0f, 1.0f, defaults.groundAlbedo,
-                                  "地平線より下の環境を、地面からの反射としてどれだけ明るくするか。\n"
+                                  "地面に届く直射光と天空光を反射する割合。地面反射と大気の多重散乱に反映します。\n"
                                   "0 は暗く、1 は強く反射します。地形マテリアルの色や反射率自体は変えません。");
+                ui::EndPropertyTable();
+            }
+            ui::SectionHeader("環境光");
+            if (ui::BeginPropertyTable("atmosphericEnvironmentRows", "スカイライト強度")) {
+                ui::PropertyFloat("スカイライト強度", &m_renderer.AtmosphericEnvironmentIntensity(),
+                                  0.0f, 8.0f, renderer::PreviewRenderer::DefaultSkylightIntensity,
+                                  "空と地面反射から地形・マテリアルへ届く環境光の倍率。1 は大気計算そのままです。\n"
+                                  "上げると陰側と環境反射を明るくします。太陽の直射光・空と雲の表示輝度・露出は変えません。\n"
+                                  "1 以外は照明バランスを調整するための補正です。局所的な地形の照り返しを計算する GI とは異なります。");
                 ui::EndPropertyTable();
             }
             ui::SectionHeader("雲");

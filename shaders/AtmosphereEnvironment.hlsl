@@ -8,7 +8,8 @@ cbuffer Constants : register(b1) {
 void CsMain(uint3 id:SV_DispatchThreadID) {
     RWTexture2D<float4> output=ResourceDescriptorHeap[outputIndex];
     float3 ray=EquirectUvToDirection((id.xy+0.5)/float2(512,256));
-    float3 sky=AtmosphericSky(ray,settings,lutIndex);
+    Texture2D<float4> lighting=ResourceDescriptorHeap[lightingIndex];
+    float3 sky=AtmosphericSky(ray,settings,lutIndex,lighting.Load(int3(2,0,0)).rgb);
     RWTexture2D<float4> skyOutput=ResourceDescriptorHeap[pad];
     skyOutput[id.xy]=float4(sky,1);
     float4 cloud=IntegrateCloud(float3(0,0,0),ray,1e9,settings,noiseIndex,lightingIndex);

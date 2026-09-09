@@ -223,7 +223,9 @@ public:
     bool& AtmosphericMode() { return m_atmosphericMode; }
     AtmosphereSettings& AtmosphericSettings() { return m_atmosphereSettings; }
     LightSettings EffectiveLight() const;
-    float EnvironmentIntensity() const { return m_atmosphericMode ? 1.0f : m_activeSky.iblIntensity; }
+    static constexpr float DefaultSkylightIntensity = 1.0f;
+    float& AtmosphericEnvironmentIntensity() { return m_atmosphericEnvironmentIntensity; }
+    float EnvironmentIntensity() const { return m_atmosphericMode ? m_atmosphericEnvironmentIntensity : m_activeSky.iblIntensity; }
     const Environment& LegacyEnvironment() const { return m_environment; }
     MaterialSettings& Material() { return m_material; }
     // 平面を包む球の半径（原点中心）。カメラの Frame() が使う。
@@ -320,6 +322,7 @@ private:
     AtmosphereSettings m_atmosphereSettings;
     LightSettings m_atmosphericLight{0.9f, 0.9f, 120000.0f, {1.0f, 1.0f, 1.0f}};
     bool m_atmosphericMode = false;
+    float m_atmosphericEnvironmentIntensity = DefaultSkylightIntensity;
     compositor::MaterialEvaluator m_evaluator;
     // ビューポートに適用している天球の中身。**Environment の元になっているもの。**
     // 既定値は Environment::Initialize が作る環境と一致させてあるので、

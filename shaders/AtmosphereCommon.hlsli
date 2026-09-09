@@ -109,13 +109,10 @@ float4 IntegrateCloud(float3 origin, float3 ray, float limit, AtmosphericParamet
     }
     return float4(radiance,transmission);
 }
-float3 AtmosphericSky(float3 ray, AtmosphericParameters p, uint lutIndex) {
+float3 AtmosphericSky(float3 ray, AtmosphericParameters p, uint lutIndex, float3 groundRadiance=0) {
     Texture2D<float4> lut=ResourceDescriptorHeap[lutIndex];
-    float3 sun=AtmosphereSun(p);
-    // 下半球は地面反射の近似。地表へすぐ衝突する極短レイの積分を避け、地平線を連続にする。
-    float3 sampleRay=ray.y < 0 ? normalize(float3(ray.x,max(-ray.y,0.005),ray.z)) : ray;
-    float3 sky=AtmComputeScattering(sampleRay,sun,p.density,p.mie,p.eccentricity,lut,g_samplerLinearClamp,true,p.altitude);
-    if(ray.y<0) sky*=lerp(1,p.groundAlbedo,smoothstep(0,0.08,-ray.y));
+    float3 sky=AtmComputeScattering(ray,AtmosphereSun(p),p.density,p.mie,p.eccentricity,
+        lut,g_samplerLinearClamp,true,p.altitude,groundRadiance);
     return max(0,sky*p.illuminance);
 }
 #endif

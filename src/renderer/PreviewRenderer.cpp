@@ -1,3 +1,4 @@
+#include "../../shaders/AtmosphereIntegration.hlsli"
 #include "renderer/PreviewRenderer.h"
 
 #include "core/ImageIo.h"
@@ -348,11 +349,13 @@ LightSettings PreviewRenderer::EffectiveLight() const {
     }
     const double distance = -b + std::sqrt(b*b-origin*origin+6420000.0*6420000.0);
     double opticalR=0, opticalM=0;
-    for (int i=0;i<8;++i) {
-        const double t=(i+0.5)*distance/8.0;
+    for (int i=0;i<32;++i) {
+        const double start=distance*AtmosphereRayFraction(static_cast<float>(i)/32.0f);
+        const double end=distance*AtmosphereRayFraction(static_cast<float>(i+1)/32.0f);
+        const double t=(start+end)*0.5;
         const double height=std::sqrt(origin*origin+t*t+2*b*t)-radius;
-        opticalR+=std::exp(-height/7994.0)*distance/8.0;
-        opticalM+=std::exp(-height/1200.0)*distance/8.0;
+        opticalR+=std::exp(-height/7994.0)*(end-start);
+        opticalM+=std::exp(-height/1200.0)*(end-start);
     }
     result.color = {static_cast<float>(std::exp(-5.802e-6*p.density*opticalR-21e-6*p.mie*1.1*opticalM)),
                     static_cast<float>(std::exp(-13.558e-6*p.density*opticalR-21e-6*p.mie*1.1*opticalM)),
@@ -363,6 +366,7 @@ LightSettings PreviewRenderer::EffectiveLight() const {
 void PreviewRenderer::ResetSettings() {
     m_atmosphere.ResetAnimation();
     m_atmosphericMode = false;
+    m_atmosphericEnvironmentIntensity = DefaultSkylightIntensity;
     m_atmosphereSettings = AtmosphereSettings{};
     m_atmosphericLight = {0.9f, 0.9f, 120000.0f, {1.0f, 1.0f, 1.0f}};
     const PreviewDefaults& defaults = kPreviewDefaults;
