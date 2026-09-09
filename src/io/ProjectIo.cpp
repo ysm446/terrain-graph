@@ -1670,7 +1670,7 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
         auto& sun = renderer.AtmosphericLight();
         const renderer::AtmosphereSettings defaults;
         atmosphere.animateClouds = ReadBool(source, "animateClouds", false) ? 1u : 0u;
-        atmosphere.windSpeed = std::clamp(ReadFloat(source, "windSpeed", defaults.windSpeed), 0.0f, 100.0f);
+        atmosphere.windSpeed = std::clamp(ReadFloat(source, "windSpeed", defaults.windSpeed), 0.0f, 1000.0f);
         atmosphere.windDirection = std::clamp(ReadFloat(source, "windDirection", defaults.windDirection), -3.14159265f, 3.14159265f);
         sun.azimuth = std::clamp(ReadFloat(source, "azimuth", defaults.azimuth), -3.1415927f, 3.1415927f);
         sun.elevation = std::clamp(ReadFloat(source, "elevation", defaults.elevation), -1.55334f, 1.55334f);

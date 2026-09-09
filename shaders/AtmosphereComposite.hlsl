@@ -19,8 +19,7 @@ float4 PsMain(Vertex v):SV_Target {
     float limit=z<1 ? length(world.xyz-camera) : 1e9;
     float3 origin=camera;
     Texture2D<float4> skyView=ResourceDescriptorHeap[lutIndex];
-    float3 ambient=skyView.SampleLevel(g_samplerEquirect,float2(0.5,0.001),0).rgb;
-    float4 cloud=IntegrateCloud(origin,ray,limit,settings,noiseIndex,ambient);
+    float4 cloud=IntegrateCloud(origin,ray,limit,settings,noiseIndex,environmentIndex);
     if(z>=1 && showSky!=0) {
         float3 sky=skyView.SampleLevel(g_samplerEquirect,DirectionToEquirectUv(ray),0).rgb;
         float3 sun=AtmosphereSun(settings);

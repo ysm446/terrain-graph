@@ -45,7 +45,8 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
         if (!m_environment.Initialize(device, pipelines, false) ||
             !CreateTarget(device, m_multiScatter, 32, DXGI_FORMAT_R16G16B16A16_FLOAT) ||
             !CreateTarget(device, m_noise, 64, DXGI_FORMAT_R16_FLOAT, 64) ||
-            !CreateTarget(device, m_skyView, 512, DXGI_FORMAT_R16G16B16A16_FLOAT, 1, 256)) {
+            !CreateTarget(device, m_skyView, 512, DXGI_FORMAT_R16G16B16A16_FLOAT, 1, 256) ||
+            !CreateTarget(device, m_cloudLighting, 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 1)) {
             Shutdown(device);
             return false;
         }
@@ -78,10 +79,27 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
         }
         PIXEndEvent(commands);
     })) return false;
+    auto* lightingPipeline=pipelines.GetCompute(L"AtmosphereCloudLighting.hlsl",L"CsMain");
+    if (!lightingPipeline) return false;
+    struct LightingConstants { AtmosphereSettings settings; uint32_t output, lut, pad[2]; };
+    const LightingConstants lightingConstants{settings,m_cloudLighting.UavIndex(),m_multiScatter.SrvIndex(),{0,0}};
+    const auto lightingAllocation=device.Upload().Allocate(sizeof(LightingConstants),256);
+    if (!lightingAllocation.IsValid()) return false;
+    std::memcpy(lightingAllocation.cpu,&lightingConstants,sizeof(lightingConstants));
+    if (!device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commands) {
+        PIXBeginEvent(commands,PIX_COLOR(120,180,255),"AtmosphereCloudLighting");
+        TransitionIfNeeded(commands,m_cloudLighting,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        commands->SetComputeRootSignature(pipelines.GlobalRootSignature());
+        commands->SetComputeRootConstantBufferView(1,lightingAllocation.gpuAddress);
+        commands->SetPipelineState(lightingPipeline);
+        commands->Dispatch(1,1,1);
+        TransitionIfNeeded(commands,m_cloudLighting,ReadState);
+        PIXEndEvent(commands);
+    })) return false;
     if (!device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commands) {
         TransitionIfNeeded(commands, m_skyView, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     })) return false;
-    if (!m_environment.BuildFromAtmosphere(device, pipelines, settings, m_multiScatter.SrvIndex(), m_noise.SrvIndex(), m_skyView.UavIndex())) {
+    if (!m_environment.BuildFromAtmosphere(device, pipelines, settings, m_multiScatter.SrvIndex(), m_noise.SrvIndex(), m_skyView.UavIndex(), m_cloudLighting.SrvIndex())) {
         m_ready = false;
         TG_LOG_WARN("大気散乱の環境マップを生成できませんでした");
         return false;
@@ -100,6 +118,7 @@ void Atmosphere::Shutdown(rhi::Device& device) {
     device.DeferRelease(m_multiScatter);
     device.DeferRelease(m_noise);
     device.DeferRelease(m_skyView);
+    device.DeferRelease(m_cloudLighting);
     m_initialized = m_ready = false;
     m_lastTick = {};
     m_cloudTime = m_environmentTime = 0.0f;
@@ -127,7 +146,7 @@ void Atmosphere::Render(rhi::Device& device, rhi::PipelineCache& pipelines,
     const auto allocation = device.Upload().Allocate(sizeof(Constants), 256);
     if (!pipeline || !allocation.IsValid()) return;
     const Constants constants{inverseViewProjection, camera, showSky ? 1u : 0u, m_applied,
-        depth.SrvIndex(), m_skyView.SrvIndex(), m_noise.SrvIndex(), m_environment.EnvironmentSrvIndex()};
+        depth.SrvIndex(), m_skyView.SrvIndex(), m_noise.SrvIndex(), m_cloudLighting.SrvIndex()};
     std::memcpy(allocation.cpu, &constants, sizeof(constants));
     PIXBeginEvent(commands, PIX_COLOR(120, 180, 255), "AtmosphereComposite");
     // DSV を外してから深度を SRV として読む。

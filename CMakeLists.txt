@@ -268,6 +268,7 @@ enable_testing()
 
 add_executable(terrain_graph_tests
     tests/TestMain.cpp
+    tests/CloudScatteringTests.cpp
     tests/TestSupport.h
     tests/FrameLimiterTests.cpp
     tests/NodeGraphTests.cpp

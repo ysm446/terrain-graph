@@ -253,22 +253,22 @@ void Application::DrawLightingPanel() {
             auto& sky = m_renderer.AtmosphericSettings();
             const renderer::AtmosphereSettings defaults;
             ui::SectionHeader("大気");
-            if (ui::BeginPropertyTable("atmosphereRows")) {
+            if (ui::BeginPropertyTable("atmosphereRows", "グラウンドアルベド")) {
                 ui::PropertyBool("背景を表示", &m_renderer.ShowSkybox(), renderer::kPreviewDefaults.showSkybox,
                                  "空の背景を表示する。環境光と地形の手前の雲は残る");
-                ui::PropertyFloat("大気密度", &sky.density, 0.1f, 3.0f, defaults.density,
+                ui::PropertyFloat("レイリー散乱強度", &sky.density, 0.1f, 3.0f, defaults.density,
                                   "空の青さや夕焼けを生む大気の散乱量。1 が基準です。\n"
                                   "大きくすると散乱と太陽光の減衰が強くなり、空の色と地形の照明が変わります。");
-                ui::PropertyFloat("霞の密度", &sky.mie, 0.0f, 2.0f, defaults.mie,
-                                  "細かな粒子による霞の量。大きくすると太陽の周囲や地平線が白っぽく霞み、直射光が弱まります。\n"
+                ui::PropertyFloat("ミー密度", &sky.mie, 0.0f, 2.0f, defaults.mie,
+                                  "ミー散乱と吸収をまとめて変える粒子密度の倍率。大きくすると太陽の周囲や地平線が白っぽく霞み、直射光が弱まります。\n"
                                   "地形を距離に応じて隠すフォグとは別の設定です。");
-                ui::PropertyFloat("前方散乱", &sky.eccentricity, 0.0f, 0.95f, defaults.eccentricity,
-                                  "霞の光が太陽の方向へ集中する度合い。\n"
+                ui::PropertyFloat("ミー異方性", &sky.eccentricity, 0.0f, 0.95f, defaults.eccentricity,
+                                  "ミー散乱の異方性（g）。光が太陽の方向へ集中する度合い。\n"
                                   "大きいほど太陽付近の光が鋭く集中し、小さいほど広い方向へ散らばります。");
-                ui::PropertyFloat("基準標高", &sky.altitude, 0.0f, 10000.0f, defaults.altitude,
+                ui::PropertyFloat("地表の基準標高", &sky.altitude, 0.0f, 10000.0f, defaults.altitude,
                                   "地形の原点の海抜高度（m）。空と環境光を計算する基準です。\n"
                                   "高くすると上空の薄い大気を通した空になります。地形やカメラ自体は移動しません。", "%.0f m");
-                ui::PropertyFloat("地面の反射率", &sky.groundAlbedo, 0.0f, 1.0f, defaults.groundAlbedo,
+                ui::PropertyFloat("グラウンドアルベド", &sky.groundAlbedo, 0.0f, 1.0f, defaults.groundAlbedo,
                                   "地平線より下の環境を、地面からの反射としてどれだけ明るくするか。\n"
                                   "0 は暗く、1 は強く反射します。地形マテリアルの色や反射率自体は変えません。");
                 ui::EndPropertyTable();
@@ -283,7 +283,7 @@ void Application::DrawLightingPanel() {
                     ui::PropertyFloat("雲量", &sky.coverage, 0.0f, 1.0f, defaults.coverage,
                                       "雲のできる範囲を調整します。大きいほど雲が増えてつながり、小さいほど晴れ間が増えます。\n"
                                       "空を覆う面積の割合そのものではありません。");
-                    ui::PropertyFloat("密度", &sky.extinction, 0.0001f, 0.03f, defaults.extinction,
+                    ui::PropertyFloat("消散係数", &sky.extinction, 0.0001f, 0.03f, defaults.extinction,
                                       "雲の中を進む光の減衰の強さ（1/m）。大きいほど光を通しにくく、雲と雲影が濃くなります。\n"
                                       "雲の範囲は「雲量」、上下の寸法は「厚さ」で調整します。", "%.4f");
                     ui::PropertyFloat("雲底", &sky.cloudBottom, 100.0f, 10000.0f, defaults.cloudBottom,
@@ -291,23 +291,23 @@ void Application::DrawLightingPanel() {
                                       "低くすると雲が地形やカメラに近づきます。", "%.0f m");
                     ui::PropertyFloat("厚さ", &sky.cloudThickness, 100.0f, 6000.0f, defaults.cloudThickness,
                                       "雲層の上下方向の厚さ（m）。雲の上端は「雲底 + 厚さ」です。\n"
-                                      "厚くすると光が通る雲の距離が増え、同じ密度でも光を遮りやすくなります。", "%.0f m");
-                    ui::PropertyFloat("広がり", &sky.cloudScale, 1000.0f, 40000.0f, defaults.cloudScale,
+                                      "厚くすると光が通る雲の距離が増え、同じ消散係数でも光を遮りやすくなります。", "%.0f m");
+                    ui::PropertyFloat("ノイズスケール", &sky.cloudScale, 1000.0f, 40000.0f, defaults.cloudScale,
                                       "雲模様の水平方向の大きさ（m）。大きくすると大きな雲塊、小さくすると細かな雲になります。\n"
                                       "雲を描く範囲の端や、雲量を変える設定ではありません。", "%.0f m");
                     ui::PropertyFloat("範囲の中心 X", &sky.fieldCenterX, -200000.0f, 200000.0f, defaults.fieldCenterX,
                                       "雲が存在する円形範囲の中心（ワールド座標）。カメラを移動しても範囲は動きません。", "%.0f m");
                     ui::PropertyFloat("範囲の中心 Z", &sky.fieldCenterZ, -200000.0f, 200000.0f, defaults.fieldCenterZ,
                                       "雲が存在する円形範囲の中心（ワールド座標）。雲本体・雲影・環境光で同じ範囲を使います。", "%.0f m");
-                    ui::PropertyFloat("範囲の半径", &sky.fieldRadius, 100.0f, 200000.0f, defaults.fieldRadius,
-                                      "雲が存在する水平範囲の半径。雲模様の大きさは「広がり」で調整します。", "%.0f m");
-                    ui::PropertyFloat("外周の減衰幅", &sky.fieldFalloff, 1.0f, 50000.0f, defaults.fieldFalloff,
+                    ui::PropertyFloat("雲の分布半径", &sky.fieldRadius, 100.0f, 200000.0f, defaults.fieldRadius,
+                                      "雲が存在する水平範囲の半径。雲模様の大きさは「ノイズスケール」で調整します。", "%.0f m");
+                    ui::PropertyFloat("境界フェード幅", &sky.fieldFalloff, 1.0f, 50000.0f, defaults.fieldFalloff,
                                       "範囲の外縁へ向けて密度をゼロにする幅。半径を超える値は半径として扱います。", "%.0f m");
                     bool animate = sky.animateClouds != 0;
                     if (ui::PropertyBool("アニメーション", &animate, defaults.animateClouds != 0,
                                          "風で雲模様を流します。オフで一時停止。雲と雲影は同期し、環境光と反射は約 1 秒ごとに更新します。"))
                         sky.animateClouds = animate ? 1u : 0u;
-                    ui::PropertyFloat("風速", &sky.windSpeed, 0.0f, 100.0f, defaults.windSpeed,
+                    ui::PropertyFloat("風速", &sky.windSpeed, 0.0f, 1000.0f, defaults.windSpeed,
                                       "雲模様が進む速度。存在範囲の中心と半径は動きません。", "%.1f m/s");
                     float windDegrees = sky.windDirection * 180.0f / 3.14159265f;
                     if (ui::PropertyFloat("風向", &windDegrees, -180.0f, 180.0f, defaults.windDirection,

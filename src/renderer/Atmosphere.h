@@ -52,6 +52,7 @@ private:
     rhi::GpuTexture m_multiScatter;
     rhi::GpuTexture m_noise;
     rhi::GpuTexture m_skyView;
+    rhi::GpuTexture m_cloudLighting;
     AtmosphereSettings m_applied;
     AtmosphereSettings m_requested;
     std::chrono::steady_clock::time_point m_lastTick{};

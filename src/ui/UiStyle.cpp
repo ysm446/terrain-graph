@@ -540,13 +540,14 @@ void ApplyTheme(float dpiScale) {
     style.ScaleAllSizes(g_dpiScale);
 }
 
-bool BeginPropertyTable(const char* id) {
+bool BeginPropertyTable(const char* id, const char* widestLabel) {
     if (!ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingStretchProp)) {
         return false;
     }
     // ラベル列は文字が入る幅なので、文字サイズにも追従させる（大きくして切れないように）。
-    ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed,
-                            TextScaled(kLabelColumnWidth));
+    const float labelWidth = widestLabel ? std::max(TextScaled(kLabelColumnWidth),
+        ImGui::CalcTextSize(widestLabel).x + ImGui::CalcTextSize("：").x) : TextScaled(kLabelColumnWidth);
+    ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed, labelWidth);
     ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch);
     return true;
 }

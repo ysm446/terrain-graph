@@ -43,7 +43,7 @@ public:
 
     // 手続き的な空から作り直す。
     bool BuildFromAtmosphere(rhi::Device& device, rhi::PipelineCache& pipelineCache,
-                             const AtmosphereSettings& settings, uint32_t lutIndex, uint32_t noiseIndex, uint32_t skyOutputIndex);
+                             const AtmosphereSettings& settings, uint32_t lutIndex, uint32_t noiseIndex, uint32_t skyOutputIndex, uint32_t cloudLightingIndex);
     bool BuildFromSky(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                       const SkySettings& sky);
 
