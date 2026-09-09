@@ -295,6 +295,24 @@ void Application::DrawLightingPanel() {
                     ui::PropertyFloat("広がり", &sky.cloudScale, 1000.0f, 40000.0f, defaults.cloudScale,
                                       "雲模様の水平方向の大きさ（m）。大きくすると大きな雲塊、小さくすると細かな雲になります。\n"
                                       "雲を描く範囲の端や、雲量を変える設定ではありません。", "%.0f m");
+                    ui::PropertyFloat("範囲の中心 X", &sky.fieldCenterX, -200000.0f, 200000.0f, defaults.fieldCenterX,
+                                      "雲が存在する円形範囲の中心（ワールド座標）。カメラを移動しても範囲は動きません。", "%.0f m");
+                    ui::PropertyFloat("範囲の中心 Z", &sky.fieldCenterZ, -200000.0f, 200000.0f, defaults.fieldCenterZ,
+                                      "雲が存在する円形範囲の中心（ワールド座標）。雲本体・雲影・環境光で同じ範囲を使います。", "%.0f m");
+                    ui::PropertyFloat("範囲の半径", &sky.fieldRadius, 100.0f, 200000.0f, defaults.fieldRadius,
+                                      "雲が存在する水平範囲の半径。雲模様の大きさは「広がり」で調整します。", "%.0f m");
+                    ui::PropertyFloat("外周の減衰幅", &sky.fieldFalloff, 1.0f, 50000.0f, defaults.fieldFalloff,
+                                      "範囲の外縁へ向けて密度をゼロにする幅。半径を超える値は半径として扱います。", "%.0f m");
+                    bool animate = sky.animateClouds != 0;
+                    if (ui::PropertyBool("アニメーション", &animate, defaults.animateClouds != 0,
+                                         "風で雲模様を流します。オフで一時停止。雲と雲影は同期し、環境光と反射は約 1 秒ごとに更新します。"))
+                        sky.animateClouds = animate ? 1u : 0u;
+                    ui::PropertyFloat("風速", &sky.windSpeed, 0.0f, 100.0f, defaults.windSpeed,
+                                      "雲模様が進む速度。存在範囲の中心と半径は動きません。", "%.1f m/s");
+                    float windDegrees = sky.windDirection * 180.0f / 3.14159265f;
+                    if (ui::PropertyFloat("風向", &windDegrees, -180.0f, 180.0f, defaults.windDirection,
+                                          "雲が進む方向。0 度は +Z、90 度は +X です。", "%.0f deg"))
+                        sky.windDirection = windDegrees * 3.14159265f / 180.0f;
                     int seed = static_cast<int>(sky.seed);
                     if (ui::PropertyInt("シード", &seed, 0, 10000, static_cast<int>(defaults.seed),
                                         "雲模様の乱数の種。値を変えると雲の形と配置が変わります。\n"

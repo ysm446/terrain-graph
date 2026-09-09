@@ -2,6 +2,8 @@
 #include "core/Log.h"
 #include <pix3.h>
 #include <cstring>
+#include <algorithm>
+#include <cmath>
 
 namespace tg::renderer {
 namespace {
@@ -19,8 +21,26 @@ bool CreateTarget(rhi::Device& device, rhi::GpuTexture& texture, uint32_t size, 
     return device.Allocator().CreateTexture2D(desc, texture);
 }
 }
-bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, const AtmosphereSettings& settings) {
-    if (m_ready && std::memcmp(&settings, &m_applied, sizeof(settings)) == 0) return true;
+bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, const AtmosphereSettings& requested) {
+    const auto now = std::chrono::steady_clock::now();
+    const float delta = m_lastTick.time_since_epoch().count() == 0 ? 0.0f :
+        std::clamp(std::chrono::duration<float>(now-m_lastTick).count(), 0.0f, 0.1f);
+    m_lastTick = now;
+    if (requested.clouds && requested.animateClouds && requested.windSpeed > 0) {
+        m_cloudTime += delta;
+        m_windX += std::sin(requested.windDirection)*requested.windSpeed*delta;
+        m_windZ += std::cos(requested.windDirection)*requested.windSpeed*delta;
+    }
+    AtmosphereSettings settings = requested;
+    settings.windOffsetX = static_cast<float>(std::fmod(m_windX, requested.cloudScale));
+    settings.windOffsetZ = static_cast<float>(std::fmod(m_windZ, requested.cloudScale));
+    // 本体と影は毎フレーム同じ時刻。高価な環境マップ更新は最大 1 Hz。
+    const bool changed = !m_ready || std::memcmp(&requested, &m_requested, sizeof(requested)) != 0;
+    if (!changed && m_cloudTime-m_environmentTime < 1.0f) {
+        m_applied.windOffsetX = settings.windOffsetX;
+        m_applied.windOffsetZ = settings.windOffsetZ;
+        return true;
+    }
     if (!m_initialized) {
         if (!m_environment.Initialize(device, pipelines, false) ||
             !CreateTarget(device, m_multiScatter, 32, DXGI_FORMAT_R16G16B16A16_FLOAT) ||
@@ -70,6 +90,8 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
         TransitionIfNeeded(commands, m_skyView, ReadState);
     })) return false;
     m_applied = settings;
+    m_requested = requested;
+    m_environmentTime = m_cloudTime;
     m_ready = true;
     return true;
 }
@@ -79,6 +101,9 @@ void Atmosphere::Shutdown(rhi::Device& device) {
     device.DeferRelease(m_noise);
     device.DeferRelease(m_skyView);
     m_initialized = m_ready = false;
+    m_lastTick = {};
+    m_cloudTime = m_environmentTime = 0.0f;
+    m_windX = m_windZ = 0.0;
 }
 void Atmosphere::Render(rhi::Device& device, rhi::PipelineCache& pipelines,
                         ID3D12GraphicsCommandList* commands, rhi::GpuTexture& scene, rhi::GpuTexture& depth,

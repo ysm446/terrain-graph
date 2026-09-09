@@ -1594,6 +1594,13 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     atmosphereNode["cloudBottom"] = atmosphere.cloudBottom;
     atmosphereNode["cloudThickness"] = atmosphere.cloudThickness;
     atmosphereNode["cloudScale"] = atmosphere.cloudScale;
+    atmosphereNode["animateClouds"] = atmosphere.animateClouds != 0;
+    atmosphereNode["windSpeed"] = atmosphere.windSpeed;
+    atmosphereNode["windDirection"] = atmosphere.windDirection;
+    atmosphereNode["fieldCenterX"] = atmosphere.fieldCenterX;
+    atmosphereNode["fieldCenterZ"] = atmosphere.fieldCenterZ;
+    atmosphereNode["fieldRadius"] = atmosphere.fieldRadius;
+    atmosphereNode["fieldFalloff"] = atmosphere.fieldFalloff;
     atmosphereNode["seed"] = atmosphere.seed;
     atmosphereNode["samples"] = atmosphere.samples;
     node["atmosphere"] = std::move(atmosphereNode);
@@ -1650,6 +1657,7 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
 }
 
 void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
+    renderer.ResetAtmosphereAnimation();
     // 既定値は renderer::kPreviewDefaults の一択。数値を直接書かない。
     // 名前は各節ローカルの defaults（LightSettings など）と衝突させない。
     const renderer::PreviewDefaults& previewDefaults = renderer::kPreviewDefaults;
@@ -1661,6 +1669,9 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
         auto& atmosphere = renderer.AtmosphericSettings();
         auto& sun = renderer.AtmosphericLight();
         const renderer::AtmosphereSettings defaults;
+        atmosphere.animateClouds = ReadBool(source, "animateClouds", false) ? 1u : 0u;
+        atmosphere.windSpeed = std::clamp(ReadFloat(source, "windSpeed", defaults.windSpeed), 0.0f, 100.0f);
+        atmosphere.windDirection = std::clamp(ReadFloat(source, "windDirection", defaults.windDirection), -3.14159265f, 3.14159265f);
         sun.azimuth = std::clamp(ReadFloat(source, "azimuth", defaults.azimuth), -3.1415927f, 3.1415927f);
         sun.elevation = std::clamp(ReadFloat(source, "elevation", defaults.elevation), -1.55334f, 1.55334f);
         sun.illuminance = std::clamp(ReadFloat(source, "illuminance", defaults.illuminance), 0.0f, 200000.0f);
@@ -1675,6 +1686,10 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
         atmosphere.cloudBottom = std::clamp(ReadFloat(source, "cloudBottom", defaults.cloudBottom), 100.0f, 10000.0f);
         atmosphere.cloudThickness = std::clamp(ReadFloat(source, "cloudThickness", defaults.cloudThickness), 100.0f, 6000.0f);
         atmosphere.cloudScale = std::clamp(ReadFloat(source, "cloudScale", defaults.cloudScale), 1000.0f, 40000.0f);
+        atmosphere.fieldCenterX = std::clamp(ReadFloat(source, "fieldCenterX", defaults.fieldCenterX), -200000.0f, 200000.0f);
+        atmosphere.fieldCenterZ = std::clamp(ReadFloat(source, "fieldCenterZ", defaults.fieldCenterZ), -200000.0f, 200000.0f);
+        atmosphere.fieldRadius = std::clamp(ReadFloat(source, "fieldRadius", defaults.fieldRadius), 100.0f, 200000.0f);
+        atmosphere.fieldFalloff = std::clamp(ReadFloat(source, "fieldFalloff", defaults.fieldFalloff), 1.0f, 50000.0f);
         atmosphere.clouds = ReadBool(source, "clouds", ReadUInt(source, "clouds", defaults.clouds) != 0) ? 1u : 0u;
         atmosphere.seed = std::min(ReadUInt(source, "seed", defaults.seed), 10000u);
         const auto samples = ReadUInt(source, "samples", defaults.samples);

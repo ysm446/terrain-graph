@@ -16,7 +16,7 @@ float4 PsMain(Vertex v):SV_Target {
     float4 world=mul(inverseViewProjection,float4(v.ndc,z < 1 ? z : 0.99999,1));
     world.xyz/=world.w;
     float3 ray=normalize(world.xyz-camera);
-    float limit=z<1 ? length(world.xyz-camera) : 100000;
+    float limit=z<1 ? length(world.xyz-camera) : 1e9;
     float3 origin=camera;
     Texture2D<float4> skyView=ResourceDescriptorHeap[lutIndex];
     float3 ambient=skyView.SampleLevel(g_samplerEquirect,float2(0.5,0.001),0).rgb;

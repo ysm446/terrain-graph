@@ -361,6 +361,7 @@ LightSettings PreviewRenderer::EffectiveLight() const {
 }
 
 void PreviewRenderer::ResetSettings() {
+    m_atmosphere.ResetAnimation();
     m_atmosphericMode = false;
     m_atmosphereSettings = AtmosphereSettings{};
     m_atmosphericLight = {0.9f, 0.9f, 120000.0f, {1.0f, 1.0f, 1.0f}};

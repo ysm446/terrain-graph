@@ -332,15 +332,21 @@ bool Environment::BuildFromEquirect(rhi::Device& device, rhi::PipelineCache& pip
 bool Environment::BuildFromAtmosphere(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                                        const AtmosphereSettings& settings, uint32_t lutIndex, uint32_t noiseIndex, uint32_t skyOutputIndex) {
     auto* pipeline = pipelineCache.GetCompute(L"AtmosphereEnvironment.hlsl", L"CsMain");
-    if (!pipeline || !CreateTargets(device, 512, 256)) return false;
+    if (!pipeline) return false;
+    // アニメーション更新では同じターゲットを再使用する。毎秒の再確保・ディスクリプタ再利用を避ける。
+    if ((!m_ready || m_equirect.width != 512 || m_equirect.height != 256) &&
+        !CreateTargets(device, 512, 256)) return false;
     struct Constants { AtmosphereSettings settings; uint32_t output, lut, noise, pad; };
     const Constants constants{settings, m_equirect.UavIndex(), lutIndex, noiseIndex, skyOutputIndex};
+    const auto allocation = device.Upload().Allocate(sizeof(Constants), 256);
+    if (!allocation.IsValid()) return false;
+    std::memcpy(allocation.cpu, &constants, sizeof(constants));
     if (!device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commands) {
         PIXBeginEvent(commands, PIX_COLOR(120, 180, 255), "AtmosphereEnvironment");
         TransitionIfNeeded(commands, m_equirect, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         commands->SetComputeRootSignature(pipelineCache.GlobalRootSignature());
         commands->SetPipelineState(pipeline);
-        commands->SetComputeRoot32BitConstants(0, sizeof(constants) / 4, &constants, 0);
+        commands->SetComputeRootConstantBufferView(1, allocation.gpuAddress);
         commands->Dispatch(64, 32, 1);
         PIXEndEvent(commands);
     })) return false;

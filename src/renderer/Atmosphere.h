@@ -1,6 +1,7 @@
 #pragma once
 #include "renderer/Environment.h"
 #include <cstdint>
+#include <chrono>
 
 namespace tg::renderer {
 // HLSL の AtmosphericParameters と同じ配置。距離は m、太陽は大気圏外照度 lux。
@@ -17,15 +18,26 @@ struct AtmosphereSettings {
     float coverage = 0.55f;
     float extinction = 0.006f;
     float cloudBottom = 1500.0f;
-    float cloudThickness = 1500.0f;
-    float cloudScale = 12000.0f;
+    float cloudThickness = 2000.0f;
+    float cloudScale = 4000.0f;
     uint32_t seed = 1;
     uint32_t samples = 64;
+    float fieldCenterX = 0.0f;
+    float fieldCenterZ = 0.0f;
+    float fieldRadius = 6000.0f;
+    float fieldFalloff = 2000.0f;
+    float windSpeed = 10.0f;
+    float windDirection = 0.0f;
+    uint32_t animateClouds = 0;
+    float windOffsetX = 0.0f; // 実行時のみ。保存しない。
+    float windOffsetZ = 0.0f;
+    float padding[3]{};
 };
-static_assert(sizeof(AtmosphereSettings) == 64);
+static_assert(sizeof(AtmosphereSettings) == 112);
 
 class Atmosphere {
 public:
+    void ResetAnimation() { m_cloudTime = m_environmentTime = 0.0f; m_windX = m_windZ = 0.0; m_lastTick = {}; m_ready = false; }
     bool Update(rhi::Device& device, rhi::PipelineCache& pipelines, const AtmosphereSettings& settings);
     void Shutdown(rhi::Device& device);
     const Environment& GetEnvironment() const { return m_environment; }
@@ -41,6 +53,12 @@ private:
     rhi::GpuTexture m_noise;
     rhi::GpuTexture m_skyView;
     AtmosphereSettings m_applied;
+    AtmosphereSettings m_requested;
+    std::chrono::steady_clock::time_point m_lastTick{};
+    double m_windX = 0.0;
+    double m_windZ = 0.0;
+    float m_cloudTime = 0.0f;
+    float m_environmentTime = 0.0f;
     bool m_initialized = false;
     bool m_ready = false;
 };
