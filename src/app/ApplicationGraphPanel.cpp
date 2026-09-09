@@ -93,6 +93,8 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
 ImVec4 PinTypeColor(graph::ValueType valueType) {
     switch (valueType) {
         // マスクはオレンジ。0〜1 の 1 チャンネル。
+        case graph::ValueType::Volume:
+            return ImGui::GetStyleColorVec4(ImGuiCol_Text);
         case graph::ValueType::Mask:
             return ImVec4(0.82f, 0.64f, 0.36f, 1.0f);
         // パスは水色。線（点とエッジ）が流れる。緑 / オレンジと色相が離れていて、
@@ -340,7 +342,7 @@ void Application::CopySelectedGraphNodes() {
     std::vector<const graph::Node*> nodes;
     for (const graph::GraphId id : m_selectedGraphNodes) {
         const graph::Node* node = m_graph.FindNode(id);
-        if (node != nullptr && node->kind != graph::NodeKind::Output) {
+        if (node != nullptr && node->kind != graph::NodeKind::Output && node->kind != graph::NodeKind::CloudOutput) {
             nodes.push_back(node);
         }
     }
@@ -511,7 +513,9 @@ void Application::DrawGraphNode(const graph::Node& node) {
 
     // ヘッダ: 種類色の印 + 名前。レイヤーが無効なら名前を落とした色で描く。
     const auto* layerSettings = std::get_if<graph::LayerNodeSettings>(&node.settings);
-    const bool enabled = (layerSettings == nullptr) || layerSettings->layer.enabled;
+    const auto* cloudSettings = std::get_if<graph::CloudNodeSettings>(&node.settings);
+    const bool enabled = ((layerSettings == nullptr) || layerSettings->layer.enabled) &&
+                         ((cloudSettings == nullptr) || cloudSettings->enabled);
     {
         const ImVec2 cursor = ImGui::GetCursorScreenPos();
         ImDrawList* drawList = ImGui::GetWindowDrawList();
@@ -801,7 +805,8 @@ void Application::DrawGraphEditor() {
         ImGui::TextDisabled("ノードを追加");
         ImGui::Separator();
         const auto addNodeMenuItem = [&](graph::NodeKind kind, const char* label) {
-            if (!ImGui::MenuItem(label)) {
+            const bool available = kind != graph::NodeKind::CloudOutput || !m_graph.CompileCloud().hasOutput;
+            if (!ImGui::MenuItem(label, nullptr, false, available)) {
                 return;
             }
             const graph::GraphId nodeId = m_graph.CreateNode(kind);
@@ -817,6 +822,15 @@ void Application::DrawGraphEditor() {
                                       : DefaultLayerFor(graph::LayerKindFor(kind));
                 settings->layer.name +=
                     " " + std::to_string(m_graph.Nodes().size());
+            }
+            if (auto* cloud = std::get_if<graph::CloudNodeSettings>(&node->settings)) {
+                const float size = m_renderer.PlaneSize();
+                const float height = m_renderer.DisplacementScale();
+                cloud->width = std::clamp(size * 0.3f, 10.0f, 20000.0f);
+                cloud->depth = std::clamp(size * 0.2f, 10.0f, 20000.0f);
+                cloud->thickness = std::clamp(height * 0.4f, 10.0f, 20000.0f);
+                cloud->centerY = height * 0.2f;
+                cloud->noiseScale = cloud->width;
             }
             node->posX = addNodePosition.x;
             node->posY = addNodePosition.y;
@@ -879,6 +893,10 @@ void Application::DrawGraphEditor() {
                         "Mask Path — パスの足跡をマスクにする");
         addNodeMenuItem(graph::NodeKind::MaskArea,
                         "Mask Area — パスの閉じた鎖の内側をマスクにする（エリア選択）");
+        ImGui::Separator();
+        ImGui::Separator();
+        addNodeMenuItem(graph::NodeKind::Cloud, "雲塊 — 位置・寸法・輪郭を指定する立体の雲");
+        addNodeMenuItem(graph::NodeKind::CloudOutput, "雲出力 — Volume を繋いで雲を表示する");
         ImGui::Separator();
         addNodeMenuItem(graph::NodeKind::Output, "Output — ここに繋いだ結果をプレビューする");
         ImGui::EndPopup();
@@ -1192,6 +1210,52 @@ void Application::DrawGraphPanel() {
         }
         if (changed) {
             m_graph.MarkDirty();
+            MarkDocumentChanged();
+        }
+    } else if (auto* cloud = std::get_if<graph::CloudNodeSettings>(&selected->settings)) {
+        bool changed = false;
+        const graph::CloudNodeSettings defaults;
+        if (ui::BeginPropertyTable("cloudNodeRows")) {
+            changed |= ui::PropertyBool("有効", &cloud->enabled, defaults.enabled);
+            changed |= ui::PropertyFloat("中心 X", &cloud->centerX, -10000.0f, 10000.0f, defaults.centerX,
+                                         "雲の中心位置（m）。地形原点からの位置です。", "%.1f m");
+            changed |= ui::PropertyFloat("中心高度", &cloud->centerY, -10000.0f, 10000.0f, defaults.centerY,
+                                         "雲の中心の高さ（m）。低くすると山腹や谷へ移ります。", "%.1f m");
+            changed |= ui::PropertyFloat("中心 Z", &cloud->centerZ, -10000.0f, 10000.0f, defaults.centerZ,
+                                         "雲の中心位置（m）。地形原点からの位置です。", "%.1f m");
+            changed |= ui::PropertyFloat("横幅", &cloud->width, 10.0f, 20000.0f, defaults.width,
+                                         "雲の X 方向の全幅。大きくすると横へ広がります。", "%.1f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat("厚さ", &cloud->thickness, 10.0f, 20000.0f, defaults.thickness,
+                                         "雲の上下方向の全幅。中心高度の上下へ半分ずつ広がります。", "%.1f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat("奥行き", &cloud->depth, 10.0f, 20000.0f, defaults.depth,
+                                         "雲の Z 方向の全幅。大きくすると奥へ広がります。", "%.1f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat("消散係数", &cloud->extinction, 0.0001f, 0.03f, defaults.extinction,
+                                         "光の減衰（1/m）。大きくすると雲の内部と雲影が濃くなります。", "%.4f", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat("模様の大きさ", &cloud->noiseScale, 10.0f, 20000.0f, defaults.noiseScale,
+                                         "ノイズの周期（m）。大きいほど大きな膨らみになります。", "%.1f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat("形の崩し", &cloud->shapeStrength, 0.0f, 1.0f, defaults.shapeStrength,
+                                         "楕円体の輪郭をノイズで削ります。大きいほど形が崩れます。", "%.2f");
+            changed |= ui::PropertyFloat("細部の崩し", &cloud->detailStrength, 0.0f, 1.0f, defaults.detailStrength,
+                                         "細かな密度の抜けを加えます。大きいほど縁がほぐれます。", "%.2f");
+            changed |= ui::PropertyFloat("縁の柔らかさ", &cloud->edgeSoftness, 0.02f, 1.0f, defaults.edgeSoftness,
+                                         "輪郭から内側へ密度が増す幅の割合。大きいほど薄く柔らかくなります。", "%.2f");
+            changed |= ui::PropertyInt("シード", &cloud->seed, 0, 10000, defaults.seed);
+            ui::EndPropertyTable();
+        }
+        ui::HintText("Volume を雲出力へ接続して表示。太陽と照明はライティング設定を共有します");
+        if (!m_renderer.AtmosphericMode() && ui::Button("大気散乱へ切替", ui::kWideButtonWidth)) {
+            m_renderer.AtmosphericMode() = true;
+            MarkDocumentChanged();
+        }
+        if (changed) {
+            m_graph.MarkDirty();
+            MarkDocumentChanged();
+        }
+    } else if (selected->kind == graph::NodeKind::CloudOutput) {
+        ui::HintText("雲塊の Volume を接続して表示します。未接続なら雲は表示しません");
+        ui::HintText("この段階では雲塊は1つ。位置と形は接続元の雲塊で編集します");
+        if (!m_renderer.AtmosphericMode() && ui::Button("大気散乱へ切替", ui::kWideButtonWidth)) {
+            m_renderer.AtmosphericMode() = true;
             MarkDocumentChanged();
         }
     } else if (std::get_if<graph::PathNodeSettings>(&selected->settings) != nullptr) {

@@ -160,7 +160,14 @@ constexpr std::array<PinDefinition, 7> kFluvialErosionPins = {{
     {PinKind::Output, ValueType::Mask, "Age"},
 }};
 
-constexpr std::array<NodeDefinition, 28> kNodeDefinitions = {{
+constexpr std::array<PinDefinition, 1> kCloudPins = {{
+    {PinKind::Output, ValueType::Volume, "Volume"},
+}};
+constexpr std::array<PinDefinition, 1> kCloudOutputPins = {{
+    {PinKind::Input, ValueType::Volume, "Volume"},
+}};
+
+constexpr std::array<NodeDefinition, 30> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -188,6 +195,8 @@ constexpr std::array<NodeDefinition, 28> kNodeDefinitions = {{
     {NodeKind::Path, "path", "Path", kPathPins},
     {NodeKind::MaskPath, "maskPath", "Mask Path", kMaskPathPins},
     {NodeKind::MaskArea, "maskArea", "Mask Area", kMaskPathPins},
+    {NodeKind::Cloud, "cloud", "雲塊", kCloudPins},
+    {NodeKind::CloudOutput, "cloudOutput", "雲出力", kCloudOutputPins},
     {NodeKind::Output, "output", "Output", kOutputNodePins},
 }};
 
@@ -438,7 +447,25 @@ bool NodeGraph::DeleteLink(GraphId linkId) {
     return true;
 }
 
+CompiledCloud NodeGraph::CompileCloud() const {
+    CompiledCloud result;
+    for (const Node& node : m_nodes) {
+        if (node.kind != NodeKind::CloudOutput) continue;
+        result.hasOutput = true;
+        const Node* source = UpstreamOf(node, ValueType::Volume);
+        if (source != nullptr && source->kind == NodeKind::Cloud) {
+            if (const auto* cloud = std::get_if<CloudNodeSettings>(&source->settings)) {
+                result.cloud = *cloud;
+                result.connected = true;
+            }
+        }
+        break; // 雲出力は一つ。壊れたファイルに複数あっても先頭を採用する。
+    }
+    return result;
+}
+
 GraphId NodeGraph::CreateNode(NodeKind kind) {
+    if (kind == NodeKind::CloudOutput && CompileCloud().hasOutput) return 0;
     const NodeDefinition* definition = FindNodeDefinition(kind);
     if (definition == nullptr) {
         return 0;
@@ -452,6 +479,8 @@ GraphId NodeGraph::CreateNode(NodeKind kind) {
         node.settings = std::move(settings);
     } else if (IsMaskNodeKind(kind)) {
         node.settings = MaskNodeSettings{};
+    } else if (kind == NodeKind::Cloud) {
+        node.settings = CloudNodeSettings{};
     } else if (kind == NodeKind::Path) {
         node.settings = PathNodeSettings{};
     } else {

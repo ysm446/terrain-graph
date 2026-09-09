@@ -57,6 +57,7 @@ struct StartupOptions {
     // 画面キャプチャは他ウィンドウを掴むことがあるため、確認にはこちらを使う。
     std::filesystem::path uiScreenshotPath;
     uint32_t screenshotFrame = 8;
+    graph::GraphId selectNode = 0; // 開発用。読み込んだグラフのプロパティを画像で確認する。
 };
 
 // アプリ本体。ウィンドウ、デバイス、UI の生存期間とフレームループを持つ。

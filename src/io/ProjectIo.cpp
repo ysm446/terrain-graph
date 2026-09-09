@@ -1330,6 +1330,20 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["blend"] = WriteBlend(mask->blend);
             item["maskPath"] = WritePathMask(mask->pathMask);
             item["maskArea"] = WriteAreaMask(mask->areaMask);
+        } else if (const auto* cloud = std::get_if<graph::CloudNodeSettings>(&node.settings)) {
+            item["cloud"]["enabled"] = cloud->enabled;
+            item["cloud"]["centerX"] = cloud->centerX;
+            item["cloud"]["centerY"] = cloud->centerY;
+            item["cloud"]["centerZ"] = cloud->centerZ;
+            item["cloud"]["width"] = cloud->width;
+            item["cloud"]["thickness"] = cloud->thickness;
+            item["cloud"]["depth"] = cloud->depth;
+            item["cloud"]["extinction"] = cloud->extinction;
+            item["cloud"]["noiseScale"] = cloud->noiseScale;
+            item["cloud"]["shapeStrength"] = cloud->shapeStrength;
+            item["cloud"]["detailStrength"] = cloud->detailStrength;
+            item["cloud"]["edgeSoftness"] = cloud->edgeSoftness;
+            item["cloud"]["seed"] = cloud->seed;
         } else if (const auto* path = std::get_if<graph::PathNodeSettings>(&node.settings)) {
             item["path"] = WritePath(path->path);
         }
@@ -1464,6 +1478,24 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                 settings.pathMask = ReadPathMask(item, "maskPath");
                 settings.areaMask = ReadAreaMask(item, "maskArea");
                 created.settings = std::move(settings);
+            } else if (created.kind == graph::NodeKind::Cloud) {
+                graph::CloudNodeSettings settings;
+                if (const json* cloud = FindMember(item, "cloud"); cloud && cloud->is_object()) {
+                    settings.enabled = ReadBool(*cloud, "enabled", settings.enabled);
+                    settings.seed = std::clamp(ReadInt(*cloud, "seed", settings.seed), 0, 10000);
+                    settings.centerX = std::clamp(ReadFloat(*cloud, "centerX", settings.centerX), -10000.0f, 10000.0f);
+                    settings.centerY = std::clamp(ReadFloat(*cloud, "centerY", settings.centerY), -10000.0f, 10000.0f);
+                    settings.centerZ = std::clamp(ReadFloat(*cloud, "centerZ", settings.centerZ), -10000.0f, 10000.0f);
+                    settings.width = std::clamp(ReadFloat(*cloud, "width", settings.width), 10.0f, 20000.0f);
+                    settings.thickness = std::clamp(ReadFloat(*cloud, "thickness", settings.thickness), 10.0f, 20000.0f);
+                    settings.depth = std::clamp(ReadFloat(*cloud, "depth", settings.depth), 10.0f, 20000.0f);
+                    settings.noiseScale = std::clamp(ReadFloat(*cloud, "noiseScale", settings.noiseScale), 10.0f, 20000.0f);
+                    settings.extinction = std::clamp(ReadFloat(*cloud, "extinction", settings.extinction), 0.0001f, 0.03f);
+                    settings.shapeStrength = std::clamp(ReadFloat(*cloud, "shapeStrength", settings.shapeStrength), 0.0f, 1.0f);
+                    settings.detailStrength = std::clamp(ReadFloat(*cloud, "detailStrength", settings.detailStrength), 0.0f, 1.0f);
+                    settings.edgeSoftness = std::clamp(ReadFloat(*cloud, "edgeSoftness", settings.edgeSoftness), 0.02f, 1.0f);
+                }
+                created.settings = settings;
             } else if (created.kind == graph::NodeKind::Path) {
                 graph::PathNodeSettings settings;
                 settings.path = ReadPath(item, "path");
@@ -1687,12 +1719,12 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
         atmosphere.groundAlbedo = std::clamp(ReadFloat(source, "groundAlbedo", defaults.groundAlbedo), 0.0f, 1.0f);
         atmosphere.coverage = std::clamp(ReadFloat(source, "coverage", defaults.coverage), 0.0f, 1.0f);
         atmosphere.extinction = std::clamp(ReadFloat(source, "extinction", defaults.extinction), .0001f, .03f);
-        atmosphere.cloudBottom = std::clamp(ReadFloat(source, "cloudBottom", defaults.cloudBottom), 100.0f, 10000.0f);
-        atmosphere.cloudThickness = std::clamp(ReadFloat(source, "cloudThickness", defaults.cloudThickness), 100.0f, 6000.0f);
-        atmosphere.cloudScale = std::clamp(ReadFloat(source, "cloudScale", defaults.cloudScale), 1000.0f, 40000.0f);
+        atmosphere.cloudBottom = std::clamp(ReadFloat(source, "cloudBottom", defaults.cloudBottom), -10000.0f, 10000.0f);
+        atmosphere.cloudThickness = std::clamp(ReadFloat(source, "cloudThickness", defaults.cloudThickness), 10.0f, 6000.0f);
+        atmosphere.cloudScale = std::clamp(ReadFloat(source, "cloudScale", defaults.cloudScale), 10.0f, 40000.0f);
         atmosphere.fieldCenterX = std::clamp(ReadFloat(source, "fieldCenterX", defaults.fieldCenterX), -200000.0f, 200000.0f);
         atmosphere.fieldCenterZ = std::clamp(ReadFloat(source, "fieldCenterZ", defaults.fieldCenterZ), -200000.0f, 200000.0f);
-        atmosphere.fieldRadius = std::clamp(ReadFloat(source, "fieldRadius", defaults.fieldRadius), 100.0f, 200000.0f);
+        atmosphere.fieldRadius = std::clamp(ReadFloat(source, "fieldRadius", defaults.fieldRadius), 1.0f, 200000.0f);
         atmosphere.fieldFalloff = std::clamp(ReadFloat(source, "fieldFalloff", defaults.fieldFalloff), 1.0f, 50000.0f);
         atmosphere.clouds = ReadBool(source, "clouds", ReadUInt(source, "clouds", defaults.clouds) != 0) ? 1u : 0u;
         atmosphere.seed = std::min(ReadUInt(source, "seed", defaults.seed), 10000u);

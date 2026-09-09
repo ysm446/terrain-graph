@@ -283,7 +283,7 @@ void Application::ProcessPendingFileWork() {
         if (io::LoadProject(path, m_device, m_pipelineCache, refs)) {
             m_recentProjects.Add(path);
             m_projectPath = path;
-            m_selectedGraphNode = 0;
+            m_selectedGraphNode = m_graph.FindNode(m_options.selectNode) ? m_options.selectNode : 0;
             m_previewGraphNode = 0;
             m_previewGraphPin = 0;
             m_compiledGraphRevision = 0;

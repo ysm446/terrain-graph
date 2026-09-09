@@ -289,12 +289,16 @@ void PreviewRenderer::Shutdown(rhi::Device& device) {
 }
 
 void PreviewRenderer::ProcessPendingWork(rhi::Device& device,
-                                        rhi::PipelineCache& pipelineCache) {
+                                        rhi::PipelineCache& pipelineCache, const AtmosphereSettings* cloudOverride) {
     if (m_atmosphericMode) {
         m_atmosphereSettings.azimuth = m_atmosphericLight.azimuth;
         m_atmosphereSettings.elevation = m_atmosphericLight.elevation;
         m_atmosphereSettings.illuminance = m_atmosphericLight.illuminance;
-        m_atmosphere.Update(device, pipelineCache, m_atmosphereSettings);
+        AtmosphereSettings effective = cloudOverride ? *cloudOverride : m_atmosphereSettings;
+        effective.azimuth = m_atmosphericLight.azimuth;
+        effective.elevation = m_atmosphericLight.elevation;
+        effective.illuminance = m_atmosphericLight.illuminance;
+        m_atmosphere.Update(device, pipelineCache, effective);
     }
     if (m_requestedMeshSubdivisions != m_meshSubdivisions) {
         // 古い頂点バッファは GPU がまだ見ているかもしれないので、

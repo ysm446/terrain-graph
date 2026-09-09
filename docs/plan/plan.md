@@ -1,7 +1,7 @@
 # plan — 実装方針と優先順位
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-09 13:36
+更新日時: 2026-09-10 02:06
 
 進捗管理の入口。実装の詳細な設計は [docs/design/](../design/) に置く。
 
@@ -96,6 +96,9 @@ tests/
 ```
 
 ## マイルストーン
+
+雲のオーサリングは [雲ノード](../design/cloud-nodes.md) に記録。第1段階は雲塊1つの位置・形の編集。
+マスク分布・Path・複数雲合成は見た目を評価してから進める。
 
 ### 引き継いだ土台（material-mixer M0〜M6、完了）
 
@@ -196,7 +199,7 @@ terrain_graph.exe [--project <path>] [--save-project <path>]
                    [--hdri <path>] [--texture <path>]...
                    [--export <dir>]
                    [--screenshot <path>] [--screenshot-ui <path>]
-                   [--screenshot-frame <n>]
+                   [--screenshot-frame <n>] [--select-node <id>]
 ```
 
 `--texture` は繰り返し指定でき、起動時にテクスチャライブラリへ読み込む。
@@ -210,6 +213,7 @@ terrain_graph.exe [--project <path>] [--save-project <path>]
 `--screenshot` はビューポートの内容を、`--screenshot-ui` は UI 込みの
 ウィンドウ全体を PNG に書き出して終了する。
 画面キャプチャに頼らず結果を確認できるため、リモート環境や自動確認で使う。
+`--select-node` は読み込んだグラフで指定 ID のノードを選択し、プロパティの画像確認に使う。
 
 ## 見つけている課題（未着手）
 

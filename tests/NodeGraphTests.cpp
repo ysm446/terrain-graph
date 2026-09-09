@@ -39,6 +39,38 @@ bool StartsWithNeutralPlane(const tg::graph::CompiledGraph& compiled) {
 }  // namespace
 
 void RunNodeGraphTests() {
+    Section("ノードグラフ — 雲の独立した出力");
+    {
+        NodeGraph graph = NodeGraph::CreateDefault();
+        Check(!graph.CompileCloud().hasOutput, "既存グラフは従来の空設定を使う");
+        const auto cloudId = graph.CreateNode(NodeKind::Cloud);
+        const auto outputId = graph.CreateNode(NodeKind::CloudOutput);
+        const auto* cloud = graph.FindNode(cloudId);
+        const auto* output = graph.FindNode(outputId);
+        const auto cloudPin = cloud->outputs.front().id;
+        const auto inputPin = output->inputs.front().id;
+        Check(graph.CompileCloud().hasOutput && !graph.CompileCloud().connected,
+              "未接続の雲出力は雲を表示しない");
+        Check(!graph.CanCreateLink(graph.Nodes().front().outputs.front().id, inputPin),
+              "Material と Volume は接続できない");
+        Check(graph.CreateLink(cloudPin,inputPin) && graph.CompileCloud().connected,
+              "雲塊を雲出力へ接続できる");
+        auto& settings = std::get<tg::graph::CloudNodeSettings>(graph.FindMutableNode(cloudId)->settings);
+        settings.centerY = -150.0f;
+        settings.width = 900.0f;
+        settings.enabled = false;
+        const auto compiled = graph.CompileCloud();
+        Check(compiled.cloud.centerY == -150.0f && compiled.cloud.width == 900.0f && !compiled.cloud.enabled,
+              "位置・寸法・有効状態が描画用設定へ伝わる");
+        Check(graph.CreateNode(NodeKind::CloudOutput) == 0, "雲出力は重複して作れない");
+        Check(graph.CompileLayers().layers.size() == 1, "雲の接続は地形の出力へ混入しない");
+        graph.DeleteNode(cloudId);
+        Check(graph.CompileCloud().hasOutput && !graph.CompileCloud().connected,
+              "雲塊を削除すると古い雲が残らない");
+        graph.DeleteNode(outputId);
+        Check(!graph.CompileCloud().hasOutput, "雲出力を削除すると従来の空設定へ戻る");
+    }
+
     Section("ノードグラフ — 入力のないハイト加工");
 
     constexpr std::array kOperationKinds = {

@@ -38,6 +38,7 @@ enum class ValueType : uint32_t {
     Mask = 1,
     // パス（地形の上に引いた向き付きの線）。Path ノードが出し、Mask Path が読む。
     Path = 2,
+    Volume = 3,
 };
 
 enum class NodeKind : uint32_t {
@@ -97,6 +98,8 @@ enum class NodeKind : uint32_t {
     FluvialErosion = 25,
     FlattenBorders = 26,
     SnowCover = 27,
+    Cloud = 28,
+    CloudOutput = 29,
 };
 
 struct PinDefinition {
@@ -187,11 +190,31 @@ struct CompiledGraph {
     std::vector<GraphId> layerSources;
 };
 
+// 雲塊の寸法はワールド座標の m。体積データは描画時に手続き評価する。
+struct CloudNodeSettings {
+    bool enabled = true;
+    float centerX = 0.0f, centerY = 200.0f, centerZ = 0.0f;
+    float width = 1200.0f, thickness = 400.0f, depth = 800.0f;
+    float extinction = 0.012f;
+    float noiseScale = 800.0f;
+    float shapeStrength = 0.65f;
+    float detailStrength = 0.3f;
+    float edgeSoftness = 0.2f;
+    int seed = 1;
+};
+
+// 雲出力が未接続でも hasOutput は真。古い雲へ戻らず表示を消す。
+struct CompiledCloud {
+    bool hasOutput = false;
+    CloudNodeSettings cloud;
+    bool connected = false;
+};
+
 // 出力。ここに繋いだチェーンがプレビューのマテリアルになる。
 struct OutputNodeSettings {};
 
 using NodeSettings =
-    std::variant<LayerNodeSettings, MaskNodeSettings, OutputNodeSettings, PathNodeSettings>;
+    std::variant<LayerNodeSettings, MaskNodeSettings, OutputNodeSettings, PathNodeSettings, CloudNodeSettings>;
 
 struct Node {
     GraphId id = 0;
@@ -244,6 +267,7 @@ public:
     // 出力ノードの「下地」チェーンを遡る。
     // チェーンが空なら下地 1 枚（MaterialStack::MakeBaseLayer と同じもの）を返す。
     CompiledGraph CompileLayers() const;
+    CompiledCloud CompileCloud() const;
     // 指定したノード**まで**。ノードを選んでプレビューするときに使う。
     // outputPin は**どの出力を見ているか**。0 なら最初の出力（レイヤーなら Result）。
     // マスクの出力を見ているときは、その結果を白黒で貼ったプレビューになる

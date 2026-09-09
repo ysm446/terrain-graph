@@ -199,7 +199,7 @@ public:
     const SkyDefinition& ActiveSky() const { return m_activeSky; }
     // 環境マップやマテリアル解像度の作り直しは GPU 待機を伴うため、
     // フレームの外でまとめて処理する。
-    void ProcessPendingWork(rhi::Device& device, rhi::PipelineCache& pipelineCache);
+    void ProcessPendingWork(rhi::Device& device, rhi::PipelineCache& pipelineCache, const AtmosphereSettings* cloudOverride = nullptr);
 
     // 表示先のサイズに合わせてレンダーターゲットを作り直す。
     bool Resize(rhi::Device& device, uint32_t width, uint32_t height);

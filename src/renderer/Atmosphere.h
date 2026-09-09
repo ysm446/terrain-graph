@@ -17,15 +17,15 @@ struct AtmosphereSettings {
     uint32_t clouds = 0;
     float coverage = 0.55f;
     float extinction = 0.006f;
-    float cloudBottom = 1500.0f;
-    float cloudThickness = 2000.0f;
-    float cloudScale = 4000.0f;
+    float cloudBottom = 100.0f;
+    float cloudThickness = 400.0f;
+    float cloudScale = 1200.0f;
     uint32_t seed = 1;
     uint32_t samples = 64;
     float fieldCenterX = 0.0f;
     float fieldCenterZ = 0.0f;
-    float fieldRadius = 6000.0f;
-    float fieldFalloff = 2000.0f;
+    float fieldRadius = 3200.0f;
+    float fieldFalloff = 400.0f;
     float windSpeed = 10.0f;
     float windDirection = 0.0f;
     uint32_t animateClouds = 0;
@@ -33,8 +33,12 @@ struct AtmosphereSettings {
     float windOffsetZ = 0.0f;
     uint32_t lowerHemisphere = 1; // 0: 空の延長、1: 地面反射。
     float padding[2]{};
+    uint32_t localCloud = 0; // 実行時のみ。雲ノードが楕円体の密度を指定する。
+    float radiusX = 600.0f, radiusZ = 400.0f, edgeSoftness = 0.2f;
+    float shapeStrength = 0.65f, detailStrength = 0.3f;
+    float localPadding[2]{};
 };
-static_assert(sizeof(AtmosphereSettings) == 112);
+static_assert(sizeof(AtmosphereSettings) == 144);
 
 class Atmosphere {
 public:

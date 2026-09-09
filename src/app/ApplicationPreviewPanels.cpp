@@ -291,32 +291,48 @@ void Application::DrawLightingPanel() {
                 ui::EndPropertyTable();
             }
             ui::SectionHeader("雲");
-            if (ui::BeginPropertyTable("cloudRows")) {
+            const bool nodeCloud = m_graph.CompileCloud().hasOutput;
+            if (nodeCloud) ui::HintText("雲はグラフの雲塊・雲出力で設定します");
+            if (!nodeCloud && ui::BeginPropertyTable("cloudRows")) {
                 bool clouds = sky.clouds != 0;
                 if (ui::PropertyBool("雲を描画", &clouds, defaults.clouds != 0,
                                      "立体的な雲を描画し、環境光と反射にも反映します。\n"
                                      "ライトの「影」がオンなら地形に雲影も落とします。オフにしても雲の設定は保持されます。")) sky.clouds = clouds ? 1u : 0u;
                 if (clouds) {
+                    ui::PropertyLabel("雲の配置", "現在の地形サイズと変位量から、山にかかる低い雲層へまとめて設定します。\n"
+                                      "地形の四隅より少し外まで広げます。適用後は各値を個別に調整できます。");
+                    if (ui::Button("地形に合わせる", ui::kWideButtonWidth)) {
+                        const float size = m_renderer.PlaneSize();
+                        const float height = m_renderer.DisplacementScale();
+                        // 地形の高さは (Height - 0.5) * 変位量。雲の濃い下部を山腹へ置く。
+                        sky.cloudBottom = std::clamp(height * 0.1f, -10000.0f, 10000.0f);
+                        sky.cloudThickness = std::clamp(height * 0.3f, 10.0f, 6000.0f);
+                        sky.cloudScale = std::clamp(size * 0.3f, 10.0f, 40000.0f);
+                        sky.fieldCenterX = sky.fieldCenterZ = 0.0f;
+                        sky.fieldRadius = std::clamp(size * 0.78f, 1.0f, 200000.0f);
+                        sky.fieldFalloff = std::clamp(size * 0.07f, 1.0f, 50000.0f);
+                    }
+                    ui::PropertyEnd();
                     ui::PropertyFloat("雲量", &sky.coverage, 0.0f, 1.0f, defaults.coverage,
                                       "雲のできる範囲を調整します。大きいほど雲が増えてつながり、小さいほど晴れ間が増えます。\n"
                                       "空を覆う面積の割合そのものではありません。");
                     ui::PropertyFloat("消散係数", &sky.extinction, 0.0001f, 0.03f, defaults.extinction,
                                       "雲の中を進む光の減衰の強さ（1/m）。大きいほど光を通しにくく、雲と雲影が濃くなります。\n"
                                       "雲の範囲は「雲量」、上下の寸法は「厚さ」で調整します。", "%.4f");
-                    ui::PropertyFloat("雲底", &sky.cloudBottom, 100.0f, 10000.0f, defaults.cloudBottom,
+                    ui::PropertyFloat("雲底", &sky.cloudBottom, -10000.0f, 10000.0f, defaults.cloudBottom,
                                       "地形の原点から雲の下端までの高さ（m）。山頂からの高さではありません。\n"
-                                      "低くすると雲が地形やカメラに近づきます。", "%.0f m");
-                    ui::PropertyFloat("厚さ", &sky.cloudThickness, 100.0f, 6000.0f, defaults.cloudThickness,
+                                      "負の値で原点より下へ下げられます。山にかけるときは厚さも小さくします。", "%.0f m");
+                    ui::PropertyFloat("厚さ", &sky.cloudThickness, 10.0f, 6000.0f, defaults.cloudThickness,
                                       "雲層の上下方向の厚さ（m）。雲の上端は「雲底 + 厚さ」です。\n"
                                       "厚くすると光が通る雲の距離が増え、同じ消散係数でも光を遮りやすくなります。", "%.0f m");
-                    ui::PropertyFloat("ノイズスケール", &sky.cloudScale, 1000.0f, 40000.0f, defaults.cloudScale,
+                    ui::PropertyFloat("ノイズスケール", &sky.cloudScale, 10.0f, 40000.0f, defaults.cloudScale,
                                       "雲模様の水平方向の大きさ（m）。大きくすると大きな雲塊、小さくすると細かな雲になります。\n"
                                       "雲を描く範囲の端や、雲量を変える設定ではありません。", "%.0f m");
                     ui::PropertyFloat("範囲の中心 X", &sky.fieldCenterX, -200000.0f, 200000.0f, defaults.fieldCenterX,
                                       "雲が存在する円形範囲の中心（ワールド座標）。カメラを移動しても範囲は動きません。", "%.0f m");
                     ui::PropertyFloat("範囲の中心 Z", &sky.fieldCenterZ, -200000.0f, 200000.0f, defaults.fieldCenterZ,
                                       "雲が存在する円形範囲の中心（ワールド座標）。雲本体・雲影・環境光で同じ範囲を使います。", "%.0f m");
-                    ui::PropertyFloat("雲の分布半径", &sky.fieldRadius, 100.0f, 200000.0f, defaults.fieldRadius,
+                    ui::PropertyFloat("雲の分布半径", &sky.fieldRadius, 1.0f, 200000.0f, defaults.fieldRadius,
                                       "雲が存在する水平範囲の半径。雲模様の大きさは「ノイズスケール」で調整します。", "%.0f m");
                     ui::PropertyFloat("境界フェード幅", &sky.fieldFalloff, 1.0f, 50000.0f, defaults.fieldFalloff,
                                       "範囲の外縁へ向けて密度をゼロにする幅。半径を超える値は半径として扱います。", "%.0f m");

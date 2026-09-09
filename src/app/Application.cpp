@@ -320,7 +320,30 @@ int Application::Run() {
 
         // 環境マップやマテリアル解像度の作り直しは GPU 待機を伴うため、
         // フレームの外で処理する。
-        m_renderer.ProcessPendingWork(m_device, m_pipelineCache);
+        const graph::CompiledCloud compiledCloud = m_graph.CompileCloud();
+        renderer::AtmosphereSettings cloudSettings = m_renderer.AtmosphericSettings();
+        if (compiledCloud.hasOutput) {
+            const auto& cloud = compiledCloud.cloud;
+            cloudSettings.clouds = compiledCloud.connected && cloud.enabled ? 1u : 0u;
+            cloudSettings.localCloud = 1;
+            cloudSettings.animateClouds = 0;
+            cloudSettings.fieldCenterX = cloud.centerX;
+            cloudSettings.fieldCenterZ = cloud.centerZ;
+            cloudSettings.cloudBottom = cloud.centerY - cloud.thickness * 0.5f;
+            cloudSettings.cloudThickness = cloud.thickness;
+            cloudSettings.radiusX = cloud.width * 0.5f;
+            cloudSettings.radiusZ = cloud.depth * 0.5f;
+            cloudSettings.fieldRadius = std::max(cloudSettings.radiusX, cloudSettings.radiusZ);
+            cloudSettings.cloudScale = cloud.noiseScale;
+            cloudSettings.extinction = cloud.extinction;
+            cloudSettings.shapeStrength = cloud.shapeStrength;
+            cloudSettings.detailStrength = cloud.detailStrength;
+            cloudSettings.edgeSoftness = cloud.edgeSoftness;
+            cloudSettings.seed = static_cast<uint32_t>(cloud.seed);
+            cloudSettings.coverage = 1.0f;
+        }
+        m_renderer.ProcessPendingWork(m_device, m_pipelineCache,
+                                      compiledCloud.hasOutput ? &cloudSettings : nullptr);
         // ペイントマスクの解像度変更も作り直しを伴うため、フレームの外で処理する。
         m_paintMasks.ProcessPendingWork(m_device, m_pipelineCache);
 

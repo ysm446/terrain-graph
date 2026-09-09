@@ -55,6 +55,8 @@ tg::StartupOptions ParseCommandLine() {
         } else if (argument == L"--screenshot-ui" && (i + 1) < argc) {
             options.uiScreenshotPath = argv[i + 1];
             ++i;
+        } else if (argument == L"--select-node" && (i + 1) < argc) {
+            options.selectNode = ::_wtoi(argv[++i]);
         } else if (argument == L"--screenshot-frame" && (i + 1) < argc) {
             options.screenshotFrame = static_cast<uint32_t>(::_wtoi(argv[i + 1]));
             ++i;
