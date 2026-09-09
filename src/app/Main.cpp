@@ -60,6 +60,10 @@ tg::StartupOptions ParseCommandLine() {
             options.screenshotCount = static_cast<uint32_t>(std::clamp(::_wtoi(argv[++i]), 1, 256));
         } else if (argument == L"--screenshot-interval" && (i + 1) < argc) {
             options.screenshotInterval = static_cast<uint32_t>(std::clamp(::_wtoi(argv[++i]), 1, 1000));
+        } else if (argument == L"--benchmark-frames" && (i + 1) < argc) {
+            options.benchmarkFrames = static_cast<uint32_t>(std::clamp(::_wtoi(argv[++i]), 1, 10000));
+        } else if (argument == L"--cloud-reference") {
+            options.referenceCloudLighting = true;
         } else if (argument == L"--select-node" && (i + 1) < argc) {
             options.selectNode = ::_wtoi(argv[++i]);
         } else if (argument == L"--screenshot-frame" && (i + 1) < argc) {

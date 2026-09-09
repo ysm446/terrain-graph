@@ -190,7 +190,9 @@ public:
     // （こちらの漏れ）か「開いても既定に戻らない」（あちらの漏れ）になる。
     // 天球は SkyLibrary が持つので、ここでは触らない。
     void ResetSettings();
-    void SetCloudDistributionMask(uint32_t index) { m_atmosphere.SetDistributionMask(index); }
+    void SetCloudDistributionMask(uint32_t index, uint64_t revision) { m_atmosphere.SetDistributionMask(index, revision); }
+    bool& CloudLightingCache() { return m_cloudLightingCache; }
+    void InvalidateCloudLighting() { m_atmosphere.InvalidateFrameLighting(); }
     void ResetCloudMotion() { m_atmosphere.ResetCloudMotion(); }
     void ResetAtmosphereAnimation() { m_atmosphere.ResetAnimation(); }
 
@@ -321,6 +323,7 @@ private:
     MaterialSettings m_material;
     Environment m_environment;
     Atmosphere m_atmosphere;
+    bool m_cloudLightingCache = true;
     AtmosphereSettings m_atmosphereSettings;
     LightSettings m_atmosphericLight{0.9f, 0.9f, 120000.0f, {1.0f, 1.0f, 1.0f}};
     bool m_atmosphericMode = false;

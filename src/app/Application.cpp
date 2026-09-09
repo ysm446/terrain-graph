@@ -86,6 +86,7 @@ std::string ScreenshotFileName() {
 
 bool Application::Initialize(const StartupOptions& options) {
     m_options = options;
+    m_renderer.CloudLightingCache() = !options.referenceCloudLighting;
 
     // ファイル選択ダイアログ（IFileDialog）が COM を使う。
     m_comInitialized =
@@ -245,9 +246,12 @@ void Application::PollShaderHotReload() {
     // PSO は GPU が参照中の可能性があるため、破棄前に必ず待つ。
     m_device.WaitForGpu();
     m_pipelineCache.InvalidateAll();
+    m_renderer.InvalidateCloudLighting();
 }
 
 int Application::Run() {
+    uint32_t benchmarkStartFrame = 0;
+    std::chrono::steady_clock::time_point benchmarkStart;
     uint32_t capturedScreenshots = 0;
     uint64_t nextScreenshotFrame = m_options.screenshotFrame;
     while (m_window.PumpMessages()) {
@@ -366,6 +370,7 @@ int Application::Run() {
             cloudSettings.cloudScale = cloud.noiseScale;
             cloudSettings.extinction = cloud.extinction;
             cloudSettings.shapeStrength = cloud.shapeStrength;
+            if (compiledCloud.layer) cloudSettings.opticalDepthIndex = UINT32_MAX;
             cloudSettings.detailStrength = cloud.detailStrength;
             cloudSettings.edgeSoftness = cloud.edgeSoftness;
             cloudSettings.seed = static_cast<uint32_t>(cloud.seed);
@@ -452,7 +457,7 @@ int Application::Run() {
             m_cloudMaskEvaluator.Update(m_device, m_pipelineCache, commandList, m_cloudMaskStack,
                                         m_textureLibrary, m_materialLibrary, m_paintMasks);
         }
-        m_renderer.SetCloudDistributionMask(CloudDistributionMask());
+        m_renderer.SetCloudDistributionMask(CloudDistributionMask(), m_cloudMaskPin ? m_cloudMaskEvaluator.EvaluatedRevision() : 0);
         m_renderer.Render(m_device, m_pipelineCache, commandList, m_graphStack,
                           m_textureLibrary, m_materialLibrary, m_paintMasks);
 
@@ -495,12 +500,26 @@ int Application::Run() {
             RequestScreenshot();
         }
 
-        m_device.EndFrame(m_settings.Display().vsync);
+        m_device.EndFrame(m_options.benchmarkFrames == 0 && m_settings.Display().vsync);
 
         // デバッグレイヤーが溜めた検証エラーをログ（とステータスバー）へ流す。
         // 汲まないとデバッガを繋がない限り誰の目にも触れない。
         m_device.DrainDebugMessages();
         ++m_frameCounter;
+        if (m_options.benchmarkFrames && evaluationIdle && m_frameCounter >= 120) {
+            if (!benchmarkStartFrame) {
+                m_device.WaitForGpu();
+                benchmarkStartFrame = m_frameCounter;
+                benchmarkStart = std::chrono::steady_clock::now();
+            } else if (m_frameCounter-benchmarkStartFrame >= m_options.benchmarkFrames) {
+                m_device.WaitForGpu();
+                const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now()-benchmarkStart).count();
+                TG_LOG_INFO("描画計測: %u frames, %.3f ms/frame, %.1f FPS, cloudReference=%d",
+                    m_options.benchmarkFrames, seconds*1000/m_options.benchmarkFrames,
+                    m_options.benchmarkFrames/seconds, m_options.referenceCloudLighting ? 1 : 0);
+                break;
+            }
+        }
 
         // 開発用のスクリーンショット。書き出したら終了する。
         if (captureUi) {
@@ -525,6 +544,7 @@ int Application::Run() {
 
 // 開発用オプションで動いているか。対話せずに書き出して終わる経路。
 bool Application::Headless() const {
+    if (m_options.benchmarkFrames) return true;
     return !m_options.screenshotPath.empty() || !m_options.uiScreenshotPath.empty() ||
            !m_options.exportDirectory.empty() || !m_options.saveProjectPath.empty();
 }

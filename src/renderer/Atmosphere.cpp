@@ -33,6 +33,10 @@ void Atmosphere::ResetAnimation() {
     m_ready = false;
 }
 bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, const AtmosphereSettings& requested) {
+    if (requested.localCloud == 2 && !m_opticalDepth.IsValid()) {
+        if (!CreateTarget(device, m_opticalDepth, 64, DXGI_FORMAT_R16G16B16A16_FLOAT, 64, 32)) return false;
+        m_opticalDirty = true;
+    }
     const auto now = std::chrono::steady_clock::now();
     const float delta = !m_ready || m_lastTick.time_since_epoch().count() == 0 ? 0.0f :
         std::clamp(std::chrono::duration<float>(now-m_lastTick).count(), 0.0f, 0.1f);
@@ -164,7 +168,35 @@ void Atmosphere::Shutdown(rhi::Device& device) {
     m_lastTick = {};
     m_cloudTime = m_environmentTime = 0.0f;
     m_motion.Reset();
+    device.DeferRelease(m_opticalDepth);
+    m_opticalDirty = true;
     m_cloudEnvironmentDirty = false;
+}
+// 雲の形は元の密度で描き、低周波な光学的厚さだけを共有する。
+void Atmosphere::UpdateFrameLighting(rhi::Device& device, rhi::PipelineCache& pipelines,
+                                   ID3D12GraphicsCommandList* commands) {
+    if (!m_ready || !m_applied.clouds || m_applied.localCloud != 2 || !m_opticalDepth.IsValid()) return;
+    auto settings = m_applied;
+    settings.opticalDepthIndex = UINT32_MAX;
+    if (m_opticalDirty || std::memcmp(&settings, &m_opticalSettings, sizeof(settings)) != 0) {
+        auto* pipeline = pipelines.GetCompute(L"AtmosphereOpticalDepth.hlsl", L"CsMain");
+        struct Constants { AtmosphereSettings settings; uint32_t noise, output, pad[2]; };
+        const auto allocation = device.Upload().Allocate(sizeof(Constants), 256);
+        if (!pipeline || !allocation.IsValid()) return;
+        const Constants constants{settings, m_noise.SrvIndex(), m_opticalDepth.UavIndex(), {0,0}};
+        std::memcpy(allocation.cpu, &constants, sizeof(constants));
+        PIXBeginEvent(commands, PIX_COLOR(120,180,255), "CloudOpticalDepthCache");
+        TransitionIfNeeded(commands, m_opticalDepth, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        commands->SetComputeRootSignature(pipelines.GlobalRootSignature());
+        commands->SetComputeRootConstantBufferView(1, allocation.gpuAddress);
+        commands->SetPipelineState(pipeline);
+        commands->Dispatch(8, 8, 16);
+        TransitionIfNeeded(commands, m_opticalDepth, ReadState);
+        PIXEndEvent(commands);
+        m_opticalSettings = settings;
+        m_opticalDirty = false;
+    }
+    m_applied.opticalDepthIndex = m_opticalDepth.SrvIndex() | 0x80000000u;
 }
 void Atmosphere::Render(rhi::Device& device, rhi::PipelineCache& pipelines,
                         ID3D12GraphicsCommandList* commands, rhi::GpuTexture& scene, rhi::GpuTexture& depth,

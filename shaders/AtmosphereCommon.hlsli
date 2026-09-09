@@ -141,9 +141,26 @@ float CloudOpticalDepth(float3 origin, float3 ray, AtmosphericParameters p, uint
         optical+=CloudDensity(origin+ray*(start+(i+0.5)*stepLength),p,noiseIndex)*stepLength;
     return optical*p.extinction;
 }
+// 雲層専用。shapeStrength と同じ領域をキャッシュ SRV として使用する。
+bool HasCloudOpticalCache(AtmosphericParameters p) {
+    return p.localCloud==2 && (asuint(p.shapeStrength)&0x80000000)!=0 && asuint(p.shapeStrength)!=0xffffffff;
+}
+float3 SampleCloudOpticalCache(float3 position, AtmosphericParameters p) {
+    float3 uvw=saturate((position-LocalCloudCenter(p))/LocalCloudRadii(p)*0.5+0.5);
+    float2 uv=(uvw.xy*float2(63,31)+0.5)/float2(64,32);
+    float z=uvw.z*63;
+    Texture2DArray<float4> cache=ResourceDescriptorHeap[asuint(p.shapeStrength)&0x7fffffff];
+    return lerp(cache.SampleLevel(g_samplerLinearClamp,float3(uv,floor(z)),0).rgb,
+                cache.SampleLevel(g_samplerLinearClamp,float3(uv,min(floor(z)+1,63)),0).rgb,frac(z));
+}
 float CloudShadow(float3 position, AtmosphericParameters p, uint noiseIndex) {
     float3 sun=AtmosphereSun(p);
     if(p.clouds==0 || sun.y<=0.001) return 1;
+    if (HasCloudOpticalCache(p)) {
+        float start,end;
+        if (!CloudInterval(position,sun,1e9,p,start,end)) return 1;
+        return exp(-SampleCloudOpticalCache(position+sun*start,p).x);
+    }
     return exp(-CloudOpticalDepth(position,sun,p,noiseIndex,max(p.samples/2,16u)));
 }
 float4 IntegrateCloud(float3 origin, float3 ray, float limit, AtmosphericParameters p,
@@ -165,9 +182,12 @@ float4 IntegrateCloud(float3 origin, float3 ray, float limit, AtmosphericParamet
         float3 pos=origin+ray*(start+(i+0.5)*stepLength);
         float density=CloudDensity(pos,p,noiseIndex);
         if(density<=0) continue;
-        float sunDepth=CloudOpticalDepth(pos,sun,p,noiseIndex,max(p.samples/2,16u));
-        float topDepth=CloudOpticalDepth(pos,float3(0,1,0),p,noiseIndex,8);
-        float bottomDepth=CloudOpticalDepth(pos,float3(0,-1,0),p,noiseIndex,8);
+        float3 depths;
+        if (HasCloudOpticalCache(p)) depths=SampleCloudOpticalCache(pos,p);
+        else depths=float3(CloudOpticalDepth(pos,sun,p,noiseIndex,max(p.samples/2,16u)),
+            CloudOpticalDepth(pos,float3(0,1,0),p,noiseIndex,8),
+            CloudOpticalDepth(pos,float3(0,-1,0),p,noiseIndex,8));
+        float sunDepth=depths.x, topDepth=depths.y, bottomDepth=depths.z;
         // 多重散乱のオクターブ近似。高次ほど寄与・消散・方向性を弱める。
         // 地形の直射影にはこの散乱光を使わず、元の Beer 透過率だけを使う。
         float3 light=0;
