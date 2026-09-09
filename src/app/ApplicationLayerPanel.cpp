@@ -175,16 +175,16 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                                        snowDefaults.settlingPasses,
                                        "1 段のなかで雪を滑らせる回数");
             int snowResolutionIndex = 1;
-            for (int i = 0; i < IM_ARRAYSIZE(kSedimentResolutionValues); ++i) {
-                if (kSedimentResolutionValues[i] == layer.snow.resolution) {
+            for (int i = 0; i < IM_ARRAYSIZE(kSnowResolutionValues); ++i) {
+                if (kSnowResolutionValues[i] == layer.snow.resolution) {
                     snowResolutionIndex = i;
                 }
             }
-            if (ui::PropertyCombo("解像度", &snowResolutionIndex, kSedimentResolutionLabels,
-                                  IM_ARRAYSIZE(kSedimentResolutionLabels), 1,
+            if (ui::PropertyCombo("解像度", &snowResolutionIndex, kSnowResolutionLabels,
+                                  IM_ARRAYSIZE(kSnowResolutionLabels), 1,
                                   "雪を動かすグリッド。合成解像度とは別。"
                                   "上げるほど細かい雪の筋が出るが重い")) {
-                layer.snow.resolution = kSedimentResolutionValues[snowResolutionIndex];
+                layer.snow.resolution = kSnowResolutionValues[snowResolutionIndex];
                 changed = true;
             }
             changed |= ui::PropertyFloat(

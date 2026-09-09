@@ -214,6 +214,9 @@ inline const char* const kRockStyleLabels[] = {"丸い", "多面体", "尖った
 // 堆積 / 積雪の計算グリッド。合成解像度とは別に持つ。
 inline const char* const kSedimentResolutionLabels[] = {"256", "512", "1024"};
 inline constexpr uint32_t kSedimentResolutionValues[] = {256, 512, 1024};
+// 積雪は 2048 まで選べる（評価器側のクランプ上限に合わせる）。
+inline const char* const kSnowResolutionLabels[] = {"256", "512", "1024", "2048"};
+inline constexpr uint32_t kSnowResolutionValues[] = {256, 512, 1024, 2048};
 inline const compositor::BrushSettings kDefaultBrush;
 inline const renderer::LightSettings kDefaultLight;
 inline const renderer::ExposureSettings kDefaultExposure;
