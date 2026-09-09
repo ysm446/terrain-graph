@@ -167,7 +167,12 @@ constexpr std::array<PinDefinition, 1> kCloudOutputPins = {{
     {PinKind::Input, ValueType::Volume, "Volume"},
 }};
 
-constexpr std::array<NodeDefinition, 30> kNodeDefinitions = {{
+constexpr std::array<PinDefinition, 2> kCloudLayerPins = {{
+    {PinKind::Input, ValueType::Mask, "Distribution"},
+    {PinKind::Output, ValueType::Volume, "Volume"},
+}};
+
+constexpr std::array<NodeDefinition, 31> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -196,6 +201,7 @@ constexpr std::array<NodeDefinition, 30> kNodeDefinitions = {{
     {NodeKind::MaskPath, "maskPath", "Mask Path", kMaskPathPins},
     {NodeKind::MaskArea, "maskArea", "Mask Area", kMaskPathPins},
     {NodeKind::Cloud, "cloud", "雲塊", kCloudPins},
+    {NodeKind::CloudLayer, "cloudLayer", "雲層", kCloudLayerPins},
     {NodeKind::CloudOutput, "cloudOutput", "雲出力", kCloudOutputPins},
     {NodeKind::Output, "output", "Output", kOutputNodePins},
 }};
@@ -453,11 +459,21 @@ CompiledCloud NodeGraph::CompileCloud() const {
         if (node.kind != NodeKind::CloudOutput) continue;
         result.hasOutput = true;
         const Node* source = UpstreamOf(node, ValueType::Volume);
-        if (source != nullptr && source->kind == NodeKind::Cloud) {
+        if (source != nullptr && (source->kind == NodeKind::Cloud || source->kind == NodeKind::CloudLayer)) {
             if (const auto* cloud = std::get_if<CloudNodeSettings>(&source->settings)) {
                 result.cloud = *cloud;
                 result.connected = true;
                 result.sourceId = source->id;
+                result.layer = source->kind == NodeKind::CloudLayer;
+                if (result.layer && !source->inputs.empty()) {
+                    for (const auto& link : m_links) {
+                        if (link.endPin != source->inputs.front().id) continue;
+                        if (const auto* pin = FindPin(link.startPin)) {
+                            result.maskNode = pin->nodeId;
+                            result.maskPin = pin->id;
+                        }
+                    }
+                }
             }
         }
         break; // 雲出力は一つ。壊れたファイルに複数あっても先頭を採用する。
@@ -480,8 +496,16 @@ GraphId NodeGraph::CreateNode(NodeKind kind) {
         node.settings = std::move(settings);
     } else if (IsMaskNodeKind(kind)) {
         node.settings = MaskNodeSettings{};
-    } else if (kind == NodeKind::Cloud) {
-        node.settings = CloudNodeSettings{};
+    } else if (kind == NodeKind::Cloud || kind == NodeKind::CloudLayer) {
+        CloudNodeSettings cloud;
+        if (kind == NodeKind::CloudLayer) {
+            cloud.width = cloud.depth = 12000.0f;
+            cloud.thickness = 600.0f;
+            cloud.centerY = 500.0f;
+            cloud.noiseScale = 1500.0f;
+            cloud.motionMode = 1;
+        }
+        node.settings = cloud;
     } else if (kind == NodeKind::Path) {
         node.settings = PathNodeSettings{};
     } else {

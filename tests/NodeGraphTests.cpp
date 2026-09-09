@@ -81,6 +81,29 @@ void RunNodeGraphTests() {
         Check(graph.TerrainRevision()!=terrainRevision, "通常のグラフ編集は地形を更新する");
     }
 
+    Section("雲層の分布入力");
+    {
+        NodeGraph graph = NodeGraph::CreateDefault();
+        const auto layer = graph.CreateNode(NodeKind::CloudLayer);
+        const auto output = graph.CreateNode(NodeKind::CloudOutput);
+        const auto mask = graph.CreateNode(NodeKind::MaskNoise);
+        const auto layerPin = graph.FindNode(layer)->outputs.front().id;
+        const auto inputPin = graph.FindNode(layer)->inputs.front().id;
+        const auto maskPin = graph.FindNode(mask)->outputs.front().id;
+        Check(graph.CreateLink(layerPin, graph.FindNode(output)->inputs.front().id), "雲層は雲出力へ接続できる");
+        Check(graph.CompileCloud().layer && graph.CompileCloud().maskPin == 0, "未接続の雲層は全面分布");
+        Check(graph.CreateLink(maskPin, inputPin), "マスクを分布へ接続できる");
+        const auto cloud = graph.CompileCloud();
+        Check(cloud.maskPin == maskPin && cloud.maskNode == mask, "分布元のピンを保持する");
+        Check(cloud.cloud.width == 12000.0f && cloud.cloud.motionMode == 1, "雲層は広い固定範囲が既定");
+        const auto compiled = graph.CompileLayersTo(cloud.maskNode, cloud.maskPin);
+        Check(!compiled.maskOps.empty(), "分布マスクを既存の評価プログラムへ変換できる");
+        Check(!graph.CanCreateLink(layerPin, inputPin), "Volume を分布へ接続しない");
+        graph.DeleteNode(mask);
+        Check(graph.CompileCloud().maskPin == 0, "分布元の削除で未接続へ戻る");
+        Check(graph.CompileLayers().layers.size() == 1, "雲層は地形出力を変えない");
+    }
+
     Section("ノードグラフ — 雲の独立した出力");
     {
         NodeGraph graph = NodeGraph::CreateDefault();

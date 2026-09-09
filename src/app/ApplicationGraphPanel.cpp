@@ -333,6 +333,12 @@ D3D12_GPU_DESCRIPTOR_HANDLE Application::GraphMaskThumbnail(graph::GraphId nodeI
         }
         break;
     }
+    if (m_cloudMaskPin && m_cloudMaskEvaluator.EvaluatedRevision() == m_cloudMaskStack.Revision()) {
+        for (size_t i=0; i<m_cloudMaskSources.size(); ++i) {
+            if (m_cloudMaskSources[i].nodeId == nodeId && m_cloudMaskSources[i].outputIndex == outputIndex)
+                return m_cloudMaskEvaluator.MaskOpThumbnailHandle(i);
+        }
+    }
     return D3D12_GPU_DESCRIPTOR_HANDLE{0};
 }
 
@@ -823,7 +829,7 @@ void Application::DrawGraphEditor() {
                 settings->layer.name +=
                     " " + std::to_string(m_graph.Nodes().size());
             }
-            if (auto* cloud = std::get_if<graph::CloudNodeSettings>(&node->settings)) {
+            if (auto* cloud = std::get_if<graph::CloudNodeSettings>(&node->settings); cloud && kind == graph::NodeKind::Cloud) {
                 const float size = m_renderer.PlaneSize();
                 const float height = m_renderer.DisplacementScale();
                 cloud->width = std::clamp(size * 0.3f, 10.0f, 20000.0f);
@@ -896,6 +902,7 @@ void Application::DrawGraphEditor() {
         ImGui::Separator();
         ImGui::Separator();
         addNodeMenuItem(graph::NodeKind::Cloud, "雲塊 — 位置・寸法・輪郭を指定する立体の雲");
+        addNodeMenuItem(graph::NodeKind::CloudLayer, "雲層 — 分布マスクと高度・厚さで広い雲を作る");
         addNodeMenuItem(graph::NodeKind::CloudOutput, "雲出力 — Volume を繋いで雲を表示する");
         ImGui::Separator();
         addNodeMenuItem(graph::NodeKind::Output, "Output — ここに繋いだ結果をプレビューする");
@@ -1214,7 +1221,16 @@ void Application::DrawGraphPanel() {
         }
     } else if (auto* cloud = std::get_if<graph::CloudNodeSettings>(&selected->settings)) {
         bool changed = false;
-        const graph::CloudNodeSettings defaults;
+        graph::CloudNodeSettings defaults;
+        const bool isCloudLayer = selected->kind == graph::NodeKind::CloudLayer;
+        if (isCloudLayer) {
+            defaults.width = defaults.depth = 12000.0f;
+            defaults.thickness = 600.0f;
+            defaults.centerY = 500.0f;
+            defaults.noiseScale = 1500.0f;
+            defaults.motionMode = 1;
+            ui::HintText("Distribution にマスクを接続：白に雲、黒は空。未接続は全面。マスク全体を雲層の範囲に割り当てます");
+        }
         ui::SectionHeader("動き");
         if (ui::BeginPropertyTable("cloudMotionRows")) {
             changed |= ui::PropertyBool("再生", &cloud->animate, defaults.animate,
@@ -1260,7 +1276,10 @@ void Application::DrawGraphPanel() {
                                          "光の減衰（1/m）。大きくすると雲の内部と雲影が濃くなります。", "%.4f", ImGuiSliderFlags_Logarithmic);
             changed |= ui::PropertyFloat("模様の大きさ", &cloud->noiseScale, 10.0f, 20000.0f, defaults.noiseScale,
                                          "ノイズの周期（m）。大きいほど大きな膨らみになります。", "%.1f m", ImGuiSliderFlags_Logarithmic);
-            changed |= ui::PropertyFloat("形の崩し", &cloud->shapeStrength, 0.0f, 1.0f, defaults.shapeStrength,
+            if (isCloudLayer) {
+                changed |= ui::PropertyFloat("雲量", &cloud->coverage, 0.0f, 1.0f, defaults.coverage,
+                    "分布の中を雲で覆う量。0 で雲なし、1 で隙間が少なくなります。", "%.2f");
+            } else changed |= ui::PropertyFloat("形の崩し", &cloud->shapeStrength, 0.0f, 1.0f, defaults.shapeStrength,
                                          "楕円体の輪郭をノイズで削ります。大きいほど形が崩れます。", "%.2f");
             changed |= ui::PropertyFloat("細部の崩し", &cloud->detailStrength, 0.0f, 1.0f, defaults.detailStrength,
                                          "細かな密度の抜けを加えます。大きいほど縁がほぐれます。", "%.2f");

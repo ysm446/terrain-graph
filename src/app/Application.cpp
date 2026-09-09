@@ -178,6 +178,7 @@ void Application::Shutdown() {
     m_device.WaitForGpu();
     // ImGui のコンテキストより先に破棄する（エディタが ImGui に依存している）。
     DestroyGraphEditor();
+    if (m_cloudMaskEvaluator.Resolution() != 0) m_cloudMaskEvaluator.Destroy(m_device);
     m_paintMasks.Destroy(m_device);
     m_materialSphere.Destroy(m_device);
     m_skySphere.Destroy(m_device);
@@ -323,11 +324,32 @@ int Application::Run() {
         // 環境マップやマテリアル解像度の作り直しは GPU 待機を伴うため、
         // フレームの外で処理する。
         const graph::CompiledCloud compiledCloud = m_graph.CompileCloud();
+        const auto maskPin = compiledCloud.layer ? compiledCloud.maskPin : 0;
+        if (maskPin && (m_cloudMaskGraphRevision != m_graph.TerrainRevision() ||
+                        m_cloudMaskPin != maskPin || m_cloudMaskPaintRevision != m_paintMasks.Revision())) {
+            auto mask = m_graph.CompileLayersTo(compiledCloud.maskNode, maskPin);
+            // 分布専用の低解像度評価。地形プレビューの選択と独立したキャッシュ。
+            // 表示用の灰色レンジではなく、分布用の正確な 0/1 を出力する。
+            if (mask.layers.size() >= 2) {
+                mask.layers[mask.layers.size()-2].baseColor = {0,0,0};
+                mask.layers.back().baseColor = {1,1,1};
+            }
+            m_cloudMaskSources = std::move(mask.maskOpSources);
+            m_cloudMaskStack.Layers() = std::move(mask.layers);
+            m_cloudMaskStack.MaskOps() = std::move(mask.maskOps);
+            m_cloudMaskStack.MarkDirty();
+            m_cloudMaskGraphRevision = m_graph.TerrainRevision();
+            m_cloudMaskPaintRevision = m_paintMasks.Revision();
+        }
+        m_cloudMaskPin = maskPin;
+        if (maskPin && m_cloudMaskEvaluator.Resolution() == 0 &&
+            !m_cloudMaskEvaluator.Create(m_device, 512, false)) return 1;
         renderer::AtmosphereSettings cloudSettings = m_renderer.AtmosphericSettings();
         if (compiledCloud.hasOutput) {
             const auto& cloud = compiledCloud.cloud;
             cloudSettings.clouds = compiledCloud.connected && cloud.enabled ? 1u : 0u;
-            cloudSettings.localCloud = 1;
+            cloudSettings.localCloud = compiledCloud.layer ? 2 : 1;
+            cloudSettings.distributionMask = CloudDistributionMask();
             cloudSettings.animateClouds = cloud.animate ? 1u : 0u;
             cloudSettings.cloudMotionMode = static_cast<uint32_t>(cloud.motionMode);
             cloudSettings.cloudSource = static_cast<uint32_t>(compiledCloud.sourceId);
@@ -347,7 +369,7 @@ int Application::Run() {
             cloudSettings.detailStrength = cloud.detailStrength;
             cloudSettings.edgeSoftness = cloud.edgeSoftness;
             cloudSettings.seed = static_cast<uint32_t>(cloud.seed);
-            cloudSettings.coverage = 1.0f;
+            cloudSettings.coverage = compiledCloud.layer ? cloud.coverage : 1.0f;
         }
         m_renderer.ProcessPendingWork(m_device, m_pipelineCache,
                                       compiledCloud.hasOutput ? &cloudSettings : nullptr);
@@ -426,6 +448,11 @@ int Application::Run() {
 
         // グラフをレイヤー列へコンパイルした結果で評価する。
         SyncGraphStack();
+        if (m_cloudMaskPin) {
+            m_cloudMaskEvaluator.Update(m_device, m_pipelineCache, commandList, m_cloudMaskStack,
+                                        m_textureLibrary, m_materialLibrary, m_paintMasks);
+        }
+        m_renderer.SetCloudDistributionMask(CloudDistributionMask());
         m_renderer.Render(m_device, m_pipelineCache, commandList, m_graphStack,
                           m_textureLibrary, m_materialLibrary, m_paintMasks);
 
@@ -456,7 +483,9 @@ int Application::Run() {
 
         // UI 込みの書き出しは、バックバッファが描き終わったこのフレームで写す。
         // **合成の評価は非同期なので、走っている最中は撮らない**（前回の絵が写る）。
-        const bool evaluationIdle = !m_renderer.Evaluator().IsEvaluating();
+        const bool evaluationIdle = !m_renderer.Evaluator().IsEvaluating() &&
+            (!m_cloudMaskPin || (!m_cloudMaskEvaluator.IsEvaluating() &&
+             m_cloudMaskEvaluator.EvaluatedRevision() == m_cloudMaskStack.Revision()));
         const bool captureUi = !m_options.uiScreenshotPath.empty() &&
                                (m_frameCounter + 1) >= m_options.screenshotFrame && evaluationIdle;
         if (captureUi) {

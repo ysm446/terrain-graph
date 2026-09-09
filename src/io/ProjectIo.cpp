@@ -1332,6 +1332,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["maskArea"] = WriteAreaMask(mask->areaMask);
         } else if (const auto* cloud = std::get_if<graph::CloudNodeSettings>(&node.settings)) {
             item["cloud"]["enabled"] = cloud->enabled;
+            item["cloud"]["coverage"] = cloud->coverage;
             item["cloud"]["centerX"] = cloud->centerX;
             item["cloud"]["centerY"] = cloud->centerY;
             item["cloud"]["centerZ"] = cloud->centerZ;
@@ -1483,10 +1484,11 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                 settings.pathMask = ReadPathMask(item, "maskPath");
                 settings.areaMask = ReadAreaMask(item, "maskArea");
                 created.settings = std::move(settings);
-            } else if (created.kind == graph::NodeKind::Cloud) {
+            } else if (created.kind == graph::NodeKind::Cloud || created.kind == graph::NodeKind::CloudLayer) {
                 graph::CloudNodeSettings settings;
                 if (const json* cloud = FindMember(item, "cloud"); cloud && cloud->is_object()) {
                     settings.enabled = ReadBool(*cloud, "enabled", settings.enabled);
+                    settings.coverage = std::clamp(ReadFloat(*cloud, "coverage", settings.coverage), 0.0f, 1.0f);
                     settings.animate = ReadBool(*cloud, "animate", settings.animate);
                     const auto motionMode = ReadString(*cloud, "motionMode", "translate");
                     settings.motionMode = motionMode == "drift" ? 2 : motionMode == "flow" ? 1 : 0;

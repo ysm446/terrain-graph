@@ -71,7 +71,8 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
             std::chrono::duration<float>(now-m_lastCloudEdit).count() >= 0.3f;
         // 本体・影は即時反映。再生・ドラッグ中は環境の GPU 待機を挟まない。
         // 空の変更とシード変更だけは即時にキャッシュを更新する。
-        const bool sourceChanged = settings.localCloud != baked.localCloud || settings.cloudSource != baked.cloudSource;
+        const bool sourceChanged = settings.localCloud != baked.localCloud || settings.cloudSource != baked.cloudSource ||
+            (baked.distributionMask == UINT32_MAX-1 && settings.distributionMask != UINT32_MAX-1);
         if (!skyChanged && !updateNoise && !sourceChanged && !(m_cloudEnvironmentDirty && settled)) {
             m_applied = settings;
             m_requested = requested;

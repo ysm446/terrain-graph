@@ -10,7 +10,7 @@ struct AtmosphericParameters {
     float cloudThickness; float cloudScale; uint seed; uint samples;
     float fieldCenterX; float fieldCenterZ; float fieldRadius; float fieldFalloff;
     float windSpeed; float windDirection; uint animateClouds; float windOffsetX;
-    float windOffsetZ; uint lowerHemisphere; float noiseSpeedRatio; float padding;
+    float windOffsetZ; uint lowerHemisphere; float noiseSpeedRatio; uint distributionMask;
     uint localCloud; float radiusX; float radiusZ; float edgeSoftness;
     float shapeStrength; float detailStrength; uint cloudMotionMode; uint cloudSource;
 };
@@ -46,7 +46,28 @@ float LocalCloudDensity(float3 position, AtmosphericParameters p, uint noiseInde
 // 64 枚の 2D 配列で周期 3D 密度を持つ。XY はハードウェア補間、Z のみ手動補間。
 float CloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex) {
     if (p.clouds == 0) return 0;
-    if (p.localCloud != 0) return LocalCloudDensity(position,p,noiseIndex);
+    if (p.localCloud == 1) return LocalCloudDensity(position,p,noiseIndex);
+    if (p.localCloud == 2) {
+        float3 offset = position - LocalCloudCenter(p);
+        float3 q = abs(offset / LocalCloudRadii(p));
+        if (any(q >= 1)) return 0;
+        if (p.distributionMask == 0xfffffffe) return 0; // 評価待ち。
+        float distribution = 1;
+        if (p.distributionMask != 0xffffffff) {
+            Texture2D<float3> mask = ResourceDescriptorHeap[p.distributionMask];
+            float2 uv = offset.xz / (2 * float2(p.radiusX,p.radiusZ)) + 0.5;
+            distribution = saturate(mask.SampleLevel(g_samplerLinearClamp,uv,0).r);
+        }
+        if (distribution <= 0.001 || p.coverage <= 0) return 0;
+        float3 uvw = (offset-float3(p.windOffsetX,0,p.windOffsetZ))/p.cloudScale+0.5;
+        float shape = SampleCloudNoise(uvw,noiseIndex);
+        float detail = SampleCloudNoise(uvw*3.1+0.173,noiseIndex);
+        float profile = saturate((1-q.y)/max(p.edgeSoftness,0.01));
+        float edge = saturate((1-max(q.x,q.z))/max(p.edgeSoftness,0.01));
+        float density = saturate((shape-(1-p.coverage))/max(p.coverage,0.001));
+        density = saturate(density-p.detailStrength*(1-detail)*(1-density));
+        return density * profile * edge * distribution;
+    }
     float h = (position.y - p.cloudBottom) / p.cloudThickness;
     if (h <= 0 || h >= 1 || p.clouds == 0 || p.coverage <= 0) return 0;
     Texture2DArray<float> noise = ResourceDescriptorHeap[noiseIndex];
@@ -67,7 +88,21 @@ float CloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex) {
 bool CloudInterval(float3 origin, float3 ray, float limit, AtmosphericParameters p,
                    out float start, out float end) {
     start=0; end=limit;
-    if (p.localCloud != 0) {
+    if (p.localCloud == 2) {
+        float3 offset = origin-LocalCloudCenter(p);
+        float3 radii = LocalCloudRadii(p);
+        [unroll] for (uint axis=0; axis<3; ++axis) {
+            if (abs(ray[axis]) < 1e-7) {
+                if (abs(offset[axis]) >= radii[axis]) return false;
+            } else {
+                float a=(-radii[axis]-offset[axis])/ray[axis];
+                float b=(radii[axis]-offset[axis])/ray[axis];
+                start=max(start,min(a,b)); end=min(end,max(a,b));
+            }
+        }
+        return end>start;
+    }
+    if (p.localCloud == 1) {
         float3 offset = (origin-LocalCloudCenter(p))/LocalCloudRadii(p);
         float3 direction = ray/LocalCloudRadii(p);
         float a=dot(direction,direction), b=dot(offset,direction), c=dot(offset,offset)-1;

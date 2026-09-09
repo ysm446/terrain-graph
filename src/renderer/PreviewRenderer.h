@@ -190,6 +190,7 @@ public:
     // （こちらの漏れ）か「開いても既定に戻らない」（あちらの漏れ）になる。
     // 天球は SkyLibrary が持つので、ここでは触らない。
     void ResetSettings();
+    void SetCloudDistributionMask(uint32_t index) { m_atmosphere.SetDistributionMask(index); }
     void ResetCloudMotion() { m_atmosphere.ResetCloudMotion(); }
     void ResetAtmosphereAnimation() { m_atmosphere.ResetAnimation(); }
 

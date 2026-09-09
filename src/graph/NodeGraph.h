@@ -100,6 +100,7 @@ enum class NodeKind : uint32_t {
     SnowCover = 27,
     Cloud = 28,
     CloudOutput = 29,
+    CloudLayer = 30,
 };
 
 struct PinDefinition {
@@ -203,6 +204,7 @@ struct CloudNodeSettings {
     int seed = 1;
     bool animate = false;
     int motionMode = 2; // 0: 雲全体、1: 範囲内の模様、2: 流れながら変化。
+    float coverage = 0.6f; // 雲層の雲量。
     float noiseSpeedRatio = 0.75f; // 雲の移動速度に対する模様の速度。
     float windSpeed = 20.0f;
     float windDirection = 90.0f; // 度。0 は +Z、90 は +X。
@@ -214,6 +216,8 @@ struct CompiledCloud {
     CloudNodeSettings cloud;
     bool connected = false;
     GraphId sourceId = 0;
+    bool layer = false;
+    GraphId maskNode = 0, maskPin = 0;
 };
 
 // 出力。ここに繋いだチェーンがプレビューのマテリアルになる。
