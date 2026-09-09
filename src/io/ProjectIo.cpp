@@ -1344,6 +1344,10 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["cloud"]["detailStrength"] = cloud->detailStrength;
             item["cloud"]["edgeSoftness"] = cloud->edgeSoftness;
             item["cloud"]["seed"] = cloud->seed;
+            item["cloud"]["animate"] = cloud->animate;
+            item["cloud"]["motionMode"] = cloud->motionMode == 2 ? "drift" : cloud->motionMode == 1 ? "flow" : "translate";
+            item["cloud"]["windSpeed"] = cloud->windSpeed;
+            item["cloud"]["windDirection"] = cloud->windDirection;
         } else if (const auto* path = std::get_if<graph::PathNodeSettings>(&node.settings)) {
             item["path"] = WritePath(path->path);
         }
@@ -1482,6 +1486,11 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                 graph::CloudNodeSettings settings;
                 if (const json* cloud = FindMember(item, "cloud"); cloud && cloud->is_object()) {
                     settings.enabled = ReadBool(*cloud, "enabled", settings.enabled);
+                    settings.animate = ReadBool(*cloud, "animate", settings.animate);
+                    const auto motionMode = ReadString(*cloud, "motionMode", "translate");
+                    settings.motionMode = motionMode == "drift" ? 2 : motionMode == "flow" ? 1 : 0;
+                    settings.windSpeed = std::clamp(ReadFloat(*cloud, "windSpeed", settings.windSpeed), 0.0f, 1000.0f);
+                    settings.windDirection = std::clamp(ReadFloat(*cloud, "windDirection", settings.windDirection), -180.0f, 180.0f);
                     settings.seed = std::clamp(ReadInt(*cloud, "seed", settings.seed), 0, 10000);
                     settings.centerX = std::clamp(ReadFloat(*cloud, "centerX", settings.centerX), -10000.0f, 10000.0f);
                     settings.centerY = std::clamp(ReadFloat(*cloud, "centerY", settings.centerY), -10000.0f, 10000.0f);

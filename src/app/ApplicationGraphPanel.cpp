@@ -273,11 +273,11 @@ void Application::SyncGraphStack() {
         }
     }
 
-    if (m_compiledGraphRevision == m_graph.Revision() && m_compiledGraphTarget == target &&
+    if (m_compiledGraphRevision == m_graph.TerrainRevision() && m_compiledGraphTarget == target &&
         m_compiledGraphTargetPin == m_previewGraphPin) {
         return;
     }
-    m_compiledGraphRevision = m_graph.Revision();
+    m_compiledGraphRevision = m_graph.TerrainRevision();
     m_compiledGraphTarget = target;
     m_compiledGraphTargetPin = m_previewGraphPin;
     graph::CompiledGraph compiled = (target != 0)
@@ -1215,6 +1215,29 @@ void Application::DrawGraphPanel() {
     } else if (auto* cloud = std::get_if<graph::CloudNodeSettings>(&selected->settings)) {
         bool changed = false;
         const graph::CloudNodeSettings defaults;
+        ui::SectionHeader("動き");
+        if (ui::BeginPropertyTable("cloudMotionRows")) {
+            changed |= ui::PropertyBool("再生", &cloud->animate, defaults.animate,
+                "風で雲を動かします。オフでその位置に一時停止します。");
+            const char* modes[] = {"雲全体を移動", "範囲内で模様を流す", "流れながら変化"};
+            changed |= ui::PropertyCombo("動かし方", &cloud->motionMode, modes, 3, defaults.motionMode,
+                "全体移動、範囲内の移流、流れながら変化を選べます。変化では模様が雲の 75% の速さで進みます。切替時は開始位置へ戻ります。");
+            changed |= ui::PropertyFloat("風速", &cloud->windSpeed, 0.0f, 1000.0f, defaults.windSpeed,
+                "雲が進む速さ（m/s）。大きいほど速く動きます。", "%.1f m/s");
+            changed |= ui::PropertyFloat("風向", &cloud->windDirection, -180.0f, 180.0f, defaults.windDirection,
+                "進行方向。0 度は +Z、90 度は +X です。", "%.0f deg");
+            ui::PropertyLabelEmpty("resetCloudMotion");
+            if (ui::Button("開始位置へ戻す", ui::kWideButtonWidth)) {
+                cloud->animate = false;
+                if (m_graph.CompileCloud().sourceId == selected->id)
+                    m_renderer.ResetCloudMotion();
+                changed = true;
+            }
+            ui::PropertyEnd();
+            ui::EndPropertyTable();
+        }
+        ui::HintText("再生中の環境光・反射は固定し、停止後に更新します");
+        ui::SectionHeader("形と配置");
         if (ui::BeginPropertyTable("cloudNodeRows")) {
             changed |= ui::PropertyBool("有効", &cloud->enabled, defaults.enabled);
             changed |= ui::PropertyFloat("中心 X", &cloud->centerX, -10000.0f, 10000.0f, defaults.centerX,
@@ -1245,11 +1268,11 @@ void Application::DrawGraphPanel() {
         ui::HintText("Volume を雲出力へ接続して表示。太陽と照明はライティング設定を共有します");
         if (!m_renderer.AtmosphericMode() && ui::Button("大気散乱へ切替", ui::kWideButtonWidth)) {
             m_renderer.AtmosphericMode() = true;
-            MarkDocumentChanged();
+            MarkDocumentChanged(false);
         }
         if (changed) {
-            m_graph.MarkDirty();
-            MarkDocumentChanged();
+            m_graph.MarkCloudDirty();
+            MarkDocumentChanged(false);
         }
     } else if (selected->kind == graph::NodeKind::CloudOutput) {
         ui::HintText("雲塊の Volume を接続して表示します。未接続なら雲は表示しません");

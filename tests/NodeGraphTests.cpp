@@ -2,6 +2,7 @@
 // GPU 評価の前段だけを対象にし、入力を外したときに古い結果を残さない規則を固定する。
 
 #include "graph/NodeGraph.h"
+#include "renderer/CloudMotion.h"
 
 #include "TestSupport.h"
 
@@ -39,6 +40,36 @@ bool StartsWithNeutralPlane(const tg::graph::CompiledGraph& compiled) {
 }  // namespace
 
 void RunNodeGraphTests() {
+    Section("雲の時間更新");
+    {
+        tg::renderer::CloudMotion motion;
+        motion.Advance(2.0, true, 10.0f, 0.0f);
+        Check(std::abs(motion.z-20.0)<1e-5 && motion.x==0, "風速と経過時間に応じて +Z へ進む");
+        motion.Advance(5.0, false, 10.0f, 0.0f);
+        Check(std::abs(motion.z-20.0)<1e-5, "一時停止中は位置を維持する");
+        motion.Advance(1.0, true, 10.0f, 1.570796327f);
+        Check(std::abs(motion.x-10.0)<1e-5, "再開と風向変更は現在の位置から続く");
+        using tg::renderer::CloudMotion;
+        Check(CloudMotion::LocalNoiseOffset(400.0, 100.0, 2) == -100.0f,
+              "移動 400m に対し模様は 300m 進み、範囲との相対位置が変わる");
+        Check(CloudMotion::LocalNoiseOffset(400.0, 100.0, 0) == 0.0f,
+              "従来の全体移動では模様を固定する");
+        Check(CloudMotion::LocalNoiseOffset(-400.0, 100.0, 2) == 100.0f,
+              "逆風ではノイズの相対移動も反転する");
+        Check(CloudMotion::LocalNoiseOffset(40400.0, 100.0, 2) == -100.0f,
+              "長時間の移流は両ノイズに共通の周期で折り返す");
+        motion.Reset();
+        Check(motion.x==0 && motion.z==0, "開始位置への復帰は移動量を消す");
+        NodeGraph graph;
+        const auto terrainRevision = graph.TerrainRevision();
+        const auto revision = graph.Revision();
+        graph.MarkCloudDirty();
+        Check(graph.Revision()!=revision && graph.TerrainRevision()==terrainRevision,
+              "雲だけの編集は地形の再コンパイルを要求しない");
+        graph.MarkDirty();
+        Check(graph.TerrainRevision()!=terrainRevision, "通常のグラフ編集は地形を更新する");
+    }
+
     Section("ノードグラフ — 雲の独立した出力");
     {
         NodeGraph graph = NodeGraph::CreateDefault();

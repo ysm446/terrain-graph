@@ -125,11 +125,11 @@ void Application::ApplyDocument(const DocumentSnapshot& snapshot) {
     m_selectedMaterial = std::clamp(snapshot.selectedMaterial, 0, std::max(0, materialCount - 1));
 }
 
-void Application::MarkDocumentChanged() {
+void Application::MarkDocumentChanged(bool terrainChanged) {
     m_documentDirty = true;
     // マテリアルの編集はグラフの改版に映らないので、スタック側を直接叩いて
     // 再評価させる（グラフ自体の編集は Revision の変化で再コンパイルされる）。
-    m_graphStack.MarkDirty();
+    if (terrainChanged) m_graphStack.MarkDirty();
 }
 
 // 文書からも履歴からも参照されなくなったペイントマスクを破棄する。

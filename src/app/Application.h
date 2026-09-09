@@ -57,6 +57,8 @@ struct StartupOptions {
     // 画面キャプチャは他ウィンドウを掴むことがあるため、確認にはこちらを使う。
     std::filesystem::path uiScreenshotPath;
     uint32_t screenshotFrame = 8;
+    uint32_t screenshotCount = 1; // ビューポート連番の枚数。
+    uint32_t screenshotInterval = 1;
     graph::GraphId selectNode = 0; // 開発用。読み込んだグラフのプロパティを画像で確認する。
 };
 
@@ -212,7 +214,7 @@ private:
     // 写し取った文書を書き戻す。**マテリアルの破棄を伴うのでフレームの外で呼ぶ。**
     void ApplyDocument(const DocumentSnapshot& snapshot);
     // レイヤーかマテリアルを変えたときに呼ぶ。フレームの終わりに 1 段積まれる。
-    void MarkDocumentChanged();
+    void MarkDocumentChanged(bool terrainChanged = true);
     // 文書からも履歴からも参照されなくなったペイントマスクを破棄する。
     // レイヤーを消してもすぐには捨てないため、ここで回収する。
     void SweepPaintMasks();

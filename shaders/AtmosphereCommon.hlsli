@@ -12,7 +12,7 @@ struct AtmosphericParameters {
     float windSpeed; float windDirection; uint animateClouds; float windOffsetX;
     float windOffsetZ; uint lowerHemisphere; float2 padding;
     uint localCloud; float radiusX; float radiusZ; float edgeSoftness;
-    float shapeStrength; float detailStrength; float2 localPadding;
+    float shapeStrength; float detailStrength; uint cloudMotionMode; uint cloudSource;
 };
 float3 AtmosphereSun(AtmosphericParameters p) {
     return float3(cos(p.elevation) * sin(p.azimuth), sin(p.elevation), cos(p.elevation) * cos(p.azimuth));
@@ -35,7 +35,8 @@ float LocalCloudDensity(float3 position, AtmosphericParameters p, uint noiseInde
     float3 offset = position - LocalCloudCenter(p);
     float edge = 1 - length(offset / LocalCloudRadii(p));
     if (edge <= 0) return 0;
-    float3 uvw = offset / p.cloudScale + 0.5;
+    float3 wind = p.cloudMotionMode != 0 ? float3(p.windOffsetX,0,p.windOffsetZ) : 0;
+    float3 uvw = (offset-wind) / p.cloudScale + 0.5;
     float shape = saturate((SampleCloudNoise(uvw,noiseIndex)-0.5)*3+0.5);
     float detail = saturate((SampleCloudNoise(uvw*3.1+0.173,noiseIndex)-0.5)*3+0.5);
     // 外接楕円体の内側だけを削るため、輪郭は交差区間からはみ出さない。

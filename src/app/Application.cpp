@@ -247,6 +247,8 @@ void Application::PollShaderHotReload() {
 }
 
 int Application::Run() {
+    uint32_t capturedScreenshots = 0;
+    uint64_t nextScreenshotFrame = m_options.screenshotFrame;
     while (m_window.PumpMessages()) {
         if (m_window.IsMinimized()) {
             ::WaitMessage();
@@ -326,7 +328,11 @@ int Application::Run() {
             const auto& cloud = compiledCloud.cloud;
             cloudSettings.clouds = compiledCloud.connected && cloud.enabled ? 1u : 0u;
             cloudSettings.localCloud = 1;
-            cloudSettings.animateClouds = 0;
+            cloudSettings.animateClouds = cloud.animate ? 1u : 0u;
+            cloudSettings.cloudMotionMode = static_cast<uint32_t>(cloud.motionMode);
+            cloudSettings.cloudSource = static_cast<uint32_t>(compiledCloud.sourceId);
+            cloudSettings.windSpeed = cloud.windSpeed;
+            cloudSettings.windDirection = cloud.windDirection * 3.14159265f / 180.0f;
             cloudSettings.fieldCenterX = cloud.centerX;
             cloudSettings.fieldCenterZ = cloud.centerZ;
             cloudSettings.cloudBottom = cloud.centerY - cloud.thickness * 0.5f;
@@ -470,11 +476,17 @@ int Application::Run() {
         if (captureUi) {
             break;
         }
-        if (!m_options.screenshotPath.empty() && m_frameCounter >= m_options.screenshotFrame &&
+        if (!m_options.screenshotPath.empty() && m_frameCounter >= nextScreenshotFrame &&
             evaluationIdle) {
             m_device.WaitForGpu();
-            m_renderer.SaveOutputToPng(m_device, m_options.screenshotPath);
-            break;
+            auto path = m_options.screenshotPath;
+            if (m_options.screenshotCount > 1) {
+                path = path.parent_path() / (path.stem().wstring() + L"_" +
+                    std::to_wstring(capturedScreenshots) + path.extension().wstring());
+            }
+            m_renderer.SaveOutputToPng(m_device, path);
+            if (++capturedScreenshots >= m_options.screenshotCount) break;
+            nextScreenshotFrame = static_cast<uint64_t>(m_frameCounter) + m_options.screenshotInterval;
         }
 
     }

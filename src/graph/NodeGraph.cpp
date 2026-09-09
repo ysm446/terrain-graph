@@ -457,6 +457,7 @@ CompiledCloud NodeGraph::CompileCloud() const {
             if (const auto* cloud = std::get_if<CloudNodeSettings>(&source->settings)) {
                 result.cloud = *cloud;
                 result.connected = true;
+                result.sourceId = source->id;
             }
         }
         break; // 雲出力は一つ。壊れたファイルに複数あっても先頭を採用する。

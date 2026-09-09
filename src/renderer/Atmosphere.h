@@ -1,5 +1,6 @@
 #pragma once
 #include "renderer/Environment.h"
+#include "renderer/CloudMotion.h"
 #include <cstdint>
 #include <chrono>
 
@@ -36,13 +37,15 @@ struct AtmosphereSettings {
     uint32_t localCloud = 0; // 実行時のみ。雲ノードが楕円体の密度を指定する。
     float radiusX = 600.0f, radiusZ = 400.0f, edgeSoftness = 0.2f;
     float shapeStrength = 0.65f, detailStrength = 0.3f;
-    float localPadding[2]{};
+    uint32_t cloudMotionMode = 0;
+    uint32_t cloudSource = 0;
 };
 static_assert(sizeof(AtmosphereSettings) == 144);
 
 class Atmosphere {
 public:
-    void ResetAnimation() { m_cloudTime = m_environmentTime = 0.0f; m_windX = m_windZ = 0.0; m_lastTick = {}; m_ready = false; }
+    void ResetAnimation();
+    void ResetCloudMotion();
     bool Update(rhi::Device& device, rhi::PipelineCache& pipelines, const AtmosphereSettings& settings);
     void Shutdown(rhi::Device& device);
     const Environment& GetEnvironment() const { return m_environment; }
@@ -60,9 +63,11 @@ private:
     rhi::GpuTexture m_cloudLighting;
     AtmosphereSettings m_applied;
     AtmosphereSettings m_requested;
+    AtmosphereSettings m_environmentSettings;
+    CloudMotion m_motion;
+    std::chrono::steady_clock::time_point m_lastCloudEdit{};
+    bool m_cloudEnvironmentDirty = false;
     std::chrono::steady_clock::time_point m_lastTick{};
-    double m_windX = 0.0;
-    double m_windZ = 0.0;
     float m_cloudTime = 0.0f;
     float m_environmentTime = 0.0f;
     bool m_initialized = false;

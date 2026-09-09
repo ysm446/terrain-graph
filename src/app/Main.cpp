@@ -6,6 +6,7 @@
 #include <shellapi.h>
 
 #include <cstdlib>
+#include <algorithm>
 #include <string>
 
 // --- DirectX 12 Agility SDK ------------------------------------------------
@@ -55,6 +56,10 @@ tg::StartupOptions ParseCommandLine() {
         } else if (argument == L"--screenshot-ui" && (i + 1) < argc) {
             options.uiScreenshotPath = argv[i + 1];
             ++i;
+        } else if (argument == L"--screenshot-count" && (i + 1) < argc) {
+            options.screenshotCount = static_cast<uint32_t>(std::clamp(::_wtoi(argv[++i]), 1, 256));
+        } else if (argument == L"--screenshot-interval" && (i + 1) < argc) {
+            options.screenshotInterval = static_cast<uint32_t>(std::clamp(::_wtoi(argv[++i]), 1, 1000));
         } else if (argument == L"--select-node" && (i + 1) < argc) {
             options.selectNode = ::_wtoi(argv[++i]);
         } else if (argument == L"--screenshot-frame" && (i + 1) < argc) {

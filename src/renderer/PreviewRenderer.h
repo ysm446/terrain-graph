@@ -190,6 +190,7 @@ public:
     // （こちらの漏れ）か「開いても既定に戻らない」（あちらの漏れ）になる。
     // 天球は SkyLibrary が持つので、ここでは触らない。
     void ResetSettings();
+    void ResetCloudMotion() { m_atmosphere.ResetCloudMotion(); }
     void ResetAtmosphereAnimation() { m_atmosphere.ResetAnimation(); }
 
     // ビューポートに適用する天球を渡す。**毎フレーム呼んでよい。**

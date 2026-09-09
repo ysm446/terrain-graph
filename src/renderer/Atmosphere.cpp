@@ -21,24 +21,64 @@ bool CreateTarget(rhi::Device& device, rhi::GpuTexture& texture, uint32_t size, 
     return device.Allocator().CreateTexture2D(desc, texture);
 }
 }
+void Atmosphere::ResetCloudMotion() {
+    m_motion.Reset();
+    m_lastTick = {};
+    m_lastCloudEdit = std::chrono::steady_clock::now();
+    m_cloudEnvironmentDirty = true;
+}
+void Atmosphere::ResetAnimation() {
+    ResetCloudMotion();
+    m_cloudTime = m_environmentTime = 0.0f;
+    m_ready = false;
+}
 bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, const AtmosphereSettings& requested) {
     const auto now = std::chrono::steady_clock::now();
-    const float delta = m_lastTick.time_since_epoch().count() == 0 ? 0.0f :
+    const float delta = !m_ready || m_lastTick.time_since_epoch().count() == 0 ? 0.0f :
         std::clamp(std::chrono::duration<float>(now-m_lastTick).count(), 0.0f, 0.1f);
     m_lastTick = now;
-    if (requested.clouds && requested.animateClouds && requested.windSpeed > 0) {
-        m_cloudTime += delta;
-        m_windX += std::sin(requested.windDirection)*requested.windSpeed*delta;
-        m_windZ += std::cos(requested.windDirection)*requested.windSpeed*delta;
-    }
+    if (requested.localCloud != m_requested.localCloud ||
+        requested.cloudSource != m_requested.cloudSource ||
+        requested.cloudMotionMode != m_requested.cloudMotionMode) m_motion.Reset();
+    const bool playing = requested.clouds && requested.animateClouds && requested.windSpeed > 0;
+    m_motion.Advance(delta, playing, requested.windSpeed, requested.windDirection);
+    if (playing) m_cloudTime += delta;
     AtmosphereSettings settings = requested;
-    settings.windOffsetX = static_cast<float>(std::fmod(m_windX, requested.cloudScale));
-    settings.windOffsetZ = static_cast<float>(std::fmod(m_windZ, requested.cloudScale));
-    // 本体と影は毎フレーム同じ時刻。高価な環境マップ更新は最大 1 Hz。
+    if (requested.localCloud && requested.cloudMotionMode != 1) {
+        settings.fieldCenterX += static_cast<float>(m_motion.x);
+        settings.fieldCenterZ += static_cast<float>(m_motion.z);
+        // 範囲より模様を遅く進める。追加サンプルなしで異なる場所の密度を読む。
+        settings.windOffsetX = m_motion.LocalNoiseOffset(m_motion.x, requested.cloudScale, requested.cloudMotionMode);
+        settings.windOffsetZ = m_motion.LocalNoiseOffset(m_motion.z, requested.cloudScale, requested.cloudMotionMode);
+    } else {
+        // ローカル雲の細部は周波数 3.1 倍なので、共通周期は基準周期の 10 倍。
+        const double period = requested.cloudScale * (requested.localCloud ? 10.0 : 1.0);
+        settings.windOffsetX = static_cast<float>(std::fmod(m_motion.x, period));
+        settings.windOffsetZ = static_cast<float>(std::fmod(m_motion.z, period));
+    }
     const bool changed = !m_ready || std::memcmp(&requested, &m_requested, sizeof(requested)) != 0;
-    if (!changed && m_cloudTime-m_environmentTime < 1.0f) {
-        m_applied.windOffsetX = settings.windOffsetX;
-        m_applied.windOffsetZ = settings.windOffsetZ;
+    const auto& baked = m_environmentSettings;
+    const bool skyChanged = !m_ready || settings.azimuth != baked.azimuth || settings.elevation != baked.elevation ||
+        settings.illuminance != baked.illuminance || settings.density != baked.density || settings.mie != baked.mie ||
+        settings.eccentricity != baked.eccentricity || settings.altitude != baked.altitude ||
+        settings.groundAlbedo != baked.groundAlbedo || settings.lowerHemisphere != baked.lowerHemisphere;
+    const bool updateLut = !m_ready || settings.density != baked.density || settings.mie != baked.mie || settings.groundAlbedo != baked.groundAlbedo;
+    const bool updateNoise = !m_ready || settings.seed != baked.seed;
+    if (settings.localCloud && m_ready) {
+        if (changed) m_lastCloudEdit = now;
+        if (changed || playing) m_cloudEnvironmentDirty = true;
+        const bool settled = !requested.animateClouds &&
+            std::chrono::duration<float>(now-m_lastCloudEdit).count() >= 0.3f;
+        // 本体・影は即時反映。再生・ドラッグ中は環境の GPU 待機を挟まない。
+        // 空の変更とシード変更だけは即時にキャッシュを更新する。
+        const bool sourceChanged = settings.localCloud != baked.localCloud || settings.cloudSource != baked.cloudSource;
+        if (!skyChanged && !updateNoise && !sourceChanged && !(m_cloudEnvironmentDirty && settled)) {
+            m_applied = settings;
+            m_requested = requested;
+            return true;
+        }
+    } else if (!changed && m_cloudTime-m_environmentTime < 1.0f) {
+        m_applied = settings;
         return true;
     }
     if (!m_initialized) {
@@ -52,8 +92,6 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
         }
         m_initialized = true;
     }
-    const bool updateLut = !m_ready || settings.density != m_applied.density || settings.mie != m_applied.mie || settings.groundAlbedo != m_applied.groundAlbedo;
-    const bool updateNoise = !m_ready || settings.seed != m_applied.seed;
     auto* lutPipeline = pipelines.GetCompute(L"AtmosphereMultiScatter.hlsl", L"CSGenerate");
     auto* noisePipeline = pipelines.GetCompute(L"AtmosphereCloudDensity.hlsl", L"CSGenerate");
     if (!lutPipeline || !noisePipeline) return false;
@@ -110,6 +148,8 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
     m_applied = settings;
     m_requested = requested;
     m_environmentTime = m_cloudTime;
+    m_environmentSettings = settings;
+    m_cloudEnvironmentDirty = false;
     m_ready = true;
     return true;
 }
@@ -122,7 +162,8 @@ void Atmosphere::Shutdown(rhi::Device& device) {
     m_initialized = m_ready = false;
     m_lastTick = {};
     m_cloudTime = m_environmentTime = 0.0f;
-    m_windX = m_windZ = 0.0;
+    m_motion.Reset();
+    m_cloudEnvironmentDirty = false;
 }
 void Atmosphere::Render(rhi::Device& device, rhi::PipelineCache& pipelines,
                         ID3D12GraphicsCommandList* commands, rhi::GpuTexture& scene, rhi::GpuTexture& depth,

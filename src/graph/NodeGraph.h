@@ -201,6 +201,10 @@ struct CloudNodeSettings {
     float detailStrength = 0.3f;
     float edgeSoftness = 0.2f;
     int seed = 1;
+    bool animate = false;
+    int motionMode = 2; // 0: 雲全体、1: 範囲内の模様、2: 流れながら変化。
+    float windSpeed = 20.0f;
+    float windDirection = 90.0f; // 度。0 は +Z、90 は +X。
 };
 
 // 雲出力が未接続でも hasOutput は真。古い雲へ戻らず表示を消す。
@@ -208,6 +212,7 @@ struct CompiledCloud {
     bool hasOutput = false;
     CloudNodeSettings cloud;
     bool connected = false;
+    GraphId sourceId = 0;
 };
 
 // 出力。ここに繋いだチェーンがプレビューのマテリアルになる。
@@ -298,7 +303,9 @@ public:
     const TerrainScale* FindChainScale(GraphId nodeId) const;
 
     // 変更があったことを記録する。Application はこれを見て再コンパイルする。
-    void MarkDirty() { ++m_revision; }
+    void MarkDirty() { ++m_revision; ++m_terrainRevision; }
+    void MarkCloudDirty() { ++m_revision; }
+    uint64_t TerrainRevision() const { return m_terrainRevision; }
     uint64_t Revision() const { return m_revision; }
 
 private:
@@ -359,6 +366,7 @@ private:
     std::vector<Link> m_links;
     GraphId m_nextGraphId = 1;
     uint64_t m_revision = 1;
+    uint64_t m_terrainRevision = 1;
 };
 
 std::span<const NodeDefinition> NodeDefinitions();
