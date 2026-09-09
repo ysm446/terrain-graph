@@ -164,6 +164,7 @@ set(tg_sources
     src/renderer/MaterialSphere.h
     src/renderer/Mesh.cpp
     src/renderer/Mesh.h
+    src/renderer/Atmosphere.cpp
     src/renderer/PreviewRenderer.cpp
     src/renderer/PreviewRenderer.h
     src/renderer/SkyLibrary.cpp

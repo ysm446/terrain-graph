@@ -1576,6 +1576,28 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     node["showSkybox"] = renderer.ShowSkybox();
     node["skyboxBlur"] = renderer.SkyboxBlur();
     node["shadow"] = renderer.ShadowEnabled();
+    node["lightingMode"] = renderer.AtmosphericMode() ? "atmospheric" : "ibl";
+    const auto& atmosphere = renderer.AtmosphericSettings();
+    const auto& sun = renderer.AtmosphericLight();
+    json atmosphereNode;
+    atmosphereNode["azimuth"] = sun.azimuth;
+    atmosphereNode["elevation"] = sun.elevation;
+    atmosphereNode["illuminance"] = sun.illuminance;
+    atmosphereNode["density"] = atmosphere.density;
+    atmosphereNode["mie"] = atmosphere.mie;
+    atmosphereNode["eccentricity"] = atmosphere.eccentricity;
+    atmosphereNode["altitude"] = atmosphere.altitude;
+    atmosphereNode["groundAlbedo"] = atmosphere.groundAlbedo;
+    atmosphereNode["clouds"] = atmosphere.clouds != 0;
+    atmosphereNode["coverage"] = atmosphere.coverage;
+    atmosphereNode["extinction"] = atmosphere.extinction;
+    atmosphereNode["cloudBottom"] = atmosphere.cloudBottom;
+    atmosphereNode["cloudThickness"] = atmosphere.cloudThickness;
+    atmosphereNode["cloudScale"] = atmosphere.cloudScale;
+    atmosphereNode["seed"] = atmosphere.seed;
+    atmosphereNode["samples"] = atmosphere.samples;
+    node["atmosphere"] = std::move(atmosphereNode);
+
 
     // 被写界深度。見え方だけの設定だが、プロジェクトごとに変えるものなので残す。
     const renderer::DofSettings& dof = renderer.Dof();
@@ -1601,7 +1623,7 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     cameraNode["fovY"] = camera.fovY;
     node["camera"] = std::move(cameraNode);
 
-    const renderer::LightSettings& light = renderer.Light();
+    const renderer::LightSettings& light = renderer.LegacyLight();
     json lightNode;
     lightNode["azimuth"] = light.azimuth;
     lightNode["elevation"] = light.elevation;
@@ -1631,6 +1653,34 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
     // 既定値は renderer::kPreviewDefaults の一択。数値を直接書かない。
     // 名前は各節ローカルの defaults（LightSettings など）と衝突させない。
     const renderer::PreviewDefaults& previewDefaults = renderer::kPreviewDefaults;
+    renderer.AtmosphericMode() = ReadString(node, "lightingMode", "ibl") == "atmospheric";
+    {
+        const json empty = json::object();
+        const auto it = node.find("atmosphere");
+        const json& source = it != node.end() && it->is_object() ? *it : empty;
+        auto& atmosphere = renderer.AtmosphericSettings();
+        auto& sun = renderer.AtmosphericLight();
+        const renderer::AtmosphereSettings defaults;
+        sun.azimuth = std::clamp(ReadFloat(source, "azimuth", defaults.azimuth), -3.1415927f, 3.1415927f);
+        sun.elevation = std::clamp(ReadFloat(source, "elevation", defaults.elevation), -1.55334f, 1.55334f);
+        sun.illuminance = std::clamp(ReadFloat(source, "illuminance", defaults.illuminance), 0.0f, 200000.0f);
+        sun.color = {1.0f, 1.0f, 1.0f};
+        atmosphere.density = std::clamp(ReadFloat(source, "density", defaults.density), .1f, 3.0f);
+        atmosphere.mie = std::clamp(ReadFloat(source, "mie", defaults.mie), 0.0f, 2.0f);
+        atmosphere.eccentricity = std::clamp(ReadFloat(source, "eccentricity", defaults.eccentricity), 0.0f, .95f);
+        atmosphere.altitude = std::clamp(ReadFloat(source, "altitude", defaults.altitude), 0.0f, 10000.0f);
+        atmosphere.groundAlbedo = std::clamp(ReadFloat(source, "groundAlbedo", defaults.groundAlbedo), 0.0f, 1.0f);
+        atmosphere.coverage = std::clamp(ReadFloat(source, "coverage", defaults.coverage), 0.0f, 1.0f);
+        atmosphere.extinction = std::clamp(ReadFloat(source, "extinction", defaults.extinction), .0001f, .03f);
+        atmosphere.cloudBottom = std::clamp(ReadFloat(source, "cloudBottom", defaults.cloudBottom), 100.0f, 10000.0f);
+        atmosphere.cloudThickness = std::clamp(ReadFloat(source, "cloudThickness", defaults.cloudThickness), 100.0f, 6000.0f);
+        atmosphere.cloudScale = std::clamp(ReadFloat(source, "cloudScale", defaults.cloudScale), 1000.0f, 40000.0f);
+        atmosphere.clouds = ReadBool(source, "clouds", ReadUInt(source, "clouds", defaults.clouds) != 0) ? 1u : 0u;
+        atmosphere.seed = std::min(ReadUInt(source, "seed", defaults.seed), 10000u);
+        const auto samples = ReadUInt(source, "samples", defaults.samples);
+        atmosphere.samples = samples <= 32 ? 32u : samples <= 64 ? 64u : 128u;
+    }
+
     renderer.Tonemap() = static_cast<renderer::TonemapMode>(
         EnumValue(kTonemapNames, node, "tonemap", static_cast<uint32_t>(previewDefaults.tonemap)));
     renderer.UseMaterialTextures() =
@@ -1675,7 +1725,7 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
 
     {
         const json& light = section("light");
-        renderer::LightSettings& target = renderer.Light();
+        renderer::LightSettings& target = renderer.LegacyLight();
         const renderer::LightSettings defaults;
         target.azimuth = ReadFloat(light, "azimuth", defaults.azimuth);
         target.elevation = ReadFloat(light, "elevation", defaults.elevation);
@@ -2221,6 +2271,8 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
     if (const json* preview = FindMember(document, "preview");
         preview != nullptr && preview->is_object()) {
         const renderer::PreviewDefaults& previewDefaults = renderer::kPreviewDefaults;
+
+
         scaleFallback.sizeMeters = ReadFloat(*preview, "planeSize", previewDefaults.planeSize);
         scaleFallback.heightMeters =
             ReadFloat(*preview, "displacementScale", previewDefaults.displacementScale);

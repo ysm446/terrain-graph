@@ -5,6 +5,7 @@
 #include "compositor/TextureLibrary.h"
 #include "renderer/Camera.h"
 #include "renderer/Environment.h"
+#include "renderer/Atmosphere.h"
 #include "renderer/SkyLibrary.h"
 #include "renderer/Mesh.h"
 #include "rhi/Device.h"
@@ -215,14 +216,21 @@ public:
     Camera& GetCamera() { return m_camera; }
     const Camera& GetCamera() const { return m_camera; }
     ExposureSettings& Exposure() { return m_exposure; }
-    LightSettings& Light() { return m_light; }
+    LightSettings& Light() { return m_atmosphericMode ? m_atmosphericLight : m_light; }
+    LightSettings& LegacyLight() { return m_light; }
+    LightSettings& AtmosphericLight() { return m_atmosphericLight; }
+    bool& AtmosphericMode() { return m_atmosphericMode; }
+    AtmosphereSettings& AtmosphericSettings() { return m_atmosphereSettings; }
+    LightSettings EffectiveLight() const;
+    float EnvironmentIntensity() const { return m_atmosphericMode ? 1.0f : m_activeSky.iblIntensity; }
+    const Environment& LegacyEnvironment() const { return m_environment; }
     MaterialSettings& Material() { return m_material; }
     // 平面を包む球の半径（原点中心）。カメラの Frame() が使う。
     float BoundingRadius() const;
     TonemapMode& Tonemap() { return m_tonemap; }
     DebugView& Debug() { return m_debugView; }
     DebugView Debug() const { return m_debugView; }
-    const Environment& GetEnvironment() const { return m_environment; }
+    const Environment& GetEnvironment() const { return m_atmosphericMode && m_atmosphere.IsReady() ? m_atmosphere.GetEnvironment() : m_environment; }
     bool& ShowSkybox() { return m_showSkybox; }
     // 背景だけをぼかす。**IBL の寄与は変えない。**
     // プリフィルタ済みキューブの粗いミップを引くだけなので、追加のパスは要らない。
@@ -307,6 +315,10 @@ private:
     LightSettings m_light;
     MaterialSettings m_material;
     Environment m_environment;
+    Atmosphere m_atmosphere;
+    AtmosphereSettings m_atmosphereSettings;
+    LightSettings m_atmosphericLight{0.9f, 0.9f, 120000.0f, {1.0f, 1.0f, 1.0f}};
+    bool m_atmosphericMode = false;
     compositor::MaterialEvaluator m_evaluator;
     // ビューポートに適用している天球の中身。**Environment の元になっているもの。**
     // 既定値は Environment::Initialize が作る環境と一致させてあるので、

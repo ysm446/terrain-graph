@@ -1,4 +1,5 @@
 #include "renderer/Environment.h"
+#include "renderer/Atmosphere.h"
 
 #include "core/ImageIo.h"
 #include "core/Log.h"
@@ -54,7 +55,7 @@ void InsertUavBarrier(ID3D12GraphicsCommandList* commandList, const rhi::GpuText
 
 }  // namespace
 
-bool Environment::Initialize(rhi::Device& device, rhi::PipelineCache& pipelineCache) {
+bool Environment::Initialize(rhi::Device& device, rhi::PipelineCache& pipelineCache, bool buildDefaultSky) {
     rhi::TextureDesc brdfDesc;
     brdfDesc.width = kBrdfLutSize;
     brdfDesc.height = kBrdfLutSize;
@@ -70,7 +71,7 @@ bool Environment::Initialize(rhi::Device& device, rhi::PipelineCache& pipelineCa
         return false;
     }
 
-    return BuildFromSky(device, pipelineCache, SkySettings{});
+    return !buildDefaultSky || BuildFromSky(device, pipelineCache, SkySettings{});
 }
 
 void Environment::Shutdown(rhi::Device& device) {
@@ -326,6 +327,25 @@ bool Environment::BuildFromEquirect(rhi::Device& device, rhi::PipelineCache& pip
 
     m_ready = true;
     return true;
+}
+
+bool Environment::BuildFromAtmosphere(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                       const AtmosphereSettings& settings, uint32_t lutIndex, uint32_t noiseIndex, uint32_t skyOutputIndex) {
+    auto* pipeline = pipelineCache.GetCompute(L"AtmosphereEnvironment.hlsl", L"CsMain");
+    if (!pipeline || !CreateTargets(device, 512, 256)) return false;
+    struct Constants { AtmosphereSettings settings; uint32_t output, lut, noise, pad; };
+    const Constants constants{settings, m_equirect.UavIndex(), lutIndex, noiseIndex, skyOutputIndex};
+    if (!device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commands) {
+        PIXBeginEvent(commands, PIX_COLOR(120, 180, 255), "AtmosphereEnvironment");
+        TransitionIfNeeded(commands, m_equirect, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        commands->SetComputeRootSignature(pipelineCache.GlobalRootSignature());
+        commands->SetPipelineState(pipeline);
+        commands->SetComputeRoot32BitConstants(0, sizeof(constants) / 4, &constants, 0);
+        commands->Dispatch(64, 32, 1);
+        PIXEndEvent(commands);
+    })) return false;
+    m_sourceName = "大気散乱スカイ";
+    return BuildFromEquirect(device, pipelineCache, 1.0f);
 }
 
 bool Environment::BuildFromSky(rhi::Device& device, rhi::PipelineCache& pipelineCache,

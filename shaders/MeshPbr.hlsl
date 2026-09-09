@@ -1,3 +1,4 @@
+#include "AtmosphereCommon.hlsli"
 // マテリアルプレビューのメッシュ描画。
 // 出力はトーンマップ前の線形放射輝度で、露出は後段の TonemapPass で掛ける。
 //
@@ -73,6 +74,10 @@ struct MeshConstants
     float maskPreviewLow;
     float maskPreviewHigh;
     float pad7;
+    AtmosphericParameters atmosphere;
+    uint cloudNoiseIndex;
+    uint atmosphericMode;
+    float2 atmospherePad;
 };
 
 // 「ハイト（ローカル）」で周りの平均を取る半径（合成テクセル）と、
@@ -515,7 +520,8 @@ PsOutput PsMain(VsOutput input)
     float3 radiance = ShadeDirectionalLight(normal, viewDirection, lightDirection,
                                             g_mesh.lightColor, g_mesh.lightIlluminance,
                                             diffuseColor, f0, roughness) *
-                      shadow;
+                      shadow * (g_mesh.atmosphericMode != 0 ?
+                          CloudShadow(input.worldPosition, g_mesh.atmosphere, g_mesh.cloudNoiseIndex) : 1.0);
 
     // --- IBL（分割和近似） -------------------------------------------------
     // saturate + 加算だと最大 1.00001 になり、FresnelSchlickRoughness の

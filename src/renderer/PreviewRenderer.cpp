@@ -118,6 +118,10 @@ struct MeshConstants {
     float maskPreviewLow;
     float maskPreviewHigh;
     float pad7;
+    AtmosphereSettings atmosphere;
+    uint32_t cloudNoiseIndex;
+    uint32_t atmosphericMode;
+    float atmospherePad[2];
 };
 
 // GPU 側の SkyboxConstants と一致させること。
@@ -260,7 +264,7 @@ XMMATRIX PreviewRenderer::LightViewProjection() const {
     const float shadowRadius = std::max(kShadowRadiusMin, radius * kShadowRadiusRatio);
     const float shadowDistance = std::max(kShadowDistanceMin, radius * kShadowDistanceRatio);
 
-    const XMFLOAT3 direction = m_light.Direction();  // サーフェスから光源へ
+    const XMFLOAT3 direction = EffectiveLight().Direction();  // サーフェスから光源へ
     const XMVECTOR lightDirection = XMVector3Normalize(XMLoadFloat3(&direction));
     const XMVECTOR eye = XMVectorScale(lightDirection, shadowDistance);
     // 真上・真下からのときに上方向が縮退しないよう、軸を入れ替える。
@@ -278,12 +282,19 @@ void PreviewRenderer::Shutdown(rhi::Device& device) {
     device.DeferRelease(m_shadowMap);
     m_evaluator.Destroy(device);
     m_environment.Shutdown(device);
+    m_atmosphere.Shutdown(device);
     m_plane.Release(device);
     ReleaseTargets(device);
 }
 
 void PreviewRenderer::ProcessPendingWork(rhi::Device& device,
                                         rhi::PipelineCache& pipelineCache) {
+    if (m_atmosphericMode) {
+        m_atmosphereSettings.azimuth = m_atmosphericLight.azimuth;
+        m_atmosphereSettings.elevation = m_atmosphericLight.elevation;
+        m_atmosphereSettings.illuminance = m_atmosphericLight.illuminance;
+        m_atmosphere.Update(device, pipelineCache, m_atmosphereSettings);
+    }
     if (m_requestedMeshSubdivisions != m_meshSubdivisions) {
         // 古い頂点バッファは GPU がまだ見ているかもしれないので、
         // Release（Defer）を通してから作り直す。
@@ -324,7 +335,35 @@ void PreviewRenderer::ProcessPendingWork(rhi::Device& device,
     }
 }
 
+LightSettings PreviewRenderer::EffectiveLight() const {
+    if (!m_atmosphericMode) return m_light;
+    LightSettings result = m_atmosphericLight;
+    const auto& p = m_atmosphereSettings;
+    const double radius = 6360000.0, origin = radius + std::max(1.0f, p.altitude);
+    const double mu = std::sin(result.elevation), b = origin * mu;
+    const double groundD = b*b - (origin*origin-radius*radius);
+    if (groundD >= 0.0 && -b-std::sqrt(groundD)>0.0) {
+        result.illuminance = 0.0f;
+        return result;
+    }
+    const double distance = -b + std::sqrt(b*b-origin*origin+6420000.0*6420000.0);
+    double opticalR=0, opticalM=0;
+    for (int i=0;i<8;++i) {
+        const double t=(i+0.5)*distance/8.0;
+        const double height=std::sqrt(origin*origin+t*t+2*b*t)-radius;
+        opticalR+=std::exp(-height/7994.0)*distance/8.0;
+        opticalM+=std::exp(-height/1200.0)*distance/8.0;
+    }
+    result.color = {static_cast<float>(std::exp(-5.802e-6*p.density*opticalR-21e-6*p.mie*1.1*opticalM)),
+                    static_cast<float>(std::exp(-13.558e-6*p.density*opticalR-21e-6*p.mie*1.1*opticalM)),
+                    static_cast<float>(std::exp(-33.1e-6*p.density*opticalR-21e-6*p.mie*1.1*opticalM))};
+    return result;
+}
+
 void PreviewRenderer::ResetSettings() {
+    m_atmosphericMode = false;
+    m_atmosphereSettings = AtmosphereSettings{};
+    m_atmosphericLight = {0.9f, 0.9f, 120000.0f, {1.0f, 1.0f, 1.0f}};
     const PreviewDefaults& defaults = kPreviewDefaults;
     m_tonemap = defaults.tonemap;
     m_useMaterialTextures = defaults.useMaterialTextures;
@@ -669,18 +708,24 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     XMStoreFloat4x4(&constants.normalMatrix,
                     XMMatrixTranspose(XMMatrixInverse(nullptr, model)));
 
+    constants.atmosphere = m_atmosphere.AppliedSettings();
+    if (!m_shadowEnabled) constants.atmosphere.clouds = 0;
+    constants.cloudNoiseIndex = m_atmosphere.NoiseIndex();
+    constants.atmosphericMode = m_atmosphericMode && m_atmosphere.IsReady() ? 1u : 0u;
     constants.cameraPosition = m_camera.Position();
-    constants.lightDirection = m_light.Direction();
-    constants.lightIlluminance = m_light.illuminance;
-    constants.lightColor = m_light.color;
+    const auto light = EffectiveLight();
+    const auto& environment = GetEnvironment();
+    constants.lightDirection = light.Direction();
+    constants.lightIlluminance = light.illuminance;
+    constants.lightColor = light.color;
     constants.baseColor = m_material.baseColor;
     constants.roughness = m_material.roughness;
     constants.metallic = m_material.metallic;
-    constants.iblIntensity = m_environment.IsReady() ? m_activeSky.iblIntensity : 0.0f;
-    constants.prefilteredMipCount = m_environment.PrefilteredMipCount();
-    constants.irradianceIndex = m_environment.IrradianceSrvIndex();
-    constants.prefilteredIndex = m_environment.PrefilteredSrvIndex();
-    constants.brdfLutIndex = m_environment.BrdfLutSrvIndex();
+    constants.iblIntensity = environment.IsReady() ? EnvironmentIntensity() : 0.0f;
+    constants.prefilteredMipCount = environment.PrefilteredMipCount();
+    constants.irradianceIndex = environment.IrradianceSrvIndex();
+    constants.prefilteredIndex = environment.PrefilteredSrvIndex();
+    constants.brdfLutIndex = environment.BrdfLutSrvIndex();
 
     const compositor::MaterialTextureSet& materialTextures = m_evaluator.Textures();
     const bool useMaterial = m_useMaterialTextures && materialTextures.IsValid();
@@ -818,7 +863,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     commandList->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
 
     // チャンネルを覗く表示のときは背景を描かない。値だけを見たいため。
-    if (m_showSkybox && m_environment.IsReady() && IsShadedView(m_debugView)) {
+    if (!m_atmosphericMode && m_showSkybox && m_environment.IsReady() && IsShadedView(m_debugView)) {
         rhi::GraphicsPipelineDesc skyboxPipelineDesc;
         skyboxPipelineDesc.shaderPath = L"Skybox.hlsl";
         skyboxPipelineDesc.vertexEntry = L"VsMain";
@@ -869,6 +914,13 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
 
             PIXEndEvent(commandList);
         }
+    }
+
+    if (m_atmosphericMode && IsShadedView(m_debugView)) {
+        XMFLOAT4X4 inverseViewProjection;
+        XMStoreFloat4x4(&inverseViewProjection, XMMatrixInverse(nullptr, viewProjection));
+        m_atmosphere.Render(device, pipelineCache, commandList, m_sceneColor, m_depth,
+                            inverseViewProjection, m_camera.Position(), m_showSkybox);
     }
 
     TransitionIfNeeded(commandList, m_sceneColor, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);

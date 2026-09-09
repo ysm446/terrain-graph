@@ -212,6 +212,12 @@ void Application::DrawMaterialPanel() {
 
 void Application::DrawLightingPanel() {
     if (ImGui::Begin("ライティング")) {
+        if (ui::BeginPropertyTable("lightingModeRows")) {
+            const char* modes[] = {"環境マップ (IBL)", "大気散乱スカイ"};
+            int mode = m_renderer.AtmosphericMode() ? 1 : 0;
+            if (ui::PropertyCombo("モード", &mode, modes, 2, 0)) m_renderer.AtmosphericMode() = mode == 1;
+            ui::EndPropertyTable();
+        }
         renderer::LightSettings& light = m_renderer.Light();
 
         ui::SectionHeader("ライト");
@@ -229,14 +235,52 @@ void Application::DrawLightingPanel() {
                 light.elevation = DegreesToRadians(elevationDeg);
             }
             ui::PropertyFloat("照度", &light.illuminance, 0.0f, 200000.0f,
-                              kDefaultLight.illuminance,
-                              "lux。晴天の直射日光がおよそ 100000 lux", "%.0f");
-            ui::PropertyColorLinear("光の色", &light.color.x, &kDefaultLight.color.x);
+                              m_renderer.AtmosphericMode() ? renderer::AtmosphereSettings{}.illuminance : kDefaultLight.illuminance,
+                              m_renderer.AtmosphericMode() ? "大気圏外の照度 (lux)。地表では大気の透過率で減衰する" : "lux。晴天の直射日光がおよそ 100000 lux", "%.0f");
+            if (!m_renderer.AtmosphericMode())
+                ui::PropertyColorLinear("光の色", &light.color.x, &kDefaultLight.color.x);
+            else ui::PropertyValue("光の色", "大気の透過率から自動計算");
             ui::PropertyBool("影", &m_renderer.ShadowEnabled(),
                              renderer::kPreviewDefaults.shadowEnabled,
                              "ディレクショナルライトの影を落とす。"
                              "ディスプレイスメントで押し出した形にも落ちる");
             ui::EndPropertyTable();
+        }
+
+        if (m_renderer.AtmosphericMode()) {
+            auto& sky = m_renderer.AtmosphericSettings();
+            const renderer::AtmosphereSettings defaults;
+            ui::SectionHeader("大気");
+            if (ui::BeginPropertyTable("atmosphereRows")) {
+                ui::PropertyBool("背景を表示", &m_renderer.ShowSkybox(), renderer::kPreviewDefaults.showSkybox,
+                                 "空の背景を表示する。環境光と地形の手前の雲は残る");
+                ui::PropertyFloat("大気密度", &sky.density, 0.1f, 3.0f, defaults.density);
+                ui::PropertyFloat("霞の密度", &sky.mie, 0.0f, 2.0f, defaults.mie);
+                ui::PropertyFloat("前方散乱", &sky.eccentricity, 0.0f, 0.95f, defaults.eccentricity);
+                ui::PropertyFloat("基準標高", &sky.altitude, 0.0f, 10000.0f, defaults.altitude,
+                                  "地形の原点の海抜。環境光の評価高度にも使う", "%.0f m");
+                ui::PropertyFloat("地面の反射率", &sky.groundAlbedo, 0.0f, 1.0f, defaults.groundAlbedo);
+                ui::EndPropertyTable();
+            }
+            ui::SectionHeader("雲");
+            if (ui::BeginPropertyTable("cloudRows")) {
+                bool clouds = sky.clouds != 0;
+                if (ui::PropertyBool("雲を描画", &clouds, defaults.clouds != 0)) sky.clouds = clouds ? 1u : 0u;
+                if (clouds) {
+                    ui::PropertyFloat("雲量", &sky.coverage, 0.0f, 1.0f, defaults.coverage);
+                    ui::PropertyFloat("密度", &sky.extinction, 0.0001f, 0.03f, defaults.extinction, nullptr, "%.4f");
+                    ui::PropertyFloat("雲底", &sky.cloudBottom, 100.0f, 10000.0f, defaults.cloudBottom, nullptr, "%.0f m");
+                    ui::PropertyFloat("厚さ", &sky.cloudThickness, 100.0f, 6000.0f, defaults.cloudThickness, nullptr, "%.0f m");
+                    ui::PropertyFloat("広がり", &sky.cloudScale, 1000.0f, 40000.0f, defaults.cloudScale, nullptr, "%.0f m");
+                    int seed = static_cast<int>(sky.seed);
+                    if (ui::PropertyInt("シード", &seed, 0, 10000, static_cast<int>(defaults.seed))) sky.seed = static_cast<uint32_t>(seed);
+                    const char* quality[] = {"低", "標準", "高"};
+                    int index = sky.samples <= 32 ? 0 : sky.samples <= 64 ? 1 : 2;
+                    if (ui::PropertyCombo("品質", &index, quality, 3, 1)) sky.samples = 32u << index;
+                }
+                ui::EndPropertyTable();
+            }
+            ui::HintText("太陽に合わせて空・環境光・雲影が変わります");
         }
 
         ui::SectionHeader("露出");
@@ -270,26 +314,28 @@ void Application::DrawLightingPanel() {
 
         // **環境そのもの（何を空にするか）は天球パネルが持つ。**
         // ここに残すのは、天球ではなく見え方に属する設定だけ。
-        ui::SectionHeader("環境 (IBL)");
-        if (ui::BeginPropertyTable("iblRows")) {
-            const renderer::SkyAsset* activeSky = m_skyLibrary.Active();
-            ui::PropertyValue("天球", "%s", (activeSky != nullptr) ? activeSky->name.c_str() : "-");
-            ui::PropertyValue("環境", "%s", m_renderer.GetEnvironment().SourceName().c_str());
-            ui::PropertyValue("equirect", "%u x %u", m_renderer.GetEnvironment().EquirectWidth(),
-                              m_renderer.GetEnvironment().EquirectHeight());
-            ui::PropertyBool("背景を表示", &m_renderer.ShowSkybox(),
-                             renderer::kPreviewDefaults.showSkybox,
-                             "オフにすると背景色だけになる。IBL の寄与は残る");
-            ImGui::BeginDisabled(!m_renderer.ShowSkybox());
-            ui::PropertyBool("背景をぼかす", &m_renderer.SkyboxBlur(),
-                             renderer::kPreviewDefaults.skyboxBlur,
-                             "背景だけを柔らかくする。素材を見比べるときに、"
-                             "背景の細部が目移りの原因にならないようにする。"
-                             "IBL の寄与と陰影は変わらない");
-            ImGui::EndDisabled();
-            ui::EndPropertyTable();
+        if (!m_renderer.AtmosphericMode()) {
+            ui::SectionHeader("環境 (IBL)");
+            if (ui::BeginPropertyTable("iblRows")) {
+                const renderer::SkyAsset* activeSky = m_skyLibrary.Active();
+                ui::PropertyValue("天球", "%s", (activeSky != nullptr) ? activeSky->name.c_str() : "-");
+                ui::PropertyValue("環境", "%s", m_renderer.GetEnvironment().SourceName().c_str());
+                ui::PropertyValue("equirect", "%u x %u", m_renderer.GetEnvironment().EquirectWidth(),
+                                  m_renderer.GetEnvironment().EquirectHeight());
+                ui::PropertyBool("背景を表示", &m_renderer.ShowSkybox(),
+                                 renderer::kPreviewDefaults.showSkybox,
+                                 "オフにすると背景色だけになる。IBL の寄与は残る");
+                ImGui::BeginDisabled(!m_renderer.ShowSkybox());
+                ui::PropertyBool("背景をぼかす", &m_renderer.SkyboxBlur(),
+                                 renderer::kPreviewDefaults.skyboxBlur,
+                                 "背景だけを柔らかくする。素材を見比べるときに、"
+                                 "背景の細部が目移りの原因にならないようにする。"
+                                 "IBL の寄与と陰影は変わらない");
+                ImGui::EndDisabled();
+                ui::EndPropertyTable();
+            }
+            ui::HintText("空の切り替えと輝度は「天球」パネルで設定する");
         }
-        ui::HintText("空の切り替えと輝度は「天球」パネルで設定する");
 
         ui::SectionHeader("トーンマップ");
         if (ui::BeginPropertyTable("tonemapRows")) {

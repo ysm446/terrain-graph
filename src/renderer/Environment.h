@@ -13,6 +13,8 @@ namespace tg::renderer {
 // 手続き的な空の設定。単位は cd/m^2 相当。
 // 太陽はディレクショナルライトで別に扱うため、ここには入れない
 // （環境マップに入れると二重計上になり、解像度の都合でエイリアスも出る）。
+struct AtmosphereSettings;
+
 struct SkySettings {
     DirectX::XMFLOAT3 zenithColor = {0.20f, 0.36f, 0.78f};
     DirectX::XMFLOAT3 horizonColor = {0.70f, 0.80f, 0.95f};
@@ -36,10 +38,12 @@ float SkyLuminanceScale(float skyLuminance, float measuredSky);
 // 生成はすべてコンピュートで行い、Device::ExecuteImmediate でその場で完了させる。
 class Environment {
 public:
-    bool Initialize(rhi::Device& device, rhi::PipelineCache& pipelineCache);
+    bool Initialize(rhi::Device& device, rhi::PipelineCache& pipelineCache, bool buildDefaultSky = true);
     void Shutdown(rhi::Device& device);
 
     // 手続き的な空から作り直す。
+    bool BuildFromAtmosphere(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                             const AtmosphereSettings& settings, uint32_t lutIndex, uint32_t noiseIndex, uint32_t skyOutputIndex);
     bool BuildFromSky(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                       const SkySettings& sky);
 

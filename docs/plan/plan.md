@@ -1,11 +1,12 @@
 # plan — 実装方針と優先順位
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-09 03:46
+更新日時: 2026-09-09 13:36
 
 進捗管理の入口。実装の詳細な設計は [docs/design/](../design/) に置く。
 
 - [design/rhi.md](../design/rhi.md) — bindless、ルートシグネチャ、リソース管理、シェーダ
+- [design/atmospheric-sky.md](../design/atmospheric-sky.md) — 大気散乱スカイ・雲・既存モードとの互換性
 - [design/rendering.md](../design/rendering.md) — 描画の流れ、露出とトーンマップ、IBL、行列の規約
 - [design/compositing.md](../design/compositing.md) — チャンネル定義、ハイトブレンド、RNM、タイル評価
 - [design/design-guide.md](../design/design-guide.md) — UI のレイアウト、配色、プロパティ行
