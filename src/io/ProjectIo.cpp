@@ -1588,6 +1588,7 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     atmosphereNode["eccentricity"] = atmosphere.eccentricity;
     atmosphereNode["altitude"] = atmosphere.altitude;
     atmosphereNode["groundAlbedo"] = atmosphere.groundAlbedo;
+    atmosphereNode["lowerHemisphere"] = atmosphere.lowerHemisphere == 0 ? "skyExtension" : "groundReflection";
     atmosphereNode["clouds"] = atmosphere.clouds != 0;
     atmosphereNode["coverage"] = atmosphere.coverage;
     atmosphereNode["extinction"] = atmosphere.extinction;
@@ -1682,6 +1683,7 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
         atmosphere.mie = std::clamp(ReadFloat(source, "mie", defaults.mie), 0.0f, 2.0f);
         atmosphere.eccentricity = std::clamp(ReadFloat(source, "eccentricity", defaults.eccentricity), 0.0f, .95f);
         atmosphere.altitude = std::clamp(ReadFloat(source, "altitude", defaults.altitude), 0.0f, 10000.0f);
+        atmosphere.lowerHemisphere = ReadString(source, "lowerHemisphere", "groundReflection") == "skyExtension" ? 0u : 1u;
         atmosphere.groundAlbedo = std::clamp(ReadFloat(source, "groundAlbedo", defaults.groundAlbedo), 0.0f, 1.0f);
         atmosphere.coverage = std::clamp(ReadFloat(source, "coverage", defaults.coverage), 0.0f, 1.0f);
         atmosphere.extinction = std::clamp(ReadFloat(source, "extinction", defaults.extinction), .0001f, .03f);

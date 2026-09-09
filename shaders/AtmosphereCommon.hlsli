@@ -10,7 +10,7 @@ struct AtmosphericParameters {
     float cloudThickness; float cloudScale; uint seed; uint samples;
     float fieldCenterX; float fieldCenterZ; float fieldRadius; float fieldFalloff;
     float windSpeed; float windDirection; uint animateClouds; float windOffsetX;
-    float windOffsetZ; float3 padding;
+    float windOffsetZ; uint lowerHemisphere; float2 padding;
 };
 float3 AtmosphereSun(AtmosphericParameters p) {
     return float3(cos(p.elevation) * sin(p.azimuth), sin(p.elevation), cos(p.elevation) * cos(p.azimuth));
@@ -111,8 +111,14 @@ float4 IntegrateCloud(float3 origin, float3 ray, float limit, AtmosphericParamet
 }
 float3 AtmosphericSky(float3 ray, AtmosphericParameters p, uint lutIndex, float3 groundRadiance=0) {
     Texture2D<float4> lut=ResourceDescriptorHeap[lutIndex];
-    float3 sky=AtmComputeScattering(ray,AtmosphereSun(p),p.density,p.mie,p.eccentricity,
+    // 空の延長は初期実装と同じ上半球の折り返し。背景・IBL・雲照明で共用する。
+    float3 sampleRay=ray;
+    if(p.lowerHemisphere==0 && ray.y<0)
+        sampleRay=normalize(float3(ray.x,max(-ray.y,0.005),ray.z));
+    float3 sky=AtmComputeScattering(sampleRay,AtmosphereSun(p),p.density,p.mie,p.eccentricity,
         lut,g_samplerLinearClamp,true,p.altitude,groundRadiance);
+    if(p.lowerHemisphere==0 && ray.y<0)
+        sky*=lerp(1,p.groundAlbedo,smoothstep(0,0.08,-ray.y));
     return max(0,sky*p.illuminance);
 }
 #endif

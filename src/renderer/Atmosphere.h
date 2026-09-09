@@ -31,7 +31,8 @@ struct AtmosphereSettings {
     uint32_t animateClouds = 0;
     float windOffsetX = 0.0f; // 実行時のみ。保存しない。
     float windOffsetZ = 0.0f;
-    float padding[3]{};
+    uint32_t lowerHemisphere = 1; // 0: 空の延長、1: 地面反射。
+    float padding[2]{};
 };
 static_assert(sizeof(AtmosphereSettings) == 112);
 

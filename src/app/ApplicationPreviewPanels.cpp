@@ -268,8 +268,16 @@ void Application::DrawLightingPanel() {
                 ui::PropertyFloat("地表の基準標高", &sky.altitude, 0.0f, 10000.0f, defaults.altitude,
                                   "地形の原点の海抜高度（m）。空と環境光を計算する基準です。\n"
                                   "高くすると上空の薄い大気を通した空になります。地形やカメラ自体は移動しません。", "%.0f m");
+                int lowerHemisphere = static_cast<int>(sky.lowerHemisphere);
+                const char* lowerHemisphereLabels[]{"空の延長", "地面反射"};
+                if (ui::PropertyCombo("下半球", &lowerHemisphere, lowerHemisphereLabels, 2,
+                                      static_cast<int>(defaults.lowerHemisphere),
+                                      "空の延長：青空を下半球へ折り返す初期の表現。地面反射：日光と天空光を受けた地表の反射。\n"
+                                      "背景・環境光・反射・雲の環境照明に共通で適用します。空の延長は見た目のための近似です。"))
+                    sky.lowerHemisphere = static_cast<uint32_t>(lowerHemisphere);
                 ui::PropertyFloat("グラウンドアルベド", &sky.groundAlbedo, 0.0f, 1.0f, defaults.groundAlbedo,
-                                  "地面に届く直射光と天空光を反射する割合。地面反射と大気の多重散乱に反映します。\n"
+                                  "地面反射では直射光と天空光を反射する割合。空の延長では青みを保って下半球の明るさを調整します。\n"
+                                  "どちらも大気の多重散乱へ反映します。\n"
                                   "0 は暗く、1 は強く反射します。地形マテリアルの色や反射率自体は変えません。");
                 ui::EndPropertyTable();
             }
