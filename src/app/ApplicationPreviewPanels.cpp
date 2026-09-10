@@ -285,8 +285,8 @@ void Application::DrawLightingPanel() {
             if (ui::BeginPropertyTable("atmosphericEnvironmentRows", "スカイライト強度")) {
                 ui::PropertyFloat("スカイライト強度", &m_renderer.AtmosphericEnvironmentIntensity(),
                                   0.0f, 8.0f, renderer::PreviewRenderer::DefaultSkylightIntensity,
-                                  "空と地面反射から地形・マテリアルへ届く環境光の倍率。1 は大気計算そのままです。\n"
-                                  "上げると陰側と環境反射を明るくします。太陽の直射光・空と雲の表示輝度・露出は変えません。\n"
+                                  "空と地面反射から地形・マテリアル・雲へ届く環境光の倍率。1 は大気計算そのままです。\n"
+                                  "上げると陰側・環境反射・雲の天空照明を明るくします。太陽の直射光・背景の空・露出は変えません。\n"
                                   "1 以外は照明バランスを調整するための補正です。局所的な地形の照り返しを計算する GI とは異なります。");
                 ui::EndPropertyTable();
             }

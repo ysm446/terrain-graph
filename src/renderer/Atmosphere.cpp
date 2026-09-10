@@ -65,7 +65,8 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
     const bool skyChanged = !m_ready || settings.azimuth != baked.azimuth || settings.elevation != baked.elevation ||
         settings.illuminance != baked.illuminance || settings.density != baked.density || settings.mie != baked.mie ||
         settings.eccentricity != baked.eccentricity || settings.altitude != baked.altitude ||
-        settings.groundAlbedo != baked.groundAlbedo || settings.lowerHemisphere != baked.lowerHemisphere;
+        settings.groundAlbedo != baked.groundAlbedo || settings.lowerHemisphere != baked.lowerHemisphere ||
+        settings.cloudSkylightIntensity != baked.cloudSkylightIntensity;
     const bool updateLut = !m_ready || settings.density != baked.density || settings.mie != baked.mie || settings.groundAlbedo != baked.groundAlbedo;
     const bool updateNoise = !m_ready || settings.seed != baked.seed;
     if (settings.localCloud && m_ready) {
@@ -178,6 +179,7 @@ void Atmosphere::UpdateFrameLighting(rhi::Device& device, rhi::PipelineCache& pi
     if (!m_ready || !m_applied.clouds || m_applied.localCloud != 2 || !m_opticalDepth.IsValid()) return;
     auto settings = m_applied;
     settings.opticalDepthIndex = UINT32_MAX;
+    settings.cloudSkylightIntensity = 1.0f; // 照明倍率は光学的厚さを変えない。
     if (m_opticalDirty || std::memcmp(&settings, &m_opticalSettings, sizeof(settings)) != 0) {
         auto* pipeline = pipelines.GetCompute(L"AtmosphereOpticalDepth.hlsl", L"CsMain");
         struct Constants { AtmosphereSettings settings; uint32_t noise, output, pad[2]; };

@@ -298,6 +298,7 @@ void PreviewRenderer::ProcessPendingWork(rhi::Device& device,
         effective.azimuth = m_atmosphericLight.azimuth;
         effective.elevation = m_atmosphericLight.elevation;
         effective.illuminance = m_atmosphericLight.illuminance;
+        effective.cloudSkylightIntensity = m_atmosphericEnvironmentIntensity;
         m_atmosphere.Update(device, pipelineCache, effective);
     }
     if (m_requestedMeshSubdivisions != m_meshSubdivisions) {

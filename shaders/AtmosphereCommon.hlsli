@@ -13,7 +13,7 @@ struct AtmosphericParameters {
     float windOffsetZ; uint lowerHemisphere; float noiseSpeedRatio; uint distributionMask;
     uint localCloud; float radiusX; float radiusZ; float edgeSoftness;
     float shapeStrength; float detailStrength; uint cloudMotionMode; uint cloudSource;
-    uint flatCloudBottom; uint3 padding;
+    uint flatCloudBottom; float cloudSkylightIntensity; uint2 padding;
 };
 float3 AtmosphereSun(AtmosphericParameters p) {
     return float3(cos(p.elevation) * sin(p.azimuth), sin(p.elevation), cos(p.elevation) * cos(p.azimuth));
@@ -195,8 +195,9 @@ float4 IntegrateCloud(float3 origin, float3 ray, float limit, AtmosphericParamet
     float3 sunlight=AtmComputeSunTransmittance(sun,p.density,p.mie,p.altitude+p.cloudBottom)*p.illuminance;
     float mu=dot(ray,sun);
     Texture2D<float4> cloudLighting=ResourceDescriptorHeap[lightingIndex];
-    float3 skyAbove=cloudLighting.Load(int3(0,0,0)).rgb;
-    float3 skyBelow=cloudLighting.Load(int3(1,0,0)).rgb;
+    // 地形と共通の倍率を天空照明にだけ適用。太陽光と光学的厚さは変えない。
+    float3 skyAbove=cloudLighting.Load(int3(0,0,0)).rgb*p.cloudSkylightIntensity;
+    float3 skyBelow=cloudLighting.Load(int3(1,0,0)).rgb*p.cloudSkylightIntensity;
     float4 phases=float4(CloudPhase(mu,1),CloudPhase(mu,0.5),CloudPhase(mu,0.25),CloudPhase(mu,0.125));
     float transmission=1; float3 radiance=0;
     [loop] for(uint i=0;i<count && transmission>0.005;++i) {

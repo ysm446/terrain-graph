@@ -42,7 +42,8 @@ struct AtmosphereSettings {
     uint32_t cloudMotionMode = 0;
     uint32_t cloudSource = 0;
     uint32_t flatCloudBottom = 0;
-    uint32_t padding[3] = {};
+    float cloudSkylightIntensity = 1.0f; // 実行時に地形と共通のスカイライト強度を受け取る。
+    uint32_t padding[2] = {};
 };
 static_assert(sizeof(AtmosphereSettings) == 160);
 
