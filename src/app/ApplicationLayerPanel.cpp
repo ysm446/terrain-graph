@@ -121,6 +121,30 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
         return changed;
     }
 
+    if (layer.kind == compositor::LayerKind::MeanderingRivers) {
+        auto& p = layer.meanderingRivers;
+        const compositor::MaterialLayer::MeanderingRiversSettings d;
+        if (ui::BeginPropertyTable("meanderingRivers", "地形の影響")) {
+            changed |= ui::PropertyInt("反復回数", &p.iterations, 0, 512, d.iterations, "蛇行を進める回数。0 では入力した川筋を使う");
+            changed |= ui::PropertyFloat("川幅", &p.riverWidth, 0.1f, 1000.0f, d.riverWidth, "河床を掘る幅", "%.2f m");
+            changed |= ui::PropertyFloat("蛇行スケール", &p.meanderScale, 0.1f, 10.0f, d.meanderScale, "川幅に対する標本間隔と移動距離の倍率", "%.2f");
+            changed |= ui::PropertyFloat("蛇行の強さ", &p.intensity, 0.0f, 2.0f, d.intensity, "川筋を進める強さ。両端は固定する", "%.2f");
+            changed |= ui::PropertyFloat("地形の影響", &p.heightInfluence, 0.0f, 10.0f, d.heightInfluence, "低い地形へ向かう強さ", "%.2f");
+            changed |= ui::PropertyFloat("平滑化", &p.smoothing, 0.0f, 1.0f, d.smoothing, "反復ごとに川筋を滑らかにする強さ", "%.2f");
+            changed |= ui::PropertyFloat("深さの比率", &p.riverDepth, 0.0f, 2.0f, d.riverDepth, "川幅に対する掘り込みの深さ。0 では河床を掘らない", "%.3f");
+            changed |= ui::PropertyFloat("岸の揺らぎ", &p.bankNoise, 0.0f, 0.5f, d.bankNoise, "道のりに沿って川幅を変化させる割合", "%.2f");
+            changed |= ui::PropertyInt("シード", &p.seed, 0, 1000000, d.seed, "初期の揺らぎと岸の模様を変える");
+            changed |= ui::PropertyBool("上り勾配を除去", &p.flattenUphill, d.flattenUphill, "Path の矢印方向へ川の基準高が上がらないようにする");
+            changed |= ui::PropertyBool("流域を整形", &p.basinEnabled, d.basinEnabled, "入力した川筋の周囲を川の基準高へ馴染ませる。盛り上がる場所もある");
+            changed |= ui::PropertyFloat("流域の半幅", &p.basinWidth, 0.0f, 5000.0f, d.basinWidth, "入力した川筋から流域の外縁までの距離", "%.1f m");
+            changed |= ui::PropertyFloat("流域の深さ", &p.basinDepth, 0.0f, 1000.0f, d.basinDepth, "川の基準高から流域を下げる距離", "%.2f m");
+            ui::EndPropertyTable();
+        }
+        ui::HintText("Base に地形、Path に上流から下流へ向く開いた線を接続する。"
+            "分岐・閉じた線・途中で向きが反転する線には対応しない。"
+            "Result は地形、River は河床の範囲。水面は生成しない。");
+        return changed;
+    }
     // 湖は給水マスクを受けて水を移動し、水面まで地形を持ち上げる。
     if (layer.kind == compositor::LayerKind::Lake) {
         auto& p = layer.lake;

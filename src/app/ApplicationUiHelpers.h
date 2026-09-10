@@ -116,6 +116,12 @@ inline const compositor::MaterialLayer kDefaultSedimentLayer = [] {
     return layer;
 }();
 
+inline const compositor::MaterialLayer kDefaultMeanderingRiversLayer = [] {
+    compositor::MaterialLayer layer;
+    layer.kind = compositor::LayerKind::MeanderingRivers;
+    layer.name = "Meandering Rivers";
+    return layer;
+}();
 // Lake の既定値。
 inline const compositor::MaterialLayer kDefaultLakeLayer = [] {
     compositor::MaterialLayer layer;
@@ -198,6 +204,8 @@ inline const compositor::MaterialLayer& DefaultLayerFor(compositor::LayerKind ki
             return kDefaultSedimentLayer;
         case compositor::LayerKind::Crumbling:
             return kDefaultCrumblingLayer;
+        case compositor::LayerKind::MeanderingRivers:
+            return kDefaultMeanderingRiversLayer;
         case compositor::LayerKind::Lake:
             return kDefaultLakeLayer;
         case compositor::LayerKind::SnowCover:

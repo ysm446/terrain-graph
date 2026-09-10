@@ -1,7 +1,7 @@
 # plan — 実装方針と優先順位
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-10 22:12
+更新日時: 2026-09-11 06:31
 
 進捗管理の入口。実装の詳細な設計は [docs/design/](../design/) に置く。
 
@@ -13,6 +13,7 @@
 - [design/design-guide.md](../design/design-guide.md) — UI のレイアウト、配色、プロパティ行
 - [design/mask-flowline.md](../design/mask-flowline.md) — Mask Flowline の入出力、設定、計算方法と制限
 - [design/lake.md](../design/lake.md) — Lake の入出力、計算方法と制限
+- [design/meandering-rivers.md](../design/meandering-rivers.md) — Meandering Rivers の入出力、計算、HDA との差分
 - [design/node-graph.md](../design/node-graph.md) — ノードグラフのデータモデル、評価、エディタ UI
 - [reference/nodes.md](../reference/nodes.md) — ノード 1 つずつの役割・ピン・パラメータ
 - [reference/file-format.md](../reference/file-format.md) — `.tgproj` / `.tgmat` の形式

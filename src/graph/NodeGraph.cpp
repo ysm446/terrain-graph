@@ -188,7 +188,14 @@ constexpr std::array<PinDefinition, 2> kCloudLayerPins = {{
     {PinKind::Output, ValueType::Volume, "Volume"},
 }};
 
-constexpr std::array<NodeDefinition, 33> kNodeDefinitions = {{
+constexpr std::array<PinDefinition, 4> kMeanderingRiversPins = {{
+    {PinKind::Input, ValueType::Material, "Base"},
+    {PinKind::Input, ValueType::Path, "Path"},
+    {PinKind::Output, ValueType::Material, "Result"},
+    {PinKind::Output, ValueType::Mask, "River"},
+}};
+
+constexpr std::array<NodeDefinition, 34> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -200,6 +207,7 @@ constexpr std::array<NodeDefinition, 33> kNodeDefinitions = {{
     {NodeKind::Snow, "snow", "Snow", kDepositPins},
     {NodeKind::River, "river", "River", kRiverPins},
     {NodeKind::Lake, "lake", "Lake", kLakePins},
+    {NodeKind::MeanderingRivers, "meanderingRivers", "Meandering Rivers", kMeanderingRiversPins},
     {NodeKind::Droplet, "droplet", "Droplet Erosion", kDropletPins},
     {NodeKind::FluvialErosion, "fluvialErosion", "Fluvial Erosion", kFluvialErosionPins},
     {NodeKind::FlattenBorders, "flattenBorders", "Flatten Borders", kBlurPins},
@@ -252,7 +260,7 @@ bool IsLayerNodeKind(NodeKind kind) {
     return kind == NodeKind::Surface || kind == NodeKind::Shape || kind == NodeKind::Liquid ||
            kind == NodeKind::Heightmap || kind == NodeKind::Blur ||
            kind == NodeKind::Sediment || kind == NodeKind::Crumbling ||
-           kind == NodeKind::Snow || kind == NodeKind::SnowCover || kind == NodeKind::Lake || kind == NodeKind::River || kind == NodeKind::Droplet ||
+           kind == NodeKind::Snow || kind == NodeKind::SnowCover || kind == NodeKind::Lake || kind == NodeKind::MeanderingRivers || kind == NodeKind::River || kind == NodeKind::Droplet ||
            kind == NodeKind::Scatter || kind == NodeKind::MultiScaleErosion ||
            kind == NodeKind::FluvialErosion || kind == NodeKind::FlattenBorders;
 }
@@ -278,7 +286,7 @@ bool IsHeightMaskNodeKind(NodeKind kind) {
 
 bool IsLayerMaskSourceKind(NodeKind kind) {
     return kind == NodeKind::Sediment || kind == NodeKind::Crumbling ||
-           kind == NodeKind::Snow || kind == NodeKind::SnowCover || kind == NodeKind::Lake || kind == NodeKind::River || kind == NodeKind::FluvialErosion || kind == NodeKind::Droplet ||
+           kind == NodeKind::Snow || kind == NodeKind::SnowCover || kind == NodeKind::Lake || kind == NodeKind::MeanderingRivers || kind == NodeKind::River || kind == NodeKind::FluvialErosion || kind == NodeKind::Droplet ||
            kind == NodeKind::Scatter;
 }
 
@@ -309,6 +317,8 @@ compositor::LayerKind LayerKindFor(NodeKind kind) {
             return compositor::LayerKind::Sediment;
         case NodeKind::Crumbling:
             return compositor::LayerKind::Crumbling;
+        case NodeKind::MeanderingRivers:
+            return compositor::LayerKind::MeanderingRivers;
         case NodeKind::Lake:
             return compositor::LayerKind::Lake;
         case NodeKind::SnowCover:
@@ -698,6 +708,7 @@ bool NodeGraph::MaskDependsOnHeight(const Node& maskNode, int depth) const {
         case NodeKind::Sediment:
         case NodeKind::Crumbling:
         case NodeKind::Lake:
+        case NodeKind::MeanderingRivers:
         case NodeKind::SnowCover:
         case NodeKind::Snow:
         case NodeKind::River:
@@ -899,6 +910,8 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
             layerOp.sedimentMask.contrast = layerSettings->layer.sediment.maskContrast;
             layerOp.sedimentMask.thicknessMeters =
                 layerSettings->layer.sediment.maskThicknessMeters;
+        } else if (maskNode.kind == NodeKind::MeanderingRivers) {
+            layerOp.kind = compositor::MaskOpKind::MeanderingRivers;
         } else if (maskNode.kind == NodeKind::Lake) {
             layerOp.kind = compositor::MaskOpKind::Lake;
             layerOp.dropletMask.channel = static_cast<uint32_t>(std::min<size_t>(source.outputIndex, 2));
@@ -1216,6 +1229,19 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace) co
                 break;
             }
         }
+    }
+
+    // Result 経由とマスクだけの分岐の両方で、接続中の Path から標本を作る。
+    for (size_t i = 0; i < layerNodes.size(); ++i) {
+        if (layerNodes[i]->kind != NodeKind::MeanderingRivers) continue;
+        auto& layer = compiled.layers[i];
+        layer.meanderPoints.clear();
+        const Node* pathNode = UpstreamOf(*layerNodes[i], ValueType::Path);
+        const auto* path = pathNode ? std::get_if<PathNodeSettings>(&pathNode->settings) : nullptr;
+        const TerrainScale* scale = FindChainScale(layerNodes[i]->id);
+        if (path) layer.meanderPoints = BuildMeanderPoints(path->path,
+            scale ? scale->sizeMeters : TerrainScale{}.sizeMeters, layer.meanderingRivers.riverWidth *
+            layer.meanderingRivers.meanderScale * 2.0f);
     }
 
     // Mask 入力に繋がっているマスクのノードを op の列へ落とし、

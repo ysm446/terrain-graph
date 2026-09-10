@@ -140,7 +140,7 @@ void RunNodeGraphTests() {
 
     constexpr std::array kOperationKinds = {
         NodeKind::Blur,      NodeKind::Sediment, NodeKind::Crumbling,
-        NodeKind::Lake, NodeKind::SnowCover, NodeKind::Snow, NodeKind::River,    NodeKind::Droplet,
+        NodeKind::MeanderingRivers, NodeKind::Lake, NodeKind::SnowCover, NodeKind::Snow, NodeKind::River,    NodeKind::Droplet,
         NodeKind::MultiScaleErosion,
         NodeKind::FluvialErosion,
         NodeKind::FlattenBorders,
@@ -192,6 +192,51 @@ void RunNodeGraphTests() {
                 found |= op.kind == tg::compositor::MaskOpKind::FluvialErosion && op.dropletMask.channel == i-1;
             Check(found, "補助出力のプレビューが対応する成分を参照する");
         }
+    }
+
+    Section("ノードグラフ — Meandering Rivers のパスと分岐");
+    {
+        NodeGraph graph;
+        const auto baseId = graph.CreateNode(NodeKind::Heightmap);
+        const auto riverId = graph.CreateNode(NodeKind::MeanderingRivers);
+        const auto pathId = graph.CreateNode(NodeKind::Path);
+        const auto surfaceId = graph.CreateNode(NodeKind::Surface);
+        const auto* base = graph.FindNode(baseId);
+        const auto* river = graph.FindNode(riverId);
+        const auto* pathNode = graph.FindNode(pathId);
+        const auto* surface = graph.FindNode(surfaceId);
+        Check(river->inputs.size() == 2 && river->inputs[1].valueType == tg::graph::ValueType::Path &&
+            river->outputs.size() == 2, "地形と Path を受け、Result と River を出す");
+        Check(graph.CreateLink(base->outputs[0].id, river->inputs[0].id) &&
+            graph.CreateLink(pathNode->outputs[0].id, river->inputs[1].id), "地形と Path を接続できる");
+        auto& path = std::get<tg::graph::PathNodeSettings>(graph.FindMutableNode(pathId)->settings).path;
+        const auto a = tg::graph::AddPathPoint(path, 0.1f, 0.5f, 0);
+        const auto b = tg::graph::AddPathPoint(path, 0.9f, 0.5f, a);
+        path.FindPoint(a)->heightOffsetMeters = 2.0f;
+        const auto compiled = graph.CompileLayersTo(riverId);
+        const auto& samples = compiled.layers.back().meanderPoints;
+        Check(!samples.empty() && samples.front().u == 0.1f && samples.back().u == 0.9f &&
+            samples.front().along == 0.0f && samples.back().along == 1.0f &&
+            samples.front().heightOffset == 2.0f, "向き・端点・高さオフセットを引き継ぐ");
+        const auto maskPreview = graph.CompileLayersTo(riverId, river->outputs[1].id);
+        bool found = false;
+        for (const auto& op : maskPreview.maskOps) found |= op.kind == tg::compositor::MaskOpKind::MeanderingRivers;
+        Check(found, "River マスクのプレビューを生成できる");
+        Check(graph.CreateLink(base->outputs[0].id, surface->inputs[0].id) &&
+            graph.CreateLink(river->outputs[1].id, surface->inputs[1].id), "River だけを別枝で使える");
+        const auto branch = graph.CompileLayersTo(surfaceId);
+        Check(branch.layers.size() == 3 && branch.layers[1].maskOnly &&
+            !branch.layers[1].meanderPoints.empty(), "マスクだけの枝にもパスを渡し、地形を変更しない");
+        tg::graph::ReversePathEdge(path, path.edges.front().id);
+        const auto reversed = tg::graph::BuildMeanderPoints(path, 1024, 10);
+        Check(!reversed.empty() && reversed.front().u == 0.9f && reversed.back().u == 0.1f,
+            "ID 順に依存せずパスの矢印方向を使う");
+        path.edges.clear();
+        Check(graph.CompileLayersTo(riverId).layers.back().meanderPoints.empty(), "Path を空にすると古い川筋を残さない");
+        tg::graph::ConnectPathPoints(path, a, b);
+        const auto c = tg::graph::AddPathPoint(path, 0.5f, 0.8f, b);
+        tg::graph::ConnectPathPoints(path, c, a);
+        Check(tg::graph::BuildMeanderPoints(path, 1024, 10).empty(), "閉じた Path を川として評価しない");
     }
 
     Section("ノードグラフ — Lake の独立した出力");

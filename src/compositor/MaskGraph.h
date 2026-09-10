@@ -60,6 +60,7 @@ enum class MaskOpKind : uint32_t {
     SnowCover = 18,
     Lake = 19,
     Flowline = 20,
+    MeanderingRivers = 21,
 };
 
 // 曲率マスクの向き。シェーダの TG_CURVATURE_* と一致させること。

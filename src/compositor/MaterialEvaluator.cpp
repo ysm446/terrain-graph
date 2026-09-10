@@ -230,6 +230,20 @@ uint64_t HashHeightState(uint64_t seed, const MaterialLayer& layer) {
     hash = HashBytes(hash, &layer.blur, sizeof(layer.blur));
     hash = HashBytes(hash, &layer.sediment, sizeof(layer.sediment));
     hash = HashBytes(hash, &layer.crumbling, sizeof(layer.crumbling));
+    hash = HashBytes(hash, &layer.meanderingRivers.iterations, sizeof(layer.meanderingRivers.iterations));
+    hash = HashBytes(hash, &layer.meanderingRivers.riverWidth, sizeof(layer.meanderingRivers.riverWidth));
+    hash = HashBytes(hash, &layer.meanderingRivers.meanderScale, sizeof(layer.meanderingRivers.meanderScale));
+    hash = HashBytes(hash, &layer.meanderingRivers.intensity, sizeof(layer.meanderingRivers.intensity));
+    hash = HashBytes(hash, &layer.meanderingRivers.heightInfluence, sizeof(layer.meanderingRivers.heightInfluence));
+    hash = HashBytes(hash, &layer.meanderingRivers.smoothing, sizeof(layer.meanderingRivers.smoothing));
+    hash = HashBytes(hash, &layer.meanderingRivers.riverDepth, sizeof(layer.meanderingRivers.riverDepth));
+    hash = HashBytes(hash, &layer.meanderingRivers.basinWidth, sizeof(layer.meanderingRivers.basinWidth));
+    hash = HashBytes(hash, &layer.meanderingRivers.basinDepth, sizeof(layer.meanderingRivers.basinDepth));
+    hash = HashBytes(hash, &layer.meanderingRivers.bankNoise, sizeof(layer.meanderingRivers.bankNoise));
+    hash = HashBytes(hash, &layer.meanderingRivers.seed, sizeof(layer.meanderingRivers.seed));
+    hash = HashBytes(hash, &layer.meanderingRivers.basinEnabled, sizeof(layer.meanderingRivers.basinEnabled));
+    hash = HashBytes(hash, &layer.meanderingRivers.flattenUphill, sizeof(layer.meanderingRivers.flattenUphill));
+    hash = HashBytes(hash, layer.meanderPoints.data(), layer.meanderPoints.size() * sizeof(MaterialLayer::MeanderPoint));
     hash = HashBytes(hash, &layer.lake.optimizationSteps, sizeof(layer.lake.optimizationSteps));
     hash = HashBytes(hash, &layer.lake.waterAmount, sizeof(layer.lake.waterAmount));
     hash = HashBytes(hash, &layer.lake.allowOutflow, sizeof(layer.lake.allowOutflow));
@@ -398,6 +412,7 @@ uint64_t HashMaskOpParams(uint64_t seed, const MaskOp& op) {
             return HashBytes(seed, &op.height, sizeof(op.height));
         case MaskOpKind::River:
             return HashBytes(seed, &op.riverMask, sizeof(op.riverMask));
+        case MaskOpKind::MeanderingRivers:
         case MaskOpKind::Lake:
         case MaskOpKind::SnowCover:
         case MaskOpKind::FluvialErosion:
@@ -675,6 +690,10 @@ void MaterialEvaluator::Destroy(rhi::Device& device) {
     m_snowCover.allocation = 0;
     for (auto* texture : {&m_lake.state[0], &m_lake.state[1], &m_lake.output}) device.DeferRelease(*texture);
     m_lake.allocation = 0;
+    for (auto* t : {&m_meanderingRivers.points[0], &m_meanderingRivers.points[1],
+        &m_meanderingRivers.original, &m_meanderingRivers.nearest[0], &m_meanderingRivers.nearest[1],
+        &m_meanderingRivers.basin, &m_meanderingRivers.output}) device.DeferRelease(*t);
+    m_meanderingRivers.allocation = 0;
     for (auto* texture : {&m_flowline.particles, &m_flowline.strength, &m_flowline.additions, &m_flowline.deposits}) device.DeferRelease(*texture);
     m_flowline.resolution = 0;
     m_flowline.particleResolution = 0;
@@ -1031,6 +1050,12 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
         return ApplyRiverMask(device, pipelineCache, commandList, op, stack, target);
     }
     // 水滴侵食の流量 / 堆積も、直前に走った水滴侵食レイヤーの作業用テクスチャから焼く。
+    if (op.kind == MaskOpKind::MeanderingRivers) {
+        const bool enabled = op.heightSourceLayer >= 0 &&
+            static_cast<size_t>(op.heightSourceLayer) < stack.Layers().size() &&
+            stack.Layers()[op.heightSourceLayer].enabled;
+        return ApplyMeanderingRiversMask(device, pipelineCache, commandList, target, enabled);
+    }
     if (op.kind == MaskOpKind::Lake) {
         const bool enabled = op.heightSourceLayer >= 0 &&
             static_cast<size_t>(op.heightSourceLayer) < stack.Layers().size() &&
@@ -2928,6 +2953,169 @@ static_assert(sizeof(SnowCoverConstants) == 304);
 }
 
 namespace {
+struct MeanderingConstants {
+    uint32_t points[4]{}, images[4]{}, nearest[4]{}, grid[4]{};
+    float scale[4]{}, motion[4]{}, basin[4]{};
+};
+static_assert(sizeof(MeanderingConstants) == 112);
+}
+
+bool MaterialEvaluator::ApplyMeanderingRivers(rhi::Device& device, rhi::PipelineCache& cache,
+    ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer, const MaterialStack& stack) {
+    auto& r = m_meanderingRivers;
+    const auto& p = layer.meanderingRivers;
+    const uint32_t n = m_resolution;
+    if (r.allocation != n) {
+        r.allocation = 0;
+        for (auto* t : {&r.points[0], &r.points[1], &r.original, &r.nearest[0], &r.nearest[1], &r.basin, &r.output})
+            device.DeferRelease(*t);
+        if (!CreateChannelTexture(device, 64, DXGI_FORMAT_R32G32B32A32_FLOAT, L"MeanderPointsA", r.points[0]) ||
+            !CreateChannelTexture(device, 64, DXGI_FORMAT_R32G32B32A32_FLOAT, L"MeanderPointsB", r.points[1]) ||
+            !CreateChannelTexture(device, 64, DXGI_FORMAT_R32G32B32A32_FLOAT, L"MeanderOriginal", r.original) ||
+            !CreateChannelTexture(device, n, DXGI_FORMAT_R32_UINT, L"MeanderNearestA", r.nearest[0]) ||
+            !CreateChannelTexture(device, n, DXGI_FORMAT_R32_UINT, L"MeanderNearestB", r.nearest[1]) ||
+            !CreateChannelTexture(device, n, DXGI_FORMAT_R32_FLOAT, L"MeanderBasin", r.basin) ||
+            !CreateChannelTexture(device, n, DXGI_FORMAT_R32G32B32A32_FLOAT, L"MeanderOutput", r.output)) return false;
+        r.allocation = n;
+    }
+    const wchar_t* entries[] = {L"CsInit", L"CsAdvect", L"CsSmooth", L"CsResample", L"CsClear",
+        L"CsSeed", L"CsJump", L"CsBasin", L"CsFinish", L"CsResolve", L"CsProject"};
+    ID3D12PipelineState* passes[11]{};
+    for (size_t i = 0; i < std::size(entries); ++i) {
+        passes[i] = cache.GetCompute(L"CompositeMeanderingRivers.hlsl", entries[i]);
+        if (!passes[i]) return false;
+    }
+    auto* normals = cache.GetCompute(L"CompositeBlur.hlsl", L"CsNormalFromHeight");
+    if (!normals) return false;
+    MeanderingConstants c{};
+    c.points[1] = r.points[0].UavIndex();
+    c.points[2] = r.original.UavIndex();
+    c.points[3] = static_cast<uint32_t>(std::min<size_t>(layer.meanderPoints.size(), 2048));
+    c.images[0] = m_textures.height.SrvIndex();
+    c.images[1] = m_textures.height.UavIndex();
+    c.images[2] = r.basin.UavIndex();
+    c.images[3] = r.output.UavIndex();
+    c.grid[0] = n;
+    c.grid[1] = p.flattenUphill ? 1u : 0u;
+    c.grid[2] = static_cast<uint32_t>(std::clamp(p.seed, 0, 1000000));
+    c.scale[0] = std::max(stack.SizeMeters(), 0.001f);
+    c.scale[1] = std::max(stack.HeightMeters(), 0.001f);
+    c.scale[2] = std::clamp(p.riverWidth, 0.1f, 1000.0f);
+    c.scale[3] = c.scale[2] * std::clamp(p.meanderScale, 0.1f, 10.0f) * 2.0f;
+    c.motion[0] = p.iterations > 0 ? std::clamp(p.intensity, 0.0f, 2.0f) : 0.0f;
+    c.motion[1] = std::clamp(p.heightInfluence, 0.0f, 10.0f);
+    c.motion[2] = std::clamp(p.smoothing, 0.0f, 1.0f);
+    c.motion[3] = std::clamp(p.riverDepth, 0.0f, 2.0f);
+    c.basin[0] = p.basinEnabled ? 1.0f : 0.0f;
+    c.basin[1] = std::clamp(p.basinWidth, 0.0f, 5000.0f);
+    c.basin[2] = std::clamp(p.basinDepth, 0.0f, 1000.0f);
+    c.basin[3] = std::clamp(p.bankNoise, 0.0f, 0.5f);
+    const auto upload = [&](bool withPoints = false) {
+        const uint64_t extra = withPoints ? 2048 * sizeof(MaterialLayer::MeanderPoint) : 0;
+        const auto allocation = AllocateConstants(device, sizeof(c) + extra);
+        if (!allocation.IsValid()) return D3D12_GPU_VIRTUAL_ADDRESS{0};
+        std::memcpy(allocation.cpu, &c, sizeof(c));
+        if (withPoints) {
+            auto* data = static_cast<uint8_t*>(allocation.cpu) + sizeof(c);
+            std::memset(data, 0, extra);
+            if (c.points[3]) std::memcpy(data, layer.meanderPoints.data(), c.points[3] * sizeof(MaterialLayer::MeanderPoint));
+        }
+        return allocation.gpuAddress;
+    };
+    const auto run = [&](int pass, D3D12_GPU_VIRTUAL_ADDRESS address) {
+        if (!address) return false;
+        commandList->SetComputeRootConstantBufferView(1, address);
+        commandList->SetPipelineState(passes[pass]);
+        const bool pointPass = pass <= 3 || pass == 5 || pass == 10;
+        commandList->Dispatch(pointPass ? std::max(1u, (c.points[3] + 63) / 64) : DispatchCount(n),
+            pointPass ? 1u : DispatchCount(n), 1);
+        const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+        commandList->ResourceBarrier(1, &barrier);
+        return true;
+    };
+    const auto distanceField = [&]() {
+        uint32_t current = 0;
+        c.nearest[1] = r.nearest[0].UavIndex();
+        if (!run(4, upload()) || !run(5, upload())) return false;
+        uint32_t first = 1;
+        while (first < n) first *= 2;
+        for (uint32_t step = first / 2; step > 0; step /= 2) {
+            c.nearest[0] = r.nearest[current].UavIndex();
+            c.nearest[1] = r.nearest[1 - current].UavIndex();
+            c.nearest[2] = step;
+            if (!run(6, upload())) return false;
+            current = 1 - current;
+        }
+        // JFA+1 で線分の境界付近を補正する。
+        c.nearest[0] = r.nearest[current].UavIndex();
+        c.nearest[1] = r.nearest[1 - current].UavIndex();
+        c.nearest[2] = 1;
+        if (!run(6, upload())) return false;
+        c.nearest[0] = r.nearest[1 - current].UavIndex();
+        return true;
+    };
+    PIXBeginEvent(commandList, PIX_COLOR_DEFAULT, "Meandering Rivers");
+    for (auto* t : {&r.points[0], &r.points[1], &r.original, &r.nearest[0], &r.nearest[1], &r.basin, &r.output})
+        TransitionIfNeeded(commandList, *t, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    bool ok = run(0, upload(true));
+    c.points[0] = r.original.UavIndex();
+    ok = ok && distanceField() && run(7, upload());
+    uint32_t current = 0;
+    // ping-pong の定数は反復で再利用する。
+    D3D12_GPU_VIRTUAL_ADDRESS addresses[2]{};
+    for (uint32_t i = 0; i < 2; ++i) {
+        c.points[0] = r.points[i].UavIndex();
+        c.points[1] = r.points[1 - i].UavIndex();
+        addresses[i] = upload();
+    }
+    const int iterations = c.motion[0] > 0 ? std::clamp(p.iterations, 0, 512) : 0;
+    for (int i = 0; i < iterations && ok && c.points[3] > 0; ++i) {
+        for (int pass = 1; pass <= 3 && ok; ++pass) {
+            ok = run(pass, addresses[current]);
+            current = 1 - current;
+        }
+    }
+    c.points[0] = r.points[current].UavIndex();
+    c.points[1] = r.points[1 - current].UavIndex();
+    ok = ok && run(10, upload());
+    c.points[0] = r.points[1 - current].UavIndex();
+    ok = ok && distanceField() && run(8, upload());
+    TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    if (ok && !layer.maskOnly) {
+        ok = run(9, upload());
+        if (ok) RebuildNormalsFromHeight(device, normals, commandList, stack);
+    }
+    PIXEndEvent(commandList);
+    return ok;
+}
+
+bool MaterialEvaluator::ApplyMeanderingRiversMask(rhi::Device& device, rhi::PipelineCache& cache,
+    ID3D12GraphicsCommandList* commandList, rhi::GpuTexture& target, bool enabled) {
+    auto* pass = cache.GetCompute(L"CompositeMeanderingRivers.hlsl", L"CsMask");
+    if (!pass || (enabled && !m_meanderingRivers.allocation)) return false;
+    MeanderingConstants c{};
+    c.images[3] = m_meanderingRivers.output.UavIndex();
+    c.nearest[3] = target.UavIndex();
+    c.grid[0] = target.width;
+    c.grid[3] = enabled ? 1u : 0u;
+    const auto allocation = AllocateConstants(device, sizeof(c));
+    if (!allocation.IsValid()) return false;
+    std::memcpy(allocation.cpu, &c, sizeof(c));
+    PIXBeginEvent(commandList, PIX_COLOR_DEFAULT, "Meandering Rivers Mask");
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    commandList->SetComputeRootConstantBufferView(1, allocation.gpuAddress);
+    commandList->SetPipelineState(pass);
+    commandList->Dispatch(DispatchCount(target.width), DispatchCount(target.height), 1);
+    const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+    commandList->ResourceBarrier(1, &barrier);
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    PIXEndEvent(commandList);
+    return true;
+}
+
+
+namespace {
 struct LakeConstants {
     uint32_t textures[4]{}, inputs[4]{}, grid[4]{}, mode[4]{};
     float scale[4]{};
@@ -4481,7 +4669,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 op.kind == MaskOpKind::Curvature || op.kind == MaskOpKind::Sediment ||
                 op.kind == MaskOpKind::Crumbling || op.kind == MaskOpKind::Snow ||
                 op.kind == MaskOpKind::Height || op.kind == MaskOpKind::River ||
-                op.kind == MaskOpKind::Lake || op.kind == MaskOpKind::SnowCover || op.kind == MaskOpKind::FluvialErosion || op.kind == MaskOpKind::Droplet || op.kind == MaskOpKind::Scatter) {
+                op.kind == MaskOpKind::MeanderingRivers || op.kind == MaskOpKind::Lake || op.kind == MaskOpKind::SnowCover || op.kind == MaskOpKind::FluvialErosion || op.kind == MaskOpKind::Droplet || op.kind == MaskOpKind::Scatter) {
                 after = std::max(after, op.heightSourceLayer);
                 const size_t layerCount = std::min<size_t>(
                     stack.Layers().size(),
@@ -4609,6 +4797,9 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                                    inputMaskIndex)) {
                     complete = false;
                 }
+                ++m_evaluatedLayerCount;
+            } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::MeanderingRivers) {
+                if (!ApplyMeanderingRivers(device, pipelineCache, commandList, layer, stack)) complete = false;
                 ++m_evaluatedLayerCount;
             } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::Lake) {
                 if (!ApplyLake(device, pipelineCache, commandList, layer, stack, inputMaskIndex)) complete = false;

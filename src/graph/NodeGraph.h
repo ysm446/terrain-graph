@@ -103,6 +103,7 @@ enum class NodeKind : uint32_t {
     CloudLayer = 30,
     Lake = 31,
     MaskFlowline = 32,
+    MeanderingRivers = 33,
 };
 
 struct PinDefinition {

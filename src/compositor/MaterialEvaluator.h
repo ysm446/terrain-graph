@@ -431,6 +431,14 @@ private:
         const MaterialStack& stack, uint32_t maskIndex);
     bool ApplySnowCoverMask(rhi::Device& device, rhi::PipelineCache& cache,
         ID3D12GraphicsCommandList* commandList, const MaskOp& op, rhi::GpuTexture& target, bool enabled);
+    struct MeanderingRiversResources {
+        rhi::GpuTexture points[2], original, nearest[2], basin, output;
+        uint32_t allocation = 0;
+    } m_meanderingRivers;
+    bool ApplyMeanderingRivers(rhi::Device& device, rhi::PipelineCache& cache,
+        ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer, const MaterialStack& stack);
+    bool ApplyMeanderingRiversMask(rhi::Device& device, rhi::PipelineCache& cache,
+        ID3D12GraphicsCommandList* commandList, rhi::GpuTexture& target, bool enabled);
     struct LakeResources {
         rhi::GpuTexture state[2], output;
         uint32_t allocation = 0;

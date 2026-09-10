@@ -153,7 +153,7 @@ const char* const kCurvatureModeNames[] = {"ridges", "valleys", "absolute"};
 const char* const kMaskBlendModeNames[] = {"add", "multiply", "min", "max", "subtract"};
 const char* const kChannelNames[] = {"baseColor", "normal", "surface", "height"};
 const char* const kLayerKindNames[] = {"surface",   "shape", "liquid", "blur",    "sediment",
-                                       "crumbling", "snow",  "river",  "droplet", "scatter", "multiScaleErosion", "fluvialErosion", "flattenBorders", "snowCover", "lake"};
+                                       "crumbling", "snow",  "river",  "droplet", "scatter", "multiScaleErosion", "fluvialErosion", "flattenBorders", "snowCover", "lake", "meanderingRivers"};
 // 散布の形 / 向き。compositor::ScatterShape / ScatterOrientation の並びと一致させること。
 const char* const kScatterShapeNames[] = {"hemisphere", "cone"};
 const char* const kScatterOrientationNames[] = {"flat", "followGround", "slopeOriented"};
@@ -829,6 +829,21 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     node["crumbling"] = std::move(crumbling);
 
     // 積雪（積雪レイヤーだけが使う）。
+    node["meanderingRivers"] = {
+        {"iterations", layer.meanderingRivers.iterations},
+        {"riverWidth", layer.meanderingRivers.riverWidth},
+        {"meanderScale", layer.meanderingRivers.meanderScale},
+        {"intensity", layer.meanderingRivers.intensity},
+        {"heightInfluence", layer.meanderingRivers.heightInfluence},
+        {"smoothing", layer.meanderingRivers.smoothing},
+        {"riverDepth", layer.meanderingRivers.riverDepth},
+        {"basinWidth", layer.meanderingRivers.basinWidth},
+        {"basinDepth", layer.meanderingRivers.basinDepth},
+        {"bankNoise", layer.meanderingRivers.bankNoise},
+        {"seed", layer.meanderingRivers.seed},
+        {"basinEnabled", layer.meanderingRivers.basinEnabled},
+        {"flattenUphill", layer.meanderingRivers.flattenUphill}
+    };
     node["lake"] = {{"optimizationSteps", layer.lake.optimizationSteps},
                     {"waterAmount", layer.lake.waterAmount},
                     {"allowOutflow", layer.lake.allowOutflow},
@@ -1089,6 +1104,21 @@ compositor::MaterialLayer ReadLayer(
                                                        defaults.sediment.maskThicknessMeters);
     }
 
+    if (const json* value = FindMember(node, "meanderingRivers"); value != nullptr && value->is_object()) {
+        layer.meanderingRivers.iterations = std::clamp(ReadInt(*value, "iterations", defaults.meanderingRivers.iterations), 0, 512);
+        layer.meanderingRivers.riverWidth = std::clamp(ReadFloat(*value, "riverWidth", defaults.meanderingRivers.riverWidth), 0.1f, 1000.0f);
+        layer.meanderingRivers.meanderScale = std::clamp(ReadFloat(*value, "meanderScale", defaults.meanderingRivers.meanderScale), 0.1f, 10.0f);
+        layer.meanderingRivers.intensity = std::clamp(ReadFloat(*value, "intensity", defaults.meanderingRivers.intensity), 0.0f, 2.0f);
+        layer.meanderingRivers.heightInfluence = std::clamp(ReadFloat(*value, "heightInfluence", defaults.meanderingRivers.heightInfluence), 0.0f, 10.0f);
+        layer.meanderingRivers.smoothing = std::clamp(ReadFloat(*value, "smoothing", defaults.meanderingRivers.smoothing), 0.0f, 1.0f);
+        layer.meanderingRivers.riverDepth = std::clamp(ReadFloat(*value, "riverDepth", defaults.meanderingRivers.riverDepth), 0.0f, 2.0f);
+        layer.meanderingRivers.basinWidth = std::clamp(ReadFloat(*value, "basinWidth", defaults.meanderingRivers.basinWidth), 0.0f, 5000.0f);
+        layer.meanderingRivers.basinDepth = std::clamp(ReadFloat(*value, "basinDepth", defaults.meanderingRivers.basinDepth), 0.0f, 1000.0f);
+        layer.meanderingRivers.bankNoise = std::clamp(ReadFloat(*value, "bankNoise", defaults.meanderingRivers.bankNoise), 0.0f, 0.5f);
+        layer.meanderingRivers.seed = std::clamp(ReadInt(*value, "seed", defaults.meanderingRivers.seed), 0, 1000000);
+        layer.meanderingRivers.basinEnabled = ReadBool(*value, "basinEnabled", defaults.meanderingRivers.basinEnabled);
+        layer.meanderingRivers.flattenUphill = ReadBool(*value, "flattenUphill", defaults.meanderingRivers.flattenUphill);
+    }
     if (const json* value = FindMember(node, "lake"); value != nullptr && value->is_object()) {
         layer.lake.optimizationSteps = std::clamp(ReadInt(*value, "optimizationSteps", defaults.lake.optimizationSteps), 0, 10);
         layer.lake.waterAmount = std::clamp(ReadFloat(*value, "waterAmount", defaults.lake.waterAmount), 0.0f, 100.0f);

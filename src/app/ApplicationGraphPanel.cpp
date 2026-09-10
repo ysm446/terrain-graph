@@ -48,6 +48,7 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
         case graph::NodeKind::SnowCover:
         case graph::NodeKind::Snow:
             return ImVec4(0.72f, 0.76f, 0.82f, 1.0f);
+        case graph::NodeKind::MeanderingRivers:
         case graph::NodeKind::Lake:
         case graph::NodeKind::River:
             return ImVec4(0.48f, 0.64f, 0.72f, 1.0f);
@@ -865,6 +866,7 @@ void Application::DrawGraphEditor() {
         addNodeMenuItem(graph::NodeKind::SnowCover, "Snow Cover — 積雪と薄雪を生成し、被覆・雪深・流動量を出す");
         addNodeMenuItem(graph::NodeKind::Snow,
                         "Snow — 雪を降らせ、急な雪面から落として積もらせる");
+        addNodeMenuItem(graph::NodeKind::MeanderingRivers, "Meandering Rivers — Path を蛇行させ、河床を掘る");
         addNodeMenuItem(graph::NodeKind::Lake, "Lake — 窪みに水を溜め、湖の範囲・水深・水位を出す");
         addNodeMenuItem(graph::NodeKind::River,
                         "River — 川筋から河床を掘り、下流へ下がる水面を張る");
@@ -1071,6 +1073,18 @@ void Application::DrawGraphPanel() {
             if (pin.valueType == graph::ValueType::Mask &&
                 m_graph.FindUpstreamNodeForPin(pin.id) != nullptr) {
                 maskFromNode = true;
+            }
+        }
+        if (selected->kind == graph::NodeKind::MeanderingRivers) {
+            const auto* source = m_graph.FindUpstreamNodeForPin(selected->inputs[1].id);
+            const auto* path = source ? std::get_if<graph::PathNodeSettings>(&source->settings) : nullptr;
+            const auto* scale = m_graph.FindChainScale(selected->id);
+            const auto& p = settings->layer.meanderingRivers;
+            if (!path || graph::BuildMeanderPoints(path->path,
+                scale ? scale->sizeMeters : graph::TerrainScale{}.sizeMeters,
+                p.riverWidth * p.meanderScale * 2.0f).empty()) {
+                ui::HintText("有効な川筋がないため地形は変わらず、River は空になる。"
+                    "独立した開いた Path を矢印が揃う向きで接続する（合計 2048 標本まで）。");
             }
         }
         changed |= DrawLayerSettings(settings->layer, isBase, isSource, maskFromNode,

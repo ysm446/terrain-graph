@@ -1,9 +1,14 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-10 22:12
+更新日時: 2026-09-11 06:31
 
 ## 現在の状況
+
+**Meandering Rivers を追加（2026-09-11 06:31）。** 地形と Path を入力に、GPU で蛇行・流域整形・河床掘削を行う。
+Result と River マスクに対応。独立した開いた Path が対象で、蛇行後の Path 出力・三日月湖・履歴は未対応。
+Debug / Release、テスト、DXC、GPU 検証、UI・描画、保存再読み込み、2048² 書き出しを確認。
+仕様は [Meandering Rivers](../design/meandering-rivers.md)。更新版は `build/meandering/Release/terrain_graph.exe`。
 
 **Mask Flowline を追加（2026-09-10 22:12）。** 斜面に沿う流跡をマスクとして出力。
 Source / Outflow、密度・長さ・摩擦・傾斜制限に対応し、地形は変更しない。

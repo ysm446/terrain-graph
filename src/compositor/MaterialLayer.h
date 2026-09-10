@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace tg::compositor {
 
@@ -64,6 +65,7 @@ enum class LayerKind : uint32_t {
     FlattenBorders = 12,
     SnowCover = 13,
     Lake = 14,
+    MeanderingRivers = 15,
 };
 
 // 散布する形。terrain-editor の ScatterShapeType と同じ。
@@ -91,7 +93,7 @@ enum class RockStyle : uint32_t {
 // 合成せずハイトを書き換える加工か。**下地にはなれない**（ならす相手が要る）。
 inline bool IsHeightOperationKind(LayerKind kind) {
     return kind == LayerKind::Blur || kind == LayerKind::Sediment ||
-           kind == LayerKind::Crumbling || kind == LayerKind::Snow || kind == LayerKind::SnowCover || kind == LayerKind::Lake ||
+           kind == LayerKind::Crumbling || kind == LayerKind::Snow || kind == LayerKind::SnowCover || kind == LayerKind::Lake || kind == LayerKind::MeanderingRivers ||
            kind == LayerKind::River || kind == LayerKind::Droplet ||
            kind == LayerKind::Scatter || kind == LayerKind::MultiScaleErosion ||
            kind == LayerKind::FluvialErosion || kind == LayerKind::FlattenBorders;
@@ -519,6 +521,26 @@ struct MaterialLayer {
     SnowCoverSettings snowCover;
 
     // Lake の設定。水量と基準スケールの単位は m。
+    // パス標本はグラフのコンパイル時に生成し、保存しない。UV、高さオフセット m、道のり 0〜1。
+    struct MeanderPoint { float u, v, heightOffset, along; };
+    struct MeanderingRiversSettings {
+        int iterations = 128;
+        float riverWidth = 5.0f;
+        float meanderScale = 1.0f;
+        float intensity = 1.0f;
+        float heightInfluence = 1.0f;
+        float smoothing = 0.5f;
+        float riverDepth = 0.1f;
+        float basinWidth = 100.0f;
+        float basinDepth = 0.0f;
+        float bankNoise = 0.1f;
+        int seed = 1;
+        bool basinEnabled = true;
+        bool flattenUphill = true;
+    };
+    MeanderingRiversSettings meanderingRivers;
+    std::vector<MeanderPoint> meanderPoints;
+
     struct LakeSettings {
         int optimizationSteps = 3;
         float waterAmount = 5.0f;

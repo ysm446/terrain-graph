@@ -1135,4 +1135,52 @@ std::vector<compositor::PathSegment> BuildPathAreaSegments(const PathSettings& p
     return segments;
 }
 
+std::vector<compositor::MaterialLayer::MeanderPoint> BuildMeanderPoints(
+    const PathSettings& path, float sizeMeters, float spacingMeters) {
+    std::vector<compositor::MaterialLayer::MeanderPoint> result;
+    if (!std::isfinite(sizeMeters) || !std::isfinite(spacingMeters)) return result;
+    sizeMeters = std::max(sizeMeters, 0.001f);
+    spacingMeters = std::max(spacingMeters, 0.01f);
+    for (const auto& strand : BuildPathStrands(path)) {
+        if (strand.closed || strand.edges.empty()) return {};
+        for (auto id : strand.points) if (path.EdgeCount(id) > 2) return {};
+        // 鎖の走査順は ID の順にも依存するので、エッジの向きへ揃える。
+        const bool forward = path.FindEdge(strand.edges.front())->from == strand.points.front();
+        for (size_t i = 0; i < strand.edges.size(); ++i) {
+            if ((path.FindEdge(strand.edges[i])->from == strand.points[i]) != forward) return {};
+        }
+        auto samples = SamplePathStrand(path, strand, 16);
+        if (!forward) std::reverse(samples.begin(), samples.end());
+        if (samples.size() < 2) continue;
+        std::vector<float> lengths(samples.size(), 0.0f);
+        for (size_t i = 0; i < samples.size(); ++i) {
+            const auto& p = samples[i];
+            if (!std::isfinite(p.u) || !std::isfinite(p.v) || !std::isfinite(p.heightOffsetMeters)) return {};
+            if (i) lengths[i] = lengths[i - 1] + std::hypot(p.u - samples[i - 1].u, p.v - samples[i - 1].v) * sizeMeters;
+        }
+        const float length = lengths.back();
+        if (length < 0.001f) continue;
+        const size_t count = static_cast<size_t>(std::clamp(std::ceil(length / spacingMeters) + 1.0f, 3.0f, 256.0f));
+        if (result.size() + count > 2048) return {};
+        size_t segment = 1;
+        for (size_t i = 0; i < count; ++i) {
+            const float along = static_cast<float>(i) / static_cast<float>(count - 1);
+            if (i == 0 || i + 1 == count) {
+                const auto& endpoint = i == 0 ? samples.front() : samples.back();
+                result.push_back({endpoint.u, endpoint.v, endpoint.heightOffsetMeters, along});
+                continue;
+            }
+            const float distance = along * length;
+            while (segment + 1 < samples.size() && lengths[segment] < distance) ++segment;
+            const float t = std::clamp((distance - lengths[segment - 1]) /
+                std::max(lengths[segment] - lengths[segment - 1], 1e-8f), 0.0f, 1.0f);
+            const auto& a = samples[segment - 1];
+            const auto& b = samples[segment];
+            result.push_back({Lerp(a.u, b.u, t), Lerp(a.v, b.v, t),
+                Lerp(a.heightOffsetMeters, b.heightOffsetMeters, t), along});
+        }
+    }
+    return result;
+}
+
 }  // namespace tg::graph
