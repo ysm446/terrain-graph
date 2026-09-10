@@ -199,6 +199,10 @@ float4 IntegrateCloud(float3 origin, float3 ray, float limit, AtmosphericParamet
     float3 skyAbove=cloudLighting.Load(int3(0,0,0)).rgb*p.cloudSkylightIntensity;
     float3 skyBelow=cloudLighting.Load(int3(1,0,0)).rgb*p.cloudSkylightIntensity;
     float4 phases=float4(CloudPhase(mu,1),CloudPhase(mu,0.5),CloudPhase(mu,0.25),CloudPhase(mu,0.125));
+    // 寄与と消散を分離するオクターブ近似。0.85 は有限次数で失われる光の調整値。
+    // 単散乱は維持し、高次の等方化した太陽光を残す（設計資料 atmospheric-sky.md）。
+    const float contribution=0.85;
+    phases*=float4(1,contribution,contribution*contribution,contribution*contribution*contribution);
     float transmission=1; float3 radiance=0;
     [loop] for(uint i=0;i<count && transmission>0.005;++i) {
         float3 pos=origin+ray*(start+(i+0.5)*stepLength);
@@ -210,14 +214,14 @@ float4 IntegrateCloud(float3 origin, float3 ray, float limit, AtmosphericParamet
             CloudOpticalDepth(pos,float3(0,1,0),p,noiseIndex,8),
             CloudOpticalDepth(pos,float3(0,-1,0),p,noiseIndex,8));
         float sunDepth=depths.x, topDepth=depths.y, bottomDepth=depths.z;
-        // 多重散乱のオクターブ近似。高次ほど寄与・消散・方向性を弱める。
+        // 多重散乱のオクターブ近似。太陽光の寄与は上で位相へ適用済み。
         // 地形の直射影にはこの散乱光を使わず、元の Beer 透過率だけを使う。
         float3 light=0;
         [unroll] for(uint order=0;order<4;++order) {
             float attenuation=exp2(-(float)order);
             float weight=attenuation;
-            light+=weight*(sunlight*phases[order]*exp(-sunDepth*attenuation)
-                +0.5*(skyAbove*exp(-topDepth*attenuation)+skyBelow*exp(-bottomDepth*attenuation)));
+            light+=sunlight*phases[order]*exp(-sunDepth*attenuation)
+                +weight*0.5*(skyAbove*exp(-topDepth*attenuation)+skyBelow*exp(-bottomDepth*attenuation));
         }
         // 区間内一定の密度・光源に対する解析積分（Beer-Lambert）。
         float opacity=1-exp(-density*p.extinction*stepLength);
