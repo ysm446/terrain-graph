@@ -1316,6 +1316,9 @@ void Application::DrawGraphPanel() {
             }
             changed |= ui::PropertyFloat("消散係数", &cloud->extinction, 0.0001f, 0.03f, defaults.extinction,
                                          "光の減衰（1/m）。大きくすると雲の内部と雲影が濃くなります。", "%.4f", ImGuiSliderFlags_Logarithmic);
+            const char* noiseTypes[] = {"Perlin fBM", "Perlin-Worley"};
+            changed |= ui::PropertyCombo("ノイズの種類", &cloud->noiseType, noiseTypes, 2, defaults.noiseType,
+                "Perlin fBM は従来の模様。Perlin-Worley は丸い細胞状の膨らみと、Worley による細部の崩しを使います。雲本体と影に共通です。");
             changed |= ui::PropertyFloat("模様の大きさ", &cloud->noiseScale, 10.0f, 20000.0f, defaults.noiseScale,
                                          "ノイズの周期（m）。大きいほど大きな膨らみになります。", "%.1f m", ImGuiSliderFlags_Logarithmic);
             if (isCloudLayer) {

@@ -84,8 +84,9 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
         const bool settled = !requested.animateClouds &&
             std::chrono::duration<float>(now-m_lastCloudEdit).count() >= 0.3f;
         // 本体・影は即時反映。再生・ドラッグ中は環境の GPU 待機を挟まない。
-        // 空の変更とシード変更だけは即時にキャッシュを更新する。
+        // 空・シード・ノイズ種類の変更は再生中でも環境へ即時に反映する。
         const bool sourceChanged = settings.localCloud != baked.localCloud || settings.cloudSource != baked.cloudSource ||
+            settings.cloudNoiseType != baked.cloudNoiseType ||
             (baked.distributionMask == UINT32_MAX-1 && settings.distributionMask != UINT32_MAX-1);
         if (!skyChanged && !updateCells && !sourceChanged && !(m_cloudEnvironmentDirty && settled)) {
             m_applied = settings;
@@ -99,7 +100,7 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
     if (!m_initialized) {
         if (!m_environment.Initialize(device, pipelines, false) ||
             !CreateTarget(device, m_multiScatter, 32, DXGI_FORMAT_R16G16B16A16_FLOAT) ||
-            !CreateTarget(device, m_noise, 64, DXGI_FORMAT_R16_FLOAT, 64) ||
+            !CreateTarget(device, m_noise, 64, DXGI_FORMAT_R16G16B16A16_FLOAT, 64) ||
             !CreateTarget(device, m_skyView, 512, DXGI_FORMAT_R16G16B16A16_FLOAT, 1, 256) ||
             !CreateTarget(device, m_cloudLighting, 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 1) ||
             !CreateTarget(device, m_cloudCells, 10, DXGI_FORMAT_R32G32B32A32_FLOAT, 3)) {

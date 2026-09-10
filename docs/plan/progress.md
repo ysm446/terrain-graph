@@ -1,9 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-11 06:31
+更新日時: 2026-09-11 08:19
 
 ## 現在の状況
+
+**雲のノイズ選択を追加（2026-09-11 08:19）。** 雲塊・雲層と旧形式の大気設定で Perlin fBM / Perlin-Worley を選択可能。旧設定の見た目を維持し、保存に対応。Debug / Release ビルド・グラフテスト・DXC 12 エントリ・Release 描画・保存再読み込みを確認。UI 撮影済みだが選択欄がスクロール範囲外で、直接操作は Computer Use のアプリ承認が得られず未確認。Debug GPU 検証は起動処理に時間がかかり未完了。詳細は [雲の仕様](../design/volumetric-clouds.md)。確認用ビルドは `build/cloud-noise/Release/terrain_graph.exe`。
 
 **Meandering Rivers を追加（2026-09-11 06:31）。** 地形と Path を入力に、GPU で蛇行・流域整形・河床掘削を行う。
 Result と River マスクに対応。独立した開いた Path が対象で、蛇行後の Path 出力・三日月湖・履歴は未対応。

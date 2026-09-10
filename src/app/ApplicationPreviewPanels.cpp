@@ -331,6 +331,12 @@ void Application::DrawLightingPanel() {
                     ui::PropertyFloat("厚さ", &sky.cloudThickness, 10.0f, 6000.0f, defaults.cloudThickness,
                                       "雲層の上下方向の厚さ（m）。雲の上端は「雲底 + 厚さ」です。\n"
                                       "厚くすると光が通る雲の距離が増え、同じ消散係数でも光を遮りやすくなります。", "%.0f m");
+                    const char* noiseTypes[] = {"Perlin fBM", "Perlin-Worley"};
+                    int noiseType = static_cast<int>(sky.cloudNoiseType);
+                    if (ui::PropertyCombo("ノイズの種類", &noiseType, noiseTypes, 2,
+                        static_cast<int>(defaults.cloudNoiseType),
+                        "Perlin fBM は従来の模様。Perlin-Worley は丸い細胞状の膨らみを使います。"))
+                        sky.cloudNoiseType = static_cast<uint32_t>(noiseType);
                     ui::PropertyFloat("ノイズスケール", &sky.cloudScale, 10.0f, 40000.0f, defaults.cloudScale,
                                       "雲模様の水平方向の大きさ（m）。大きくすると大きな雲塊、小さくすると細かな雲になります。\n"
                                       "雲を描く範囲の端や、雲量を変える設定ではありません。", "%.0f m");

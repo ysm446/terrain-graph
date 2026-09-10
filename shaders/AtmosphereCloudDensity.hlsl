@@ -1,4 +1,4 @@
-// terrain-editor の周期 Perlin fBM を移植。64³ の密度を 2D 配列へ格納し、シード変更時だけ更新する。
+// 周期ノイズ 64³ を 2D 配列へ保存。R: 従来の Perlin、G: Perlin-Worley、B: 細部 Worley。
 
 cbuffer CloudVolumeConstants : register(b0)
 {
@@ -108,6 +108,27 @@ float Fbm3DPeriodic(float3 p, int s, int basePeriod)
     return maxAmp > 0.0f ? total / maxAmp : 0.0f;
 }
 
+// 特徴点の乱数だけを周期で折り返す。距離は折り返す前の隣接セルから測る。
+// レイマーチ中には評価せず、ノイズ生成時にだけ使う。
+float InvertedWorley(float3 uvw, int period, int s) {
+    float3 p = uvw * period;
+    int3 cell = int3(floor(p));
+    float3 local = frac(p);
+    float nearest = 1.0;
+    [loop] for (int z = -1; z <= 1; ++z)
+    [loop] for (int y = -1; y <= 1; ++y)
+    [loop] for (int x = -1; x <= 1; ++x) {
+        int3 offset = int3(x, y, z);
+        int3 wrapped = int3(WrapInt(cell.x+x, period), WrapInt(cell.y+y, period), WrapInt(cell.z+z, period));
+        uint a = Hash4(wrapped.x, wrapped.y, wrapped.z, s);
+        uint b = Hash4(wrapped.x, wrapped.y, wrapped.z, s + 1013);
+        float3 feature = float3(a & 65535u, a >> 16, b & 65535u) / 65535.0;
+        float3 delta = float3(offset) + feature - local;
+        nearest = min(nearest, dot(delta, delta));
+    }
+    return 1 - sqrt(nearest);
+}
+
 [numthreads(8, 8, 1)]
 void CSGenerate(uint3 dtid : SV_DispatchThreadID)
 {
@@ -126,6 +147,17 @@ void CSGenerate(uint3 dtid : SV_DispatchThreadID)
     float n = baseShape * 0.7 + detail * 0.3;
     n = saturate(n * 0.5 + 0.5);
 
-    RWTexture2DArray<float> Output = ResourceDescriptorHeap[outputIndex];
-    Output[dtid] = n;
+    float w4 = InvertedWorley(uvw, 4, seed + 47);
+    float w8 = InvertedWorley(uvw, 8, seed + 59);
+    float w16 = InvertedWorley(uvw, 16, seed + 71);
+    float w32 = InvertedWorley(uvw, 32, seed + 83);
+    float lowWorley = w4 * 0.625 + w8 * 0.25 + w16 * 0.125;
+    float highWorley = w8 * 0.625 + w16 * 0.25 + w32 * 0.125;
+    float perlin = saturate(baseShape * 1.5 + 0.5);
+    // Perlin の低い部分を Worley の丸い特徴点で膨らませる。
+    // 値域を調整して、全域が高密度にならないようにする。
+    float perlinWorley = saturate((lerp(perlin, 1.0, lowWorley) - 0.2) / 0.8);
+    float erosion = saturate((highWorley - 0.15) / 0.7);
+    RWTexture2DArray<float4> Output = ResourceDescriptorHeap[outputIndex];
+    Output[dtid] = float4(n, perlinWorley, erosion, 0);
 }

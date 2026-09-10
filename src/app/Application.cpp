@@ -369,6 +369,7 @@ int Application::Run() {
             cloudSettings.radiusZ = cloud.depth * 0.5f;
             cloudSettings.fieldRadius = std::max(cloudSettings.radiusX, cloudSettings.radiusZ);
             cloudSettings.cloudScale = cloud.noiseScale;
+            cloudSettings.cloudNoiseType = static_cast<uint32_t>(std::clamp(cloud.noiseType, 0, 1));
             cloudSettings.extinction = cloud.extinction;
             cloudSettings.shapeStrength = cloud.shapeStrength;
             if (compiledCloud.layer) cloudSettings.opticalDepthIndex = UINT32_MAX;

@@ -202,6 +202,7 @@ struct CloudNodeSettings {
     float width = 1200.0f, thickness = 400.0f, depth = 800.0f;
     float extinction = 0.012f;
     float noiseScale = 800.0f;
+    int noiseType = 0; // 0: Perlin fBM、1: Perlin-Worley。
     float shapeStrength = 0.65f;
     float detailStrength = 0.3f;
     float edgeSoftness = 0.2f;

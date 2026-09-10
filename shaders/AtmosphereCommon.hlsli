@@ -14,18 +14,26 @@ struct AtmosphericParameters {
     uint localCloud; float radiusX; float radiusZ; float edgeSoftness;
     float shapeStrength; float detailStrength; uint cloudMotionMode; uint cloudSource;
     float flatCloudBottom; float cloudSkylightIntensity; float cloudBodyOffsetX; float cloudBodyOffsetZ;
-    float indirectLight; float ambientLight; uint cloudCellIndex; float lightingPadding;
+    float indirectLight; float ambientLight; uint cloudCellIndex; uint cloudNoiseType;
 };
 float3 AtmosphereSun(AtmosphericParameters p) {
     return float3(cos(p.elevation) * sin(p.azimuth), sin(p.elevation), cos(p.elevation) * cos(p.azimuth));
 }
 // ローカル雲は全軸で同じワールド周期を使う。Y も厚さから独立した 3D ノイズ。
-float SampleCloudNoise(float3 uvw, uint noiseIndex) {
-    Texture2DArray<float> noise = ResourceDescriptorHeap[noiseIndex];
+float SampleCloudNoise(float3 uvw, uint noiseIndex, uint channel = 0) {
+    Texture2DArray<float4> noise = ResourceDescriptorHeap[noiseIndex];
     float z = frac(uvw.z) * 64 - 0.5;
-    float a = noise.SampleLevel(g_samplerLinearWrap, float3(uvw.xy, ((int)floor(z)+64)%64), 0);
-    float b = noise.SampleLevel(g_samplerLinearWrap, float3(uvw.xy, ((int)floor(z)+65)%64), 0);
+    float a = noise.SampleLevel(g_samplerLinearWrap, float3(uvw.xy, ((int)floor(z)+64)%64), 0)[channel];
+    float b = noise.SampleLevel(g_samplerLinearWrap, float3(uvw.xy, ((int)floor(z)+65)%64), 0)[channel];
     return lerp(a,b,frac(z));
+}
+float CloudShapeNoise(float3 uvw, AtmosphericParameters p, uint noiseIndex) {
+    if (p.cloudNoiseType == 1) return SampleCloudNoise(uvw, noiseIndex, 1);
+    return saturate((SampleCloudNoise(uvw, noiseIndex) - 0.5) * 3 + 0.5);
+}
+float CloudDetailNoise(float3 uvw, AtmosphericParameters p, uint noiseIndex) {
+    if (p.cloudNoiseType == 1) return SampleCloudNoise(uvw, noiseIndex, 2);
+    return saturate((SampleCloudNoise(uvw, noiseIndex) - 0.5) * 3 + 0.5);
 }
 float3 LocalCloudCenter(AtmosphericParameters p) {
     return float3(p.fieldCenterX, p.cloudBottom + p.cloudThickness * 0.5, p.fieldCenterZ);
@@ -52,8 +60,8 @@ float LocalCloudDensity(float3 position, AtmosphericParameters p, uint noiseInde
     if (edge <= 0) return 0;
     float3 wind = p.cloudMotionMode != 0 ? float3(p.windOffsetX,0,p.windOffsetZ) : 0;
     float3 uvw = (offset-wind) / p.cloudScale + 0.5;
-    float shape = saturate((SampleCloudNoise(uvw,noiseIndex)-0.5)*3+0.5);
-    float detail = saturate((SampleCloudNoise(uvw*3.1+0.173,noiseIndex)-0.5)*3+0.5);
+    float shape = CloudShapeNoise(uvw,p,noiseIndex);
+    float detail = CloudDetailNoise(uvw*3.1+0.173,p,noiseIndex);
     // 輪郭は交差区間の内側だけを削る。
     float density = saturate((edge - p.shapeStrength*(1-shape)*0.65) / p.edgeSoftness);
     density = saturate(density - p.detailStrength*(1-detail)*(1-density));
@@ -152,8 +160,8 @@ float CloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex) {
         float body=CloudLayerBody(bodyPosition,h,p,distribution);
         if(body<=0) return 0;
         // 表面だけでなく中規模の入り江や切れ目も作り、丸い土台を残さない。
-        float shape = saturate((SampleCloudNoise(uvw*2+0.317,noiseIndex)-0.5)*3+0.5);
-        float detail = saturate((SampleCloudNoise(uvw*3.1+0.173,noiseIndex)-0.5)*3+0.5);
+        float shape = CloudShapeNoise(uvw*2+0.317,p,noiseIndex);
+        float detail = CloudDetailNoise(uvw*3.1+0.173,p,noiseIndex);
         float profile = saturate((1-q.y)/max(p.edgeSoftness,0.01));
         if (p.flatCloudBottom != 0)
             profile = CloudBottomFade(h/max(p.flatCloudBottom,1e-5),shape,detail)
@@ -165,13 +173,9 @@ float CloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex) {
     }
     float h = (position.y - p.cloudBottom) / p.cloudThickness;
     if (h <= 0 || h >= 1 || p.clouds == 0 || p.coverage <= 0) return 0;
-    Texture2DArray<float> noise = ResourceDescriptorHeap[noiseIndex];
     float2 wind = float2(p.windOffsetX,p.windOffsetZ);
     float3 uvw = float3((position.x-wind.x) / p.cloudScale, h, (position.z-wind.y) / p.cloudScale);
-    float z = frac(uvw.z) * 64 - 0.5;
-    float a = noise.SampleLevel(g_samplerLinearWrap, float3(uvw.xy, ((int)floor(z)+64)%64), 0);
-    float b = noise.SampleLevel(g_samplerLinearWrap, float3(uvw.xy, ((int)floor(z)+65)%64), 0);
-    float n = lerp(a,b,frac(z));
+    float n = SampleCloudNoise(uvw, noiseIndex, p.cloudNoiseType == 1 ? 1 : 0);
     float falloff = min(p.fieldFalloff, p.fieldRadius);
     float fieldFade = saturate((p.fieldRadius-length(position.xz-float2(p.fieldCenterX,p.fieldCenterZ)))/max(falloff,1));
     // 移植元の積雲プロファイル。高さの分布を適用してから雲量の閾値を引く。

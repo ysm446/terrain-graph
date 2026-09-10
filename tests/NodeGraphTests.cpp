@@ -96,6 +96,12 @@ void RunNodeGraphTests() {
         const auto cloud = graph.CompileCloud();
         Check(cloud.maskPin == maskPin && cloud.maskNode == mask, "分布元のピンを保持する");
         Check(cloud.cloud.width == 12000.0f && cloud.cloud.motionMode == 1, "雲層は広い固定範囲が既定");
+        Check(cloud.cloud.noiseType == 0, "雲層の既定ノイズは従来の Perlin fBM");
+        auto& layerSettings = std::get<tg::graph::CloudNodeSettings>(graph.FindMutableNode(layer)->settings);
+        layerSettings.noiseType = 1;
+        graph.MarkCloudDirty();
+        Check(graph.CompileCloud().cloud.noiseType == 1 && graph.CompileCloud().maskPin == maskPin,
+            "Perlin-Worley の選択と分布マスクを同時に描画へ渡す");
         const auto compiled = graph.CompileLayersTo(cloud.maskNode, cloud.maskPin);
         Check(!compiled.maskOps.empty(), "分布マスクを既存の評価プログラムへ変換できる");
         Check(!graph.CanCreateLink(layerPin, inputPin), "Volume を分布へ接続しない");
@@ -123,10 +129,12 @@ void RunNodeGraphTests() {
         auto& settings = std::get<tg::graph::CloudNodeSettings>(graph.FindMutableNode(cloudId)->settings);
         settings.centerY = -150.0f;
         settings.width = 900.0f;
+        settings.noiseType = 1;
         settings.enabled = false;
         const auto compiled = graph.CompileCloud();
         Check(compiled.cloud.centerY == -150.0f && compiled.cloud.width == 900.0f && !compiled.cloud.enabled,
               "位置・寸法・有効状態が描画用設定へ伝わる");
+        Check(compiled.cloud.noiseType == 1, "雲塊にも Perlin-Worley の選択が伝わる");
         Check(graph.CreateNode(NodeKind::CloudOutput) == 0, "雲出力は重複して作れない");
         Check(graph.CompileLayers().layers.size() == 1, "雲の接続は地形の出力へ混入しない");
         graph.DeleteNode(cloudId);

@@ -161,6 +161,7 @@ const char* const kScatterOrientationNames[] = {"flat", "followGround", "slopeOr
 const char* const kRockStyleNames[] = {"classic", "polygonal", "shard"};
 const char* const kTonemapNames[] = {"none", "reinhard", "aces"};
 const char* const kSkySourceNames[] = {"procedural", "hdri"};
+const char* const kCloudNoiseNames[] = {"perlinFbm", "perlinWorley"};
 const char* const kApertureShapeNames[] = {"circle", "triangle", "hexagon", "octagon"};
 
 template <size_t N>
@@ -1426,6 +1427,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["cloud"]["noiseScale"] = cloud->noiseScale;
             item["cloud"]["shapeStrength"] = cloud->shapeStrength;
             item["cloud"]["detailStrength"] = cloud->detailStrength;
+            item["cloud"]["noiseType"] = EnumName(kCloudNoiseNames, static_cast<uint32_t>(cloud->noiseType));
             item["cloud"]["edgeSoftness"] = cloud->edgeSoftness;
             item["cloud"]["flatBottom"] = cloud->flatBottom;
             item["cloud"]["bottomFlatness"] = cloud->bottomFlatness;
@@ -1595,6 +1597,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.extinction = std::clamp(ReadFloat(*cloud, "extinction", settings.extinction), 0.0001f, 0.03f);
                     settings.shapeStrength = std::clamp(ReadFloat(*cloud, "shapeStrength", settings.shapeStrength), 0.0f, 1.0f);
                     settings.detailStrength = std::clamp(ReadFloat(*cloud, "detailStrength", settings.detailStrength), 0.0f, 1.0f);
+                    settings.noiseType = static_cast<int>(EnumValue(kCloudNoiseNames, *cloud, "noiseType", 0));
                     settings.edgeSoftness = std::clamp(ReadFloat(*cloud, "edgeSoftness", settings.edgeSoftness), 0.02f, 1.0f);
                     settings.flatBottom = ReadBool(*cloud, "flatBottom", false);
                     settings.bottomFlatness = std::clamp(ReadFloat(*cloud, "bottomFlatness", settings.bottomFlatness), 0.0f, 1.0f);
@@ -1735,6 +1738,7 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     atmosphereNode["cloudBottom"] = atmosphere.cloudBottom;
     atmosphereNode["cloudThickness"] = atmosphere.cloudThickness;
     atmosphereNode["cloudScale"] = atmosphere.cloudScale;
+    atmosphereNode["cloudNoiseType"] = EnumName(kCloudNoiseNames, atmosphere.cloudNoiseType);
     atmosphereNode["skylightIntensity"] = renderer.AtmosphericEnvironmentIntensity();
     atmosphereNode["animateClouds"] = atmosphere.animateClouds != 0;
     atmosphereNode["windSpeed"] = atmosphere.windSpeed;
@@ -1826,6 +1830,7 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
         atmosphere.lowerHemisphere = ReadString(source, "lowerHemisphere", "groundReflection") == "skyExtension" ? 0u : 1u;
         atmosphere.groundAlbedo = std::clamp(ReadFloat(source, "groundAlbedo", defaults.groundAlbedo), 0.0f, 1.0f);
         atmosphere.coverage = std::clamp(ReadFloat(source, "coverage", defaults.coverage), 0.0f, 1.0f);
+        atmosphere.cloudNoiseType = EnumValue(kCloudNoiseNames, source, "cloudNoiseType", defaults.cloudNoiseType);
         atmosphere.extinction = std::clamp(ReadFloat(source, "extinction", defaults.extinction), .0001f, .03f);
         atmosphere.cloudBottom = std::clamp(ReadFloat(source, "cloudBottom", defaults.cloudBottom), -10000.0f, 10000.0f);
         atmosphere.indirectLight = std::clamp(ReadFloat(source, "indirectLight", defaults.indirectLight), 0.0f, 5.0f);
