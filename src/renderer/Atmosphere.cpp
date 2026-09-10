@@ -59,6 +59,13 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
         const double period = requested.cloudScale * (requested.localCloud ? 10.0 : 1.0);
         settings.windOffsetX = static_cast<float>(std::fmod(m_motion.x, period));
         settings.windOffsetZ = static_cast<float>(std::fmod(m_motion.z, period));
+        if (requested.localCloud == 2) {
+            settings.cloudBodyOffsetX = settings.windOffsetX;
+            settings.cloudBodyOffsetZ = settings.windOffsetZ;
+            // 積算済みの相対移動を使い、速度比の編集時に表面を飛ばさない。
+            settings.windOffsetX = static_cast<float>(std::fmod(m_motion.x-m_motion.driftX, period));
+            settings.windOffsetZ = static_cast<float>(std::fmod(m_motion.z-m_motion.driftZ, period));
+        }
     }
     const bool changed = !m_ready || std::memcmp(&requested, &m_requested, sizeof(requested)) != 0;
     const auto& baked = m_environmentSettings;

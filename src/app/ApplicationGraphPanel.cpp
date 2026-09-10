@@ -1238,7 +1238,7 @@ void Application::DrawGraphPanel() {
             const char* modes[] = {"雲全体を移動", "範囲内で模様を流す", "流れながら変化"};
             changed |= ui::PropertyCombo("動かし方", &cloud->motionMode, modes, 3, defaults.motionMode,
                 "全体移動、範囲内の移流、流れながら変化を選べます。変化では模様を雲より遅く進めます。切替時は開始位置へ戻ります。");
-            if (cloud->motionMode == 2) {
+            if (cloud->motionMode == 2 || (isCloudLayer && cloud->motionMode == 1)) {
                 changed |= ui::PropertyFloat("模様の速度比", &cloud->noiseSpeedRatio, 0.0f, 1.0f, defaults.noiseSpeedRatio,
                     "1 で雲と同じ速度（形を維持）、0 で模様を空間に固定。小さいほど移動に伴う形の変化が速くなります。", "%.2f");
             }
@@ -1262,18 +1262,18 @@ void Application::DrawGraphPanel() {
             changed |= ui::PropertyBool("有効", &cloud->enabled, defaults.enabled);
             changed |= ui::PropertyFloat("中心 X", &cloud->centerX, -10000.0f, 10000.0f, defaults.centerX,
                                          "雲の中心位置（m）。地形原点からの位置です。", "%.1f m");
-            changed |= ui::PropertyFloat("中心高度", &cloud->centerY, -10000.0f, 10000.0f, defaults.centerY,
-                                         "雲の中心の高さ（m）。低くすると山腹や谷へ移ります。", "%.1f m");
             changed |= ui::PropertyFloat("中心 Z", &cloud->centerZ, -10000.0f, 10000.0f, defaults.centerZ,
                                          "雲の中心位置（m）。地形原点からの位置です。", "%.1f m");
+            changed |= ui::PropertyFloat("中心高度", &cloud->centerY, -10000.0f, 10000.0f, defaults.centerY,
+                                         "雲の中心の高さ（m）。低くすると山腹や谷へ移ります。", "%.1f m");
             changed |= ui::PropertyFloat("横幅", &cloud->width, 10.0f, 20000.0f, defaults.width,
                                          "雲の X 方向の全幅。大きくすると横へ広がります。", "%.1f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat("奥行き", &cloud->depth, 10.0f, 20000.0f, defaults.depth,
+                                         "雲の Z 方向の全幅。大きくすると奥へ広がります。", "%.1f m", ImGuiSliderFlags_Logarithmic);
             changed |= ui::PropertyFloat("厚さ", &cloud->thickness, 10.0f, 20000.0f, defaults.thickness,
                                          "雲の上下方向の全幅。中心高度の上下へ半分ずつ広がります。", "%.1f m", ImGuiSliderFlags_Logarithmic);
             changed |= ui::PropertyBool("平らな雲底", &cloud->flatBottom, defaults.flatBottom,
                 "底を中心高度 − 厚さの半分にそろえ、境界を薄くぼかします。上部の凹凸は残します。");
-            changed |= ui::PropertyFloat("奥行き", &cloud->depth, 10.0f, 20000.0f, defaults.depth,
-                                         "雲の Z 方向の全幅。大きくすると奥へ広がります。", "%.1f m", ImGuiSliderFlags_Logarithmic);
             changed |= ui::PropertyFloat("消散係数", &cloud->extinction, 0.0001f, 0.03f, defaults.extinction,
                                          "光の減衰（1/m）。大きくすると雲の内部と雲影が濃くなります。", "%.4f", ImGuiSliderFlags_Logarithmic);
             changed |= ui::PropertyFloat("模様の大きさ", &cloud->noiseScale, 10.0f, 20000.0f, defaults.noiseScale,

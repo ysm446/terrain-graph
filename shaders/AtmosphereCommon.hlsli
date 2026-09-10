@@ -13,7 +13,7 @@ struct AtmosphericParameters {
     float windOffsetZ; uint lowerHemisphere; float noiseSpeedRatio; uint distributionMask;
     uint localCloud; float radiusX; float radiusZ; float edgeSoftness;
     float shapeStrength; float detailStrength; uint cloudMotionMode; uint cloudSource;
-    uint flatCloudBottom; float cloudSkylightIntensity; uint2 padding;
+    uint flatCloudBottom; float cloudSkylightIntensity; float cloudBodyOffsetX; float cloudBodyOffsetZ;
 };
 float3 AtmosphereSun(AtmosphericParameters p) {
     return float3(cos(p.elevation) * sin(p.azimuth), sin(p.elevation), cos(p.elevation) * cos(p.azimuth));
@@ -58,6 +58,32 @@ float LocalCloudDensity(float3 position, AtmosphericParameters p, uint noiseInde
     density = saturate(density - p.detailStrength*(1-detail)*(1-density));
     return density * (p.flatCloudBottom != 0 ? CloudBottomFade(h,shape,detail) : 1);
 }
+// 雲層の塊配置。移流の巻き戻し周期（模様の大きさの 10 倍）に合わせる。
+float3 CloudCellRandom(int2 cell, uint seed) {
+    uint2 wrapped=uint2((cell%10+10)%10);
+    uint value=wrapped.x*1597334677u+wrapped.y*3812015801u+seed*2798796415u;
+    value=(value^(value>>16))*2246822519u;
+    uint a=(value^(value>>13))*3266489917u;
+    uint b=(a^(a>>16))*2246822519u;
+    uint c=(b^(b>>13))*3266489917u;
+    return float3(a&65535u,b&65535u,c&65535u)/65535.0;
+}
+float CloudLayerBody(float2 position, float h, AtmosphericParameters p, float distribution) {
+    int2 cell=int2(floor(position));
+    float body=-1;
+    // 半径は 1 セル未満。隣接セルも評価し、セル境界で塊を切らない。
+    [unroll] for(int z=-1;z<=1;++z) [unroll] for(int x=-1;x<=1;++x) {
+        int2 neighbor=cell+int2(x,z);
+        float3 random=CloudCellRandom(neighbor,p.seed);
+        float2 center=float2(neighbor)+0.5+(random.xy-0.5)*0.9;
+        float radius=(0.65+0.3*sqrt(p.coverage))*(0.6+0.4*random.z);
+        float2 horizontal=(position-center)/(radius*float2(0.7+0.3*random.y,1));
+        float vertical=(p.flatCloudBottom!=0 ? h : 2*h-1)/(0.5+0.5*random.z);
+        body=max(body,1-length(float3(horizontal,vertical)));
+    }
+    // マスクの灰色は塊の輪郭を縮める。内部の密度を一律には薄めない。
+    return body-(1-sqrt(p.coverage*distribution));
+}
 // 64 枚の 2D 配列で周期 3D 密度を持つ。XY はハードウェア補間、Z のみ手動補間。
 float CloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex) {
     if (p.clouds == 0) return 0;
@@ -78,16 +104,19 @@ float CloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex) {
         float3 noiseOffset = offset;
         if (p.flatCloudBottom != 0) noiseOffset.y = (max(h,0.12)-0.5)*p.cloudThickness;
         float3 uvw = (noiseOffset-float3(p.windOffsetX,0,p.windOffsetZ))/p.cloudScale+0.5;
-        float shape = SampleCloudNoise(uvw,noiseIndex);
-        float detail = SampleCloudNoise(uvw*3.1+0.173,noiseIndex);
+        float body=CloudLayerBody((offset.xz-float2(p.cloudBodyOffsetX,p.cloudBodyOffsetZ))/p.cloudScale,h,p,distribution);
+        if(body<=0) return 0;
+        // 密度のある塊の表面だけを削る。ノイズそのものを雲の密度にはしない。
+        float shape = saturate((SampleCloudNoise(uvw,noiseIndex)-0.5)*3+0.5);
+        float detail = saturate((SampleCloudNoise(uvw*3.1+0.173,noiseIndex)-0.5)*3+0.5);
         float profile = saturate((1-q.y)/max(p.edgeSoftness,0.01));
         if (p.flatCloudBottom != 0)
-            profile = CloudBottomFade(h,saturate((shape-0.5)*3+0.5),saturate((detail-0.5)*3+0.5))
+            profile = CloudBottomFade(h,shape,detail)
                 *saturate(2*(1-h)/max(p.edgeSoftness,0.01));
         float edge = saturate((1-max(q.x,q.z))/max(p.edgeSoftness,0.01));
-        float density = saturate((shape-(1-p.coverage))/max(p.coverage,0.001));
+        float density = saturate((body-0.25*(1-shape))/max(p.edgeSoftness,0.01));
         density = saturate(density-p.detailStrength*(1-detail)*(1-density));
-        return density * profile * edge * distribution;
+        return density * profile * edge;
     }
     float h = (position.y - p.cloudBottom) / p.cloudThickness;
     if (h <= 0 || h >= 1 || p.clouds == 0 || p.coverage <= 0) return 0;
