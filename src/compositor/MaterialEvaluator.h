@@ -440,6 +440,13 @@ private:
         const MaterialStack& stack, uint32_t maskIndex);
     bool ApplyLakeMask(rhi::Device& device, rhi::PipelineCache& cache,
         ID3D12GraphicsCommandList* commandList, const MaskOp& op, rhi::GpuTexture& target, bool enabled);
+    struct FlowlineResources {
+        rhi::GpuTexture particles, strength, additions, deposits;
+        uint32_t resolution = 0, particleResolution = 0;
+    } m_flowline;
+    bool ApplyFlowlineMask(rhi::Device& device, rhi::PipelineCache& cache,
+        ID3D12GraphicsCommandList* commandList, const MaskOp& op,
+        const MaterialStack& stack, rhi::GpuTexture& target);
     RiverResources m_river;
     DropletResources m_droplet;
     MultiScaleErosionResources m_multiScaleErosion;

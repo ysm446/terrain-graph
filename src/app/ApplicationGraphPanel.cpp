@@ -62,6 +62,7 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
             return ImVec4(0.72f, 0.72f, 0.72f, 1.0f);
         case graph::NodeKind::MaskNoise:
             return ImVec4(0.68f, 0.72f, 0.62f, 1.0f);
+        case graph::NodeKind::MaskFlowline:
         case graph::NodeKind::MaskFluvial:
             return ImVec4(0.55f, 0.68f, 0.74f, 1.0f);
         case graph::NodeKind::MaskHeight:
@@ -880,6 +881,7 @@ void Application::DrawGraphEditor() {
                         "Mask Image — 画像をマスクにする（白い所だけ乗る）");
         addNodeMenuItem(graph::NodeKind::MaskNoise,
                         "Mask Noise — ノイズをマスクにする（下地に依らない）");
+        addNodeMenuItem(graph::NodeKind::MaskFlowline, "Mask Flowline — 地形に沿う流跡をマスクにする");
         addNodeMenuItem(graph::NodeKind::MaskFluvial,
                         "Mask Fluvial — 下地の川筋をマスクにする");
         addNodeMenuItem(graph::NodeKind::MaskHeight,
@@ -1110,6 +1112,11 @@ void Application::DrawGraphPanel() {
                 hint = "下地に依らないノイズをマスクにする。"
                        "周波数は整数へ丸めて使うので、出力は必ずタイルする";
                 break;
+            case graph::NodeKind::MaskFlowline:
+                header = "流跡";
+                hint = "Base の地形に沿って粒子を流し、通った場所をマスクにする。地形の高さは変えない。"
+                       "Source は発生範囲と強さ、Outflow は途中で流れを弱める範囲を指定する";
+                break;
             case graph::NodeKind::MaskFluvial:
                 header = "川筋";
                 hint = "下地の高さから水の集まる所（川筋）を作る。"
@@ -1163,6 +1170,9 @@ void Application::DrawGraphPanel() {
             switch (selected->kind) {
                 case graph::NodeKind::MaskNoise:
                     changed |= DrawNoiseRows(mask->noise, graph::MaskNodeSettings().noise);
+                    break;
+                case graph::NodeKind::MaskFlowline:
+                    changed |= DrawFlowlineRows(mask->flowline);
                     break;
                 case graph::NodeKind::MaskFluvial:
                     changed |= DrawFluvialRows(mask->fluvial);

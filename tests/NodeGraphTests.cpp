@@ -503,8 +503,47 @@ void RunNodeGraphTests() {
               "Base 接続中の Path は自身の入力地形を表示する");
     }
 
+    Section("ノードグラフ — Mask Flowline の入力とマスク出力");
+    {
+        NodeGraph graph;
+        const auto baseId = graph.CreateNode(NodeKind::Heightmap);
+        const auto flowId = graph.CreateNode(NodeKind::MaskFlowline);
+        const auto sourceId = graph.CreateNode(NodeKind::MaskNoise);
+        const auto outflowId = graph.CreateNode(NodeKind::MaskNoise);
+        const auto* base = graph.FindNode(baseId);
+        const auto* flow = graph.FindNode(flowId);
+        const auto* source = graph.FindNode(sourceId);
+        const auto* outflow = graph.FindNode(outflowId);
+        Check(flow->inputs.size() == 3 && flow->outputs.size() == 1 &&
+              flow->outputs[0].valueType == tg::graph::ValueType::Mask,
+              "Base / Source / Outflow を受け、Mask だけを出す");
+        Check(graph.CreateLink(base->outputs[0].id, flow->inputs[0].id) &&
+              graph.CreateLink(source->outputs[0].id, flow->inputs[1].id) &&
+              graph.CreateLink(outflow->outputs[0].id, flow->inputs[2].id), "地形・発生範囲・流出域を接続できる");
+        auto& settings = std::get<tg::graph::MaskNodeSettings>(graph.FindMutableNode(flowId)->settings);
+        settings.flowline.numberOfFlows = 321;
+        settings.flowline.lengthMeters = 45.0f;
+        graph.MarkDirty();
+        const auto compiled = graph.CompileLayersTo(flowId);
+        Check(compiled.maskOps.size() == 3, "依存マスクを先にコンパイルする");
+        const auto& op = compiled.maskOps.back();
+        Check(op.kind == tg::compositor::MaskOpKind::Flowline && op.inputA == 0 && op.inputB == 1 &&
+              op.heightSourceLayer == 0 && op.flowline.numberOfFlows == 321 && op.flowline.lengthMeters == 45.0f,
+              "入力の順序・地形の参照位置・専用設定を保持する");
+        bool heightUnchanged = true;
+        for (size_t i = 1; i < compiled.layers.size(); ++i)
+            heightUnchanged &= (compiled.layers[i].channelMask & tg::compositor::ChannelBit(tg::compositor::Channel::Height)) == 0;
+        Check(heightUnchanged, "マスクのプレビューは地形の高さを書き換えない");
+        Check(!graph.CreateLink(flow->outputs[0].id, flow->inputs[1].id), "自分の出力を発生範囲に戻す循環を拒否する");
+        graph.DeleteNode(sourceId);
+        const auto disconnected = graph.CompileLayersTo(flowId);
+        Check(disconnected.maskOps.back().inputA == -1 && disconnected.maskOps.back().inputB == 0,
+              "発生範囲を外しても流出域の接続は保持する");
+    }
+
     Section("ノードグラフ — ハイト由来マスクの Base");
     constexpr std::array kHeightMaskKinds = {
+        NodeKind::MaskFlowline,
         NodeKind::MaskFluvial,
         NodeKind::MaskHeight,
         NodeKind::MaskSlope,

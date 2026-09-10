@@ -141,6 +141,13 @@ constexpr std::array<PinDefinition, 1> kSourceNodePins = {{
     {PinKind::Output, ValueType::Material, "Result"},
 }};
 
+constexpr std::array<PinDefinition, 4> kFlowlinePins = {{
+    {PinKind::Input, ValueType::Material, "Base"},
+    {PinKind::Input, ValueType::Mask, "Source"},
+    {PinKind::Input, ValueType::Mask, "Outflow"},
+    {PinKind::Output, ValueType::Mask, "Mask"},
+}};
+
 constexpr std::array<PinDefinition, 6> kLakePins = {{
     {PinKind::Input, ValueType::Material, "Base"},
     {PinKind::Input, ValueType::Mask, "Water Mask"},
@@ -181,7 +188,7 @@ constexpr std::array<PinDefinition, 2> kCloudLayerPins = {{
     {PinKind::Output, ValueType::Volume, "Volume"},
 }};
 
-constexpr std::array<NodeDefinition, 32> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 33> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -201,6 +208,7 @@ constexpr std::array<NodeDefinition, 32> kNodeDefinitions = {{
     {NodeKind::MaskImage, "maskImage", "Mask Image", kMaskSourcePins},
     {NodeKind::MaskNoise, "maskNoise", "Mask Noise", kMaskSourcePins},
     {NodeKind::MaskFluvial, "maskFluvial", "Mask Fluvial", kMaskFromHeightPins},
+    {NodeKind::MaskFlowline, "maskFlowline", "Mask Flowline", kFlowlinePins},
     {NodeKind::MaskHeight, "maskHeight", "Mask Height", kMaskFromHeightPins},
     {NodeKind::MaskSlope, "maskSlope", "Mask Slope", kMaskFromHeightPins},
     {NodeKind::MaskCurvature, "maskCurvature", "Mask Curvature", kMaskFromHeightPins},
@@ -255,7 +263,7 @@ bool IsSourceNodeKind(NodeKind kind) {
 
 bool IsMaskNodeKind(NodeKind kind) {
     return kind == NodeKind::MaskImage || kind == NodeKind::MaskNoise ||
-           kind == NodeKind::MaskFluvial || kind == NodeKind::MaskHeight ||
+           kind == NodeKind::MaskFlowline || kind == NodeKind::MaskFluvial || kind == NodeKind::MaskHeight ||
            kind == NodeKind::MaskSlope || kind == NodeKind::MaskCurvature ||
            kind == NodeKind::MaskLevels || kind == NodeKind::MaskBlur ||
            kind == NodeKind::MaskBlend || kind == NodeKind::MaskPath ||
@@ -264,7 +272,7 @@ bool IsMaskNodeKind(NodeKind kind) {
 
 // 下地の Height を読むマスクか。**チェーンのどこを読むか**を Base 入力で指す。
 bool IsHeightMaskNodeKind(NodeKind kind) {
-    return kind == NodeKind::MaskFluvial || kind == NodeKind::MaskHeight ||
+    return kind == NodeKind::MaskFlowline || kind == NodeKind::MaskFluvial || kind == NodeKind::MaskHeight ||
            kind == NodeKind::MaskSlope || kind == NodeKind::MaskCurvature;
 }
 
@@ -682,6 +690,7 @@ bool NodeGraph::MaskDependsOnHeight(const Node& maskNode, int depth) const {
         return false;
     }
     switch (maskNode.kind) {
+        case NodeKind::MaskFlowline:
         case NodeKind::MaskFluvial:
         case NodeKind::MaskHeight:
         case NodeKind::MaskSlope:
@@ -963,6 +972,10 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
             op.kind = compositor::MaskOpKind::Noise;
             op.noise = settings->noise;
             break;
+        case NodeKind::MaskFlowline:
+            op.kind = compositor::MaskOpKind::Flowline;
+            op.flowline = settings->flowline;
+            break;
         case NodeKind::MaskFluvial:
             op.kind = compositor::MaskOpKind::Fluvial;
             op.fluvial = settings->fluvial;
@@ -1043,6 +1056,10 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
         }
     }
 
+    if (maskNode.kind == NodeKind::MaskFlowline) {
+        op.inputA = EmitMaskOps(UpstreamMaskOf(maskNode, 0), defaultHeightLayer, layerNodes, ops, emitted, depth + 1);
+        op.inputB = EmitMaskOps(UpstreamMaskOf(maskNode, 1), defaultHeightLayer, layerNodes, ops, emitted, depth + 1);
+    }
     // 入力のマスクを先に焼く。**op は自分より前だけを指す。**
     if (maskNode.kind == NodeKind::MaskLevels || maskNode.kind == NodeKind::MaskBlur ||
         maskNode.kind == NodeKind::MaskBlend) {

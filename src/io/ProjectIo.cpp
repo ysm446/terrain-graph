@@ -329,6 +329,48 @@ uint32_t ReadChannelMask(const json& node, const char* key, uint32_t fallback) {
     return mask;
 }
 
+json WriteFlowline(const compositor::FlowlineParams& params) {
+    json value;
+    value["scatteringMode"] = params.scatteringMode;
+    value["numberOfFlows"] = params.numberOfFlows;
+    value["density"] = params.density;
+    value["lengthMeters"] = params.lengthMeters;
+    value["friction"] = params.friction;
+    value["reflectVelocity"] = params.reflectVelocity;
+    value["reflectionAmount"] = params.reflectionAmount;
+    value["allowPooling"] = params.allowPooling;
+    value["strength"] = params.strength;
+    value["volume"] = params.volume;
+    value["talusAngle"] = params.talusAngle;
+    value["talusFalloff"] = params.talusFalloff;
+    value["clampSource"] = params.clampSource;
+    value["showOutflow"] = params.showOutflow;
+    value["normalize"] = params.normalize;
+    return value;
+}
+
+compositor::FlowlineParams ReadFlowline(const json& parent) {
+    compositor::FlowlineParams params;
+    const auto* value = FindMember(parent, "flowline");
+    if (!value || !value->is_object()) return params;
+    params.scatteringMode = std::clamp(ReadInt(*value, "scatteringMode", params.scatteringMode), 0, 1);
+    params.numberOfFlows = std::clamp(ReadInt(*value, "numberOfFlows", params.numberOfFlows), 1, 1000000);
+    params.density = std::clamp(ReadFloat(*value, "density", params.density), 0.0f, 1.0f);
+    params.lengthMeters = std::clamp(ReadFloat(*value, "lengthMeters", params.lengthMeters), 0.0f, 1024.0f);
+    params.friction = std::clamp(ReadFloat(*value, "friction", params.friction), 0.01f, 1.0f);
+    params.reflectVelocity = ReadBool(*value, "reflectVelocity", params.reflectVelocity);
+    params.reflectionAmount = std::clamp(ReadFloat(*value, "reflectionAmount", params.reflectionAmount), 0.0f, 1.0f);
+    params.allowPooling = ReadBool(*value, "allowPooling", params.allowPooling);
+    params.strength = std::clamp(ReadFloat(*value, "strength", params.strength), 0.0f, 1.0f);
+    params.volume = std::clamp(ReadFloat(*value, "volume", params.volume), 0.0f, 1.0f);
+    params.talusAngle = std::clamp(ReadFloat(*value, "talusAngle", params.talusAngle), 0.0f, 90.0f);
+    params.talusFalloff = std::clamp(ReadFloat(*value, "talusFalloff", params.talusFalloff), 0.0f, 90.0f);
+    params.clampSource = ReadBool(*value, "clampSource", params.clampSource);
+    params.showOutflow = ReadBool(*value, "showOutflow", params.showOutflow);
+    params.normalize = ReadBool(*value, "normalize", params.normalize);
+    return params;
+}
+
 json WriteFluvial(const compositor::FluvialParams& fluvial) {
     json node;
     node["curve"] = EnumName(kFluvialCurveNames, static_cast<uint32_t>(fluvial.curve));
@@ -1332,6 +1374,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["map"] = WriteMapSlot(mask->map, writeTexture);
             item["noise"] = WriteNoise(mask->noise);
             item["fluvial"] = WriteFluvial(mask->fluvial);
+            item["flowline"] = WriteFlowline(mask->flowline);
             item["height"] = WriteHeightMask(mask->height);
             item["slope"] = WriteSlope(mask->slope);
             item["curvature"] = WriteCurvature(mask->curvature);
@@ -1489,6 +1532,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                 settings.map = ReadMapSlot(item, "map", readTexture);
                 settings.noise = ReadNoise(item, "noise", graph::MaskNodeSettings().noise);
                 settings.fluvial = ReadFluvial(item, "fluvial");
+                settings.flowline = ReadFlowline(item);
                 settings.height = ReadHeightMask(item, "height");
                 settings.slope = ReadSlope(item, "slope");
                 settings.curvature = ReadCurvature(item, "curvature");

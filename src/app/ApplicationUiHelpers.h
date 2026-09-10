@@ -615,6 +615,31 @@ inline bool DrawAreaMaskRows(compositor::AreaMaskParams& params) {
     return changed;
 }
 
+inline bool DrawFlowlineRows(compositor::FlowlineParams& p) {
+    const compositor::FlowlineParams d;
+    bool changed = false;
+    const char* modes[] = {"本数", "密度"};
+    changed |= ui::PropertyCombo("発生方法", &p.scatteringMode, modes, 2, d.scatteringMode);
+    if (p.scatteringMode == 0)
+        changed |= ui::PropertyInt("本数", &p.numberOfFlows, 1, 1000000, d.numberOfFlows);
+    else
+        changed |= ui::PropertyFloat("密度", &p.density, 0.0f, 1.0f, d.density, "解像度と地形の幅に応じた粒子密度", "%.4f");
+    changed |= ui::PropertyFloat("長さ", &p.lengthMeters, 0.0f, 1024.0f, d.lengthMeters, "粒子が移動する最大距離", "%.2f m");
+    changed |= ui::PropertyFloat("摩擦", &p.friction, 0.01f, 1.0f, d.friction, "大きいほど慣性が減り、局所的な傾斜に沿う");
+    changed |= ui::PropertyBool("障害物の回避", &p.reflectVelocity, d.reflectVelocity);
+    if (p.reflectVelocity)
+        changed |= ui::PropertyFloat("回避量", &p.reflectionAmount, 0.0f, 1.0f, d.reflectionAmount);
+    changed |= ui::PropertyBool("窪みに滞留", &p.allowPooling, d.allowPooling, "無効なら周囲より低い窪みで粒子を止める");
+    changed |= ui::PropertyFloat("強さ", &p.strength, 0.0f, 1.0f, d.strength, "流跡へ加算する強さ", "%.4f");
+    changed |= ui::PropertyFloat("流れの分散", &p.volume, 0.0f, 1.0f, d.volume, "既に流れた場所を避けて流跡を分散する", "%.4f");
+    changed |= ui::PropertyFloat("最小傾斜", &p.talusAngle, 0.0f, 90.0f, d.talusAngle, "これより緩い斜面では流跡を弱める", "%.1f 度");
+    changed |= ui::PropertyFloat("傾斜の遷移幅", &p.talusFalloff, 0.0f, 90.0f, d.talusFalloff, "最小傾斜の手前で流跡を徐々に弱める角度幅", "%.1f 度");
+    changed |= ui::PropertyBool("発生値を制限", &p.clampSource, d.clampSource, "Source 入力を 0〜1 に制限する");
+    changed |= ui::PropertyBool("流出域を加算", &p.showOutflow, d.showOutflow, "Outflow 入力を最終マスクに加える");
+    changed |= ui::PropertyBool("出力を圧縮", &p.normalize, d.normalize, "値 / (1 + 値) で 0〜1 に圧縮する。流出域の加算はその後に行う");
+    return changed;
+}
+
 inline bool DrawHeightMaskRows(compositor::HeightParams& height) {
     const compositor::HeightParams defaults;
     bool changed = false;

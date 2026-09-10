@@ -1,7 +1,7 @@
 # node-graph — ノードグラフの設計
 
 作成日時: 2026-09-02 12:50
-更新日時: 2026-09-10 17:46
+更新日時: 2026-09-10 22:12
 
 `src/graph/` とグラフパネル（`src/app/ApplicationGraphPanel.cpp`）の設計。
 **ノード 1 つずつの役割・ピン・パラメータは
@@ -49,6 +49,7 @@ terrain-editor から移植したのは**仕組み**であって、ノードの�
 | River | `river` | Base / Seed(入力) / Result / Water / Bank / Depth(出力) | `MaterialLayer`（kind=River）の `river` |
 | Mask Image | `maskImage` | Mask(出力) のみ | `MapSlot`（画像 + 読むチャンネル） |
 | Mask Fluvial | `maskFluvial` | Base(入力) / Mask(出力) | `FluvialParams`（川筋） |
+| Mask Flowline | `maskFlowline` | Base / Source / Outflow(入力) / Mask(出力) | `FlowlineParams`（流跡）。[設計](mask-flowline.md) |
 | Mask Height | `maskHeight` | Base(入力) / Mask(出力) | `HeightParams`（標高帯） |
 | Mask Slope | `maskSlope` | Base(入力) / Mask(出力) | `SlopeParams`（傾斜） |
 | Mask Levels | `maskLevels` | Mask(入力) / Mask(出力) | `LevelsParams` |

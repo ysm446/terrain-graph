@@ -353,6 +353,25 @@ uint64_t HashMaskOpParams(uint64_t seed, const MaskOp& op) {
     switch (op.kind) {
         case MaskOpKind::Image:
             return HashBytes(seed, &op.map, sizeof(op.map));
+        case MaskOpKind::Flowline: {
+            uint64_t hash = seed;
+            hash = HashBytes(hash, &op.flowline.scatteringMode, sizeof(op.flowline.scatteringMode));
+            hash = HashBytes(hash, &op.flowline.numberOfFlows, sizeof(op.flowline.numberOfFlows));
+            hash = HashBytes(hash, &op.flowline.density, sizeof(op.flowline.density));
+            hash = HashBytes(hash, &op.flowline.lengthMeters, sizeof(op.flowline.lengthMeters));
+            hash = HashBytes(hash, &op.flowline.friction, sizeof(op.flowline.friction));
+            hash = HashBytes(hash, &op.flowline.reflectVelocity, sizeof(op.flowline.reflectVelocity));
+            hash = HashBytes(hash, &op.flowline.reflectionAmount, sizeof(op.flowline.reflectionAmount));
+            hash = HashBytes(hash, &op.flowline.allowPooling, sizeof(op.flowline.allowPooling));
+            hash = HashBytes(hash, &op.flowline.strength, sizeof(op.flowline.strength));
+            hash = HashBytes(hash, &op.flowline.volume, sizeof(op.flowline.volume));
+            hash = HashBytes(hash, &op.flowline.talusAngle, sizeof(op.flowline.talusAngle));
+            hash = HashBytes(hash, &op.flowline.talusFalloff, sizeof(op.flowline.talusFalloff));
+            hash = HashBytes(hash, &op.flowline.clampSource, sizeof(op.flowline.clampSource));
+            hash = HashBytes(hash, &op.flowline.showOutflow, sizeof(op.flowline.showOutflow));
+            hash = HashBytes(hash, &op.flowline.normalize, sizeof(op.flowline.normalize));
+            return hash;
+        }
         case MaskOpKind::Fluvial:
             return HashBytes(seed, &op.fluvial, sizeof(op.fluvial));
         case MaskOpKind::Slope:
@@ -656,6 +675,9 @@ void MaterialEvaluator::Destroy(rhi::Device& device) {
     m_snowCover.allocation = 0;
     for (auto* texture : {&m_lake.state[0], &m_lake.state[1], &m_lake.output}) device.DeferRelease(*texture);
     m_lake.allocation = 0;
+    for (auto* texture : {&m_flowline.particles, &m_flowline.strength, &m_flowline.additions, &m_flowline.deposits}) device.DeferRelease(*texture);
+    m_flowline.resolution = 0;
+    m_flowline.particleResolution = 0;
     ReleaseRiverResources(device);
     ReleaseDropletResources(device);
     for (auto* texture : {&m_fluvialErosion.state[0], &m_fluvialErosion.state[1],
@@ -981,6 +1003,9 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
     const MaskOp& op = ops[index];
     rhi::GpuTexture& target = m_maskOpTextures[index];
 
+    if (op.kind == MaskOpKind::Flowline) {
+        return ApplyFlowlineMask(device, pipelineCache, commandList, op, stack, target);
+    }
     // 川筋だけは反復が要るので専用のパイプライン。
     if (op.kind == MaskOpKind::Fluvial) {
         return ApplyFluvialMask(device, pipelineCache, commandList, op, stack, target);
@@ -1553,6 +1578,105 @@ bool MaterialEvaluator::ApplyMaskBlur(rhi::Device& device, rhi::PipelineCache& p
     TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     PIXEndEvent(commandList);
     return complete;
+}
+
+namespace {
+struct FlowlineConstants {
+    uint32_t textures[4]{}, inputs[4]{}, grid[4]{};
+    float physics[4]{}, flow[4]{};
+};
+static_assert(sizeof(FlowlineConstants) == 80);
+}
+
+bool MaterialEvaluator::ApplyFlowlineMask(rhi::Device& device, rhi::PipelineCache& cache,
+    ID3D12GraphicsCommandList* commandList, const MaskOp& op,
+    const MaterialStack& stack, rhi::GpuTexture& target) {
+    const auto& params = op.flowline;
+    const uint32_t n = target.width;
+    const float cell = std::max(stack.SizeMeters(), 0.001f) / n;
+    const float countValue = params.scatteringMode == 0 ? static_cast<float>(params.numberOfFlows) :
+        static_cast<float>(n) * n * cell * std::clamp(params.density, 0.0f, 1.0f);
+    const uint32_t count = static_cast<uint32_t>(std::clamp(countValue, 0.0f,
+        static_cast<float>(std::min(n * n, 1000000u))));
+    const uint32_t particleSide = std::max(1u, static_cast<uint32_t>(std::ceil(std::sqrt(static_cast<float>(count)))));
+    auto& resources = m_flowline;
+    if (resources.resolution != n || resources.particleResolution != particleSide) {
+        resources.resolution = 0;
+        resources.particleResolution = 0;
+        for (auto* texture : {&resources.particles, &resources.strength, &resources.additions, &resources.deposits})
+            device.DeferRelease(*texture);
+        if (!CreateChannelTexture(device, particleSide, DXGI_FORMAT_R32G32B32A32_FLOAT,
+                L"FlowlineParticles", resources.particles) ||
+            !CreateChannelTexture(device, particleSide, DXGI_FORMAT_R32_FLOAT,
+                L"FlowlineStrength", resources.strength) ||
+            !CreateChannelTexture(device, n, DXGI_FORMAT_R32_UINT,
+                L"FlowlineAdditions", resources.additions) ||
+            !CreateChannelTexture(device, particleSide, DXGI_FORMAT_R32_UINT,
+                L"FlowlineDeposits", resources.deposits)) return false;
+        resources.resolution = n;
+        resources.particleResolution = particleSide;
+    }
+    const wchar_t* entries[] = {L"CsClear", L"CsSeed", L"CsStep", L"CsCommit", L"CsFinish"};
+    ID3D12PipelineState* passes[5]{};
+    for (size_t i = 0; i < std::size(entries); ++i) {
+        passes[i] = cache.GetCompute(L"CompositeFlowline.hlsl", entries[i]);
+        if (!passes[i]) return false;
+    }
+    const auto maskIndex = [&](int index) {
+        return index >= 0 && static_cast<size_t>(index) < m_maskOpTextures.size() &&
+            m_maskOpTextures[index].IsValid() ? m_maskOpTextures[index].SrvIndex() : kInvalidTextureIndex;
+    };
+    FlowlineConstants constants{};
+    constants.textures[0] = m_textures.height.SrvIndex();
+    constants.textures[1] = target.UavIndex();
+    constants.textures[2] = resources.particles.UavIndex();
+    constants.textures[3] = resources.strength.UavIndex();
+    constants.inputs[0] = maskIndex(op.inputA);
+    constants.inputs[1] = maskIndex(op.inputB);
+    constants.inputs[2] = resources.additions.UavIndex();
+    constants.inputs[3] = (params.clampSource ? 1u : 0u) | (params.allowPooling ? 2u : 0u) |
+        (params.normalize ? 4u : 0u) | (params.showOutflow ? 8u : 0u);
+    constants.grid[0] = n;
+    constants.grid[1] = particleSide;
+    constants.grid[2] = count;
+    constants.grid[3] = resources.deposits.UavIndex();
+    constants.physics[0] = cell;
+    constants.physics[1] = std::max(stack.HeightMeters(), 0.001f);
+    constants.physics[2] = std::pow(1.0f - std::clamp(params.friction, 0.01f, 1.0f), cell);
+    constants.physics[3] = params.reflectVelocity ?
+        1.0f - std::pow(1.0f - std::clamp(params.reflectionAmount, 0.0f, 1.0f), cell) : 0.0f;
+    constants.flow[0] = std::clamp(params.strength, 0.0f, 1.0f);
+    constants.flow[1] = std::clamp(params.volume, 0.0f, 1.0f);
+    constants.flow[2] = std::clamp(params.talusAngle, 0.0f, 90.0f) * 3.14159f / 180.0f;
+    constants.flow[3] = std::clamp(params.talusFalloff, 0.0f, 90.0f) * 3.14159f / 180.0f;
+    const auto allocation = AllocateConstants(device, sizeof(constants));
+    if (!allocation.IsValid()) return false;
+    std::memcpy(allocation.cpu, &constants, sizeof(constants));
+    const uint32_t steps = static_cast<uint32_t>(std::ceil(std::clamp(params.lengthMeters, 0.0f, 1024.0f) / cell));
+    // 極小セルで処理時間が無制限に増えないよう移動ステップ数に上限を置く。
+    const uint32_t iterations = constants.flow[0] > 0 && count > 0 ? std::min(steps, 16384u) : 0;
+    PIXBeginEvent(commandList, PIX_COLOR_DEFAULT, "MaskFlowline");
+    TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    for (auto* texture : {&target, &resources.particles, &resources.strength, &resources.additions, &resources.deposits})
+        TransitionIfNeeded(commandList, *texture, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    commandList->SetComputeRootConstantBufferView(1, allocation.gpuAddress);
+    const auto run = [&](int pass, uint32_t resolution) {
+        commandList->SetPipelineState(passes[pass]);
+        commandList->Dispatch(DispatchCount(resolution), DispatchCount(resolution), 1);
+        const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+        commandList->ResourceBarrier(1, &barrier);
+    };
+    run(0, n);
+    run(1, particleSide);
+    for (uint32_t i = 0; i < iterations; ++i) {
+        run(2, particleSide);
+        run(3, particleSide);
+    }
+    run(4, n);
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    PIXEndEvent(commandList);
+    return true;
 }
 
 bool MaterialEvaluator::ApplyFluvialMask(rhi::Device& device,
@@ -4353,7 +4477,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             // レイヤーが走る前の（＝前回の評価の）作業用テクスチャを読む。
             // (2) ハッシュに Height の状態が入らないので、出どころの設定を
             // 触っても焼き直されず、マスクが固まったまま更新されなくなる。
-            if (op.kind == MaskOpKind::Fluvial || op.kind == MaskOpKind::Slope ||
+            if (op.kind == MaskOpKind::Flowline || op.kind == MaskOpKind::Fluvial || op.kind == MaskOpKind::Slope ||
                 op.kind == MaskOpKind::Curvature || op.kind == MaskOpKind::Sediment ||
                 op.kind == MaskOpKind::Crumbling || op.kind == MaskOpKind::Snow ||
                 op.kind == MaskOpKind::Height || op.kind == MaskOpKind::River ||

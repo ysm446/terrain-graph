@@ -102,6 +102,7 @@ enum class NodeKind : uint32_t {
     CloudOutput = 29,
     CloudLayer = 30,
     Lake = 31,
+    MaskFlowline = 32,
 };
 
 struct PinDefinition {
@@ -161,6 +162,7 @@ struct MaskNodeSettings {
     compositor::MapSlot map;
     compositor::NoiseParams noise;
     compositor::FluvialParams fluvial;
+    compositor::FlowlineParams flowline;
     compositor::HeightParams height;
     compositor::SlopeParams slope;
     compositor::CurvatureParams curvature;

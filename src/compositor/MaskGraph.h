@@ -59,6 +59,7 @@ enum class MaskOpKind : uint32_t {
     FluvialErosion = 17,
     SnowCover = 18,
     Lake = 19,
+    Flowline = 20,
 };
 
 // 曲率マスクの向き。シェーダの TG_CURVATURE_* と一致させること。
@@ -66,6 +67,25 @@ enum class CurvatureMode : uint32_t {
     Ridges = 0,    // 周りより高い所（尾根・出っ張り）
     Valleys = 1,   // 周りより低い所（谷・窪み）
     Absolute = 2,  // どちらも
+};
+
+// 地形上を流れる粒子の軌跡。地形の高さは変更しない。
+struct FlowlineParams {
+    int scatteringMode = 1; // 0: 本数、1: 密度
+    int numberOfFlows = 1000;
+    float density = 0.01f;
+    float lengthMeters = 256.0f;
+    float friction = 1.0f;
+    bool reflectVelocity = false;
+    float reflectionAmount = 1.0f;
+    bool allowPooling = false;
+    float strength = 0.025f;
+    float volume = 0.025f;
+    float talusAngle = 0.0f;
+    float talusFalloff = 0.0f;
+    bool clampSource = true;
+    bool showOutflow = true;
+    bool normalize = true;
 };
 
 // 曲率マスク。**周りの平均との高さの差**を見る。ラプラシアンではないので、
@@ -228,6 +248,7 @@ struct MaskOp {
 
     MapSlot map;
     FluvialParams fluvial;
+    FlowlineParams flowline;
     HeightParams height;
     SlopeParams slope;
     CurvatureParams curvature;
