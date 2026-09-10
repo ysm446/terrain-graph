@@ -1,12 +1,13 @@
 # plan — 実装方針と優先順位
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-10 05:01
+更新日時: 2026-09-10 15:15
 
 進捗管理の入口。実装の詳細な設計は [docs/design/](../design/) に置く。
 
 - [design/rhi.md](../design/rhi.md) — bindless、ルートシグネチャ、リソース管理、シェーダ
 - [design/atmospheric-sky.md](../design/atmospheric-sky.md) — 大気散乱スカイ・雲・既存モードとの互換性
+- [design/volumetric-clouds.md](../design/volumetric-clouds.md) — ボリューム雲の現行仕様・懸念点・今後の方向性
 - [design/rendering.md](../design/rendering.md) — 描画の流れ、露出とトーンマップ、IBL、行列の規約
 - [design/compositing.md](../design/compositing.md) — チャンネル定義、ハイトブレンド、RNM、タイル評価
 - [design/design-guide.md](../design/design-guide.md) — UI のレイアウト、配色、プロパティ行
@@ -97,8 +98,8 @@ tests/
 
 ## マイルストーン
 
-雲のオーサリングは [雲ノード](../design/cloud-nodes.md) に記録。第1段階は雲塊1つの位置・形の編集。
-マスク分布・Path・複数雲合成は見た目を評価してから進める。
+雲の現行仕様と方向性は [ボリューム雲](../design/volumetric-clouds.md)、実装履歴は [雲ノード](../design/cloud-nodes.md) に記録。
+雲塊の編集と分布マスク付き雲層、照明調整、描画の軽量化は実装済み。Path・複数 Volume 合成は未対応。
 
 ### 引き継いだ土台（material-mixer M0〜M6、完了）
 
