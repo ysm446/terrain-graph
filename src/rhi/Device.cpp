@@ -66,6 +66,9 @@ bool Device::Initialize(HWND hwnd, uint32_t width, uint32_t height, bool enableD
     if (!m_uploadRing.Create(m_allocator, kUploadBytesPerFrame)) {
         return false;
     }
+    if (!CreateFrameTiming()) {
+        return false;
+    }
 
     m_initialized = true;
     return true;
@@ -361,6 +364,42 @@ bool Device::CreateCommandObjects() {
     return true;
 }
 
+bool Device::CreateFrameTiming() {
+    if (!TG_CHECK_HR(m_commandQueue->GetTimestampFrequency(&m_timestampFrequency)) ||
+        m_timestampFrequency == 0) {
+        return false;
+    }
+    D3D12_QUERY_HEAP_DESC desc = {};
+    desc.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+    desc.Count = kFrameCount * 2;
+    if (!TG_CHECK_HR(m_device->CreateQueryHeap(&desc, IID_PPV_ARGS(&m_frameTimestampHeap)))) {
+        return false;
+    }
+    m_frameTimestampHeap->SetName(L"FrameTimestamps");
+    // READBACK は COPY_DEST 固定。スロットごとに開始・終了の 2 値を置く。
+    return m_allocator.CreateReadbackBuffer(sizeof(uint64_t) * desc.Count,
+                                            L"FrameTimestampReadback", m_frameTimestampReadback);
+}
+
+void Device::ReadFrameTiming() {
+    if (!m_frameTimestampPending[m_frameIndex]) return;
+    m_frameTimestampPending[m_frameIndex] = false;
+    const SIZE_T offset = sizeof(uint64_t) * 2 * m_frameIndex;
+    const D3D12_RANGE readRange = {offset, offset + sizeof(uint64_t) * 2};
+    void* mapped = nullptr;
+    if (!TG_CHECK_HR(m_frameTimestampReadback.resource->Map(0, &readRange, &mapped))) return;
+    const auto* timestamps = static_cast<const uint64_t*>(mapped) + 2 * m_frameIndex;
+    if (timestamps[1] >= timestamps[0]) {
+        const double milliseconds = static_cast<double>(timestamps[1] - timestamps[0]) *
+                                    1000.0 / static_cast<double>(m_timestampFrequency);
+        // 完了フレームの実測値を平滑化し、表示の細かな揺れを抑える。
+        m_gpuFrameMilliseconds = m_gpuFrameMilliseconds < 0.0 ? milliseconds :
+                                 m_gpuFrameMilliseconds * 0.9 + milliseconds * 0.1;
+    }
+    const D3D12_RANGE writtenRange = {0, 0};
+    m_frameTimestampReadback.resource->Unmap(0, &writtenRange);
+}
+
 bool Device::CreateSwapChain(HWND hwnd, uint32_t width, uint32_t height) {
     DXGI_SWAP_CHAIN_DESC1 desc = {};
     desc.Width = width;
@@ -461,6 +500,8 @@ ID3D12GraphicsCommandList* Device::BeginFrame(const float clearColor[4]) {
     }
 
     // このスロットの処理は完了しているので、解放待ちを回収してリングを巻き戻す。
+    // 既存のフェンス待機後に読む。計測のための追加 GPU 待機は入れない。
+    ReadFrameTiming();
     m_deletionQueue.Collect(m_fence->GetCompletedValue());
     m_uploadRing.BeginFrame(m_frameIndex);
 
@@ -472,6 +513,8 @@ ID3D12GraphicsCommandList* Device::BeginFrame(const float clearColor[4]) {
     }
 
     PIXBeginEvent(m_commandList.Get(), PIX_COLOR(0, 128, 255), "Frame");
+    m_commandList->EndQuery(m_frameTimestampHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP,
+                            m_frameIndex * 2);
 
     const auto toRenderTarget = CD3DX12_RESOURCE_BARRIER::Transition(
         m_backBuffers[m_frameIndex].Get(), D3D12_RESOURCE_STATE_PRESENT,
@@ -537,6 +580,13 @@ void Device::EndFrame(bool vsync) {
         return;
     }
 
+    // Present やスクリーンショットのコピーより前で区切る。
+    m_commandList->EndQuery(m_frameTimestampHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP,
+                            m_frameIndex * 2 + 1);
+    m_commandList->ResolveQueryData(m_frameTimestampHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP,
+                                   m_frameIndex * 2, 2, m_frameTimestampReadback.resource.Get(),
+                                   sizeof(uint64_t) * 2 * m_frameIndex);
+
     if (!m_capturePath.empty()) {
         CaptureBackBuffer();
     }
@@ -558,6 +608,7 @@ void Device::EndFrame(bool vsync) {
 
     ID3D12CommandList* lists[] = {m_commandList.Get()};
     m_commandQueue->ExecuteCommandLists(1, lists);
+    m_frameTimestampPending[m_frameIndex] = true;
 
     const UINT syncInterval = vsync ? 1u : 0u;
     const UINT presentFlags = (!vsync && m_allowTearing) ? DXGI_PRESENT_ALLOW_TEARING : 0u;
@@ -716,6 +767,11 @@ void Device::Shutdown() {
     m_auxiliaryFence.Reset();
     m_auxiliaryFenceValue = 0;
     m_uploadRing.Destroy();
+    m_frameTimestampReadback = GpuBuffer{};
+    m_frameTimestampHeap.Reset();
+    m_timestampFrequency = 0;
+    m_gpuFrameMilliseconds = -1.0;
+    for (auto& pending : m_frameTimestampPending) pending = false;
     ReleaseBackBuffers();
     m_rtvHeap.Destroy();
     m_dsvHeap.Destroy();

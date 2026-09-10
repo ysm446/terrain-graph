@@ -1,7 +1,7 @@
 # rendering — PBR プレビューの設計
 
 作成日時: 2026-08-31 12:09
-更新日時: 2026-09-09 13:36
+更新日時: 2026-09-10 12:06
 
 `src/renderer/` の設計方針。M2a（直接光）と M2b（IBL）で確定し、
 M4b でマテリアル UV バッファを足した。
@@ -492,3 +492,14 @@ DirectXMath は行ベクトル規約、HLSL の定数バッファ内の行列は
 画像はテクスチャの実サイズではなくコンテンツ領域に合わせて描く。
 実サイズで描くとパネルからはみ出し、スクロールバーの出入りで要求サイズが振動する。
 レンダーターゲットの作り直しは 1 フレーム遅れる。
+
+## 統計の GPU 処理時間（2026-09-10 12:04）
+
+- `Device::BeginFrame` / `EndFrame` の同じ DIRECT コマンドリスト内に開始・終了の timestamp query を置く。終了はキャプチャのコピーと Present より前。
+- `GetTimestampFrequency` と 64 bit の時刻差から double で ms へ換算。実装根拠は [Microsoft: Timing](https://learn.microsoft.com/en-us/windows/win32/direct3d12/timing) と [Queries](https://learn.microsoft.com/en-us/windows/win32/direct3d12/queries)。
+- クエリと READBACK バッファをフレームリングに合わせて 2 値ずつ確保。既存のスロット再使用フェンス待機後に Map し、計測専用の待機は追加しない。READBACK の状態は COPY_DEST 固定。終了時は既存の GPU 同期後、アロケータより先に解放する。
+- 表示は完了値の指数平滑化（新しい値の重み 0.1）。取得まで負値で未計測を表し、UI は `-- ms` を出す。数フレームの遅延がある。
+- 対象はフレームのグラフィックスキュー上の描画・compute・UI。CPU 時間・Present 待機・FPS 制限・別 compute キューのグラフ評価・ExecuteImmediate の事前計算は含まない。GPU 内のメモリ待ちや競合は実行時間に含まれる。
+- 検証: Debug / Release ビルド、既存 CTest、Debug 150 フレーム実行を通過。D3D12 警告・エラーなし。`--screenshot-ui` で同期あり・なし・FPS 非表示の統計を確認。
+- 検証画面では同期ありの 120 FPS に対し GPU 処理は 0.14 ms、同期なしは 3899 FPS / 0.09 ms、雲層では 4.50 ms と表示。FPS の逆数や同期待ちではなく負荷に応じる値であることを確認。負荷・動作クロック・画面サイズで値は変わる。
+- 画像とログは `data/gpu-time-qa/`、更新版は `build/gpu-time/Release/terrain_graph.exe`。

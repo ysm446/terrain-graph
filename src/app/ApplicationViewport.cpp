@@ -131,6 +131,13 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
     if (display.showStats) {
         const renderer::RenderStats& stats = m_renderer.Stats();
         char text[96] = {};
+        const double gpuMilliseconds = m_device.GpuFrameMilliseconds();
+        if (gpuMilliseconds >= 0.0) {
+            std::snprintf(text, sizeof(text), "GPU 処理 %.2f ms", gpuMilliseconds);
+        } else {
+            std::snprintf(text, sizeof(text), "GPU 処理 -- ms");
+        }
+        lines.emplace_back(text);
         std::snprintf(text, sizeof(text), "ドローコール %u", stats.drawCalls);
         lines.emplace_back(text);
         std::snprintf(text, sizeof(text), "頂点 %s", GroupDigits(stats.vertices).c_str());

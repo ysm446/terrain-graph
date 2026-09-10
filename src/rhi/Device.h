@@ -31,6 +31,10 @@ public:
     ID3D12GraphicsCommandList* BeginFrame(const float clearColor[4]);
     void EndFrame(bool vsync);
 
+    // フレームのグラフィックスキューの GPU 実行時間。未取得は負値。
+    // UI・描画内 compute を含む。Present 待機、CPU、別キューの処理は含まない。
+    double GpuFrameMilliseconds() const { return m_gpuFrameMilliseconds; }
+
     // バックバッファをレンダーターゲットとして再バインドする。
     // 途中で別のターゲットへ描いたあと、ImGui を描く前に呼ぶ。
     void BindBackBuffer(ID3D12GraphicsCommandList* commandList);
@@ -118,6 +122,8 @@ public:
 private:
     bool CreateFactoryAndDevice(bool enableDebugLayer);
     bool CreateCommandObjects();
+    bool CreateFrameTiming();
+    void ReadFrameTiming();
     bool CreateSwapChain(HWND hwnd, uint32_t width, uint32_t height);
     bool CreateBackBufferViews();
     // EndFrame から呼ぶ。コピーを記録し、そのフレームの完了を待ってから保存する。
@@ -137,6 +143,11 @@ private:
 
     ComPtr<ID3D12CommandAllocator> m_commandAllocators[kFrameCount];
     ComPtr<ID3D12GraphicsCommandList> m_commandList;
+    ComPtr<ID3D12QueryHeap> m_frameTimestampHeap;
+    GpuBuffer m_frameTimestampReadback;
+    uint64_t m_timestampFrequency = 0;
+    bool m_frameTimestampPending[kFrameCount] = {};
+    double m_gpuFrameMilliseconds = -1.0;
     // ExecuteImmediate 専用。フレームのコマンドリストとは分ける。
     ComPtr<ID3D12CommandAllocator> m_immediateAllocator;
     ComPtr<ID3D12GraphicsCommandList> m_immediateCommandList;
