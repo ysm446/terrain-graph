@@ -41,7 +41,7 @@ struct AtmosphereSettings {
     float detailStrength = 0.3f;
     uint32_t cloudMotionMode = 0;
     uint32_t cloudSource = 0;
-    uint32_t flatCloudBottom = 0;
+    float flatCloudBottom = 0.0f; // 0: 丸い底、1: 平らな底。
     float cloudSkylightIntensity = 1.0f; // 実行時に地形と共通のスカイライト強度を受け取る。
     float cloudBodyOffsetX = 0.0f, cloudBodyOffsetZ = 0.0f; // 雲層の塊と表面ノイズの移流を分離。
 };

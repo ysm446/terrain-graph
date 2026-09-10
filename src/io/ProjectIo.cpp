@@ -1345,6 +1345,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["cloud"]["detailStrength"] = cloud->detailStrength;
             item["cloud"]["edgeSoftness"] = cloud->edgeSoftness;
             item["cloud"]["flatBottom"] = cloud->flatBottom;
+            item["cloud"]["bottomFlatness"] = cloud->bottomFlatness;
             item["cloud"]["seed"] = cloud->seed;
             item["cloud"]["animate"] = cloud->animate;
             item["cloud"]["motionMode"] = cloud->motionMode == 2 ? "drift" : cloud->motionMode == 1 ? "flow" : "translate";
@@ -1510,6 +1511,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.detailStrength = std::clamp(ReadFloat(*cloud, "detailStrength", settings.detailStrength), 0.0f, 1.0f);
                     settings.edgeSoftness = std::clamp(ReadFloat(*cloud, "edgeSoftness", settings.edgeSoftness), 0.02f, 1.0f);
                     settings.flatBottom = ReadBool(*cloud, "flatBottom", false);
+                    settings.bottomFlatness = std::clamp(ReadFloat(*cloud, "bottomFlatness", settings.bottomFlatness), 0.0f, 1.0f);
                 }
                 created.settings = settings;
             } else if (created.kind == graph::NodeKind::Path) {
