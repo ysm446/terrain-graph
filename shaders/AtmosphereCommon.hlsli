@@ -14,7 +14,7 @@ struct AtmosphericParameters {
     uint localCloud; float radiusX; float radiusZ; float edgeSoftness;
     float shapeStrength; float detailStrength; uint cloudMotionMode; uint cloudSource;
     float flatCloudBottom; float cloudSkylightIntensity; float cloudBodyOffsetX; float cloudBodyOffsetZ;
-    float indirectLight; float3 lightingPadding;
+    float indirectLight; float ambientLight; float2 lightingPadding;
 };
 float3 AtmosphereSun(AtmosphericParameters p) {
     return float3(cos(p.elevation) * sin(p.azimuth), sin(p.elevation), cos(p.elevation) * cos(p.azimuth));
@@ -227,8 +227,8 @@ float4 IntegrateCloud(float3 origin, float3 ray, float limit, AtmosphericParamet
     float mu=dot(ray,sun);
     Texture2D<float4> cloudLighting=ResourceDescriptorHeap[lightingIndex];
     // 地形と共通の倍率を天空照明にだけ適用。太陽光と光学的厚さは変えない。
-    float3 skyAbove=cloudLighting.Load(int3(0,0,0)).rgb*p.cloudSkylightIntensity;
-    float3 skyBelow=cloudLighting.Load(int3(1,0,0)).rgb*p.cloudSkylightIntensity;
+    float3 skyAbove=cloudLighting.Load(int3(0,0,0)).rgb*p.cloudSkylightIntensity*p.ambientLight;
+    float3 skyBelow=cloudLighting.Load(int3(1,0,0)).rgb*p.cloudSkylightIntensity*p.ambientLight;
     float4 phases=float4(CloudPhase(mu,1),CloudPhase(mu,0.5),CloudPhase(mu,0.25),CloudPhase(mu,0.125));
     // 寄与と消散を分離するオクターブ近似。0.85 は有限次数で失われる光の調整値。
     // 単散乱は維持し、高次の等方化した太陽光を残す（設計資料 atmospheric-sky.md）。

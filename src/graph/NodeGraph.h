@@ -204,6 +204,7 @@ struct CloudNodeSettings {
     bool flatBottom = true;
     float bottomFlatness = 1.0f;
     float indirectLight = 1.0f;
+    float ambientLight = 1.0f;
     int seed = 1;
     bool animate = false;
     int motionMode = 2; // 0: 雲全体、1: 範囲内の模様、2: 流れながら変化。

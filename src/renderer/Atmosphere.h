@@ -45,7 +45,8 @@ struct AtmosphereSettings {
     float cloudSkylightIntensity = 1.0f; // 実行時に地形と共通のスカイライト強度を受け取る。
     float cloudBodyOffsetX = 0.0f, cloudBodyOffsetZ = 0.0f; // 雲層の塊と表面ノイズの移流を分離。
     float indirectLight = 1.0f; // 雲の太陽光の多重散乱の倍率。
-    float lightingPadding[3] = {};
+    float ambientLight = 1.0f; // 雲が受ける天空照明の倍率。
+    float lightingPadding[2] = {};
 };
 static_assert(sizeof(AtmosphereSettings) == 176);
 
