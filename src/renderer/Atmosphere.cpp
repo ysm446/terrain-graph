@@ -48,6 +48,7 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
     m_motion.Advance(delta, playing, requested.windSpeed, requested.windDirection, requested.noiseSpeedRatio);
     if (playing) m_cloudTime += delta;
     AtmosphereSettings settings = requested;
+    settings.cloudCellIndex = m_cloudCells.SrvIndex();
     if (requested.localCloud && requested.cloudMotionMode != 1) {
         settings.fieldCenterX += static_cast<float>(m_motion.x);
         settings.fieldCenterZ += static_cast<float>(m_motion.z);
@@ -76,6 +77,7 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
         settings.cloudSkylightIntensity != baked.cloudSkylightIntensity;
     const bool updateLut = !m_ready || settings.density != baked.density || settings.mie != baked.mie || settings.groundAlbedo != baked.groundAlbedo;
     const bool updateNoise = !m_ready || settings.seed != baked.seed;
+    const bool updateCells = updateNoise || m_cellsDirty;
     if (settings.localCloud && m_ready) {
         if (changed) m_lastCloudEdit = now;
         if (changed || playing) m_cloudEnvironmentDirty = true;
@@ -85,12 +87,12 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
         // 空の変更とシード変更だけは即時にキャッシュを更新する。
         const bool sourceChanged = settings.localCloud != baked.localCloud || settings.cloudSource != baked.cloudSource ||
             (baked.distributionMask == UINT32_MAX-1 && settings.distributionMask != UINT32_MAX-1);
-        if (!skyChanged && !updateNoise && !sourceChanged && !(m_cloudEnvironmentDirty && settled)) {
+        if (!skyChanged && !updateCells && !sourceChanged && !(m_cloudEnvironmentDirty && settled)) {
             m_applied = settings;
             m_requested = requested;
             return true;
         }
-    } else if (!changed && m_cloudTime-m_environmentTime < 1.0f) {
+    } else if (!changed && !updateCells && m_cloudTime-m_environmentTime < 1.0f) {
         m_applied = settings;
         return true;
     }
@@ -99,7 +101,8 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
             !CreateTarget(device, m_multiScatter, 32, DXGI_FORMAT_R16G16B16A16_FLOAT) ||
             !CreateTarget(device, m_noise, 64, DXGI_FORMAT_R16_FLOAT, 64) ||
             !CreateTarget(device, m_skyView, 512, DXGI_FORMAT_R16G16B16A16_FLOAT, 1, 256) ||
-            !CreateTarget(device, m_cloudLighting, 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 1)) {
+            !CreateTarget(device, m_cloudLighting, 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 1) ||
+            !CreateTarget(device, m_cloudCells, 10, DXGI_FORMAT_R32G32B32A32_FLOAT, 3)) {
             Shutdown(device);
             return false;
         }
@@ -107,8 +110,10 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
     }
     auto* lutPipeline = pipelines.GetCompute(L"AtmosphereMultiScatter.hlsl", L"CSGenerate");
     auto* noisePipeline = pipelines.GetCompute(L"AtmosphereCloudDensity.hlsl", L"CSGenerate");
-    if (!lutPipeline || !noisePipeline) return false;
-    if ((updateLut || updateNoise) && !device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commands) {
+    auto* cellPipeline = pipelines.GetCompute(L"AtmosphereCloudCells.hlsl", L"CsMain");
+    if (!lutPipeline || !noisePipeline || !cellPipeline) return false;
+    settings.cloudCellIndex = m_cloudCells.SrvIndex();
+    if ((updateLut || updateNoise || updateCells) && !device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commands) {
         PIXBeginEvent(commands, PIX_COLOR(120, 180, 255), "AtmosphereCaches");
         commands->SetComputeRootSignature(pipelines.GlobalRootSignature());
         if (updateLut) {
@@ -120,6 +125,16 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
             commands->Dispatch(4, 4, 1);
             TransitionIfNeeded(commands, m_multiScatter, ReadState);
         }
+        if (updateCells) {
+            PIXBeginEvent(commands, PIX_COLOR(120,180,255), "CloudCellCache");
+            TransitionIfNeeded(commands, m_cloudCells, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            const uint32_t constants[]{settings.seed, m_cloudCells.UavIndex(), 0, 0};
+            commands->SetPipelineState(cellPipeline);
+            commands->SetComputeRoot32BitConstants(0, 4, constants, 0);
+            commands->Dispatch(2, 2, 1);
+            TransitionIfNeeded(commands, m_cloudCells, ReadState);
+            PIXEndEvent(commands);
+        }
         if (updateNoise) {
             TransitionIfNeeded(commands, m_noise, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             const uint32_t constants[]{64, settings.seed, m_noise.UavIndex(), 0};
@@ -130,6 +145,7 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
         }
         PIXEndEvent(commands);
     })) return false;
+    m_cellsDirty = false;
     auto* lightingPipeline=pipelines.GetCompute(L"AtmosphereCloudLighting.hlsl",L"CsMain");
     if (!lightingPipeline) return false;
     struct LightingConstants { AtmosphereSettings settings; uint32_t output, lut, pad[2]; };
@@ -172,6 +188,10 @@ void Atmosphere::Shutdown(rhi::Device& device) {
     device.DeferRelease(m_noise);
     device.DeferRelease(m_skyView);
     device.DeferRelease(m_cloudLighting);
+    device.DeferRelease(m_cloudCells);
+    device.DeferRelease(m_halfCloud);
+    device.DeferRelease(m_halfDepth);
+    m_cellsDirty = true;
     m_initialized = m_ready = false;
     m_lastTick = {};
     m_cloudTime = m_environmentTime = 0.0f;
@@ -227,16 +247,54 @@ void Atmosphere::Render(rhi::Device& device, rhi::PipelineCache& pipelines,
         DirectX::XMFLOAT3 camera; uint32_t showSky;
         AtmosphereSettings settings;
         uint32_t depth, lut, noise, environment;
+        uint32_t halfCloud, halfDepth, width, height;
+        uint32_t halfCloudOutput, halfDepthOutput, padding[2];
     };
     const auto allocation = device.Upload().Allocate(sizeof(Constants), 256);
     if (!pipeline || !allocation.IsValid()) return;
-    const Constants constants{inverseViewProjection, camera, showSky ? 1u : 0u, m_applied,
-        depth.SrvIndex(), m_skyView.SrvIndex(), m_noise.SrvIndex(), m_cloudLighting.SrvIndex()};
+    Constants constants{inverseViewProjection, camera, showSky ? 1u : 0u, m_applied,
+        depth.SrvIndex(), m_skyView.SrvIndex(), m_noise.SrvIndex(), m_cloudLighting.SrvIndex(),
+        UINT32_MAX, UINT32_MAX, scene.width, scene.height, UINT32_MAX, UINT32_MAX, {0,0}};
+    // 深度は compute と pixel の両方から読む。DSV を先に外す。
+    commands->OMSetRenderTargets(1, &scene.rtv.cpu, FALSE, nullptr);
+    TransitionIfNeeded(commands, depth, ReadState);
+    if (m_applied.clouds && !m_fullResolutionClouds) {
+        const uint32_t width = (scene.width + 1) / 2, height = (scene.height + 1) / 2;
+        if (m_halfCloud.width != width || m_halfCloud.height != height || !m_halfDepth.IsValid()) {
+            device.DeferRelease(m_halfCloud);
+            device.DeferRelease(m_halfDepth);
+            // HDR 散乱光をクリップせず保存する。深度は交差判定用の距離。
+            if (!CreateTarget(device, m_halfCloud, width, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, height) ||
+                !CreateTarget(device, m_halfDepth, width, DXGI_FORMAT_R32_FLOAT, 1, height)) {
+                device.DeferRelease(m_halfCloud);
+                device.DeferRelease(m_halfDepth);
+            }
+        }
+        auto* halfPipeline = pipelines.GetCompute(L"AtmosphereComposite.hlsl", L"CsCloudHalf");
+        const auto halfAllocation = device.Upload().Allocate(sizeof(Constants), 256);
+        if (m_halfCloud.IsValid() && m_halfDepth.IsValid() && halfPipeline && halfAllocation.IsValid()) {
+            constants.halfCloudOutput = m_halfCloud.UavIndex();
+            constants.halfDepthOutput = m_halfDepth.UavIndex();
+            std::memcpy(halfAllocation.cpu, &constants, sizeof(constants));
+            PIXBeginEvent(commands, PIX_COLOR(120,180,255), "CloudHalfResolution");
+            TransitionIfNeeded(commands, m_halfCloud, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            TransitionIfNeeded(commands, m_halfDepth, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            commands->SetComputeRootSignature(pipelines.GlobalRootSignature());
+            commands->SetComputeRootConstantBufferView(1, halfAllocation.gpuAddress);
+            commands->SetPipelineState(halfPipeline);
+            commands->Dispatch(rhi::DispatchCount(width), rhi::DispatchCount(height), 1);
+            TransitionIfNeeded(commands, m_halfCloud, ReadState);
+            TransitionIfNeeded(commands, m_halfDepth, ReadState);
+            PIXEndEvent(commands);
+            constants.halfCloud = m_halfCloud.SrvIndex();
+            constants.halfDepth = m_halfDepth.SrvIndex();
+        }
+    }
     std::memcpy(allocation.cpu, &constants, sizeof(constants));
     PIXBeginEvent(commands, PIX_COLOR(120, 180, 255), "AtmosphereComposite");
     // DSV を外してから深度を SRV として読む。
     commands->OMSetRenderTargets(1, &scene.rtv.cpu, FALSE, nullptr);
-    TransitionIfNeeded(commands, depth, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(commands, depth, ReadState);
     commands->SetGraphicsRootSignature(pipelines.GlobalRootSignature());
     commands->SetGraphicsRootConstantBufferView(1, allocation.gpuAddress);
     commands->SetPipelineState(pipeline);

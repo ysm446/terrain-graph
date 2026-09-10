@@ -14,7 +14,7 @@ struct AtmosphericParameters {
     uint localCloud; float radiusX; float radiusZ; float edgeSoftness;
     float shapeStrength; float detailStrength; uint cloudMotionMode; uint cloudSource;
     float flatCloudBottom; float cloudSkylightIntensity; float cloudBodyOffsetX; float cloudBodyOffsetZ;
-    float indirectLight; float ambientLight; float2 lightingPadding;
+    float indirectLight; float ambientLight; uint cloudCellIndex; float lightingPadding;
 };
 float3 AtmosphereSun(AtmosphericParameters p) {
     return float3(cos(p.elevation) * sin(p.azimuth), sin(p.elevation), cos(p.elevation) * cos(p.azimuth));
@@ -69,31 +69,50 @@ float3 CloudCellRandom(int2 cell, uint seed) {
     uint c=(b^(b>>13))*3266489917u;
     return float3(a&65535u,b&65535u,c&65535u)/65535.0;
 }
+// シードにのみ依存する 100 セル分の情報。計算と参照で同じ構造を使う。
+struct CloudCellData { float4 placement; float4 shape; float4 lobe; };
+CloudCellData BuildCloudCell(int2 cell, uint seed) {
+    float3 random=CloudCellRandom(cell,seed);
+    float3 dimensions=CloudCellRandom(cell,seed+137u);
+    float3 lobes=CloudCellRandom(cell,seed+719u);
+    CloudCellData data;
+    data.placement=float4(0.5+(random.xy-0.5)*0.9,lerp(0.38,0.95,sqrt(random.z)),lerp(0.28,1.0,dimensions.z));
+    float sine,cosine; sincos(dimensions.x*6.2831853,sine,cosine);
+    data.shape=float4(sine,cosine,lerp(0.45,1.0,dimensions.y),lerp(0.45,1.0,lobes.y));
+    data.lobe=float4(lerp(-0.35,0.35,lobes.x),0,0,0);
+    return data;
+}
+CloudCellData LoadCloudCell(int2 cell, AtmosphericParameters p) {
+    if (p.cloudCellIndex==0xffffffff) return BuildCloudCell(cell,p.seed);
+    Texture2DArray<float4> cells=ResourceDescriptorHeap[p.cloudCellIndex];
+    int2 wrapped=(cell%10+10)%10;
+    CloudCellData data;
+    data.placement=cells.Load(int4(wrapped,0,0));
+    data.shape=cells.Load(int4(wrapped,1,0));
+    data.lobe=cells.Load(int4(wrapped,2,0));
+    return data;
+}
 float CloudLayerBody(float2 position, float h, AtmosphericParameters p, float distribution) {
     int2 cell=int2(floor(position));
     float body=-1;
     // 半径は 1 セル未満。隣接セルも評価し、セル境界で塊を切らない。
     [unroll] for(int z=-1;z<=1;++z) [unroll] for(int x=-1;x<=1;++x) {
         int2 neighbor=cell+int2(x,z);
-        float3 random=CloudCellRandom(neighbor,p.seed);
-        float2 center=float2(neighbor)+0.5+(random.xy-0.5)*0.9;
-        // 大きさ・縦横比・向き・高さは独立した乱数で変える。
-        float3 dimensions=CloudCellRandom(neighbor,p.seed+137u);
-        float3 lobes=CloudCellRandom(neighbor,p.seed+719u);
-        float radius=(0.65+0.3*sqrt(p.coverage))*lerp(0.38,0.95,sqrt(random.z));
-        float angle=dimensions.x*6.2831853;
-        float sine,cosine; sincos(angle,sine,cosine);
+        CloudCellData data=LoadCloudCell(neighbor,p);
+        float2 center=float2(neighbor)+data.placement.xy;
+        float radius=(0.65+0.3*sqrt(p.coverage))*data.placement.z;
+        float sine=data.shape.x,cosine=data.shape.y;
         float2 delta=position-center;
         float2 rotated=float2(cosine*delta.x+sine*delta.y,-sine*delta.x+cosine*delta.y);
-        float2 axes=radius*float2(lerp(0.45,1.0,dimensions.y),1);
-        float height=lerp(0.28,1.0,dimensions.z);
+        float2 axes=radius*float2(data.shape.z,1);
+        float height=data.placement.w;
         float vertical=lerp(2*h-1,h,p.flatCloudBottom)/height;
         float2 horizontal=rotated/axes;
         float cluster=1-length(float3(horizontal,vertical));
         // 異なる高さの膨らみを重ね、ひとつの半楕円体の頂点を崩す。
         // 各ローブの水平支持範囲は主塊の半径内に収める。
-        float2 lobeOffset=float2(0.35,lerp(-0.35,0.35,lobes.x));
-        float lobeHeight=lerp(0.45,1.0,lobes.y);
+        float2 lobeOffset=float2(0.35,data.lobe.x);
+        float lobeHeight=data.shape.w;
         float lobeVertical=lerp(2*h-1,h,p.flatCloudBottom)/lobeHeight;
         float lobe=1-length(float3((horizontal-lobeOffset)/float2(0.55,0.6),lobeVertical));
         float blend=saturate(0.5+0.5*(lobe-cluster)/0.25);

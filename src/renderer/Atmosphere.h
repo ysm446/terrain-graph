@@ -46,7 +46,8 @@ struct AtmosphereSettings {
     float cloudBodyOffsetX = 0.0f, cloudBodyOffsetZ = 0.0f; // 雲層の塊と表面ノイズの移流を分離。
     float indirectLight = 1.0f; // 雲の太陽光の多重散乱の倍率。
     float ambientLight = 1.0f; // 雲が受ける天空照明の倍率。
-    float lightingPadding[2] = {};
+    uint32_t cloudCellIndex = UINT32_MAX; // 実行時のみ。周期セルの事前計算。
+    float lightingPadding = 0;
 };
 static_assert(sizeof(AtmosphereSettings) == 176);
 
@@ -58,7 +59,8 @@ public:
         m_distributionRevision = revision;
     }
     void UpdateFrameLighting(rhi::Device& device, rhi::PipelineCache& pipelines, ID3D12GraphicsCommandList* commands);
-    void InvalidateFrameLighting() { m_opticalDirty = true; }
+    void InvalidateFrameLighting() { m_opticalDirty = true; m_cellsDirty = true; }
+    bool& FullResolutionClouds() { return m_fullResolutionClouds; }
     void ResetAnimation();
     void ResetCloudMotion();
     bool Update(rhi::Device& device, rhi::PipelineCache& pipelines, const AtmosphereSettings& settings);
@@ -76,6 +78,11 @@ private:
     rhi::GpuTexture m_noise;
     rhi::GpuTexture m_skyView;
     rhi::GpuTexture m_cloudLighting;
+    rhi::GpuTexture m_cloudCells;
+    rhi::GpuTexture m_halfCloud;
+    rhi::GpuTexture m_halfDepth;
+    bool m_cellsDirty = true;
+    bool m_fullResolutionClouds = false;
     AtmosphereSettings m_applied;
     AtmosphereSettings m_requested;
     AtmosphereSettings m_environmentSettings;

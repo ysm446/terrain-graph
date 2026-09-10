@@ -192,6 +192,7 @@ public:
     void ResetSettings();
     void SetCloudDistributionMask(uint32_t index, uint64_t revision) { m_atmosphere.SetDistributionMask(index, revision); }
     bool& CloudLightingCache() { return m_cloudLightingCache; }
+    bool& FullResolutionClouds() { return m_atmosphere.FullResolutionClouds(); }
     void InvalidateCloudLighting() { m_atmosphere.InvalidateFrameLighting(); }
     void ResetCloudMotion() { m_atmosphere.ResetCloudMotion(); }
     void ResetAtmosphereAnimation() { m_atmosphere.ResetAnimation(); }

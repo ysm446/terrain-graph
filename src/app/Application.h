@@ -58,6 +58,7 @@ struct StartupOptions {
     std::filesystem::path uiScreenshotPath;
     uint32_t benchmarkFrames = 0;
     bool referenceCloudLighting = false;
+    bool fullResolutionClouds = false;
     uint32_t screenshotFrame = 8;
     uint32_t screenshotCount = 1; // ビューポート連番の枚数。
     uint32_t screenshotInterval = 1;
