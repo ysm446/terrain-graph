@@ -77,10 +77,28 @@ float CloudLayerBody(float2 position, float h, AtmosphericParameters p, float di
         int2 neighbor=cell+int2(x,z);
         float3 random=CloudCellRandom(neighbor,p.seed);
         float2 center=float2(neighbor)+0.5+(random.xy-0.5)*0.9;
-        float radius=(0.65+0.3*sqrt(p.coverage))*(0.6+0.4*random.z);
-        float2 horizontal=(position-center)/(radius*float2(0.7+0.3*random.y,1));
-        float vertical=lerp(2*h-1,h,p.flatCloudBottom)/(0.5+0.5*random.z);
-        body=max(body,1-length(float3(horizontal,vertical)));
+        // 大きさ・縦横比・向き・高さは独立した乱数で変える。
+        float3 dimensions=CloudCellRandom(neighbor,p.seed+137u);
+        float3 lobes=CloudCellRandom(neighbor,p.seed+719u);
+        float radius=(0.65+0.3*sqrt(p.coverage))*lerp(0.38,0.95,sqrt(random.z));
+        float angle=dimensions.x*6.2831853;
+        float sine,cosine; sincos(angle,sine,cosine);
+        float2 delta=position-center;
+        float2 rotated=float2(cosine*delta.x+sine*delta.y,-sine*delta.x+cosine*delta.y);
+        float2 axes=radius*float2(lerp(0.45,1.0,dimensions.y),1);
+        float height=lerp(0.28,1.0,dimensions.z);
+        float vertical=lerp(2*h-1,h,p.flatCloudBottom)/height;
+        float2 horizontal=rotated/axes;
+        float cluster=1-length(float3(horizontal,vertical));
+        // 異なる高さの膨らみを重ね、ひとつの半楕円体の頂点を崩す。
+        // 各ローブの水平支持範囲は主塊の半径内に収める。
+        float2 lobeOffset=float2(0.35,lerp(-0.35,0.35,lobes.x));
+        float lobeHeight=lerp(0.45,1.0,lobes.y);
+        float lobeVertical=lerp(2*h-1,h,p.flatCloudBottom)/lobeHeight;
+        float lobe=1-length(float3((horizontal-lobeOffset)/float2(0.55,0.6),lobeVertical));
+        float blend=saturate(0.5+0.5*(lobe-cluster)/0.25);
+        cluster=lerp(cluster,lobe,blend)+0.25*blend*(1-blend);
+        body=max(body,cluster);
     }
     // マスクの灰色は塊の輪郭を縮める。内部の密度を一律には薄めない。
     return body-(1-sqrt(p.coverage*distribution));
@@ -106,17 +124,23 @@ float CloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex) {
         if (p.flatCloudBottom != 0)
             noiseOffset.y = (lerp(h,max(h,0.12),p.flatCloudBottom)-0.5)*p.cloudThickness;
         float3 uvw = (noiseOffset-float3(p.windOffsetX,0,p.windOffsetZ))/p.cloudScale+0.5;
-        float body=CloudLayerBody((offset.xz-float2(p.cloudBodyOffsetX,p.cloudBodyOffsetZ))/p.cloudScale,h,p,distribution);
+        // 低周波の座標変形で大きな輪郭を曲げる。変形後の座標でセルを選ぶ。
+        // 周波数 0.5 は既存の 10 周期の巻き戻しと整合する。
+        float broadX=SampleCloudNoise(uvw*0.5,noiseIndex);
+        float broadZ=SampleCloudNoise(uvw*0.5+float3(0.37,0.19,0.61),noiseIndex);
+        float2 bodyPosition=(offset.xz-float2(p.cloudBodyOffsetX,p.cloudBodyOffsetZ))/p.cloudScale;
+        bodyPosition+=(float2(broadX,broadZ)-0.5)*1.6;
+        float body=CloudLayerBody(bodyPosition,h,p,distribution);
         if(body<=0) return 0;
-        // 密度のある塊の表面だけを削る。ノイズそのものを雲の密度にはしない。
-        float shape = saturate((SampleCloudNoise(uvw,noiseIndex)-0.5)*3+0.5);
+        // 表面だけでなく中規模の入り江や切れ目も作り、丸い土台を残さない。
+        float shape = saturate((SampleCloudNoise(uvw*2+0.317,noiseIndex)-0.5)*3+0.5);
         float detail = saturate((SampleCloudNoise(uvw*3.1+0.173,noiseIndex)-0.5)*3+0.5);
         float profile = saturate((1-q.y)/max(p.edgeSoftness,0.01));
         if (p.flatCloudBottom != 0)
             profile = CloudBottomFade(h/max(p.flatCloudBottom,1e-5),shape,detail)
                 *lerp(profile,saturate(2*(1-h)/max(p.edgeSoftness,0.01)),p.flatCloudBottom);
         float edge = saturate((1-max(q.x,q.z))/max(p.edgeSoftness,0.01));
-        float density = saturate((body-0.25*(1-shape))/max(p.edgeSoftness,0.01));
+        float density = saturate((body-0.48*(1-shape))/max(p.edgeSoftness,0.01));
         density = saturate(density-p.detailStrength*(1-detail)*(1-density));
         return density * profile * edge;
     }
