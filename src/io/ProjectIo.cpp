@@ -1344,6 +1344,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["cloud"]["shapeStrength"] = cloud->shapeStrength;
             item["cloud"]["detailStrength"] = cloud->detailStrength;
             item["cloud"]["edgeSoftness"] = cloud->edgeSoftness;
+            item["cloud"]["flatBottom"] = cloud->flatBottom;
             item["cloud"]["seed"] = cloud->seed;
             item["cloud"]["animate"] = cloud->animate;
             item["cloud"]["motionMode"] = cloud->motionMode == 2 ? "drift" : cloud->motionMode == 1 ? "flow" : "translate";
@@ -1486,6 +1487,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                 created.settings = std::move(settings);
             } else if (created.kind == graph::NodeKind::Cloud || created.kind == graph::NodeKind::CloudLayer) {
                 graph::CloudNodeSettings settings;
+                settings.flatBottom = false; // 未指定の既存ノードは従来形状を維持する。
                 if (const json* cloud = FindMember(item, "cloud"); cloud && cloud->is_object()) {
                     settings.enabled = ReadBool(*cloud, "enabled", settings.enabled);
                     settings.coverage = std::clamp(ReadFloat(*cloud, "coverage", settings.coverage), 0.0f, 1.0f);
@@ -1507,6 +1509,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.shapeStrength = std::clamp(ReadFloat(*cloud, "shapeStrength", settings.shapeStrength), 0.0f, 1.0f);
                     settings.detailStrength = std::clamp(ReadFloat(*cloud, "detailStrength", settings.detailStrength), 0.0f, 1.0f);
                     settings.edgeSoftness = std::clamp(ReadFloat(*cloud, "edgeSoftness", settings.edgeSoftness), 0.02f, 1.0f);
+                    settings.flatBottom = ReadBool(*cloud, "flatBottom", false);
                 }
                 created.settings = settings;
             } else if (created.kind == graph::NodeKind::Path) {

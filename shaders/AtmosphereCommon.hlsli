@@ -13,6 +13,7 @@ struct AtmosphericParameters {
     float windOffsetZ; uint lowerHemisphere; float noiseSpeedRatio; uint distributionMask;
     uint localCloud; float radiusX; float radiusZ; float edgeSoftness;
     float shapeStrength; float detailStrength; uint cloudMotionMode; uint cloudSource;
+    uint flatCloudBottom; uint3 padding;
 };
 float3 AtmosphereSun(AtmosphericParameters p) {
     return float3(cos(p.elevation) * sin(p.azimuth), sin(p.elevation), cos(p.elevation) * cos(p.azimuth));
@@ -31,17 +32,31 @@ float3 LocalCloudCenter(AtmosphericParameters p) {
 float3 LocalCloudRadii(AtmosphericParameters p) {
     return float3(p.radiusX, p.cloudThickness * 0.5, p.radiusZ);
 }
+float CloudBottomFade(float h, float shape, float detail) {
+    // 同じ高さを基準に、浅い起伏と薄い密度の縁を残す。既存ノイズを共有する。
+    float bottom = 0.02 + 0.16*(1-shape) + 0.03*(1-detail);
+    return smoothstep(bottom,bottom+0.08,h);
+}
 float LocalCloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex) {
     float3 offset = position - LocalCloudCenter(p);
-    float edge = 1 - length(offset / LocalCloudRadii(p));
+    float3 q = offset / LocalCloudRadii(p);
+    float h = (position.y-p.cloudBottom)/p.cloudThickness;
+    if (p.flatCloudBottom != 0) {
+        if (h <= 0 || h >= 1) return 0;
+        // 雲底を半楕円体の底面に置く。下部ノイズは高さを固定し、底の凹凸を抑える。
+        q.y = h;
+        offset.y = (max(h,0.12)-0.5)*p.cloudThickness;
+    }
+    float edge = 1 - length(q);
     if (edge <= 0) return 0;
     float3 wind = p.cloudMotionMode != 0 ? float3(p.windOffsetX,0,p.windOffsetZ) : 0;
     float3 uvw = (offset-wind) / p.cloudScale + 0.5;
     float shape = saturate((SampleCloudNoise(uvw,noiseIndex)-0.5)*3+0.5);
     float detail = saturate((SampleCloudNoise(uvw*3.1+0.173,noiseIndex)-0.5)*3+0.5);
-    // 外接楕円体の内側だけを削るため、輪郭は交差区間からはみ出さない。
+    // 輪郭は交差区間の内側だけを削る。
     float density = saturate((edge - p.shapeStrength*(1-shape)*0.65) / p.edgeSoftness);
-    return saturate(density - p.detailStrength*(1-detail)*(1-density));
+    density = saturate(density - p.detailStrength*(1-detail)*(1-density));
+    return density * (p.flatCloudBottom != 0 ? CloudBottomFade(h,shape,detail) : 1);
 }
 // 64 枚の 2D 配列で周期 3D 密度を持つ。XY はハードウェア補間、Z のみ手動補間。
 float CloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex) {
@@ -59,10 +74,16 @@ float CloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex) {
             distribution = saturate(mask.SampleLevel(g_samplerLinearClamp,uv,0).r);
         }
         if (distribution <= 0.001 || p.coverage <= 0) return 0;
-        float3 uvw = (offset-float3(p.windOffsetX,0,p.windOffsetZ))/p.cloudScale+0.5;
+        float h = (position.y-p.cloudBottom)/p.cloudThickness;
+        float3 noiseOffset = offset;
+        if (p.flatCloudBottom != 0) noiseOffset.y = (max(h,0.12)-0.5)*p.cloudThickness;
+        float3 uvw = (noiseOffset-float3(p.windOffsetX,0,p.windOffsetZ))/p.cloudScale+0.5;
         float shape = SampleCloudNoise(uvw,noiseIndex);
         float detail = SampleCloudNoise(uvw*3.1+0.173,noiseIndex);
         float profile = saturate((1-q.y)/max(p.edgeSoftness,0.01));
+        if (p.flatCloudBottom != 0)
+            profile = CloudBottomFade(h,saturate((shape-0.5)*3+0.5),saturate((detail-0.5)*3+0.5))
+                *saturate(2*(1-h)/max(p.edgeSoftness,0.01));
         float edge = saturate((1-max(q.x,q.z))/max(p.edgeSoftness,0.01));
         float density = saturate((shape-(1-p.coverage))/max(p.coverage,0.001));
         density = saturate(density-p.detailStrength*(1-detail)*(1-density));
@@ -88,7 +109,7 @@ float CloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex) {
 bool CloudInterval(float3 origin, float3 ray, float limit, AtmosphericParameters p,
                    out float start, out float end) {
     start=0; end=limit;
-    if (p.localCloud == 2) {
+    if (p.localCloud == 2 || (p.localCloud == 1 && p.flatCloudBottom != 0)) {
         float3 offset = origin-LocalCloudCenter(p);
         float3 radii = LocalCloudRadii(p);
         [unroll] for (uint axis=0; axis<3; ++axis) {

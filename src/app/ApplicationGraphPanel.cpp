@@ -1270,6 +1270,8 @@ void Application::DrawGraphPanel() {
                                          "雲の X 方向の全幅。大きくすると横へ広がります。", "%.1f m", ImGuiSliderFlags_Logarithmic);
             changed |= ui::PropertyFloat("厚さ", &cloud->thickness, 10.0f, 20000.0f, defaults.thickness,
                                          "雲の上下方向の全幅。中心高度の上下へ半分ずつ広がります。", "%.1f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyBool("平らな雲底", &cloud->flatBottom, defaults.flatBottom,
+                "底を中心高度 − 厚さの半分にそろえ、境界を薄くぼかします。上部の凹凸は残します。");
             changed |= ui::PropertyFloat("奥行き", &cloud->depth, 10.0f, 20000.0f, defaults.depth,
                                          "雲の Z 方向の全幅。大きくすると奥へ広がります。", "%.1f m", ImGuiSliderFlags_Logarithmic);
             changed |= ui::PropertyFloat("消散係数", &cloud->extinction, 0.0001f, 0.03f, defaults.extinction,

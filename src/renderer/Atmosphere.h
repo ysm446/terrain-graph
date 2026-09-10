@@ -41,8 +41,10 @@ struct AtmosphereSettings {
     float detailStrength = 0.3f;
     uint32_t cloudMotionMode = 0;
     uint32_t cloudSource = 0;
+    uint32_t flatCloudBottom = 0;
+    uint32_t padding[3] = {};
 };
-static_assert(sizeof(AtmosphereSettings) == 144);
+static_assert(sizeof(AtmosphereSettings) == 160);
 
 class Atmosphere {
 public:

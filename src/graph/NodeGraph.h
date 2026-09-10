@@ -201,6 +201,7 @@ struct CloudNodeSettings {
     float shapeStrength = 0.65f;
     float detailStrength = 0.3f;
     float edgeSoftness = 0.2f;
+    bool flatBottom = true;
     int seed = 1;
     bool animate = false;
     int motionMode = 2; // 0: 雲全体、1: 範囲内の模様、2: 流れながら変化。

@@ -373,6 +373,7 @@ int Application::Run() {
             if (compiledCloud.layer) cloudSettings.opticalDepthIndex = UINT32_MAX;
             cloudSettings.detailStrength = cloud.detailStrength;
             cloudSettings.edgeSoftness = cloud.edgeSoftness;
+            cloudSettings.flatCloudBottom = cloud.flatBottom ? 1u : 0u;
             cloudSettings.seed = static_cast<uint32_t>(cloud.seed);
             cloudSettings.coverage = compiledCloud.layer ? cloud.coverage : 1.0f;
         }
@@ -596,7 +597,7 @@ void Application::DrawUi() {
     // ドックスペースの ID には版を付ける。**パネルを増減したら版を上げること。**
     // ID が変われば ini に配置が無い状態になり、既定レイアウトが組み直される。
     // 上げないと、新しいパネルがどこにも入らず浮いたままになる。
-    const ImGuiID dockspaceId = ImGui::GetID("TerrainGraphDockSpace_v16");
+    const ImGuiID dockspaceId = ImGui::GetID("TerrainGraphDockSpace_v17");
 
     // ステータスバーもメニューバーと同じく、先に作って作業領域を狭めておく。
     DrawStatusBar();
@@ -622,9 +623,9 @@ void Application::DrawUi() {
     // アセットの帯は畳める。出さなければドックノードが空になり、中央（ビューポート）が
     // その高さをもらう。ウィンドウはドック先を覚えているので、戻せば同じ所へ入る。
     if (m_settings.Display().showAssetBand) {
+        DrawTextureLibraryPanel();
         DrawMaterialLibraryPanel();
         DrawSkyLibraryPanel();
-        DrawTextureLibraryPanel();
     }
     DrawMaterialPanel();
     DrawLightingPanel();
@@ -692,7 +693,6 @@ void Application::BuildDefaultLayout(ImGuiID dockspaceId) {
     ImGuiID center = dockspaceId;
     ImGuiID right = 0;
     ImGuiID bottom = 0;
-    ImGuiID bottomRight = 0;
     // **カラムは右の 1 本だけにする。** 左右に分けると 1 本あたりが狭くなる。
     // 幅は「ラベル：値」の行が窮屈にならない範囲で**できるだけ細く**取る。
     // パネルは中を上下に割って使うので、横幅を広く取る理由がない。
@@ -701,19 +701,12 @@ void Application::BuildDefaultLayout(ImGuiID dockspaceId) {
     // アセットの帯。**右カラムを切り出した後の center を割る**ので、
     // 帯はビューポートの真下だけに伸び、右カラムの下へは回り込まない。
     ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.28f, &bottom, &center);
-    // 帯をさらに左右へ割る。**素材の一覧はどれもサムネイルの格子**なので、
-    // 「ラベル：値」の行を並べる右カラムより、横に広い帯のほうが枡が多く入る。
-    ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Right, 0.45f, &bottomRight, &bottom);
 
     ImGui::DockBuilderDockWindow("ビューポート", center);
-    // テクスチャは帯の左、マテリアルは帯の右。**テクスチャのサムネイルを
-    // マテリアルのマップ欄へドラッグして割り当てる**ので、左右に並べて
-    // 掴む側と落とす側が同時に見えるようにする。
+    // アセットは帯全体を共有し、テクスチャ・マテリアル・天球をタブで切り替える。
     ImGui::DockBuilderDockWindow("テクスチャ", bottom);
-    // **前面にしたい「マテリアル」を後にドックする。** 同じ枠では最後に
-    // ドックしたものが選ばれる。タブの並びは submit した順（マテリアル → 天球）。
-    ImGui::DockBuilderDockWindow("天球", bottomRight);
-    ImGui::DockBuilderDockWindow("マテリアル", bottomRight);
+    ImGui::DockBuilderDockWindow("マテリアル", bottom);
+    ImGui::DockBuilderDockWindow("天球", bottom);
     // 右カラムへタブで重ねる。縦に積むと 1 枚あたりが短くなり、
     // どれもスクロールしないと全体が見えなくなる。
     // **グラフは右カラムに置く。** 中央のタブにするとビューポートと排他になり、
@@ -725,7 +718,7 @@ void Application::BuildDefaultLayout(ImGuiID dockspaceId) {
 
     ImGui::DockBuilderFinish(dockspaceId);
 
-    // 前面のタブは右カラムが「グラフ」、帯の右が「マテリアル」。
+    // 前面のタブは右カラムが「グラフ」。アセットの帯は先に描く「テクスチャ」。
     // この時点ではまだウィンドウが無いので、実際の指定は各パネルの Begin 直前で行う。
     m_focusDefaultTabs = 3;
 }
