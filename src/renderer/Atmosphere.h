@@ -44,8 +44,10 @@ struct AtmosphereSettings {
     float flatCloudBottom = 0.0f; // 0: 丸い底、1: 平らな底。
     float cloudSkylightIntensity = 1.0f; // 実行時に地形と共通のスカイライト強度を受け取る。
     float cloudBodyOffsetX = 0.0f, cloudBodyOffsetZ = 0.0f; // 雲層の塊と表面ノイズの移流を分離。
+    float indirectLight = 1.0f; // 雲の太陽光の多重散乱の倍率。
+    float lightingPadding[3] = {};
 };
-static_assert(sizeof(AtmosphereSettings) == 160);
+static_assert(sizeof(AtmosphereSettings) == 176);
 
 class Atmosphere {
 public:

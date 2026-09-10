@@ -299,6 +299,9 @@ void Application::DrawLightingPanel() {
                                      "立体的な雲を描画し、環境光と反射にも反映します。\n"
                                      "ライトの「影」がオンなら地形に雲影も落とします。オフにしても雲の設定は保持されます。")) sky.clouds = clouds ? 1u : 0u;
                 if (clouds) {
+                    ui::PropertyFloat("Indirect Light", &sky.indirectLight, 0.0f, 5.0f, defaults.indirectLight,
+                        "雲の中で繰り返し散乱する太陽光の倍率。上げると雲自体が明るくなります。\n"
+                        "1 は従来の明るさ、0 は太陽光の多重散乱なし。密度・透過率・地形への雲影は変えません。", "%.2f");
                     ui::PropertyLabel("雲の配置", "現在の地形サイズと変位量から、山にかかる低い雲層へまとめて設定します。\n"
                                       "地形の四隅より少し外まで広げます。適用後は各値を個別に調整できます。");
                     if (ui::Button("地形に合わせる", ui::kWideButtonWidth)) {

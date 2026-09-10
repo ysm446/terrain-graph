@@ -1257,6 +1257,13 @@ void Application::DrawGraphPanel() {
             ui::EndPropertyTable();
         }
         ui::HintText("再生中の環境光・反射は固定し、停止後に更新します");
+        ui::SectionHeader("ライティング");
+        if (ui::BeginPropertyTable("cloudLightingRows")) {
+            changed |= ui::PropertyFloat("Indirect Light", &cloud->indirectLight, 0.0f, 5.0f, defaults.indirectLight,
+                "雲の中で繰り返し散乱する太陽光の倍率。上げると雲自体が明るくなります。\n"
+                "1 は従来の明るさ、0 は太陽光の多重散乱なし。密度・透過率・地形への雲影は変えません。", "%.2f");
+            ui::EndPropertyTable();
+        }
         ui::SectionHeader("形と配置");
         if (ui::BeginPropertyTable("cloudNodeRows")) {
             changed |= ui::PropertyBool("有効", &cloud->enabled, defaults.enabled);

@@ -14,6 +14,7 @@ struct AtmosphericParameters {
     uint localCloud; float radiusX; float radiusZ; float edgeSoftness;
     float shapeStrength; float detailStrength; uint cloudMotionMode; uint cloudSource;
     float flatCloudBottom; float cloudSkylightIntensity; float cloudBodyOffsetX; float cloudBodyOffsetZ;
+    float indirectLight; float3 lightingPadding;
 };
 float3 AtmosphereSun(AtmosphericParameters p) {
     return float3(cos(p.elevation) * sin(p.azimuth), sin(p.elevation), cos(p.elevation) * cos(p.azimuth));
@@ -233,6 +234,7 @@ float4 IntegrateCloud(float3 origin, float3 ray, float limit, AtmosphericParamet
     // 単散乱は維持し、高次の等方化した太陽光を残す（設計資料 atmospheric-sky.md）。
     const float contribution=0.85;
     phases*=float4(1,contribution,contribution*contribution,contribution*contribution*contribution);
+    phases.yzw*=p.indirectLight; // 雲自体の明るさを高次散乱だけで調整する。
     float transmission=1; float3 radiance=0;
     [loop] for(uint i=0;i<count && transmission>0.005;++i) {
         float3 pos=origin+ray*(start+(i+0.5)*stepLength);

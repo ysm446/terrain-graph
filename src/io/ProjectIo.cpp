@@ -1346,6 +1346,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["cloud"]["edgeSoftness"] = cloud->edgeSoftness;
             item["cloud"]["flatBottom"] = cloud->flatBottom;
             item["cloud"]["bottomFlatness"] = cloud->bottomFlatness;
+            item["cloud"]["indirectLight"] = cloud->indirectLight;
             item["cloud"]["seed"] = cloud->seed;
             item["cloud"]["animate"] = cloud->animate;
             item["cloud"]["motionMode"] = cloud->motionMode == 2 ? "drift" : cloud->motionMode == 1 ? "flow" : "translate";
@@ -1512,6 +1513,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.edgeSoftness = std::clamp(ReadFloat(*cloud, "edgeSoftness", settings.edgeSoftness), 0.02f, 1.0f);
                     settings.flatBottom = ReadBool(*cloud, "flatBottom", false);
                     settings.bottomFlatness = std::clamp(ReadFloat(*cloud, "bottomFlatness", settings.bottomFlatness), 0.0f, 1.0f);
+                    settings.indirectLight = std::clamp(ReadFloat(*cloud, "indirectLight", settings.indirectLight), 0.0f, 5.0f);
                 }
                 created.settings = settings;
             } else if (created.kind == graph::NodeKind::Path) {
@@ -1640,6 +1642,7 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     atmosphereNode["groundAlbedo"] = atmosphere.groundAlbedo;
     atmosphereNode["lowerHemisphere"] = atmosphere.lowerHemisphere == 0 ? "skyExtension" : "groundReflection";
     atmosphereNode["clouds"] = atmosphere.clouds != 0;
+    atmosphereNode["indirectLight"] = atmosphere.indirectLight;
     atmosphereNode["coverage"] = atmosphere.coverage;
     atmosphereNode["extinction"] = atmosphere.extinction;
     atmosphereNode["cloudBottom"] = atmosphere.cloudBottom;
@@ -1738,6 +1741,7 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
         atmosphere.coverage = std::clamp(ReadFloat(source, "coverage", defaults.coverage), 0.0f, 1.0f);
         atmosphere.extinction = std::clamp(ReadFloat(source, "extinction", defaults.extinction), .0001f, .03f);
         atmosphere.cloudBottom = std::clamp(ReadFloat(source, "cloudBottom", defaults.cloudBottom), -10000.0f, 10000.0f);
+        atmosphere.indirectLight = std::clamp(ReadFloat(source, "indirectLight", defaults.indirectLight), 0.0f, 5.0f);
         atmosphere.cloudThickness = std::clamp(ReadFloat(source, "cloudThickness", defaults.cloudThickness), 10.0f, 6000.0f);
         atmosphere.cloudScale = std::clamp(ReadFloat(source, "cloudScale", defaults.cloudScale), 10.0f, 40000.0f);
         atmosphere.fieldCenterX = std::clamp(ReadFloat(source, "fieldCenterX", defaults.fieldCenterX), -200000.0f, 200000.0f);
