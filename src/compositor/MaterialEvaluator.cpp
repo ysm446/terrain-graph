@@ -230,6 +230,10 @@ uint64_t HashHeightState(uint64_t seed, const MaterialLayer& layer) {
     hash = HashBytes(hash, &layer.blur, sizeof(layer.blur));
     hash = HashBytes(hash, &layer.sediment, sizeof(layer.sediment));
     hash = HashBytes(hash, &layer.crumbling, sizeof(layer.crumbling));
+    hash = HashBytes(hash, &layer.lake.optimizationSteps, sizeof(layer.lake.optimizationSteps));
+    hash = HashBytes(hash, &layer.lake.waterAmount, sizeof(layer.lake.waterAmount));
+    hash = HashBytes(hash, &layer.lake.allowOutflow, sizeof(layer.lake.allowOutflow));
+    hash = HashBytes(hash, &layer.lake.referenceDetailScale, sizeof(layer.lake.referenceDetailScale));
     hash = HashBytes(hash, &layer.snowCover.erodeDusting, sizeof(layer.snowCover.erodeDusting));
     hash = HashBytes(hash, &layer.snowCover.advectionLength, sizeof(layer.snowCover.advectionLength));
     hash = HashBytes(hash, &layer.snowCover.advectionVolume, sizeof(layer.snowCover.advectionVolume));
@@ -375,6 +379,7 @@ uint64_t HashMaskOpParams(uint64_t seed, const MaskOp& op) {
             return HashBytes(seed, &op.height, sizeof(op.height));
         case MaskOpKind::River:
             return HashBytes(seed, &op.riverMask, sizeof(op.riverMask));
+        case MaskOpKind::Lake:
         case MaskOpKind::SnowCover:
         case MaskOpKind::FluvialErosion:
         case MaskOpKind::Droplet:
@@ -649,6 +654,8 @@ void MaterialEvaluator::Destroy(rhi::Device& device) {
     ReleaseSnowResources(device);
     for (auto* texture : {&m_snowCover.state[0], &m_snowCover.state[1], &m_snowCover.output, &m_snowCover.weather, &m_snowCover.particles, &m_snowCover.sums}) device.DeferRelease(*texture);
     m_snowCover.allocation = 0;
+    for (auto* texture : {&m_lake.state[0], &m_lake.state[1], &m_lake.output}) device.DeferRelease(*texture);
+    m_lake.allocation = 0;
     ReleaseRiverResources(device);
     ReleaseDropletResources(device);
     for (auto* texture : {&m_fluvialErosion.state[0], &m_fluvialErosion.state[1],
@@ -999,6 +1006,12 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
         return ApplyRiverMask(device, pipelineCache, commandList, op, stack, target);
     }
     // 水滴侵食の流量 / 堆積も、直前に走った水滴侵食レイヤーの作業用テクスチャから焼く。
+    if (op.kind == MaskOpKind::Lake) {
+        const bool enabled = op.heightSourceLayer >= 0 &&
+            static_cast<size_t>(op.heightSourceLayer) < stack.Layers().size() &&
+            stack.Layers()[op.heightSourceLayer].enabled;
+        return ApplyLakeMask(device, pipelineCache, commandList, op, target, enabled);
+    }
     if (op.kind == MaskOpKind::SnowCover) {
         const bool enabled = op.heightSourceLayer >= 0 &&
             static_cast<size_t>(op.heightSourceLayer) < stack.Layers().size() &&
@@ -2790,6 +2803,162 @@ struct SnowCoverConstants {
 static_assert(sizeof(SnowCoverConstants) == 304);
 }
 
+namespace {
+struct LakeConstants {
+    uint32_t textures[4]{}, inputs[4]{}, grid[4]{}, mode[4]{};
+    float scale[4]{};
+};
+static_assert(sizeof(LakeConstants) == 80);
+}
+
+bool MaterialEvaluator::ApplyLake(rhi::Device& device, rhi::PipelineCache& cache,
+    ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
+    const MaterialStack& stack, uint32_t maskIndex) {
+    auto& resources = m_lake;
+    const auto& settings = layer.lake;
+    const uint32_t n = m_resolution;
+    if (resources.allocation != n) {
+        resources.allocation = 0;
+        for (auto* texture : {&resources.state[0], &resources.state[1], &resources.output})
+            device.DeferRelease(*texture);
+        if (!CreateChannelTexture(device, n, DXGI_FORMAT_R32G32B32A32_FLOAT, L"LakeStateA", resources.state[0]) ||
+            !CreateChannelTexture(device, n, DXGI_FORMAT_R32G32B32A32_FLOAT, L"LakeStateB", resources.state[1]) ||
+            !CreateChannelTexture(device, n, DXGI_FORMAT_R32G32B32A32_FLOAT, L"LakeOutput", resources.output)) return false;
+        resources.allocation = n;
+    }
+    const wchar_t* entries[] = {L"CsInit", L"CsTransport", L"CsUpsample", L"CsFlatten",
+        L"CsLevelInit", L"CsExtendLevel", L"CsFinish", L"CsResolve"};
+    ID3D12PipelineState* passes[8]{};
+    for (size_t i = 0; i < std::size(entries); ++i) {
+        passes[i] = cache.GetCompute(L"CompositeLake.hlsl", entries[i]);
+        if (!passes[i]) return false;
+    }
+    auto* normals = cache.GetCompute(L"CompositeBlur.hlsl", L"CsNormalFromHeight");
+    if (!normals) return false;
+
+    LakeConstants constants{};
+    constants.inputs[0] = m_textures.height.SrvIndex();
+    constants.inputs[1] = m_textures.height.UavIndex();
+    constants.inputs[2] = maskIndex;
+    constants.textures[2] = resources.output.UavIndex();
+    constants.grid[1] = n;
+    constants.mode[0] = settings.allowOutflow ? 1u : 0u;
+    constants.scale[0] = std::max(stack.HeightMeters(), 0.001f);
+    constants.scale[1] = std::clamp(settings.waterAmount, 0.0f, 100.0f);
+    constants.scale[2] = std::max(stack.SizeMeters(), 0.001f) / n;
+    // 縮小率: 0.5^floor(log2(reference / voxel)) * 0.5^optimizationSteps。
+    // 元解像度以上への拡大は行わず、最小 1 セルに制限する。
+    const float reference = std::clamp(settings.referenceDetailScale, 0.01f, 100.0f);
+    const float exponent = std::floor(std::log2(reference / constants.scale[2])) +
+        static_cast<float>(std::clamp(settings.optimizationSteps, 0, 10));
+    const uint32_t maxShift = static_cast<uint32_t>(std::floor(std::log2(static_cast<float>(n))));
+    const uint32_t shift = static_cast<uint32_t>(std::clamp(exponent, 0.0f, static_cast<float>(maxShift)));
+    const uint32_t coarse = std::max(1u, n >> shift);
+    const uint32_t stride = 1u << shift;
+    constants.grid[0] = coarse;
+    constants.grid[2] = coarse;
+
+    const auto upload = [&]() {
+        const auto allocation = AllocateConstants(device, sizeof(constants));
+        if (allocation.IsValid()) std::memcpy(allocation.cpu, &constants, sizeof(constants));
+        return allocation.gpuAddress;
+    };
+    const auto run = [&](int pass, uint32_t resolution, D3D12_GPU_VIRTUAL_ADDRESS address) {
+        if (!address) return false;
+        commandList->SetComputeRootConstantBufferView(1, address);
+        commandList->SetPipelineState(passes[pass]);
+        commandList->Dispatch(DispatchCount(resolution), DispatchCount(resolution), 1);
+        const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+        commandList->ResourceBarrier(1, &barrier);
+        return true;
+    };
+    uint32_t current = 0;
+    const auto select = [&]() {
+        constants.textures[0] = resources.state[current].UavIndex();
+        constants.textures[1] = resources.state[1 - current].UavIndex();
+    };
+    // 反復中は同じ定数バッファを共有し、フレームリングを消費し続けない。
+    const auto iterate = [&](int pass, uint32_t resolution, uint32_t count) {
+        D3D12_GPU_VIRTUAL_ADDRESS addresses[2]{};
+        for (uint32_t i = 0; i < 2; ++i) {
+            constants.textures[0] = resources.state[i].UavIndex();
+            constants.textures[1] = resources.state[1 - i].UavIndex();
+            addresses[i] = upload();
+        }
+        for (uint32_t i = 0; i < count; ++i) {
+            if (!run(pass, resolution, addresses[current])) return false;
+            current = 1 - current;
+        }
+        return true;
+    };
+
+    PIXBeginEvent(commandList, PIX_COLOR_DEFAULT, "Lake");
+    for (auto* texture : {&resources.state[0], &resources.state[1], &resources.output})
+        TransitionIfNeeded(commandList, *texture, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    select();
+    bool ok = run(0, coarse, upload());
+    current = 1 - current;
+    if (constants.scale[1] > 0) ok = ok && iterate(1, coarse, coarse * 2);
+    select();
+    ok = ok && run(2, n, upload());
+    current = 1 - current;
+    constants.grid[0] = n;
+    constants.grid[3] = stride;
+    if (constants.scale[1] > 0) {
+        ok = ok && iterate(3, n, coarse * 2);
+        constants.grid[3] = 1;
+        ok = ok && iterate(3, n, stride);
+    }
+    select();
+    ok = ok && run(4, n, upload());
+    current = 1 - current;
+    // 軸ごとの水位延長を ping-pong 化し、近傍の同時書き換えを避ける。
+    for (uint32_t axis = 0; axis < 2 && ok; ++axis) {
+        constants.mode[2] = axis;
+        for (uint32_t step = 1; step < n && ok; step *= 2) {
+            constants.grid[3] = step;
+            select();
+            ok = run(5, n, upload());
+            current = 1 - current;
+        }
+    }
+    select();
+    const auto finalAddress = upload();
+    ok = ok && run(6, n, finalAddress);
+    TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    if (ok && !layer.maskOnly && constants.scale[1] > 0) {
+        ok = run(7, n, finalAddress);
+        if (ok) RebuildNormalsFromHeight(device, normals, commandList, stack);
+    }
+    PIXEndEvent(commandList);
+    return ok;
+}
+
+bool MaterialEvaluator::ApplyLakeMask(rhi::Device& device, rhi::PipelineCache& cache,
+    ID3D12GraphicsCommandList* commandList, const MaskOp& op, rhi::GpuTexture& target, bool enabled) {
+    auto* pass = cache.GetCompute(L"CompositeLake.hlsl", L"CsMask");
+    if (!pass || (enabled && !m_lake.allocation)) return false;
+    LakeConstants constants{};
+    constants.textures[2] = m_lake.output.UavIndex();
+    constants.inputs[3] = target.UavIndex();
+    constants.grid[1] = target.width;
+    constants.mode[1] = enabled ? op.dropletMask.channel : 3u;
+    const auto allocation = AllocateConstants(device, sizeof(constants));
+    if (!allocation.IsValid()) return false;
+    std::memcpy(allocation.cpu, &constants, sizeof(constants));
+    PIXBeginEvent(commandList, PIX_COLOR_DEFAULT, "LakeMask");
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    commandList->SetComputeRootConstantBufferView(1, allocation.gpuAddress);
+    commandList->SetPipelineState(pass);
+    commandList->Dispatch(DispatchCount(target.width), DispatchCount(target.height), 1);
+    const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+    commandList->ResourceBarrier(1, &barrier);
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    PIXEndEvent(commandList);
+    return true;
+}
+
 bool MaterialEvaluator::ApplySnowCover(rhi::Device& device, rhi::PipelineCache& cache,
     ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
     const MaterialStack& stack, uint32_t maskIndex) {
@@ -2821,7 +2990,7 @@ bool MaterialEvaluator::ApplySnowCover(rhi::Device& device, rhi::PipelineCache& 
     c.textures[2]=r.weather.UavIndex(); c.textures[3]=r.output.UavIndex();
     c.inputs[0]=m_textures.height.SrvIndex(); c.inputs[1]=m_textures.height.UavIndex(); c.inputs[2]=maskIndex;
     c.grid[2]=n; c.work[0]=r.particles.UavIndex(); c.work[1]=r.sums.UavIndex();
-    // HDA の res_x * 1024 * Source_Particle_Density (0.1)。
+    // 粒子数は解像度 × 1024 × 粒子密度 (0.1)。
     c.work[2]=std::min(n*n,static_cast<uint32_t>(n*102.4f)+1u);
     c.work[3]=static_cast<uint32_t>(std::clamp(p.rampCount,2,8));
     c.scale[3]=std::max(stack.SizeMeters(),0.001f); c.scale[2]=std::max(stack.HeightMeters(),0.001f);
@@ -2970,7 +3139,7 @@ bool MaterialEvaluator::ApplyFluvialErosion(rhi::Device& device, rhi::PipelineCa
     const float levelsValue=std::clamp(std::log2(std::max(p.featureSize*reference/(size/n),1.0f))+1,1.0f,8.0f);
     const uint32_t levelCount=static_cast<uint32_t>(std::ceil(levelsValue));
     std::vector<uint32_t> levels;
-    // 最小 16 セルを維持する。元 HDA の空間パディングはアプリの固定領域に合わせる。
+    // 最小 16 セルを維持し、アプリの固定領域で評価する。
     for (uint32_t i=levelCount; i>0; --i) {
         uint32_t next=std::max(16u,n>>(i-1));
         if (levels.empty() || levels.back()!=next) levels.push_back(next);
@@ -4188,7 +4357,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 op.kind == MaskOpKind::Curvature || op.kind == MaskOpKind::Sediment ||
                 op.kind == MaskOpKind::Crumbling || op.kind == MaskOpKind::Snow ||
                 op.kind == MaskOpKind::Height || op.kind == MaskOpKind::River ||
-                op.kind == MaskOpKind::SnowCover || op.kind == MaskOpKind::FluvialErosion || op.kind == MaskOpKind::Droplet || op.kind == MaskOpKind::Scatter) {
+                op.kind == MaskOpKind::Lake || op.kind == MaskOpKind::SnowCover || op.kind == MaskOpKind::FluvialErosion || op.kind == MaskOpKind::Droplet || op.kind == MaskOpKind::Scatter) {
                 after = std::max(after, op.heightSourceLayer);
                 const size_t layerCount = std::min<size_t>(
                     stack.Layers().size(),
@@ -4316,6 +4485,9 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                                    inputMaskIndex)) {
                     complete = false;
                 }
+                ++m_evaluatedLayerCount;
+            } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::Lake) {
+                if (!ApplyLake(device, pipelineCache, commandList, layer, stack, inputMaskIndex)) complete = false;
                 ++m_evaluatedLayerCount;
             } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::SnowCover) {
                 if (!ApplySnowCover(device, pipelineCache, commandList, layer, stack, inputMaskIndex)) complete = false;

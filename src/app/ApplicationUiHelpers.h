@@ -116,7 +116,14 @@ inline const compositor::MaterialLayer kDefaultSedimentLayer = [] {
     return layer;
 }();
 
-// Snow Cover は KTT Snow Base の既定値を使う。
+// Lake の既定値。
+inline const compositor::MaterialLayer kDefaultLakeLayer = [] {
+    compositor::MaterialLayer layer;
+    layer.kind = compositor::LayerKind::Lake;
+    layer.name = "Lake";
+    return layer;
+}();
+// Snow Cover の既定値。
 inline const compositor::MaterialLayer kDefaultSnowCoverLayer = [] {
     compositor::MaterialLayer layer;
     layer.kind = compositor::LayerKind::SnowCover;
@@ -191,6 +198,8 @@ inline const compositor::MaterialLayer& DefaultLayerFor(compositor::LayerKind ki
             return kDefaultSedimentLayer;
         case compositor::LayerKind::Crumbling:
             return kDefaultCrumblingLayer;
+        case compositor::LayerKind::Lake:
+            return kDefaultLakeLayer;
         case compositor::LayerKind::SnowCover:
             return kDefaultSnowCoverLayer;
         case compositor::LayerKind::Snow:

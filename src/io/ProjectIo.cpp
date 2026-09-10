@@ -153,7 +153,7 @@ const char* const kCurvatureModeNames[] = {"ridges", "valleys", "absolute"};
 const char* const kMaskBlendModeNames[] = {"add", "multiply", "min", "max", "subtract"};
 const char* const kChannelNames[] = {"baseColor", "normal", "surface", "height"};
 const char* const kLayerKindNames[] = {"surface",   "shape", "liquid", "blur",    "sediment",
-                                       "crumbling", "snow",  "river",  "droplet", "scatter", "multiScaleErosion", "fluvialErosion", "flattenBorders", "snowCover"};
+                                       "crumbling", "snow",  "river",  "droplet", "scatter", "multiScaleErosion", "fluvialErosion", "flattenBorders", "snowCover", "lake"};
 // 散布の形 / 向き。compositor::ScatterShape / ScatterOrientation の並びと一致させること。
 const char* const kScatterShapeNames[] = {"hemisphere", "cone"};
 const char* const kScatterOrientationNames[] = {"flat", "followGround", "slopeOriented"};
@@ -787,6 +787,10 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     node["crumbling"] = std::move(crumbling);
 
     // 積雪（積雪レイヤーだけが使う）。
+    node["lake"] = {{"optimizationSteps", layer.lake.optimizationSteps},
+                    {"waterAmount", layer.lake.waterAmount},
+                    {"allowOutflow", layer.lake.allowOutflow},
+                    {"referenceDetailScale", layer.lake.referenceDetailScale}};
     json snowCover;
     snowCover["erodeDusting"] = layer.snowCover.erodeDusting;
     snowCover["advectionLength"] = layer.snowCover.advectionLength;
@@ -1043,6 +1047,12 @@ compositor::MaterialLayer ReadLayer(
                                                        defaults.sediment.maskThicknessMeters);
     }
 
+    if (const json* value = FindMember(node, "lake"); value != nullptr && value->is_object()) {
+        layer.lake.optimizationSteps = std::clamp(ReadInt(*value, "optimizationSteps", defaults.lake.optimizationSteps), 0, 10);
+        layer.lake.waterAmount = std::clamp(ReadFloat(*value, "waterAmount", defaults.lake.waterAmount), 0.0f, 100.0f);
+        layer.lake.allowOutflow = ReadBool(*value, "allowOutflow", defaults.lake.allowOutflow);
+        layer.lake.referenceDetailScale = std::clamp(ReadFloat(*value, "referenceDetailScale", defaults.lake.referenceDetailScale), 0.01f, 100.0f);
+    }
     if (const json* value = FindMember(node, "snowCover"); value != nullptr && value->is_object()) {
         layer.snowCover.erodeDusting = ReadBool(*value, "erodeDusting", defaults.snowCover.erodeDusting);
         layer.snowCover.advectionLength = ReadFloat(*value, "advectionLength", defaults.snowCover.advectionLength);

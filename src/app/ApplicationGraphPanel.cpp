@@ -48,6 +48,7 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
         case graph::NodeKind::SnowCover:
         case graph::NodeKind::Snow:
             return ImVec4(0.72f, 0.76f, 0.82f, 1.0f);
+        case graph::NodeKind::Lake:
         case graph::NodeKind::River:
             return ImVec4(0.48f, 0.64f, 0.72f, 1.0f);
         case graph::NodeKind::FluvialErosion:
@@ -863,6 +864,7 @@ void Application::DrawGraphEditor() {
         addNodeMenuItem(graph::NodeKind::SnowCover, "Snow Cover — 積雪と薄雪を生成し、被覆・雪深・流動量を出す");
         addNodeMenuItem(graph::NodeKind::Snow,
                         "Snow — 雪を降らせ、急な雪面から落として積もらせる");
+        addNodeMenuItem(graph::NodeKind::Lake, "Lake — 窪みに水を溜め、湖の範囲・水深・水位を出す");
         addNodeMenuItem(graph::NodeKind::River,
                         "River — 川筋から河床を掘り、下流へ下がる水面を張る");
         addNodeMenuItem(graph::NodeKind::FluvialErosion, "Fluvial Erosion — 流れに沿って谷を刻み、細部を戻しながら侵食する");

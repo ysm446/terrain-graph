@@ -101,6 +101,7 @@ enum class NodeKind : uint32_t {
     Cloud = 28,
     CloudOutput = 29,
     CloudLayer = 30,
+    Lake = 31,
 };
 
 struct PinDefinition {

@@ -63,6 +63,7 @@ enum class LayerKind : uint32_t {
     FluvialErosion = 11,
     FlattenBorders = 12,
     SnowCover = 13,
+    Lake = 14,
 };
 
 // 散布する形。terrain-editor の ScatterShapeType と同じ。
@@ -90,7 +91,7 @@ enum class RockStyle : uint32_t {
 // 合成せずハイトを書き換える加工か。**下地にはなれない**（ならす相手が要る）。
 inline bool IsHeightOperationKind(LayerKind kind) {
     return kind == LayerKind::Blur || kind == LayerKind::Sediment ||
-           kind == LayerKind::Crumbling || kind == LayerKind::Snow || kind == LayerKind::SnowCover ||
+           kind == LayerKind::Crumbling || kind == LayerKind::Snow || kind == LayerKind::SnowCover || kind == LayerKind::Lake ||
            kind == LayerKind::River || kind == LayerKind::Droplet ||
            kind == LayerKind::Scatter || kind == LayerKind::MultiScaleErosion ||
            kind == LayerKind::FluvialErosion || kind == LayerKind::FlattenBorders;
@@ -474,7 +475,7 @@ struct MaterialLayer {
     };
     MultiScaleErosionSettings multiScaleErosion;
 
-    // KTT Snow Base の専用設定。旧 Snow とは共有しない。距離・高さは m。
+    // Snow Cover の専用設定。旧 Snow とは共有しない。距離・高さは m。
     struct SnowCoverSettings {
         bool deepSnow = true;
         float featureSize = 2.0f;
@@ -516,6 +517,14 @@ struct MaterialLayer {
         RampPoint ramp[8] = {{0.0f, 0.0f, 1}, {1.0f, 1.0f, 1}};
     };
     SnowCoverSettings snowCover;
+
+    // Lake の設定。水量と基準スケールの単位は m。
+    struct LakeSettings {
+        int optimizationSteps = 3;
+        float waterAmount = 5.0f;
+        bool allowOutflow = false;
+        float referenceDetailScale = 1.0f;
+    } lake;
 
     struct FluvialErosionSettings {
         uint32_t resolution = 1024;

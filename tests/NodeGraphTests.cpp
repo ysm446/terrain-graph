@@ -140,7 +140,7 @@ void RunNodeGraphTests() {
 
     constexpr std::array kOperationKinds = {
         NodeKind::Blur,      NodeKind::Sediment, NodeKind::Crumbling,
-        NodeKind::SnowCover, NodeKind::Snow, NodeKind::River,    NodeKind::Droplet,
+        NodeKind::Lake, NodeKind::SnowCover, NodeKind::Snow, NodeKind::River,    NodeKind::Droplet,
         NodeKind::MultiScaleErosion,
         NodeKind::FluvialErosion,
         NodeKind::FlattenBorders,
@@ -191,6 +191,36 @@ void RunNodeGraphTests() {
             for (const auto& op : preview.maskOps)
                 found |= op.kind == tg::compositor::MaskOpKind::FluvialErosion && op.dropletMask.channel == i-1;
             Check(found, "補助出力のプレビューが対応する成分を参照する");
+        }
+    }
+
+    Section("ノードグラフ — Lake の独立した出力");
+    {
+        NodeGraph graph;
+        const auto baseId = graph.CreateNode(NodeKind::Heightmap);
+        const auto lakeId = graph.CreateNode(NodeKind::Lake);
+        const auto maskId = graph.CreateNode(NodeKind::MaskNoise);
+        const auto* base = graph.FindNode(baseId);
+        const auto* lake = graph.FindNode(lakeId);
+        const auto* mask = graph.FindNode(maskId);
+        Check(lake->inputs.size() == 2 && lake->outputs.size() == 4,
+              "Base / Mask と Result / Lake / Depth / Water Level を持つ");
+        Check(graph.CreateLink(base->outputs[0].id, lake->inputs[0].id) &&
+              graph.CreateLink(mask->outputs[0].id, lake->inputs[1].id), "給水範囲を接続できる");
+        auto* settings = std::get_if<tg::graph::LayerNodeSettings>(&graph.FindMutableNode(lakeId)->settings);
+        settings->layer.lake.allowOutflow = true;
+        settings->layer.lake.waterAmount = 3.5f;
+        graph.MarkDirty();
+        const auto result = graph.CompileLayersTo(lakeId);
+        Check(result.layers.size() == 2 && result.layers.back().kind == tg::compositor::LayerKind::Lake &&
+              result.layers.back().lake.allowOutflow && result.layers.back().lake.waterAmount == 3.5f &&
+              result.layers.back().mask.maskOp >= 0, "専用設定と給水マスクを保持する");
+        for (size_t i = 1; i < 4; ++i) {
+            const auto preview = graph.CompileLayersTo(lakeId, lake->outputs[i].id);
+            bool found = false;
+            for (const auto& op : preview.maskOps)
+                found |= op.kind == tg::compositor::MaskOpKind::Lake && op.dropletMask.channel == i - 1;
+            Check(found, "湖・水深・水位を取り違えずプレビューする");
         }
     }
 

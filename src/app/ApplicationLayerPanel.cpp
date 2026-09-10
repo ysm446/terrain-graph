@@ -121,6 +121,30 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
         return changed;
     }
 
+    // 湖は給水マスクを受けて水を移動し、水面まで地形を持ち上げる。
+    if (layer.kind == compositor::LayerKind::Lake) {
+        auto& p = layer.lake;
+        const compositor::MaterialLayer::LakeSettings d;
+        ui::SectionHeader("湖");
+        if (ui::BeginPropertyTable("lakeRows")) {
+            char name[128]{};
+            std::snprintf(name, sizeof(name), "%s", layer.name.c_str());
+            if (ui::PropertyTextInput("名前", name, sizeof(name))) { layer.name = name; changed = true; }
+            changed |= ui::PropertyFloat("水量", &p.waterAmount, 0.0f, 100.0f, d.waterAmount,
+                "全面に供給する水の厚さ。Water Mask 入力で供給場所を絞る", "%.3f m");
+            changed |= ui::PropertyInt("最適化段数", &p.optimizationSteps, 0, 10, d.optimizationSteps,
+                "大きいほど粗い格子で水を移動する。小さな窪みの結果も変化する");
+            changed |= ui::PropertyBool("境界から流出", &p.allowOutflow, d.allowOutflow,
+                "地形の端から外へ水を流す");
+            changed |= ui::PropertyFloat("基準スケール", &p.referenceDetailScale, 0.01f, 100.0f, d.referenceDetailScale,
+                "水の移動を計算する格子の基準となる距離", "%.3f m");
+            ui::EndPropertyTable();
+        }
+        ui::HintText("窪みに水を溜めて水面の高さへ変形する。Lake は湖の範囲、Depth は水深（m）、"
+                     "Water Level は周囲へ延長した水位（Height と同じ 0〜1 基準）。"
+                     "水の色や粗さは、Result の後に Surface を接続して Lake 出力で指定する");
+        return changed;
+    }
     // 積雪も合成レイヤーではなく「下地のハイトへ雪を積む加工」。
     // 降る量は一様なので、マスクの節は出さない（どこに積もるかは雪面が決める）。
     if (layer.kind == compositor::LayerKind::SnowCover) {

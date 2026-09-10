@@ -1,5 +1,5 @@
-// KTT Snow Base の Deep Snow / Dusting。高さ・雪深は内部では m。
-// OpenCL の並行書き込みは段ごとの読み取りと集計に分離する。
+// Snow Cover の Deep Snow / Dusting。高さ・雪深は内部では m。
+// 並行書き込みは段ごとの読み取りと集計に分離する。
 #include "CompositeCommon.hlsli"
 
 struct SnowCoverConstants {
@@ -139,7 +139,7 @@ void CsSettle(uint3 id : SV_DispatchThreadID) {
     for (int k = 0; k < 8; ++k) {
         float4 other = source[CoverCell(p + offsets[k],g_cover.grid.x)];
         float transfer = other.x-own.x + g_cover.snow.y*(other.z-own.z);
-        transfer *= k >= 4 ? 1.0f : 0.7f; // HDA の係数を維持する。
+        transfer *= k >= 4 ? 1.0f : 0.7f; // 軸方向と斜め方向で移動係数を変える。
         transfer = clamp(transfer, own.y-own.x, other.x-other.y);
         delta += transfer; flow += abs(transfer)*0.17f;
     }
@@ -158,7 +158,7 @@ float2 CoverRandom(float2 p) {
     return frac(sin(float2(dot(p,float2(127.141f,311.742f)),dot(p,float2(269.513f,183.357f))))*621.5153f);
 }
 // Dusting の Fluvial Advection。Snow Base が使う Smooth / 摩擦 1 / 速度 1 の組み合わせ。
-// 元 HDA の field/flowmap への非 atomic 同時書き込みを、移動ステップごとの集計へ置換。
+// field/flowmap は移動ステップごとに集計する。
 [numthreads(8,8,1)]
 void CsParticles(uint3 id : SV_DispatchThreadID) {
     if (any(id.xy >= g_cover.grid.z)) return;
@@ -209,7 +209,7 @@ void CsAdvectApply(uint3 id : SV_DispatchThreadID) {
     weather[id.xy]=value; sums[id.xy]=0; sums[id.xy+uint2(g_cover.grid.z,0)]=0;
 }
 
-// Houdini noise() に相当する連続 3D gradient noise。乱数列はエンジン側で定義。
+// 連続 3D gradient noise。乱数列はエンジン側で定義。
 float CoverHash(float3 p) { return frac(sin(dot(p,float3(127.1,311.7,74.7)))*43758.5453); }
 float CoverNoise(float3 p) {
     float3 cell=floor(p), f=frac(p), w=f*f*f*(f*(f*6-15)+10);
