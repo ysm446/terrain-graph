@@ -152,6 +152,28 @@ void Application::DrawMaterialPanel() {
             ui::EndPropertyTable();
         }
 
+        ui::SectionHeader("ボリューム雲");
+        if (ui::BeginPropertyTable("volumeCloudQuality", "レイマーチ品質")) {
+            auto& sky = m_renderer.AtmosphericSettings();
+            const char* resolutions[] = {"半解像度", "全解像度"};
+            int resolution = m_renderer.FullResolutionClouds() ? 1 : 0;
+            if (ui::PropertyCombo("描画解像度", &resolution, resolutions, 2, 0,
+                "半解像度は軽量な描画。全解像度は雲の細部を確認するための設定で、描画負荷が増えます。"))
+                m_renderer.FullResolutionClouds() = resolution == 1;
+            const char* qualities[] = {"低（32）", "標準（64）", "高（128）"};
+            int quality = sky.samples <= 32 ? 0 : sky.samples <= 64 ? 1 : 2;
+            if (ui::PropertyCombo("レイマーチ品質", &quality, qualities, 3, 1,
+                "雲の奥行き方向のサンプル数。高くすると筋や段差を抑えますが、描画が重くなります。雲塊・雲層に共通です。"))
+                sky.samples = 32u << quality;
+            const char* lighting[] = {"標準（キャッシュ）", "高（直接計算）"};
+            int lightQuality = m_renderer.CloudLightingCache() ? 0 : 1;
+            if (ui::PropertyCombo("陰影の品質", &lightQuality, lighting, 2, 0,
+                "雲層の内部の陰影と地形への雲影。標準は光学的厚さを格子に保存して再利用します。直接計算は細かな変化を評価しますが重くなります。雲塊には影響しません。"))
+                m_renderer.CloudLightingCache() = lightQuality == 0;
+            ui::EndPropertyTable();
+        }
+        ui::HintText("大気散乱スカイで使用。雲の形と配置は雲ノードで設定します");
+
         // **レンズの値はここに出さない。** 焦点距離も F 値もカメラの節が持っていて、
         // すぐ上に見えている。同じ値を並べると、どちらが効いているのか分からなくなる。
         ui::SectionHeader("被写界深度");
@@ -362,11 +384,6 @@ void Application::DrawLightingPanel() {
                     if (ui::PropertyInt("シード", &seed, 0, 10000, static_cast<int>(defaults.seed),
                                         "雲模様の乱数の種。値を変えると雲の形と配置が変わります。\n"
                                         "同じシードと設定なら同じ雲を再現できます。")) sky.seed = static_cast<uint32_t>(seed);
-                    const char* quality[] = {"低", "標準", "高"};
-                    int index = sky.samples <= 32 ? 0 : sky.samples <= 64 ? 1 : 2;
-                    if (ui::PropertyCombo("品質", &index, quality, 3, 1,
-                                          "雲の奥行きを計算する細かさ。高くすると筋や段差が出にくくなりますが、描画が重くなります。\n"
-                                          "操作が重いときは「低」、仕上がりの確認には「高」を選びます。")) sky.samples = 32u << index;
                 }
                 ui::EndPropertyTable();
             }

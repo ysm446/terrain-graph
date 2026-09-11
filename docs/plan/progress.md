@@ -1,9 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-11 08:19
+更新日時: 2026-09-11 09:04
 
 ## 現在の状況
+
+**雲層のセル数とプレビュー品質を設定可能に（2026-09-11 09:04）。** 雲層に繰り返しセル数1〜32（既定10）、プレビュー設定に「ボリューム雲」を追加。半／全解像度・32／64／128サンプル・キャッシュ／直接計算を保存可能。Debug / Releaseビルド・テスト・DXC・Release描画・保存再読み込みを確認。10セルは変更前の画像と一致。UI全体は撮影済み、追加項目の直接操作とDebug GPU実行は未確認。詳細は [雲の仕様](../design/volumetric-clouds.md)。ビルドは `build/cloud-noise/Release/terrain_graph.exe`。
 
 **雲のノイズ選択を追加（2026-09-11 08:19）。** 雲塊・雲層と旧形式の大気設定で Perlin fBM / Perlin-Worley を選択可能。旧設定の見た目を維持し、保存に対応。Debug / Release ビルド・グラフテスト・DXC 12 エントリ・Release 描画・保存再読み込みを確認。UI 撮影済みだが選択欄がスクロール範囲外で、直接操作は Computer Use のアプリ承認が得られず未確認。Debug GPU 検証は起動処理に時間がかかり未完了。詳細は [雲の仕様](../design/volumetric-clouds.md)。確認用ビルドは `build/cloud-noise/Release/terrain_graph.exe`。
 

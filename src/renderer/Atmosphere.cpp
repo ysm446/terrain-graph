@@ -61,8 +61,9 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
         settings.windOffsetX = static_cast<float>(std::fmod(m_motion.x, period));
         settings.windOffsetZ = static_cast<float>(std::fmod(m_motion.z, period));
         if (requested.localCloud == 2) {
-            settings.cloudBodyOffsetX = settings.windOffsetX;
-            settings.cloudBodyOffsetZ = settings.windOffsetZ;
+            const double bodyPeriod = requested.cloudScale * std::clamp(requested.cloudCellCount, 1u, 32u);
+            settings.cloudBodyOffsetX = static_cast<float>(std::fmod(m_motion.x, bodyPeriod));
+            settings.cloudBodyOffsetZ = static_cast<float>(std::fmod(m_motion.z, bodyPeriod));
             // 積算済みの相対移動を使い、速度比の編集時に表面を飛ばさない。
             settings.windOffsetX = static_cast<float>(std::fmod(m_motion.x-m_motion.driftX, period));
             settings.windOffsetZ = static_cast<float>(std::fmod(m_motion.z-m_motion.driftZ, period));
@@ -87,6 +88,7 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
         // 空・シード・ノイズ種類の変更は再生中でも環境へ即時に反映する。
         const bool sourceChanged = settings.localCloud != baked.localCloud || settings.cloudSource != baked.cloudSource ||
             settings.cloudNoiseType != baked.cloudNoiseType ||
+            settings.cloudCellCount != baked.cloudCellCount ||
             (baked.distributionMask == UINT32_MAX-1 && settings.distributionMask != UINT32_MAX-1);
         if (!skyChanged && !updateCells && !sourceChanged && !(m_cloudEnvironmentDirty && settled)) {
             m_applied = settings;
@@ -103,7 +105,7 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
             !CreateTarget(device, m_noise, 64, DXGI_FORMAT_R16G16B16A16_FLOAT, 64) ||
             !CreateTarget(device, m_skyView, 512, DXGI_FORMAT_R16G16B16A16_FLOAT, 1, 256) ||
             !CreateTarget(device, m_cloudLighting, 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 1) ||
-            !CreateTarget(device, m_cloudCells, 10, DXGI_FORMAT_R32G32B32A32_FLOAT, 3)) {
+            !CreateTarget(device, m_cloudCells, 32, DXGI_FORMAT_R32G32B32A32_FLOAT, 3)) {
             Shutdown(device);
             return false;
         }
@@ -132,7 +134,7 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
             const uint32_t constants[]{settings.seed, m_cloudCells.UavIndex(), 0, 0};
             commands->SetPipelineState(cellPipeline);
             commands->SetComputeRoot32BitConstants(0, 4, constants, 0);
-            commands->Dispatch(2, 2, 1);
+            commands->Dispatch(4, 4, 1);
             TransitionIfNeeded(commands, m_cloudCells, ReadState);
             PIXEndEvent(commands);
         }

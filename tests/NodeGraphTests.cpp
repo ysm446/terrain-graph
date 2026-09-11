@@ -97,9 +97,12 @@ void RunNodeGraphTests() {
         Check(cloud.maskPin == maskPin && cloud.maskNode == mask, "分布元のピンを保持する");
         Check(cloud.cloud.width == 12000.0f && cloud.cloud.motionMode == 1, "雲層は広い固定範囲が既定");
         Check(cloud.cloud.noiseType == 0, "雲層の既定ノイズは従来の Perlin fBM");
+        Check(cloud.cloud.cellCount == 10, "既存の雲層は10セル周期を維持する");
         auto& layerSettings = std::get<tg::graph::CloudNodeSettings>(graph.FindMutableNode(layer)->settings);
         layerSettings.noiseType = 1;
+        layerSettings.cellCount = 17;
         graph.MarkCloudDirty();
+        Check(graph.CompileCloud().cloud.cellCount == 17, "雲層の繰り返しセル数を描画へ渡す");
         Check(graph.CompileCloud().cloud.noiseType == 1 && graph.CompileCloud().maskPin == maskPin,
             "Perlin-Worley の選択と分布マスクを同時に描画へ渡す");
         const auto compiled = graph.CompileLayersTo(cloud.maskNode, cloud.maskPin);

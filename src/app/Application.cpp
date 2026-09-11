@@ -365,6 +365,7 @@ int Application::Run() {
             cloudSettings.fieldCenterZ = cloud.centerZ;
             cloudSettings.cloudBottom = cloud.centerY - cloud.thickness * 0.5f;
             cloudSettings.cloudThickness = cloud.thickness;
+            cloudSettings.cloudCellCount = static_cast<uint32_t>(std::clamp(cloud.cellCount, 1, 32));
             cloudSettings.radiusX = cloud.width * 0.5f;
             cloudSettings.radiusZ = cloud.depth * 0.5f;
             cloudSettings.fieldRadius = std::max(cloudSettings.radiusX, cloudSettings.radiusZ);

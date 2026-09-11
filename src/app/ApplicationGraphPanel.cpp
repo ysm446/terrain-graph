@@ -1320,8 +1320,13 @@ void Application::DrawGraphPanel() {
             changed |= ui::PropertyCombo("ノイズの種類", &cloud->noiseType, noiseTypes, 2, defaults.noiseType,
                 "Perlin fBM は従来の模様。Perlin-Worley は丸い細胞状の膨らみと、Worley による細部の崩しを使います。雲本体と影に共通です。");
             changed |= ui::PropertyFloat("模様の大きさ", &cloud->noiseScale, 10.0f, 20000.0f, defaults.noiseScale,
-                                         "ノイズの周期（m）。大きいほど大きな膨らみになります。", "%.1f m", ImGuiSliderFlags_Logarithmic);
+                                         isCloudLayer
+                                             ? "配置の1セルあたりの長さ（m）。繰り返しセル数との積が配置の周期になります。表面ノイズの大きさにも影響します。"
+                                             : "ノイズの基準となる長さ（m）。大きいほど大きな膨らみになります。",
+                                         "%.1f m", ImGuiSliderFlags_Logarithmic);
             if (isCloudLayer) {
+                changed |= ui::PropertyInt("繰り返しセル数", &cloud->cellCount, 1, 32, defaults.cellCount,
+                    "横・奥行きに共通の配置周期。範囲内の雲の個数ではありません。大きくすると配置が繰り返すまでの距離が長くなります。高さ方向のセルはありません。");
                 changed |= ui::PropertyFloat("雲量", &cloud->coverage, 0.0f, 1.0f, defaults.coverage,
                     "分布の中を雲で覆う量。0 で雲なし、1 で隙間が少なくなります。", "%.2f");
             } else changed |= ui::PropertyFloat("形の崩し", &cloud->shapeStrength, 0.0f, 1.0f, defaults.shapeStrength,

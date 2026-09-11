@@ -1427,6 +1427,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["cloud"]["noiseScale"] = cloud->noiseScale;
             item["cloud"]["shapeStrength"] = cloud->shapeStrength;
             item["cloud"]["detailStrength"] = cloud->detailStrength;
+            item["cloud"]["cellCount"] = cloud->cellCount;
             item["cloud"]["noiseType"] = EnumName(kCloudNoiseNames, static_cast<uint32_t>(cloud->noiseType));
             item["cloud"]["edgeSoftness"] = cloud->edgeSoftness;
             item["cloud"]["flatBottom"] = cloud->flatBottom;
@@ -1597,6 +1598,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.extinction = std::clamp(ReadFloat(*cloud, "extinction", settings.extinction), 0.0001f, 0.03f);
                     settings.shapeStrength = std::clamp(ReadFloat(*cloud, "shapeStrength", settings.shapeStrength), 0.0f, 1.0f);
                     settings.detailStrength = std::clamp(ReadFloat(*cloud, "detailStrength", settings.detailStrength), 0.0f, 1.0f);
+                    settings.cellCount = static_cast<int>(std::clamp(ReadUInt(*cloud, "cellCount", 10), 1u, 32u));
                     settings.noiseType = static_cast<int>(EnumValue(kCloudNoiseNames, *cloud, "noiseType", 0));
                     settings.edgeSoftness = std::clamp(ReadFloat(*cloud, "edgeSoftness", settings.edgeSoftness), 0.02f, 1.0f);
                     settings.flatBottom = ReadBool(*cloud, "flatBottom", false);
@@ -1749,6 +1751,8 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     atmosphereNode["fieldFalloff"] = atmosphere.fieldFalloff;
     atmosphereNode["seed"] = atmosphere.seed;
     atmosphereNode["samples"] = atmosphere.samples;
+    atmosphereNode["fullResolutionClouds"] = renderer.FullResolutionClouds();
+    atmosphereNode["cloudLightingCache"] = renderer.CloudLightingCache();
     node["atmosphere"] = std::move(atmosphereNode);
 
 
@@ -1843,6 +1847,8 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
         atmosphere.fieldFalloff = std::clamp(ReadFloat(source, "fieldFalloff", defaults.fieldFalloff), 1.0f, 50000.0f);
         atmosphere.clouds = ReadBool(source, "clouds", ReadUInt(source, "clouds", defaults.clouds) != 0) ? 1u : 0u;
         atmosphere.seed = std::min(ReadUInt(source, "seed", defaults.seed), 10000u);
+        renderer.FullResolutionClouds() = ReadBool(source, "fullResolutionClouds", false);
+        renderer.CloudLightingCache() = ReadBool(source, "cloudLightingCache", true);
         const auto samples = ReadUInt(source, "samples", defaults.samples);
         atmosphere.samples = samples <= 32 ? 32u : samples <= 64 ? 64u : 128u;
     }

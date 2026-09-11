@@ -373,6 +373,8 @@ void PreviewRenderer::ResetSettings() {
     m_atmosphericMode = false;
     m_atmosphericEnvironmentIntensity = DefaultSkylightIntensity;
     m_atmosphereSettings = AtmosphereSettings{};
+    FullResolutionClouds() = false;
+    m_cloudLightingCache = true;
     m_atmosphericLight = {0.9f, 0.9f, 120000.0f, {1.0f, 1.0f, 1.0f}};
     const PreviewDefaults& defaults = kPreviewDefaults;
     m_tonemap = defaults.tonemap;

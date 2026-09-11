@@ -15,6 +15,7 @@ struct AtmosphericParameters {
     float shapeStrength; float detailStrength; uint cloudMotionMode; uint cloudSource;
     float flatCloudBottom; float cloudSkylightIntensity; float cloudBodyOffsetX; float cloudBodyOffsetZ;
     float indirectLight; float ambientLight; uint cloudCellIndex; uint cloudNoiseType;
+    uint cloudCellCount; uint3 cellPadding;
 };
 float3 AtmosphereSun(AtmosphericParameters p) {
     return float3(cos(p.elevation) * sin(p.azimuth), sin(p.elevation), cos(p.elevation) * cos(p.azimuth));
@@ -67,9 +68,9 @@ float LocalCloudDensity(float3 position, AtmosphericParameters p, uint noiseInde
     density = saturate(density - p.detailStrength*(1-detail)*(1-density));
     return density * (p.flatCloudBottom != 0 ? CloudBottomFade(h/max(p.flatCloudBottom,1e-5),shape,detail) : 1);
 }
-// 雲層の塊配置。移流の巻き戻し周期（模様の大きさの 10 倍）に合わせる。
+// 雲層の塊配置。呼び出し側でセル数に合わせて座標を折り返す。
 float3 CloudCellRandom(int2 cell, uint seed) {
-    uint2 wrapped=uint2((cell%10+10)%10);
+    uint2 wrapped=uint2(cell);
     uint value=wrapped.x*1597334677u+wrapped.y*3812015801u+seed*2798796415u;
     value=(value^(value>>16))*2246822519u;
     uint a=(value^(value>>13))*3266489917u;
@@ -77,7 +78,7 @@ float3 CloudCellRandom(int2 cell, uint seed) {
     uint c=(b^(b>>13))*3266489917u;
     return float3(a&65535u,b&65535u,c&65535u)/65535.0;
 }
-// シードにのみ依存する 100 セル分の情報。計算と参照で同じ構造を使う。
+// シードにのみ依存する最大 32×32 セル分の情報。
 struct CloudCellData { float4 placement; float4 shape; float4 lobe; };
 CloudCellData BuildCloudCell(int2 cell, uint seed) {
     float3 random=CloudCellRandom(cell,seed);
@@ -91,9 +92,10 @@ CloudCellData BuildCloudCell(int2 cell, uint seed) {
     return data;
 }
 CloudCellData LoadCloudCell(int2 cell, AtmosphericParameters p) {
-    if (p.cloudCellIndex==0xffffffff) return BuildCloudCell(cell,p.seed);
+    int count = clamp((int)p.cloudCellCount, 1, 32);
+    int2 wrapped=(cell%count+count)%count;
+    if (p.cloudCellIndex==0xffffffff) return BuildCloudCell(wrapped,p.seed);
     Texture2DArray<float4> cells=ResourceDescriptorHeap[p.cloudCellIndex];
-    int2 wrapped=(cell%10+10)%10;
     CloudCellData data;
     data.placement=cells.Load(int4(wrapped,0,0));
     data.shape=cells.Load(int4(wrapped,1,0));

@@ -282,6 +282,9 @@ void Application::ProcessPendingFileWork() {
         io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
                              m_skyLibrary,     m_renderer,       m_graph};
         if (io::LoadProject(path, m_device, m_pipelineCache, refs)) {
+            // 比較用の起動引数は保存された品質設定より優先する。
+            if (m_options.referenceCloudLighting) m_renderer.CloudLightingCache() = false;
+            if (m_options.fullResolutionClouds) m_renderer.FullResolutionClouds() = true;
             m_recentProjects.Add(path);
             m_projectPath = path;
             m_selectedGraphNode = m_graph.FindNode(m_options.selectNode) ? m_options.selectNode : 0;

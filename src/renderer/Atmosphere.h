@@ -48,8 +48,10 @@ struct AtmosphereSettings {
     float ambientLight = 1.0f; // 雲が受ける天空照明の倍率。
     uint32_t cloudCellIndex = UINT32_MAX; // 実行時のみ。周期セルの事前計算。
     uint32_t cloudNoiseType = 0; // 0: Perlin fBM、1: Perlin-Worley。旧 padding を利用する。
+    uint32_t cloudCellCount = 10;
+    uint32_t cellPadding[3] = {};
 };
-static_assert(sizeof(AtmosphereSettings) == 176);
+static_assert(sizeof(AtmosphereSettings) == 192);
 
 class Atmosphere {
 public:
