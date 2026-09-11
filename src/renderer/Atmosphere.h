@@ -53,6 +53,12 @@ struct AtmosphereSettings {
 };
 static_assert(sizeof(AtmosphereSettings) == 192);
 
+struct GodRaySettings {
+    bool enabled = false;
+    float density = 0.00004f;
+    float distance = 5000.0f;
+};
+
 class Atmosphere {
 public:
     void SetDistributionMask(uint32_t index, uint64_t revision) {
@@ -62,6 +68,7 @@ public:
     }
     void UpdateFrameLighting(rhi::Device& device, rhi::PipelineCache& pipelines, ID3D12GraphicsCommandList* commands);
     void InvalidateFrameLighting() { m_opticalDirty = true; m_cellsDirty = true; }
+    GodRaySettings& GodRays() { return m_godRays; }
     bool& FullResolutionClouds() { return m_fullResolutionClouds; }
     void ResetAnimation();
     void ResetCloudMotion();
@@ -73,7 +80,9 @@ public:
     const AtmosphereSettings& AppliedSettings() const { return m_applied; }
     void Render(rhi::Device& device, rhi::PipelineCache& pipelines,
                 ID3D12GraphicsCommandList* commands, rhi::GpuTexture& scene, rhi::GpuTexture& depth,
-                const DirectX::XMFLOAT4X4& inverseViewProjection, DirectX::XMFLOAT3 camera, bool showSky);
+                const DirectX::XMFLOAT4X4& inverseViewProjection, DirectX::XMFLOAT3 camera, bool showSky,
+                const DirectX::XMFLOAT4X4& lightViewProjection, uint32_t shadowIndex,
+                float shadowTexelSize, float shadowBias);
 private:
     Environment m_environment;
     rhi::GpuTexture m_multiScatter;
@@ -83,6 +92,7 @@ private:
     rhi::GpuTexture m_cloudCells;
     rhi::GpuTexture m_halfCloud;
     rhi::GpuTexture m_halfDepth;
+    GodRaySettings m_godRays;
     bool m_cellsDirty = true;
     bool m_fullResolutionClouds = false;
     AtmosphereSettings m_applied;

@@ -152,6 +152,21 @@ void Application::DrawMaterialPanel() {
             ui::EndPropertyTable();
         }
 
+        ui::SectionHeader("ゴッドレイ");
+        if (ui::BeginPropertyTable("godRayRows")) {
+            auto& rays = m_renderer.GodRays();
+            const renderer::GodRaySettings defaults;
+            ui::PropertyBool("有効", &rays.enabled, defaults.enabled,
+                "大気散乱スカイで空気中の光を描きます。雲なしでも有効です。地形による光の筋にはライティングの影を有効にしてください");
+            ImGui::BeginDisabled(!rays.enabled);
+            ui::PropertyFloat("濃さ", &rays.density, 0.0f, 0.0002f, defaults.density,
+                "光を散乱する空気の濃さ。上げるほど光の筋と霞が強くなります", "%.5f", 0, 0.000001f);
+            ui::PropertyFloat("表示距離", &rays.distance, 100.0f, 20000.0f, defaults.distance,
+                "カメラから光の散乱を計算する距離。長いほど遠くまで霞みます", "%.0f m");
+            ImGui::EndDisabled();
+            ui::EndPropertyTable();
+        }
+
         ui::SectionHeader("ボリューム雲");
         if (ui::BeginPropertyTable("volumeCloudQuality", "レイマーチ品質")) {
             auto& sky = m_renderer.AtmosphericSettings();

@@ -6,6 +6,9 @@ cbuffer Constants : register(b1) {
     uint depthIndex; uint lutIndex; uint noiseIndex; uint environmentIndex;
     uint halfCloudIndex; uint halfDepthIndex; uint2 fullSize;
     uint halfCloudOutput; uint halfDepthOutput; uint2 padding;
+    uint godRays; float rayDensity; float rayDistance; float rayPadding;
+    float4x4 lightViewProjection;
+    uint shadowIndex; float shadowTexelSize; float shadowBias; float shadowPadding;
 };
 struct Vertex { float4 position:SV_Position; float2 ndc:TEXCOORD0; };
 Vertex VsMain(uint id:SV_VertexID) {
@@ -19,6 +22,54 @@ float3 CloudViewRay(float2 pixel, float z, out float limit) {
     limit=z<1 ? length(world.xyz-camera) : 1e9;
     return normalize(world.xyz-camera);
 }
+// 空中のサンプルには面の法線がないため、傾斜バイアスを使わない。
+float TerrainRayVisibility(float3 position) {
+    if (shadowIndex==0xffffffff) return 1;
+    float4 clip=mul(lightViewProjection,float4(position,1));
+    if (clip.w<=0) return 1;
+    float3 ndc=clip.xyz/clip.w;
+    float2 uv=ndc.xy*float2(0.5,-0.5)+0.5;
+    if (any(uv<0) || any(uv>1) || ndc.z<0 || ndc.z>1) return 1;
+    Texture2D<float> shadowMap=ResourceDescriptorHeap[shadowIndex];
+    float visibility=0;
+    [unroll] for(int y=-1;y<=1;++y) [unroll] for(int x=-1;x<=1;++x) {
+        float depth=shadowMap.SampleLevel(g_samplerPointClamp,uv+float2(x,y)*shadowTexelSize,0);
+        visibility+=(ndc.z-shadowBias<=depth) ? 1.0 : 0.0;
+    }
+    return visibility/9;
+}
+float4 IntegrateCloudAndRays(float3 ray, float limit) {
+    float4 cloud=IntegrateCloud(camera,ray,limit,settings,noiseIndex,environmentIndex);
+    float3 sun=AtmosphereSun(settings);
+    if (godRays==0 || rayDensity<=0 || sun.y<=0.001) return cloud;
+    float start=0, end=min(limit,rayDistance);
+    // 雲なしでは視線全体を積分する。雲ありは従来の高さでの分離を保つ。
+    if (settings.clouds!=0) {
+        if (abs(ray.y)<1e-6) {
+            if (camera.y>=settings.cloudBottom) return cloud;
+        } else {
+            float crossing=(settings.cloudBottom-camera.y)/ray.y;
+            if (ray.y>0) end=min(end,crossing);
+            else start=max(start,crossing);
+        }
+    }
+    if (end<=start) return cloud;
+    float stepLength=(end-start)/48;
+    float opacity=1-exp(-rayDensity*stepLength);
+    float3 sunlight=AtmComputeSunTransmittance(sun,settings.density,settings.mie,
+        settings.altitude+max(camera.y,0))*settings.illuminance;
+    float phase=CloudHg(dot(ray,sun),0.65);
+    float transmission=1;
+    float3 radiance=0;
+    [loop] for(uint i=0;i<48;++i) {
+        float3 pos=camera+ray*(start+(i+0.5)*stepLength);
+        radiance+=transmission*opacity*sunlight*phase*CloudShadow(pos,settings,noiseIndex)*TerrainRayVisibility(pos);
+        transmission*=1-opacity;
+    }
+    if (settings.clouds==0 || camera.y<settings.cloudBottom)
+        return float4(radiance+transmission*cloud.rgb,transmission*cloud.a);
+    return float4(cloud.rgb+cloud.a*radiance,cloud.a*transmission);
+}
 // 2x2 画素の左上を代表点とする。合成側も同じ格子で補間する。
 [numthreads(8,8,1)]
 void CsCloudHalf(uint3 id:SV_DispatchThreadID) {
@@ -30,13 +81,13 @@ void CsCloudHalf(uint3 id:SV_DispatchThreadID) {
     float3 ray=CloudViewRay(float2(pixel)+0.5,z,limit);
     RWTexture2D<float4> output=ResourceDescriptorHeap[halfCloudOutput];
     RWTexture2D<float> outputDepth=ResourceDescriptorHeap[halfDepthOutput];
-    output[id.xy]=IntegrateCloud(camera,ray,limit,settings,noiseIndex,environmentIndex);
+    output[id.xy]=IntegrateCloudAndRays(ray,limit);
     outputDepth[id.xy]=limit;
 }
 float4 ReconstructCloud(float2 pixel, float3 ray, float limit) {
-    if (settings.clouds==0) return float4(0,0,0,1);
+    if (settings.clouds==0 && godRays==0) return float4(0,0,0,1);
     if (halfCloudIndex==0xffffffff)
-        return IntegrateCloud(camera,ray,limit,settings,noiseIndex,environmentIndex);
+        return IntegrateCloudAndRays(ray,limit);
     Texture2D<float4> clouds=ResourceDescriptorHeap[halfCloudIndex];
     Texture2D<float> depths=ResourceDescriptorHeap[halfDepthIndex];
     float2 low=(pixel-0.5)*0.5;
@@ -53,7 +104,7 @@ float4 ReconstructCloud(float2 pixel, float3 ray, float limit) {
         float weight=(x ? fraction.x : 1-fraction.x)*(y ? fraction.y : 1-fraction.y);
         result+=clouds.Load(int3(coord,0))*weight;
     }
-    if (!compatible) return IntegrateCloud(camera,ray,limit,settings,noiseIndex,environmentIndex);
+    if (!compatible) return IntegrateCloudAndRays(ray,limit);
     return result;
 }
 float4 PsMain(Vertex v):SV_Target {

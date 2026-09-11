@@ -234,7 +234,9 @@ void Atmosphere::UpdateFrameLighting(rhi::Device& device, rhi::PipelineCache& pi
 }
 void Atmosphere::Render(rhi::Device& device, rhi::PipelineCache& pipelines,
                         ID3D12GraphicsCommandList* commands, rhi::GpuTexture& scene, rhi::GpuTexture& depth,
-                        const DirectX::XMFLOAT4X4& inverseViewProjection, DirectX::XMFLOAT3 camera, bool showSky) {
+                        const DirectX::XMFLOAT4X4& inverseViewProjection, DirectX::XMFLOAT3 camera, bool showSky,
+                const DirectX::XMFLOAT4X4& lightViewProjection, uint32_t shadowIndex,
+                float shadowTexelSize, float shadowBias) {
     if (!m_ready) return;
     rhi::GraphicsPipelineDesc desc;
     desc.shaderPath = L"AtmosphereComposite.hlsl";
@@ -252,16 +254,21 @@ void Atmosphere::Render(rhi::Device& device, rhi::PipelineCache& pipelines,
         uint32_t depth, lut, noise, environment;
         uint32_t halfCloud, halfDepth, width, height;
         uint32_t halfCloudOutput, halfDepthOutput, padding[2];
+        uint32_t godRays; float rayDensity, rayDistance, rayPadding;
+        DirectX::XMFLOAT4X4 lightViewProjection;
+        uint32_t shadowIndex; float shadowTexelSize, shadowBias, shadowPadding;
     };
     const auto allocation = device.Upload().Allocate(sizeof(Constants), 256);
     if (!pipeline || !allocation.IsValid()) return;
     Constants constants{inverseViewProjection, camera, showSky ? 1u : 0u, m_applied,
         depth.SrvIndex(), m_skyView.SrvIndex(), m_noise.SrvIndex(), m_cloudLighting.SrvIndex(),
-        UINT32_MAX, UINT32_MAX, scene.width, scene.height, UINT32_MAX, UINT32_MAX, {0,0}};
+        UINT32_MAX, UINT32_MAX, scene.width, scene.height, UINT32_MAX, UINT32_MAX, {0,0},
+        m_godRays.enabled ? 1u : 0u, m_godRays.density, m_godRays.distance, 0,
+        lightViewProjection, shadowIndex, shadowTexelSize, shadowBias, 0};
     // 深度は compute と pixel の両方から読む。DSV を先に外す。
     commands->OMSetRenderTargets(1, &scene.rtv.cpu, FALSE, nullptr);
     TransitionIfNeeded(commands, depth, ReadState);
-    if (m_applied.clouds && !m_fullResolutionClouds) {
+    if ((m_applied.clouds || m_godRays.enabled) && !m_fullResolutionClouds) {
         const uint32_t width = (scene.width + 1) / 2, height = (scene.height + 1) / 2;
         if (m_halfCloud.width != width || m_halfCloud.height != height || !m_halfDepth.IsValid()) {
             device.DeferRelease(m_halfCloud);

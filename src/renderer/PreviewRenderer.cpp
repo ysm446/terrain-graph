@@ -373,6 +373,7 @@ void PreviewRenderer::ResetSettings() {
     m_atmosphericMode = false;
     m_atmosphericEnvironmentIntensity = DefaultSkylightIntensity;
     m_atmosphereSettings = AtmosphereSettings{};
+    GodRays() = GodRaySettings{};
     FullResolutionClouds() = false;
     m_cloudLightingCache = true;
     m_atmosphericLight = {0.9f, 0.9f, 120000.0f, {1.0f, 1.0f, 1.0f}};
@@ -820,7 +821,8 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
             CountMeshDraw(m_stats, mesh, m_tessellationEnabled);
 
             TransitionIfNeeded(commandList, m_shadowMap,
-                               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE |
+                               D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             PIXEndEvent(commandList);
 
             constants.shadowIndex = m_shadowMap.SrvIndex();
@@ -933,7 +935,9 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
         XMFLOAT4X4 inverseViewProjection;
         XMStoreFloat4x4(&inverseViewProjection, XMMatrixInverse(nullptr, viewProjection));
         m_atmosphere.Render(device, pipelineCache, commandList, m_sceneColor, m_depth,
-                            inverseViewProjection, m_camera.Position(), m_showSkybox);
+                            inverseViewProjection, m_camera.Position(), m_showSkybox,
+                            constants.lightViewProjection, constants.shadowIndex,
+                            constants.shadowTexelSize, constants.shadowBias);
     }
 
     TransitionIfNeeded(commandList, m_sceneColor, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);

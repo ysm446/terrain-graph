@@ -1751,6 +1751,9 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     atmosphereNode["fieldFalloff"] = atmosphere.fieldFalloff;
     atmosphereNode["seed"] = atmosphere.seed;
     atmosphereNode["samples"] = atmosphere.samples;
+    atmosphereNode["godRays"] = renderer.GodRays().enabled;
+    atmosphereNode["godRayDensity"] = renderer.GodRays().density;
+    atmosphereNode["godRayDistance"] = renderer.GodRays().distance;
     atmosphereNode["fullResolutionClouds"] = renderer.FullResolutionClouds();
     atmosphereNode["cloudLightingCache"] = renderer.CloudLightingCache();
     node["atmosphere"] = std::move(atmosphereNode);
@@ -1847,6 +1850,11 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
         atmosphere.fieldFalloff = std::clamp(ReadFloat(source, "fieldFalloff", defaults.fieldFalloff), 1.0f, 50000.0f);
         atmosphere.clouds = ReadBool(source, "clouds", ReadUInt(source, "clouds", defaults.clouds) != 0) ? 1u : 0u;
         atmosphere.seed = std::min(ReadUInt(source, "seed", defaults.seed), 10000u);
+        const renderer::GodRaySettings rayDefaults;
+        auto& rays = renderer.GodRays();
+        rays.enabled = ReadBool(source, "godRays", rayDefaults.enabled);
+        rays.density = std::clamp(ReadFloat(source, "godRayDensity", rayDefaults.density), 0.0f, 0.0002f);
+        rays.distance = std::clamp(ReadFloat(source, "godRayDistance", rayDefaults.distance), 100.0f, 20000.0f);
         renderer.FullResolutionClouds() = ReadBool(source, "fullResolutionClouds", false);
         renderer.CloudLightingCache() = ReadBool(source, "cloudLightingCache", true);
         const auto samples = ReadUInt(source, "samples", defaults.samples);
