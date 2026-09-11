@@ -353,7 +353,17 @@ int Application::Run() {
         if (compiledCloud.hasOutput) {
             const auto& cloud = compiledCloud.cloud;
             cloudSettings.clouds = compiledCloud.connected && cloud.enabled ? 1u : 0u;
-            cloudSettings.localCloud = compiledCloud.layer ? 2 : 1;
+            cloudSettings.localCloud = !compiledCloud.primitives.empty() ? 3 : compiledCloud.layer ? 2 : 1;
+            cloudSettings.primitiveCount = static_cast<uint32_t>(compiledCloud.primitives.size());
+            cloudSettings.primitiveSmoothness = compiledCloud.smoothness;
+            cloudSettings.primitiveDisplacement = cloud.shapeStrength;
+            cloudSettings.primitiveDetail = cloud.detailStrength;
+            for (size_t i=0;i<compiledCloud.primitives.size();++i) {
+                const auto& primitive=compiledCloud.primitives[i];
+                auto& target=cloudSettings.primitives[i];
+                target.center[0]=primitive.centerX; target.center[1]=primitive.centerY; target.center[2]=primitive.centerZ;
+                target.radius[0]=primitive.radiusX; target.radius[1]=primitive.radiusY; target.radius[2]=primitive.radiusZ;
+            }
             cloudSettings.distributionMask = CloudDistributionMask();
             cloudSettings.animateClouds = cloud.animate ? 1u : 0u;
             cloudSettings.cloudMotionMode = static_cast<uint32_t>(cloud.motionMode);
@@ -370,7 +380,7 @@ int Application::Run() {
             cloudSettings.radiusZ = cloud.depth * 0.5f;
             cloudSettings.fieldRadius = std::max(cloudSettings.radiusX, cloudSettings.radiusZ);
             cloudSettings.cloudScale = cloud.noiseScale;
-            cloudSettings.cloudNoiseType = static_cast<uint32_t>(std::clamp(cloud.noiseType, 0, 1));
+            cloudSettings.cloudNoiseType = static_cast<uint32_t>(std::clamp(cloud.noiseType, 0, compiledCloud.primitives.empty() ? 1 : 2));
             cloudSettings.extinction = cloud.extinction;
             cloudSettings.shapeStrength = cloud.shapeStrength;
             if (compiledCloud.layer) cloudSettings.opticalDepthIndex = UINT32_MAX;

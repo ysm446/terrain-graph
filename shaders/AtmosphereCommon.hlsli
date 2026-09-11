@@ -3,6 +3,7 @@
 #include "EnvCommon.hlsli"
 #include "AtmosphereScattering.hlsli"
 #include "CloudScattering.hlsli"
+struct CloudPrimitive { float4 center; float4 radius; };
 struct AtmosphericParameters {
     float azimuth; float elevation; float illuminance; float density;
     float mie; float eccentricity; float altitude; float groundAlbedo;
@@ -16,6 +17,8 @@ struct AtmosphericParameters {
     float flatCloudBottom; float cloudSkylightIntensity; float cloudBodyOffsetX; float cloudBodyOffsetZ;
     float indirectLight; float ambientLight; uint cloudCellIndex; uint cloudNoiseType;
     uint cloudCellCount; uint3 cellPadding;
+    uint primitiveCount; float primitiveSmoothness; float primitiveDisplacement; float primitiveDetail;
+    CloudPrimitive primitives[32];
 };
 float3 AtmosphereSun(AtmosphericParameters p) {
     return float3(cos(p.elevation) * sin(p.azimuth), sin(p.elevation), cos(p.elevation) * cos(p.azimuth));
@@ -133,8 +136,39 @@ float CloudLayerBody(float2 position, float h, AtmosphericParameters p, float di
     return body-(1-sqrt(p.coverage*distribution));
 }
 // 64 枚の 2D 配列で周期 3D 密度を持つ。XY はハードウェア補間、Z のみ手動補間。
+// 楕円体の距離近似をmで評価。log-sum-expの和は入力順に依存しない。
+float ProceduralCloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex, out float emptyDistance) {
+    float distance=1e9, weight=0;
+    emptyDistance=1e9;
+    [loop] for(uint i=0;i<min(p.primitiveCount,32u);++i) {
+        float3 radii=max(p.primitives[i].radius.xyz,1);
+        float3 offset=position-p.primitives[i].center.xyz;
+        float k0=length(offset/radii), k1=length(offset/(radii*radii));
+        // 1-Lipschitzな距離下界。unionの膨張と最大変位を引けば安全に空白を飛ばせる。
+        emptyDistance=min(emptyDistance,min(radii.x,min(radii.y,radii.z))*(k0-1));
+        float d=k1>1e-7 ? k0*(k0-1)/k1 : -min(radii.x,min(radii.y,radii.z));
+        float k=p.primitiveSmoothness;
+        if (k>0) {
+            // 最小距離を基準に指数和を蓄積し、logは形状群につき1回だけ評価する。
+            if (d<distance) { weight=weight*exp((d-distance)/k)+1; distance=d; }
+            else weight+=exp((distance-d)/k);
+        } else distance=min(distance,d);
+    }
+    if (p.primitiveSmoothness>0 && weight>0) distance-=p.primitiveSmoothness*log(weight);
+    emptyDistance=max(0,emptyDistance-p.primitiveSmoothness*log(float(max(p.primitiveCount,1u)))-p.primitiveDisplacement-0.01);
+    if (distance>p.primitiveDisplacement) return 0;
+    float3 uvw=position/(4*max(p.cloudScale,1));
+    // 大きな輪郭の変位と小さな侵食を分離。雲全体で同じワールド座標を使う。
+    // 2は手続き雲の従来Perlin。0/1は既存のfBM / Perlin-Worleyと共通。
+    uint shapeChannel=p.cloudNoiseType==2 ? 3u : (p.cloudNoiseType==1 ? 1u : 0u);
+    uint detailChannel=p.cloudNoiseType==1 ? 2u : shapeChannel;
+    distance+=((SampleCloudNoise(uvw,noiseIndex,shapeChannel)*0.7+SampleCloudNoise(uvw*2+0.37,noiseIndex,shapeChannel)*0.3)*2-1)*p.primitiveDisplacement;
+    distance+=(1-SampleCloudNoise(uvw*3.1+0.173,noiseIndex,detailChannel))*p.primitiveDetail;
+    return smoothstep(0,max(p.edgeSoftness,1),-distance);
+}
 float CloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex) {
     if (p.clouds == 0) return 0;
+    if (p.localCloud==3) { float emptyDistance; return ProceduralCloudDensity(position,p,noiseIndex,emptyDistance); }
     if (p.localCloud == 1) return LocalCloudDensity(position,p,noiseIndex);
     if (p.localCloud == 2) {
         float3 offset = position - LocalCloudCenter(p);
@@ -189,7 +223,7 @@ float CloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex) {
 bool CloudInterval(float3 origin, float3 ray, float limit, AtmosphericParameters p,
                    out float start, out float end) {
     start=0; end=limit;
-    if (p.localCloud == 2 || (p.localCloud == 1 && p.flatCloudBottom != 0)) {
+    if (p.localCloud == 3 || p.localCloud == 2 || (p.localCloud == 1 && p.flatCloudBottom != 0)) {
         float3 offset = origin-LocalCloudCenter(p);
         float3 radii = LocalCloudRadii(p);
         [unroll] for (uint axis=0; axis<3; ++axis) {
@@ -232,19 +266,33 @@ bool CloudInterval(float3 origin, float3 ray, float limit, AtmosphericParameters
     }
     return end>start;
 }
+// 形状群では大きな包囲箱の厚さを刻み幅に使わず、ノイズと密度境界を解像する。
+uint CloudMarchCount(float distance, AtmosphericParameters p, uint baseSamples) {
+    if (p.localCloud==3) {
+        float stepLength=max(5,min(p.edgeSoftness*0.5,p.cloudScale*0.05));
+        return (uint)clamp(ceil(distance/stepLength),baseSamples,512u);
+    }
+    return (uint)clamp(ceil(distance/(p.cloudThickness/baseSamples)),baseSamples,baseSamples*4);
+}
 float CloudOpticalDepth(float3 origin, float3 ray, AtmosphericParameters p, uint noiseIndex, uint baseSamples) {
     float start,end;
     if(!CloudInterval(origin,ray,1e9,p,start,end)) return 0;
     // 長い斜光路でも雲層の出口まで積分し、自己遮蔽と地形影の減衰を揃える。
-    uint count=(uint)clamp(ceil((end-start)/(p.cloudThickness/baseSamples)),baseSamples,baseSamples*4);
+    uint count=CloudMarchCount(end-start,p,baseSamples);
     float stepLength=(end-start)/count, optical=0;
-    [loop] for(uint i=0;i<count;++i)
-        optical+=CloudDensity(origin+ray*(start+(i+0.5)*stepLength),p,noiseIndex)*stepLength;
+    [loop] for(uint i=0;i<count;++i) {
+        float3 position=origin+ray*(start+(i+0.5)*stepLength);
+        float emptyDistance=0;
+        float density=p.localCloud==3 ? ProceduralCloudDensity(position,p,noiseIndex,emptyDistance)
+                                    : CloudDensity(position,p,noiseIndex);
+        optical+=density*stepLength;
+        if (density<=0) i+=(uint)min(floor(emptyDistance/stepLength),float(count-1-i));
+    }
     return optical*p.extinction;
 }
 // 雲層専用。shapeStrength と同じ領域をキャッシュ SRV として使用する。
 bool HasCloudOpticalCache(AtmosphericParameters p) {
-    return p.localCloud==2 && (asuint(p.shapeStrength)&0x80000000)!=0 && asuint(p.shapeStrength)!=0xffffffff;
+    return (p.localCloud==2 || p.localCloud==3) && (asuint(p.shapeStrength)&0x80000000)!=0 && asuint(p.shapeStrength)!=0xffffffff;
 }
 float3 SampleCloudOpticalCache(float3 position, AtmosphericParameters p) {
     float3 uvw=saturate((position-LocalCloudCenter(p))/LocalCloudRadii(p)*0.5+0.5);
@@ -269,7 +317,8 @@ float4 IntegrateCloud(float3 origin, float3 ray, float limit, AtmosphericParamet
     if(p.clouds==0) return float4(0,0,0,1);
     float start,end;
     if(!CloudInterval(origin,ray,limit,p,start,end)) return float4(0,0,0,1);
-    uint count=(uint)clamp(ceil((end-start)/(p.cloudThickness/p.samples)),p.samples,p.samples*4);
+    uint count=CloudMarchCount(end-start,p,p.samples);
+    if (p.localCloud==3) count=(uint)clamp(ceil((end-start)/max(5,min(p.edgeSoftness*0.5,p.cloudScale*0.05))),p.samples,2048u);
     float stepLength=(end-start)/count;
     float3 sun=AtmosphereSun(p);
     float3 sunlight=AtmComputeSunTransmittance(sun,p.density,p.mie,p.altitude+p.cloudBottom)*p.illuminance;
@@ -287,8 +336,13 @@ float4 IntegrateCloud(float3 origin, float3 ray, float limit, AtmosphericParamet
     float transmission=1; float3 radiance=0;
     [loop] for(uint i=0;i<count && transmission>0.005;++i) {
         float3 pos=origin+ray*(start+(i+0.5)*stepLength);
-        float density=CloudDensity(pos,p,noiseIndex);
-        if(density<=0) continue;
+        float emptyDistance=0;
+        float density=p.localCloud==3 ? ProceduralCloudDensity(pos,p,noiseIndex,emptyDistance)
+                                    : CloudDensity(pos,p,noiseIndex);
+        if(density<=0) {
+            i+=(uint)min(floor(emptyDistance/stepLength),float(count-1-i));
+            continue;
+        }
         float3 depths;
         if (HasCloudOpticalCache(p)) depths=SampleCloudOpticalCache(pos,p);
         else depths=float3(CloudOpticalDepth(pos,sun,p,noiseIndex,max(p.samples/2,16u)),

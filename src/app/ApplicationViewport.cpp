@@ -241,6 +241,55 @@ void Application::HandleCameraShortcuts(bool itemHovered) {
 // ライトの向きを示すギズモ。地面のリング、水平方向、仰角の弧、光が来る向きの矢印。
 //
 // 色はテーマから引かない。座標軸ギズモと同じく「意味を持つ色」として固定する。
+void Application::DrawCloudShapeGizmo(const ImVec2& viewportMin, const ImVec2& viewportMax) {
+    const auto* node=m_graph.FindNode(m_selectedGraphNode);
+    if (!node) return;
+    using namespace DirectX;
+    const auto& camera=m_renderer.GetCamera();
+    const XMMATRIX viewProjection=camera.ViewMatrix()*camera.ProjectionMatrix();
+    const ImVec2 size(viewportMax.x-viewportMin.x,viewportMax.y-viewportMin.y);
+    if (size.x<=0 || size.y<=0) return;
+    ImDrawList* drawList=ImGui::GetWindowDrawList();
+    const ImU32 color=ImGui::GetColorU32(ImGuiCol_PlotLinesHovered);
+    drawList->PushClipRect(viewportMin,viewportMax,true);
+    const auto segment=[&](const XMFLOAT3& a,const XMFLOAT3& b) {
+        const auto pa=ProjectToViewport(viewProjection,a,viewportMin,size);
+        const auto pb=ProjectToViewport(viewProjection,b,viewportMin,size);
+        if (pa.visible && pb.visible) drawList->AddLine(pa.screen,pb.screen,color,ui::Scaled(1.25f));
+    };
+    const auto drawLine=[&](const graph::Node* lineNode) {
+        const auto* line=lineNode ? std::get_if<graph::CloudLineSettings>(&lineNode->settings) : nullptr;
+        if (!line) return;
+        const XMFLOAT3 start{line->startX,line->startY,line->startZ},end{line->endX,line->endY,line->endZ};
+        segment(start,end);
+        for (const auto& point : {start,end}) {
+            const auto projected=ProjectToViewport(viewProjection,point,viewportMin,size);
+            if (projected.visible) drawList->AddCircleFilled(projected.screen,ui::Scaled(3),color);
+        }
+    };
+    if (node->kind==graph::NodeKind::CloudLine) drawLine(node);
+    if (node->kind==graph::NodeKind::CloudSpheres && !node->inputs.empty())
+        drawLine(m_graph.FindUpstreamNodeForPin(node->inputs.front().id));
+    const auto shapes=m_graph.CompileCloudShapes(node->id);
+    for (const auto& shape : shapes.primitives) {
+        // 元形状を3つの大円で表示。ノイズ適用後の輪郭とは独立した配置ガイド。
+        for (int plane=0;plane<3;++plane) {
+            XMFLOAT3 previous{};
+            for (int sample=0;sample<=64;++sample) {
+                const float angle=XM_2PI*float(sample)/64;
+                const float c=std::cos(angle),v=std::sin(angle);
+                XMFLOAT3 point{shape.centerX,shape.centerY,shape.centerZ};
+                if (plane==0) { point.x+=shape.radiusX*c; point.y+=shape.radiusY*v; }
+                if (plane==1) { point.x+=shape.radiusX*c; point.z+=shape.radiusZ*v; }
+                if (plane==2) { point.y+=shape.radiusY*c; point.z+=shape.radiusZ*v; }
+                if (sample>0) segment(previous,point);
+                previous=point;
+            }
+        }
+    }
+    drawList->PopClipRect();
+}
+
 void Application::DrawLightGizmo(const ImVec2& viewportMin, const ImVec2& viewportMax) {
     const double now = ImGui::GetTime();
     if (!m_lightDragActive && now >= m_lightGizmoUntil) {
@@ -561,6 +610,7 @@ void Application::DrawViewportPanel() {
             DrawAxisGizmo(camera, imageOrigin, imageMax);
             DrawHeightGuide(imageOrigin, imageMax);
             DrawLightGizmo(imageOrigin, imageMax);
+            DrawCloudShapeGizmo(imageOrigin, imageMax);
             if (pathNode != nullptr) {
                 DrawPathOverlay(*pathNode, imageOrigin, imageMax);
             }

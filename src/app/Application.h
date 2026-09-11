@@ -238,6 +238,7 @@ private:
     // ビューポート上の F / A キーで視点をメッシュへ戻す。
     void HandleCameraShortcuts(bool itemHovered);
     // ライトの向きを示すギズモ。動かしている間と、その直後だけ出す。
+    void DrawCloudShapeGizmo(const ImVec2& viewportMin, const ImVec2& viewportMax);
     void DrawLightGizmo(const ImVec2& viewportMin, const ImVec2& viewportMax);
     // ハイトの範囲。height 0 / 0.5 / 1 がワールドのどこに来るかを枠で示す
     // （ビューポート左上の `表示 > ハイトの範囲`。平面のときだけ描く）。

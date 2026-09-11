@@ -96,6 +96,8 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
 ImVec4 PinTypeColor(graph::ValueType valueType) {
     switch (valueType) {
         // マスクはオレンジ。0〜1 の 1 チャンネル。
+        case graph::ValueType::CloudLine:
+        case graph::ValueType::CloudShape:
         case graph::ValueType::Volume:
             return ImGui::GetStyleColorVec4(ImGuiCol_Text);
         case graph::ValueType::Mask:
@@ -909,6 +911,11 @@ void Application::DrawGraphEditor() {
         ImGui::Separator();
         addNodeMenuItem(graph::NodeKind::Cloud, "雲塊 — 位置・寸法・輪郭を指定する立体の雲");
         addNodeMenuItem(graph::NodeKind::CloudLayer, "雲層 — 分布マスクと高度・厚さで広い雲を作る");
+        addNodeMenuItem(graph::NodeKind::CloudLine, "雲ライン（実験） — 雲の芯になる3D直線");
+        addNodeMenuItem(graph::NodeKind::CloudSpheres, "雲の球配置（実験） — ラインに沿って球を並べる");
+        addNodeMenuItem(graph::NodeKind::CloudEllipsoid, "雲楕円体（実験） — 雲の土台となる形");
+        addNodeMenuItem(graph::NodeKind::CloudMerge, "雲形状マージ（実験） — 基本形状を統合する");
+        addNodeMenuItem(graph::NodeKind::CloudNoise, "雲ノイズ（実験） — 輪郭と密度を作る");
         addNodeMenuItem(graph::NodeKind::CloudOutput, "雲出力 — Volume を繋いで雲を表示する");
         ImGui::Separator();
         addNodeMenuItem(graph::NodeKind::Output, "Output — ここに繋いだ結果をプレビューする");
@@ -1245,6 +1252,82 @@ void Application::DrawGraphPanel() {
             m_graph.MarkDirty();
             MarkDocumentChanged();
         }
+    } else if (auto* cloudLine = std::get_if<graph::CloudLineSettings>(&selected->settings)) {
+        const graph::CloudLineSettings defaults;
+        bool changed = false;
+        ui::HintText("始点と終点をワールド座標（m）で指定する直線。球配置の Line へ接続します。");
+        if (ui::BeginPropertyTable("CloudLineRows", "横方向のばらつき")) {
+            changed |= ui::PropertyFloat("始点 X", &cloudLine->startX, -10000.0f, 10000.0f, defaults.startX, "値はメートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("始点 Y", &cloudLine->startY, -10000.0f, 10000.0f, defaults.startY, "値はメートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("始点 Z", &cloudLine->startZ, -10000.0f, 10000.0f, defaults.startZ, "値はメートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("終点 X", &cloudLine->endX, -10000.0f, 10000.0f, defaults.endX, "値はメートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("終点 Y", &cloudLine->endY, -10000.0f, 10000.0f, defaults.endY, "値はメートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("終点 Z", &cloudLine->endZ, -10000.0f, 10000.0f, defaults.endZ, "値はメートル単位。", "%.0f m");
+            ui::EndPropertyTable();
+        }
+        if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
+    } else if (auto* cloudSpheres = std::get_if<graph::CloudSpheresSettings>(&selected->settings)) {
+        const graph::CloudSpheresSettings defaults;
+        bool changed = false;
+        ui::HintText("ラインに沿って球を配置します。横方向のずれは XZ 平面。シードを固定すると再現できます。");
+        if (ui::BeginPropertyTable("CloudSpheresRows", "横方向のばらつき")) {
+            changed |= ui::PropertyInt("球の数", &cloudSpheres->count, 1, 32, defaults.count, "ラインに沿って球を配置します。横方向のずれは XZ 平面。シードを固定すると再現できます。");
+            changed |= ui::PropertyFloat("始点の半径", &cloudSpheres->startRadius, 10.0f, 3000.0f, defaults.startRadius, "値はメートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("終点の半径", &cloudSpheres->endRadius, 10.0f, 3000.0f, defaults.endRadius, "値はメートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("横方向のばらつき", &cloudSpheres->jitter, 0.0f, 1.0f, defaults.jitter, "ラインに沿って球を配置します。横方向のずれは XZ 平面。シードを固定すると再現できます。", "%.2f");
+            changed |= ui::PropertyFloat("半径のばらつき", &cloudSpheres->radiusVariation, 0.0f, 0.9f, defaults.radiusVariation, "値はメートル単位。", "%.2f");
+            changed |= ui::PropertyInt("シード", &cloudSpheres->seed, 0, 10000, defaults.seed, "ラインに沿って球を配置します。横方向のずれは XZ 平面。シードを固定すると再現できます。");
+            ui::EndPropertyTable();
+        }
+        if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
+    } else if (auto* cloudEllipsoid = std::get_if<graph::CloudEllipsoidSettings>(&selected->settings)) {
+        const graph::CloudEllipsoidSettings defaults;
+        bool changed = false;
+        ui::HintText("軸に沿った楕円体。Shape を形状マージまたは雲ノイズへ接続します。");
+        if (ui::BeginPropertyTable("CloudEllipsoidRows", "横方向のばらつき")) {
+            changed |= ui::PropertyFloat("中心 X", &cloudEllipsoid->centerX, -10000.0f, 10000.0f, defaults.centerX, "値はメートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("中心 Y", &cloudEllipsoid->centerY, -10000.0f, 10000.0f, defaults.centerY, "値はメートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("中心 Z", &cloudEllipsoid->centerZ, -10000.0f, 10000.0f, defaults.centerZ, "値はメートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("半径 X", &cloudEllipsoid->radiusX, 10.0f, 3000.0f, defaults.radiusX, "値はメートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("半径 Y", &cloudEllipsoid->radiusY, 10.0f, 3000.0f, defaults.radiusY, "値はメートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("半径 Z", &cloudEllipsoid->radiusZ, 10.0f, 3000.0f, defaults.radiusZ, "値はメートル単位。", "%.0f m");
+            ui::EndPropertyTable();
+        }
+        if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
+    } else if (auto* cloudMerge = std::get_if<graph::CloudMergeSettings>(&selected->settings)) {
+        const graph::CloudMergeSettings defaults;
+        bool changed = false;
+        ui::HintText("A と B の形状を同じ座標で統合します。同じ形状の重複接続は1回だけ。入れ子の滑らかさは最大値を全体へ適用します。");
+        if (ui::BeginPropertyTable("CloudMergeRows", "横方向のばらつき")) {
+            changed |= ui::PropertyFloat("つなぎの滑らかさ", &cloudMerge->smoothness, 0.0f, 500.0f, defaults.smoothness, "値はメートル単位。", "%.0f m");
+            ui::EndPropertyTable();
+        }
+        if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
+    } else if (auto* cloudNoise = std::get_if<graph::CloudNoiseSettings>(&selected->settings)) {
+        const graph::CloudNoiseSettings defaults;
+        bool changed = false;
+        ui::HintText("形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。最大32個の基本形状に対応します。");
+        if (ui::BeginPropertyTable("CloudNoiseRows", "横方向のばらつき")) {
+            const char* noiseTypes[] = {"Perlin（従来）", "Perlin fBM", "Perlin-Worley"};
+            changed |= ui::PropertyCombo("ノイズの種類", &cloudNoise->noiseType, noiseTypes, 3, defaults.noiseType,
+                "Perlin は従来の輪郭。Perlin fBM は複数スケールの模様、Perlin-Worley は丸い膨らみと細部の削りを使います。雲本体と影に共通です。");
+            changed |= ui::PropertyFloat("模様の大きさ", &cloudNoise->scale, 10.0f, 5000.0f, defaults.scale, "値はメートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("輪郭の変位", &cloudNoise->displacement, 0.0f, 500.0f, defaults.displacement, "値はメートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("細部の削り", &cloudNoise->detail, 0.0f, 200.0f, defaults.detail, "値はメートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("境界の柔らかさ", &cloudNoise->feather, 1.0f, 300.0f, defaults.feather, "値はメートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("密度", &cloudNoise->extinction, 0.0001f, 0.03f, defaults.extinction, "形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。最大32個の基本形状に対応します。", "%.4f");
+            changed |= ui::PropertyFloat("Indirect Light", &cloudNoise->indirectLight, 0.0f, 5.0f, defaults.indirectLight, "形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。最大32個の基本形状に対応します。", "%.2f");
+            changed |= ui::PropertyFloat("Ambient Light", &cloudNoise->ambientLight, 0.0f, 5.0f, defaults.ambientLight, "形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。最大32個の基本形状に対応します。", "%.2f");
+            changed |= ui::PropertyInt("シード", &cloudNoise->seed, 0, 10000, defaults.seed, "形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。最大32個の基本形状に対応します。");
+            ui::EndPropertyTable();
+        }
+        const auto compiled = m_graph.CompileCloud();
+        if (compiled.shapeOverflow) ui::HintText("基本形状が32個を超えています。球の数を減らしてください。表示は停止しています。");
+        if (!m_renderer.AtmosphericMode() && ui::Button("大気散乱へ切替", ui::kWideButtonWidth)) {
+            m_renderer.AtmosphericMode() = true;
+            MarkDocumentChanged(false);
+        }
+        if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
     } else if (auto* cloud = std::get_if<graph::CloudNodeSettings>(&selected->settings)) {
         bool changed = false;
         graph::CloudNodeSettings defaults;
@@ -1349,7 +1432,7 @@ void Application::DrawGraphPanel() {
         }
     } else if (selected->kind == graph::NodeKind::CloudOutput) {
         ui::HintText("雲塊の Volume を接続して表示します。未接続なら雲は表示しません");
-        ui::HintText("この段階では雲塊は1つ。位置と形は接続元の雲塊で編集します");
+        ui::HintText("従来の雲塊・雲層、または実験用の雲ノイズを接続できます");
         if (!m_renderer.AtmosphericMode() && ui::Button("大気散乱へ切替", ui::kWideButtonWidth)) {
             m_renderer.AtmosphericMode() = true;
             MarkDocumentChanged();

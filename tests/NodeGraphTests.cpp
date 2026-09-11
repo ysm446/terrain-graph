@@ -40,6 +40,76 @@ bool StartsWithNeutralPlane(const tg::graph::CompiledGraph& compiled) {
 }  // namespace
 
 void RunNodeGraphTests() {
+    {
+        Section("手続き雲の形状構築");
+        auto graph = NodeGraph::CreateDefault();
+        const auto line=graph.CreateNode(NodeKind::CloudLine);
+        const auto spheres=graph.CreateNode(NodeKind::CloudSpheres);
+        const auto base=graph.CreateNode(NodeKind::CloudEllipsoid);
+        const auto merge=graph.CreateNode(NodeKind::CloudMerge);
+        const auto noise=graph.CreateNode(NodeKind::CloudNoise);
+        const auto output=graph.CreateNode(NodeKind::CloudOutput);
+        const auto link=[&](int from,int to,size_t index=0) {
+            return graph.CreateLink(graph.FindNode(from)->outputs[0].id,graph.FindNode(to)->inputs[index].id);
+        };
+        Check(link(noise,output),"実験用の密度フィールドを既存雲出力へ接続できる");
+        Check(!graph.CompileCloud().connected,"形状なしは雲を表示しない");
+        Check(!link(line,noise),"ラインを直接密度フィールドへ接続しない");
+        Check(link(line,spheres) && link(spheres,merge) && link(base,merge,1) && link(merge,noise),"形状構築チェーンを接続できる");
+        const auto compiled=graph.CompileCloud();
+        Check(compiled.connected && compiled.primitives.size()==9,"8球と楕円体を同じフィールドにまとめる");
+        Check(!compiled.layer && compiled.cloud.thickness>1400,"地形と独立した立体の包囲箱を作る");
+        const auto repeated=graph.CompileCloud();
+        Check(repeated.primitives[0].centerX==compiled.primitives[0].centerX,"同じシードで同じ配置を再現する");
+        auto& sphereSettings=std::get<tg::graph::CloudSpheresSettings>(graph.FindMutableNode(spheres)->settings);
+        sphereSettings.count=32;
+        Check(graph.CompileCloud().shapeOverflow && !graph.CompileCloud().connected,"上限を超えた形状を黙って切り捨てず表示を停止する");
+        Check(link(spheres,merge,1),"同じ形状を両入力に繋げる");
+        Check(graph.CompileCloud().primitives.size()==32 && !graph.CompileCloud().shapeOverflow,"共有された形状は一度だけ取り込む");
+        Check(!link(merge,merge),"形状マージの循環を拒否する");
+        sphereSettings.count=1; sphereSettings.jitter=0; sphereSettings.radiusVariation=0;
+        const auto single=graph.CompileCloud();
+        Check(single.primitives.size()==1 && single.primitives[0].centerY==200 && single.primitives[0].radiusX==350,
+            "球が1つの場合は始点と始点半径を使う");
+        graph.DeleteNode(line);
+        Check(!graph.CompileCloud().connected,"ライン削除後に古い形状を残さない");
+    }
+
+    {
+        Section("手続き雲の包囲範囲と選択ガイド");
+        NodeGraph graph;
+        const auto shape=graph.CreateNode(NodeKind::CloudEllipsoid);
+        const auto noise=graph.CreateNode(NodeKind::CloudNoise);
+        const auto output=graph.CreateNode(NodeKind::CloudOutput);
+        auto& ellipse=std::get<tg::graph::CloudEllipsoidSettings>(graph.FindMutableNode(shape)->settings);
+        ellipse.radiusX=1200; ellipse.radiusY=180; ellipse.radiusZ=700;
+        Check(graph.CompileCloudShapes(shape).primitives.size()==1 && !graph.CompileCloud().connected,
+            "未接続の形状もガイド用に評価できる");
+        graph.CreateLink(graph.FindNode(shape)->outputs[0].id,graph.FindNode(noise)->inputs[0].id);
+        graph.CreateLink(graph.FindNode(noise)->outputs[0].id,graph.FindNode(output)->inputs[0].id);
+        auto& settings=std::get<tg::graph::CloudNoiseSettings>(graph.FindMutableNode(noise)->settings);
+        Check(graph.CompileCloud().cloud.noiseType==2,"従来の手続き雲は低周波Perlinを維持する");
+        settings.noiseType=1;
+        Check(graph.CompileCloud().cloud.noiseType==0,"手続き雲のfBMを共通描画設定へ渡す");
+        settings.noiseType=2;
+        Check(graph.CompileCloud().cloud.noiseType==1,"手続き雲のPerlin-Worleyを共通描画設定へ渡す");
+        settings.noiseType=0;
+        settings.displacement=120;
+        const auto bounds=graph.CompileCloud().cloud;
+        Check(std::abs(bounds.thickness-600)<0.01f,
+            "薄い楕円体の高さに長軸用の余白を加えない");
+        settings.detail=500; settings.feather=500;
+        const auto inward=graph.CompileCloud().cloud;
+        Check(inward.width==bounds.width && inward.thickness==bounds.thickness && inward.depth==bounds.depth,
+            "内向きの削りと境界幅で包囲範囲を広げない");
+        settings.displacement=0;
+        const auto exact=graph.CompileCloud().cloud;
+        Check(exact.width==2400 && exact.thickness==360 && exact.depth==1400,
+            "変位なしの単体は元形状の包囲範囲に一致する");
+        graph.DeleteNode(shape);
+        Check(graph.CompileCloudShapes(shape).primitives.empty(),"削除した形状のガイドを残さない");
+    }
+
     Section("雲の時間更新");
     {
         tg::renderer::CloudMotion motion;

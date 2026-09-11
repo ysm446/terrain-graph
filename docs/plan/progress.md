@@ -1,9 +1,16 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-11 10:42
+更新日時: 2026-09-11 12:28
 
 ## 現在の状況
+
+**実験用「雲ノイズ」に種類の選択を追加（2026-09-11 12:28）。** Perlin（従来）/ Perlin fBM / Perlin-Worleyの3種類。省略時の互換性・保存対応。Debug / Releaseビルド・テスト・DXC・Releaseの3種類の描画・UI・保存再読み込みを確認し、従来設定は全画素一致。Debug GPU実行は未確認。起動中の通常版を保持し、更新版は `build/cloud-opt/Release/terrain_graph.exe` に配置。詳細は [手続き雲](../design/procedural-clouds.md)。
+
+**手続き雲のマージ最適化と配置ガイドを追加（2026-09-11 11:44）。** 包囲範囲の縮小、空白スキップ、smooth minimumのlog削減。同一シーンの240フレーム平均25.070 → 4.215 ms。選択中のライン・球・楕円体・マージをワイヤー表示（直接ドラッグ未対応）。Debug / Releaseビルド・テスト・DXC・Release描画とUIを確認。空白スキップの有無で画像一致。Debug GPU実行検証は未完了。実行ファイルは `build/bin/Release/terrain_graph.exe`。詳細は [手続き雲](../design/procedural-clouds.md)。
+
+**手続き雲の実験ノードを追加（2026-09-11 11:24）。** 雲ライン・球配置・楕円体・形状マージ・雲ノイズで一つの密度フィールドを構築。最大32個、保存対応。Debug / Release・テスト・DXC・Release描画・保存再読み込み・UIを確認。既存雲の画像は画素一致。Debug GPU検証は環境生成で未完了。サンプルは `data/procedural-cloud-qa/saved.tgproj`、実行ファイルは `build/bin/Release/terrain_graph.exe`。仕様と制限は [手続き雲](../design/procedural-clouds.md)。
+
 
 **雲なしのゴッドレイと地形の遮蔽に対応（2026-09-11 10:42）。** 雲なしでも空気を積分し、既存シャドウマップによる地形の遮蔽を追加。影の有効設定に連動。雲ありの雲底での分離は維持。Debug / Release ビルド、既存テスト、DXC、Release の雲なし地形で有効・無効・影なしの比較とUIを確認。Debug GPU検証は前回同様に環境生成で進まず未完了。画像は `data/godray-terrain-qa/`、実行ファイルは `build/bin/Release/terrain_graph.exe`。
 

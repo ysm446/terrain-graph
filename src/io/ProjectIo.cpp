@@ -162,6 +162,7 @@ const char* const kRockStyleNames[] = {"classic", "polygonal", "shard"};
 const char* const kTonemapNames[] = {"none", "reinhard", "aces"};
 const char* const kSkySourceNames[] = {"procedural", "hdri"};
 const char* const kCloudNoiseNames[] = {"perlinFbm", "perlinWorley"};
+const char* const kProceduralCloudNoiseNames[] = {"perlin", "perlinFbm", "perlinWorley"};
 const char* const kApertureShapeNames[] = {"circle", "triangle", "hexagon", "octagon"};
 
 template <size_t N>
@@ -1414,6 +1415,39 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["blend"] = WriteBlend(mask->blend);
             item["maskPath"] = WritePathMask(mask->pathMask);
             item["maskArea"] = WriteAreaMask(mask->areaMask);
+        } else if (const auto* cloudLine = std::get_if<graph::CloudLineSettings>(&node.settings)) {
+            item["proceduralCloud"]["startX"] = cloudLine->startX;
+            item["proceduralCloud"]["startY"] = cloudLine->startY;
+            item["proceduralCloud"]["startZ"] = cloudLine->startZ;
+            item["proceduralCloud"]["endX"] = cloudLine->endX;
+            item["proceduralCloud"]["endY"] = cloudLine->endY;
+            item["proceduralCloud"]["endZ"] = cloudLine->endZ;
+        } else if (const auto* cloudSpheres = std::get_if<graph::CloudSpheresSettings>(&node.settings)) {
+            item["proceduralCloud"]["count"] = cloudSpheres->count;
+            item["proceduralCloud"]["startRadius"] = cloudSpheres->startRadius;
+            item["proceduralCloud"]["endRadius"] = cloudSpheres->endRadius;
+            item["proceduralCloud"]["jitter"] = cloudSpheres->jitter;
+            item["proceduralCloud"]["radiusVariation"] = cloudSpheres->radiusVariation;
+            item["proceduralCloud"]["seed"] = cloudSpheres->seed;
+        } else if (const auto* cloudEllipsoid = std::get_if<graph::CloudEllipsoidSettings>(&node.settings)) {
+            item["proceduralCloud"]["centerX"] = cloudEllipsoid->centerX;
+            item["proceduralCloud"]["centerY"] = cloudEllipsoid->centerY;
+            item["proceduralCloud"]["centerZ"] = cloudEllipsoid->centerZ;
+            item["proceduralCloud"]["radiusX"] = cloudEllipsoid->radiusX;
+            item["proceduralCloud"]["radiusY"] = cloudEllipsoid->radiusY;
+            item["proceduralCloud"]["radiusZ"] = cloudEllipsoid->radiusZ;
+        } else if (const auto* cloudMerge = std::get_if<graph::CloudMergeSettings>(&node.settings)) {
+            item["proceduralCloud"]["smoothness"] = cloudMerge->smoothness;
+        } else if (const auto* cloudNoise = std::get_if<graph::CloudNoiseSettings>(&node.settings)) {
+            item["proceduralCloud"]["noiseType"] = EnumName(kProceduralCloudNoiseNames, static_cast<uint32_t>(cloudNoise->noiseType));
+            item["proceduralCloud"]["scale"] = cloudNoise->scale;
+            item["proceduralCloud"]["displacement"] = cloudNoise->displacement;
+            item["proceduralCloud"]["detail"] = cloudNoise->detail;
+            item["proceduralCloud"]["feather"] = cloudNoise->feather;
+            item["proceduralCloud"]["extinction"] = cloudNoise->extinction;
+            item["proceduralCloud"]["indirectLight"] = cloudNoise->indirectLight;
+            item["proceduralCloud"]["ambientLight"] = cloudNoise->ambientLight;
+            item["proceduralCloud"]["seed"] = cloudNoise->seed;
         } else if (const auto* cloud = std::get_if<graph::CloudNodeSettings>(&node.settings)) {
             item["cloud"]["enabled"] = cloud->enabled;
             item["cloud"]["coverage"] = cloud->coverage;
@@ -1575,6 +1609,59 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                 settings.pathMask = ReadPathMask(item, "maskPath");
                 settings.areaMask = ReadAreaMask(item, "maskArea");
                 created.settings = std::move(settings);
+            } else if (created.kind == graph::NodeKind::CloudLine) {
+                graph::CloudLineSettings settings;
+                if (const auto* shape = FindMember(item, "proceduralCloud"); shape && shape->is_object()) {
+                    settings.startX = std::clamp(ReadFloat(*shape, "startX", settings.startX), -10000.0f, 10000.0f);
+                    settings.startY = std::clamp(ReadFloat(*shape, "startY", settings.startY), -10000.0f, 10000.0f);
+                    settings.startZ = std::clamp(ReadFloat(*shape, "startZ", settings.startZ), -10000.0f, 10000.0f);
+                    settings.endX = std::clamp(ReadFloat(*shape, "endX", settings.endX), -10000.0f, 10000.0f);
+                    settings.endY = std::clamp(ReadFloat(*shape, "endY", settings.endY), -10000.0f, 10000.0f);
+                    settings.endZ = std::clamp(ReadFloat(*shape, "endZ", settings.endZ), -10000.0f, 10000.0f);
+                }
+                created.settings = settings;
+            } else if (created.kind == graph::NodeKind::CloudSpheres) {
+                graph::CloudSpheresSettings settings;
+                if (const auto* shape = FindMember(item, "proceduralCloud"); shape && shape->is_object()) {
+                    settings.count = std::clamp(ReadInt(*shape, "count", settings.count), 1, 32);
+                    settings.startRadius = std::clamp(ReadFloat(*shape, "startRadius", settings.startRadius), 10.0f, 3000.0f);
+                    settings.endRadius = std::clamp(ReadFloat(*shape, "endRadius", settings.endRadius), 10.0f, 3000.0f);
+                    settings.jitter = std::clamp(ReadFloat(*shape, "jitter", settings.jitter), 0.0f, 1.0f);
+                    settings.radiusVariation = std::clamp(ReadFloat(*shape, "radiusVariation", settings.radiusVariation), 0.0f, 0.9f);
+                    settings.seed = std::clamp(ReadInt(*shape, "seed", settings.seed), 0, 10000);
+                }
+                created.settings = settings;
+            } else if (created.kind == graph::NodeKind::CloudEllipsoid) {
+                graph::CloudEllipsoidSettings settings;
+                if (const auto* shape = FindMember(item, "proceduralCloud"); shape && shape->is_object()) {
+                    settings.centerX = std::clamp(ReadFloat(*shape, "centerX", settings.centerX), -10000.0f, 10000.0f);
+                    settings.centerY = std::clamp(ReadFloat(*shape, "centerY", settings.centerY), -10000.0f, 10000.0f);
+                    settings.centerZ = std::clamp(ReadFloat(*shape, "centerZ", settings.centerZ), -10000.0f, 10000.0f);
+                    settings.radiusX = std::clamp(ReadFloat(*shape, "radiusX", settings.radiusX), 10.0f, 3000.0f);
+                    settings.radiusY = std::clamp(ReadFloat(*shape, "radiusY", settings.radiusY), 10.0f, 3000.0f);
+                    settings.radiusZ = std::clamp(ReadFloat(*shape, "radiusZ", settings.radiusZ), 10.0f, 3000.0f);
+                }
+                created.settings = settings;
+            } else if (created.kind == graph::NodeKind::CloudMerge) {
+                graph::CloudMergeSettings settings;
+                if (const auto* shape = FindMember(item, "proceduralCloud"); shape && shape->is_object()) {
+                    settings.smoothness = std::clamp(ReadFloat(*shape, "smoothness", settings.smoothness), 0.0f, 500.0f);
+                }
+                created.settings = settings;
+            } else if (created.kind == graph::NodeKind::CloudNoise) {
+                graph::CloudNoiseSettings settings;
+                if (const auto* shape = FindMember(item, "proceduralCloud"); shape && shape->is_object()) {
+                    settings.noiseType = static_cast<int>(EnumValue(kProceduralCloudNoiseNames, *shape, "noiseType", 0));
+                    settings.scale = std::clamp(ReadFloat(*shape, "scale", settings.scale), 10.0f, 5000.0f);
+                    settings.displacement = std::clamp(ReadFloat(*shape, "displacement", settings.displacement), 0.0f, 500.0f);
+                    settings.detail = std::clamp(ReadFloat(*shape, "detail", settings.detail), 0.0f, 200.0f);
+                    settings.feather = std::clamp(ReadFloat(*shape, "feather", settings.feather), 1.0f, 300.0f);
+                    settings.extinction = std::clamp(ReadFloat(*shape, "extinction", settings.extinction), 0.0001f, 0.03f);
+                    settings.indirectLight = std::clamp(ReadFloat(*shape, "indirectLight", settings.indirectLight), 0.0f, 5.0f);
+                    settings.ambientLight = std::clamp(ReadFloat(*shape, "ambientLight", settings.ambientLight), 0.0f, 5.0f);
+                    settings.seed = std::clamp(ReadInt(*shape, "seed", settings.seed), 0, 10000);
+                }
+                created.settings = settings;
             } else if (created.kind == graph::NodeKind::Cloud || created.kind == graph::NodeKind::CloudLayer) {
                 graph::CloudNodeSettings settings;
                 settings.flatBottom = false; // 未指定の既存ノードは従来形状を維持する。

@@ -655,7 +655,16 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
 
     // 軌道の距離とクリップ面を被写体の大きさへ合わせる。**毎フレーム渡してよい。**
     // 平面のサイズや変位量はいつでも変わるので、描く直前に見るのが確実。
-    m_camera.SetSceneRadius(BoundingRadius());
+    float sceneRadius = BoundingRadius();
+    if (m_atmosphericMode && m_atmosphere.AppliedSettings().clouds &&
+        m_atmosphere.AppliedSettings().localCloud == 3) {
+        const auto& cloud = m_atmosphere.AppliedSettings();
+        // 小さな地面とkm単位の雲を組み合わせても逆投影の精度を保つ。
+        const float verticalRadius = cloud.cloudThickness * 0.5f;
+        sceneRadius = std::max(sceneRadius, std::sqrt(cloud.radiusX * cloud.radiusX +
+            verticalRadius * verticalRadius + cloud.radiusZ * cloud.radiusZ));
+    }
+    m_camera.SetSceneRadius(sceneRadius);
 
     // 描画の量はフレームごとに数え直す。**描くところで足す**ので、
     // パスを増やしたときに数え漏らしても、増やした本人が気づきやすい。

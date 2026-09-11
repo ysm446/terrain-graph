@@ -33,7 +33,7 @@ void Atmosphere::ResetAnimation() {
     m_ready = false;
 }
 bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, const AtmosphereSettings& requested) {
-    if (requested.localCloud == 2 && !m_opticalDepth.IsValid()) {
+    if ((requested.localCloud == 2 || requested.localCloud == 3) && !m_opticalDepth.IsValid()) {
         if (!CreateTarget(device, m_opticalDepth, 64, DXGI_FORMAT_R16G16B16A16_FLOAT, 64, 32)) return false;
         m_opticalDirty = true;
     }
@@ -169,6 +169,18 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
     if (!device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commands) {
         TransitionIfNeeded(commands, m_skyView, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     })) return false;
+    // 実験用形状は環境描画も照明キャッシュを使い、多重レイマーチを避ける。
+    if (settings.localCloud == 3 && settings.clouds) {
+        const bool wasReady = m_ready;
+        m_applied = settings;
+        m_ready = true;
+        const bool updated = device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commands) {
+            UpdateFrameLighting(device, pipelines, commands);
+        });
+        settings = m_applied;
+        m_ready = wasReady;
+        if (!updated || (settings.opticalDepthIndex & 0x80000000u) == 0) return false;
+    }
     if (!m_environment.BuildFromAtmosphere(device, pipelines, settings, m_multiScatter.SrvIndex(), m_noise.SrvIndex(), m_skyView.UavIndex(), m_cloudLighting.SrvIndex())) {
         m_ready = false;
         TG_LOG_WARN("大気散乱の環境マップを生成できませんでした");
@@ -206,7 +218,7 @@ void Atmosphere::Shutdown(rhi::Device& device) {
 // 雲の形は元の密度で描き、低周波な光学的厚さだけを共有する。
 void Atmosphere::UpdateFrameLighting(rhi::Device& device, rhi::PipelineCache& pipelines,
                                    ID3D12GraphicsCommandList* commands) {
-    if (!m_ready || !m_applied.clouds || m_applied.localCloud != 2 || !m_opticalDepth.IsValid()) return;
+    if (!m_ready || !m_applied.clouds || (m_applied.localCloud != 2 && m_applied.localCloud != 3) || !m_opticalDepth.IsValid()) return;
     auto settings = m_applied;
     settings.opticalDepthIndex = UINT32_MAX;
     settings.ambientLight = 1.0f; // 天空照明の倍率は光学的厚さを変えない。

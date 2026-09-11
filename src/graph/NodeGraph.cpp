@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <functional>
 #include <unordered_set>
 #include <utility>
 
@@ -195,7 +197,17 @@ constexpr std::array<PinDefinition, 4> kMeanderingRiversPins = {{
     {PinKind::Output, ValueType::Mask, "River"},
 }};
 
-constexpr std::array<NodeDefinition, 34> kNodeDefinitions = {{
+constexpr std::array<PinDefinition, 1> kCloudLinePins = {{{PinKind::Output, ValueType::CloudLine, "Line"}}};
+constexpr std::array<PinDefinition, 1> kCloudShapePins = {{{PinKind::Output, ValueType::CloudShape, "Shape"}}};
+constexpr std::array<PinDefinition, 2> kCloudSpheresPins = {{
+    {PinKind::Input, ValueType::CloudLine, "Line"}, {PinKind::Output, ValueType::CloudShape, "Shape"}}};
+constexpr std::array<PinDefinition, 3> kCloudMergePins = {{
+    {PinKind::Input, ValueType::CloudShape, "A"}, {PinKind::Input, ValueType::CloudShape, "B"},
+    {PinKind::Output, ValueType::CloudShape, "Shape"}}};
+constexpr std::array<PinDefinition, 2> kCloudNoisePins = {{
+    {PinKind::Input, ValueType::CloudShape, "Shape"}, {PinKind::Output, ValueType::Volume, "Volume"}}};
+
+constexpr std::array<NodeDefinition, 39> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -228,6 +240,11 @@ constexpr std::array<NodeDefinition, 34> kNodeDefinitions = {{
     {NodeKind::MaskArea, "maskArea", "Mask Area", kMaskPathPins},
     {NodeKind::Cloud, "cloud", "雲塊", kCloudPins},
     {NodeKind::CloudLayer, "cloudLayer", "雲層", kCloudLayerPins},
+    {NodeKind::CloudLine, "cloudLine", "雲ライン（実験）", kCloudLinePins},
+    {NodeKind::CloudSpheres, "cloudSpheres", "雲の球配置（実験）", kCloudSpheresPins},
+    {NodeKind::CloudEllipsoid, "cloudEllipsoid", "雲楕円体（実験）", kCloudShapePins},
+    {NodeKind::CloudMerge, "cloudMerge", "雲形状マージ（実験）", kCloudMergePins},
+    {NodeKind::CloudNoise, "cloudNoise", "雲ノイズ（実験）", kCloudNoisePins},
     {NodeKind::CloudOutput, "cloudOutput", "雲出力", kCloudOutputPins},
     {NodeKind::Output, "output", "Output", kOutputNodePins},
 }};
@@ -483,6 +500,45 @@ bool NodeGraph::DeleteLink(GraphId linkId) {
     return true;
 }
 
+CompiledCloud NodeGraph::CompileCloudShapes(GraphId shapeId) const {
+    CompiledCloud result;
+    std::unordered_set<GraphId> visited;
+    const auto append = [&](CloudPrimitive primitive) {
+        if (result.primitives.size() >= MaxCloudPrimitives) { result.shapeOverflow = true; return; }
+        result.primitives.push_back(primitive);
+    };
+    std::function<void(const Node*, int)> gather = [&](const Node* shape, int depth) {
+        if (!shape || depth > 128 || !visited.insert(shape->id).second) return;
+        if (const auto* ellipsoid = std::get_if<CloudEllipsoidSettings>(&shape->settings)) {
+            append({ellipsoid->centerX,ellipsoid->centerY,ellipsoid->centerZ,0,
+                std::max(1.0f,ellipsoid->radiusX),std::max(1.0f,ellipsoid->radiusY),std::max(1.0f,ellipsoid->radiusZ),0});
+        } else if (const auto* spheres = std::get_if<CloudSpheresSettings>(&shape->settings)) {
+            const auto* lineNode = UpstreamOf(*shape,ValueType::CloudLine);
+            const auto* line = lineNode ? std::get_if<CloudLineSettings>(&lineNode->settings) : nullptr;
+            if (!line) return;
+            uint32_t state=static_cast<uint32_t>(spheres->seed);
+            const auto random = [&]() { state=state*1664525u+1013904223u; return float(state>>8)/16777215.0f*2-1; };
+            const int count=std::clamp(spheres->count,1,32);
+            for (int i=0;i<count;++i) {
+                const float t=count==1 ? 0.0f : float(i)/float(count-1);
+                const float radius=std::max(1.0f,std::lerp(spheres->startRadius,spheres->endRadius,t)
+                    *(1+random()*std::clamp(spheres->radiusVariation,0.0f,0.9f)));
+                const float jitter=radius*std::clamp(spheres->jitter,0.0f,1.0f);
+                append({std::lerp(line->startX,line->endX,t)+random()*jitter,
+                    std::lerp(line->startY,line->endY,t),
+                    std::lerp(line->startZ,line->endZ,t)+random()*jitter,0,radius,radius,radius,0});
+            }
+        } else if (const auto* merge = std::get_if<CloudMergeSettings>(&shape->settings)) {
+            // 一つのフィールド全体で同じ滑らかさを使用する。入れ子は最大値。
+            result.smoothness=std::max(result.smoothness,std::clamp(merge->smoothness,0.0f,500.0f));
+            for (const auto& input : shape->inputs) gather(FindUpstreamNodeForPin(input.id),depth+1);
+        }
+    };
+    gather(FindNode(shapeId),0);
+    result.connected = !result.primitives.empty() && !result.shapeOverflow;
+    return result;
+}
+
 CompiledCloud NodeGraph::CompileCloud() const {
     CompiledCloud result;
     for (const Node& node : m_nodes) {
@@ -504,6 +560,39 @@ CompiledCloud NodeGraph::CompileCloud() const {
                         }
                     }
                 }
+            }
+        }
+        if (source && source->kind == NodeKind::CloudNoise) {
+            const auto& noise = std::get<CloudNoiseSettings>(source->settings);
+            const auto* shape=UpstreamOf(*source,ValueType::CloudShape);
+            result=CompileCloudShapes(shape ? shape->id : 0);
+            result.hasOutput=true;
+            result.sourceId=source->id;
+            auto& cloud=result.cloud;
+            cloud.flatBottom=false;
+            cloud.animate=false;
+            cloud.noiseScale=noise.scale;
+            cloud.noiseType=noise.noiseType==0 ? 2 : std::clamp(noise.noiseType-1,0,1);
+            cloud.shapeStrength=noise.displacement;
+            cloud.detailStrength=noise.detail;
+            cloud.edgeSoftness=noise.feather;
+            cloud.extinction=noise.extinction;
+            cloud.indirectLight=noise.indirectLight;
+            cloud.ambientLight=noise.ambientLight;
+            cloud.seed=noise.seed;
+            if (result.connected) {
+                float loX=1e9f,loY=1e9f,loZ=1e9f,hiX=-1e9f,hiY=-1e9f,hiZ=-1e9f;
+                // d >= rMin * (length(offset / radii) - 1)。この下界から各軸の範囲を求める。
+                // 細部の削りと境界幅は内向きなので、外側の余白には加えない。
+                const float expansion=result.smoothness*std::log(float(result.primitives.size()))+noise.displacement;
+                for (const auto& primitive : result.primitives) {
+                    const float scale=1+expansion/std::min({primitive.radiusX,primitive.radiusY,primitive.radiusZ});
+                    loX=std::min(loX,primitive.centerX-primitive.radiusX*scale); hiX=std::max(hiX,primitive.centerX+primitive.radiusX*scale);
+                    loY=std::min(loY,primitive.centerY-primitive.radiusY*scale); hiY=std::max(hiY,primitive.centerY+primitive.radiusY*scale);
+                    loZ=std::min(loZ,primitive.centerZ-primitive.radiusZ*scale); hiZ=std::max(hiZ,primitive.centerZ+primitive.radiusZ*scale);
+                }
+                cloud.centerX=(loX+hiX)*0.5f; cloud.centerY=(loY+hiY)*0.5f; cloud.centerZ=(loZ+hiZ)*0.5f;
+                cloud.width=hiX-loX; cloud.thickness=hiY-loY; cloud.depth=hiZ-loZ;
             }
         }
         break; // 雲出力は一つ。壊れたファイルに複数あっても先頭を採用する。
@@ -536,6 +625,11 @@ GraphId NodeGraph::CreateNode(NodeKind kind) {
             cloud.motionMode = 1;
         }
         node.settings = cloud;
+    } else if (kind == NodeKind::CloudLine) { node.settings = CloudLineSettings{};
+    } else if (kind == NodeKind::CloudSpheres) { node.settings = CloudSpheresSettings{};
+    } else if (kind == NodeKind::CloudEllipsoid) { node.settings = CloudEllipsoidSettings{};
+    } else if (kind == NodeKind::CloudMerge) { node.settings = CloudMergeSettings{};
+    } else if (kind == NodeKind::CloudNoise) { node.settings = CloudNoiseSettings{};
     } else if (kind == NodeKind::Path) {
         node.settings = PathNodeSettings{};
     } else {

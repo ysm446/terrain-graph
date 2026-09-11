@@ -50,8 +50,14 @@ struct AtmosphereSettings {
     uint32_t cloudNoiseType = 0; // 0: Perlin fBM、1: Perlin-Worley。旧 padding を利用する。
     uint32_t cloudCellCount = 10;
     uint32_t cellPadding[3] = {};
+    uint32_t primitiveCount = 0;
+    float primitiveSmoothness = 0;
+    float primitiveDisplacement = 0, primitiveDetail = 0;
+    struct Primitive { float center[4] = {}; float radius[4] = {}; };
+    Primitive primitives[32] = {};
+
 };
-static_assert(sizeof(AtmosphereSettings) == 192);
+static_assert(sizeof(AtmosphereSettings) == 1232);
 
 struct GodRaySettings {
     bool enabled = false;

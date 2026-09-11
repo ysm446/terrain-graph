@@ -39,6 +39,8 @@ enum class ValueType : uint32_t {
     // パス（地形の上に引いた向き付きの線）。Path ノードが出し、Mask Path が読む。
     Path = 2,
     Volume = 3,
+    CloudLine = 4,
+    CloudShape = 5,
 };
 
 enum class NodeKind : uint32_t {
@@ -104,6 +106,11 @@ enum class NodeKind : uint32_t {
     Lake = 31,
     MaskFlowline = 32,
     MeanderingRivers = 33,
+    CloudLine = 34,
+    CloudSpheres = 35,
+    CloudEllipsoid = 36,
+    CloudMerge = 37,
+    CloudNoise = 38,
 };
 
 struct PinDefinition {
@@ -220,9 +227,39 @@ struct CloudNodeSettings {
     float windDirection = 90.0f; // 度。0 は +Z、90 は +X。
 };
 
+// 実験用の形状構築。地形用Pathと独立した3D直線と、共通座標の楕円体群。
+struct CloudLineSettings {
+    float startX=0, startY=200, startZ=0;
+    float endX=0, endY=1600, endZ=0;
+};
+struct CloudSpheresSettings {
+    int count=8, seed=1;
+    float startRadius=350, endRadius=500;
+    float jitter=0.25f, radiusVariation=0.2f;
+};
+struct CloudEllipsoidSettings {
+    float centerX=0, centerY=200, centerZ=0;
+    float radiusX=1000, radiusY=250, radiusZ=700;
+};
+struct CloudMergeSettings { float smoothness=80; };
+struct CloudNoiseSettings {
+    int noiseType=0; // 0: Perlin（従来）、1: Perlin fBM、2: Perlin-Worley。
+    float scale=500, displacement=120, detail=40, feather=60;
+    float extinction=0.012f, indirectLight=1, ambientLight=1;
+    int seed=1;
+};
+struct CloudPrimitive {
+    float centerX=0, centerY=0, centerZ=0, padding=0;
+    float radiusX=1, radiusY=1, radiusZ=1, padding2=0;
+};
+inline constexpr size_t MaxCloudPrimitives=32;
+
 // 雲出力が未接続でも hasOutput は真。古い雲へ戻らず表示を消す。
 struct CompiledCloud {
     bool hasOutput = false;
+    std::vector<CloudPrimitive> primitives;
+    float smoothness = 0;
+    bool shapeOverflow = false;
     CloudNodeSettings cloud;
     bool connected = false;
     GraphId sourceId = 0;
@@ -234,7 +271,8 @@ struct CompiledCloud {
 struct OutputNodeSettings {};
 
 using NodeSettings =
-    std::variant<LayerNodeSettings, MaskNodeSettings, OutputNodeSettings, PathNodeSettings, CloudNodeSettings>;
+    std::variant<LayerNodeSettings, MaskNodeSettings, OutputNodeSettings, PathNodeSettings, CloudNodeSettings,
+                 CloudLineSettings, CloudSpheresSettings, CloudEllipsoidSettings, CloudMergeSettings, CloudNoiseSettings>;
 
 struct Node {
     GraphId id = 0;
@@ -288,6 +326,7 @@ public:
     // チェーンが空なら下地 1 枚（MaterialStack::MakeBaseLayer と同じもの）を返す。
     CompiledGraph CompileLayers() const;
     CompiledCloud CompileCloud() const;
+    CompiledCloud CompileCloudShapes(GraphId shapeId) const;
     // 指定したノード**まで**。ノードを選んでプレビューするときに使う。
     // outputPin は**どの出力を見ているか**。0 なら最初の出力（レイヤーなら Result）。
     // マスクの出力を見ているときは、その結果を白黒で貼ったプレビューになる

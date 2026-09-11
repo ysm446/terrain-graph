@@ -159,5 +159,7 @@ void CSGenerate(uint3 dtid : SV_DispatchThreadID)
     float perlinWorley = saturate((lerp(perlin, 1.0, lowWorley) - 0.2) / 0.8);
     float erosion = saturate((highWorley - 0.15) / 0.7);
     RWTexture2DArray<float4> Output = ResourceDescriptorHeap[outputIndex];
-    Output[dtid] = float4(n, perlinWorley, erosion, 0);
+    // 実験用の輪郭変位は細部を混ぜない低周波Perlinを使う。既存RGBは維持する。
+    float displacement = saturate(Perlin3DPeriodic(uvw.x*4,uvw.y*4,uvw.z*4,seed+97,4)*1.5+0.5);
+    Output[dtid] = float4(n, perlinWorley, erosion, displacement);
 }
