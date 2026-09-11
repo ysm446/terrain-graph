@@ -143,33 +143,18 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     const float clampedRoughness = clamp(roughness, kMinPerceptualRoughness, 1.0f);
     const float3 viewDirection = float3(0.0f, 0.0f, 1.0f);
 
-    // --- 2 灯で照らす ------------------------------------------------------
-    //
-    // 1 灯だけだと陰側がのっぺりして、素材の凹凸が半分しか読めない。
-    // 素材ライブラリのサムネイルは**見比べるためのもの**なので、
-    // 形と粗さが一目で分かるように 2 方向から当てる。
-    //
-    //   キー  : 左上手前。主役。暖色寄りの白
-    //   フィル: 右奥。**カメラより奥に置く**ことで、右の輪郭が光って
-    //           背景からシルエットが分離する。寒色寄りにしてキーと差をつける
-    //
-    // **強さは素材の暗さを見込んで決めてある。** 地面素材はアルベドが 0.1〜0.3 と
-    // 暗く、控えめに当てると 2 灯にしても差が模様のノイズに埋もれてしまう。
-    // 白い素材でも飽和しないことは確認済み（最も明るい素材で最大 168 / 255）。
-    const float3 keyDirection = normalize(float3(-0.45f, 0.55f, 0.70f));
-    const float3 fillDirection = normalize(float3(0.70f, 0.35f, -0.62f));
-
-    // 一覧の中で明るさが揃うよう、露出は掛けずに正規化した強さで直接シェーディングする。
+    // サムネイル専用の固定スタジオ光。横から凹凸を拾い、正面下部に陰を残す。
+    // 左上の暖色キーと右上の弱い中性色フィル。強い青いリムは作らない。
+    const float3 keyDirection = normalize(float3(-0.86f, 0.45f, 0.24f));
+    const float3 fillDirection = normalize(float3(0.72f, 0.58f, 0.38f));
     float3 radiance = ShadeDirectionalLight(normal, viewDirection, keyDirection,
-                                            float3(1.0f, 0.98f, 0.95f), 4.5f, diffuseColor, f0,
-                                            clampedRoughness);
+        float3(1.0f, 0.90f, 0.78f), 4.8f, diffuseColor, f0, clampedRoughness);
     radiance += ShadeDirectionalLight(normal, viewDirection, fillDirection,
-                                      float3(0.62f, 0.74f, 1.0f), 3.0f, diffuseColor, f0,
-                                      clampedRoughness);
+        float3(0.94f, 0.97f, 1.0f), 1.2f, diffuseColor, f0, clampedRoughness);
 
-    // 環境光の代わり。上からの弱い半球光で、影側が真っ黒にならないようにする。
+    // 底面を明るく持ち上げず、上側だけに控えめな環境光を補う。
     const float hemisphere = saturate(normal.y * 0.5f + 0.5f);
-    radiance += diffuseColor * lerp(0.05f, 0.20f, hemisphere) * ambientOcclusion;
+    radiance += diffuseColor * lerp(0.012f, 0.065f, hemisphere) * ambientOcclusion;
 
     // 輪郭は「縁を暗く落とす」のではなくアルファで抜く。
     // 落とすと、素材の色によっては濃いグレーの輪郭として見えてしまう。
