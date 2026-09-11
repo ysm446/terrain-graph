@@ -122,6 +122,10 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
     if (requested.cloudMotionMode == 3) {
         settings.windOffsetX=CloudMotion::LoopOffset(m_motion.x,requested.loopWidth);
         settings.windOffsetZ=CloudMotion::LoopOffset(m_motion.z,requested.loopDepth);
+        // 模様だけの相対移動。オフ（速度比1）では積算値を保持して見た目を飛ばさない。
+        const float noiseScale=requested.cloudScale*(requested.localCloud==3 ? 4.0f : 1.0f);
+        settings.cloudBodyOffsetX=CloudMotion::LocalNoiseOffset(m_motion.driftX,noiseScale,2);
+        settings.cloudBodyOffsetZ=CloudMotion::LocalNoiseOffset(m_motion.driftZ,noiseScale,2);
     } else if (requested.localCloud && requested.cloudMotionMode != 1) {
         settings.fieldCenterX += static_cast<float>(m_motion.x);
         settings.fieldCenterZ += static_cast<float>(m_motion.z);

@@ -271,6 +271,8 @@ struct CloudMapGuide {
 struct CloudAnimationSettings {
     float centerX=0, centerZ=0, width=10000, depth=10000;
     float speed=100, direction=90;
+    bool evolveNoise=false;
+    float noiseSpeedRatio=0.75f;
     bool playing=true;
 };
 struct CloudTransformSettings { float translateX=0, translateY=0, translateZ=0; };

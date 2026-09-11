@@ -1337,7 +1337,7 @@ void Application::DrawGraphPanel() {
         const graph::CloudAnimationSettings defaults;
         bool changed=false;
         ui::HintText("Cloud Noise → Cloud Animation → Cloud Output と接続します。指定範囲の雲を水平に循環させます。範囲外の元形状は使いません。");
-        if (ui::BeginPropertyTable("CloudAnimationRows", "中心 X")) {
+        if (ui::BeginPropertyTable("CloudAnimationRows", "模様の速度比")) {
             changed |= ui::PropertyBool("再生", &animation->playing, defaults.playing, "オフで現在位置に一時停止します。");
             changed |= ui::PropertyFloat("中心 X", &animation->centerX, -100000, 100000, defaults.centerX, "方向は0°が+Z、90°が+X。範囲はワールド座標で指定します。", "%.1f m");
             changed |= ui::PropertyFloat("中心 Z", &animation->centerZ, -100000, 100000, defaults.centerZ, "方向は0°が+Z、90°が+X。範囲はワールド座標で指定します。", "%.1f m");
@@ -1345,6 +1345,11 @@ void Application::DrawGraphPanel() {
             changed |= ui::PropertyFloat("奥行き", &animation->depth, 100, 100000, defaults.depth, "方向は0°が+Z、90°が+X。範囲はワールド座標で指定します。", "%.1f m");
             changed |= ui::PropertyFloat("速度", &animation->speed, 0, 1000, defaults.speed, "方向は0°が+Z、90°が+X。範囲はワールド座標で指定します。", "%.1f m/s");
             changed |= ui::PropertyFloat("方向", &animation->direction, 0, 360, defaults.direction, "方向は0°が+Z、90°が+X。範囲はワールド座標で指定します。", "%.1f °");
+            changed |= ui::PropertyBool("模様を変化", &animation->evolveNoise, defaults.evolveNoise,
+                "雲の移動に対して模様を遅く流します。オフにすると現在の模様を保って移動します。");
+            if (animation->evolveNoise)
+                changed |= ui::PropertyFloat("模様の速度比", &animation->noiseSpeedRatio, 0, 1, defaults.noiseSpeedRatio,
+                    "1で模様を維持。小さいほど移動に伴う変化が速くなります。再生停止中は模様も停止します。", "%.2f");
             ui::PropertyLabelEmpty("resetCloudAnimation");
             if (ui::Button("開始位置へ戻す", ui::kWideButtonWidth)) {
                 animation->playing=false;

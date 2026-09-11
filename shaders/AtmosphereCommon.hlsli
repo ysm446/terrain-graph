@@ -245,7 +245,9 @@ float ProceduralCloudSourceDensity(float3 position, AtmosphericParameters p, uin
     } else distance=ProceduralCloudShape(position,p,emptyDistance);
     emptyDistance=max(0,emptyDistance-p.primitiveSmoothness*log(float(max(p.primitiveCount,1u)))-p.primitiveDisplacement-0.01);
     if (distance>p.primitiveDisplacement) return 0;
-    float3 uvw=position/(4*max(p.cloudScale,1));
+    float3 noisePosition=position;
+    if (p.cloudMotionMode==3) noisePosition-=float3(p.cloudBodyOffsetX,0,p.cloudBodyOffsetZ);
+    float3 uvw=noisePosition/(4*max(p.cloudScale,1));
     // 大きな輪郭の変位と小さな侵食を分離。雲全体で同じワールド座標を使う。
     // 2は手続き雲の従来Perlin。0/1は既存のfBM / Perlin-Worleyと共通。
     uint shapeChannel=p.cloudNoiseType==2 ? 3u : (p.cloudNoiseType==1 ? 1u : 0u);
@@ -271,8 +273,10 @@ float CloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex) {
     if (p.cloudMotionMode==3) {
         float seamDistance;
         if (!LoopCloudPosition(position,p,seamDistance)) return 0;
-        p.cloudMotionMode=0;
-        p.windOffsetX=p.windOffsetZ=0;
+        p.cloudMotionMode=1;
+        p.windOffsetX=p.cloudBodyOffsetX;
+        p.windOffsetZ=p.cloudBodyOffsetZ;
+        p.cloudBodyOffsetX=p.cloudBodyOffsetZ=0;
     }
     if (p.localCloud == 1) return LocalCloudDensity(position,p,noiseIndex);
     if (p.localCloud == 2) {

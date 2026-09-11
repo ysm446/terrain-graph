@@ -1462,7 +1462,8 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
         } else if (const auto* animation = std::get_if<graph::CloudAnimationSettings>(&node.settings)) {
             item["cloudAnimation"]={{"centerX",animation->centerX},{"centerZ",animation->centerZ},
                 {"width",animation->width},{"depth",animation->depth},{"speed",animation->speed},
-                {"direction",animation->direction},{"playing",animation->playing}};
+                {"direction",animation->direction},{"playing",animation->playing},
+                {"evolveNoise",animation->evolveNoise},{"noiseSpeedRatio",animation->noiseSpeedRatio}};
         } else if (const auto* transform = std::get_if<graph::CloudTransformSettings>(&node.settings)) {
             item["proceduralCloud"]={{"translateX",transform->translateX},{"translateY",transform->translateY},{"translateZ",transform->translateZ}};
         } else if (const auto* replicate = std::get_if<graph::CloudReplicateSettings>(&node.settings)) {
@@ -1729,6 +1730,8 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.speed=std::clamp(ReadFloat(*value,"speed",settings.speed),0.0f,1000.0f);
                     settings.direction=std::clamp(ReadFloat(*value,"direction",settings.direction),0.0f,360.0f);
                     settings.playing=ReadBool(*value,"playing",settings.playing);
+                    settings.evolveNoise=ReadBool(*value,"evolveNoise",settings.evolveNoise);
+                    settings.noiseSpeedRatio=std::clamp(ReadFloat(*value,"noiseSpeedRatio",settings.noiseSpeedRatio),0.0f,1.0f);
                 }
                 created.settings=settings;
             } else if (created.kind == graph::NodeKind::CloudTransform) {

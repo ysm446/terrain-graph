@@ -66,6 +66,11 @@ void RunNodeGraphTests() {
         const auto paused=graph.CompileCloud();
         Check(!paused.cloud.animate && paused.animation.width==400 && paused.cloud.windSpeed==70 &&
             paused.cloud.width==compiled.cloud.width,"ループ範囲は元の形状ベイク範囲を変更しない");
+        Check(paused.cloud.noiseSpeedRatio==1,"効果オフでは模様を維持");
+        settings.evolveNoise=true; settings.noiseSpeedRatio=0.25f;
+        Check(graph.CompileCloud().cloud.noiseSpeedRatio==0.25f,"効果オンで速度比を反映");
+        settings.evolveNoise=false;
+        Check(graph.CompileCloud().cloud.noiseSpeedRatio==1 && settings.noiseSpeedRatio==0.25f,"オフでも設定した速度比を保持");
         graph.DeleteNode(noise);
         Check(!graph.CompileCloud().connected,"入力切断で古い雲を残さない");
         using tg::renderer::CloudMotion;
@@ -76,7 +81,14 @@ void RunNodeGraphTests() {
         const auto x=motion.x;
         motion.Advance(1,false,100,0);
         Check(motion.x==x && std::abs(x-100)<0.001,"停止位置を保持する");
+        motion.Advance(1,true,100,1.57079632679f,0.25f);
+        const auto drift=motion.driftX;
+        motion.Advance(1,true,100,1.57079632679f,1.0f);
+        Check(motion.driftX==drift,"効果オフは現在の模様を維持して形状だけ移動");
+        motion.Advance(1,false,100,1.57079632679f,0.25f);
+        Check(motion.driftX==drift,"一時停止は模様の変化も止める");
         motion.Reset();
+        Check(motion.driftX==0 && motion.driftZ==0,"リセットで模様も初期状態へ戻る");
         Check(motion.x==0 && motion.z==0,"開始位置へ戻せる");
         tg::renderer::AtmosphereSettings a,b;
         b.cloudMotionMode=3; b.windOffsetX=500; b.loopWidth=2000;

@@ -730,6 +730,7 @@ CompiledCloud NodeGraph::CompileCloud() const {
             result.cloud.animate=result.animation.playing;
             result.cloud.windSpeed=std::clamp(result.animation.speed,0.0f,1000.0f);
             result.cloud.windDirection=result.animation.direction;
+            result.cloud.noiseSpeedRatio=result.animation.evolveNoise ? std::clamp(result.animation.noiseSpeedRatio,0.0f,1.0f) : 1.0f;
             result.cloud.motionMode=3;
             result.sourceId=animation->id;
         }
