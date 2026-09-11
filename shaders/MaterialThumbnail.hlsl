@@ -145,16 +145,21 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     // サムネイル専用の固定スタジオ光。横から凹凸を拾い、正面下部に陰を残す。
     // 左上の暖色キーと右上の弱い中性色フィル。強い青いリムは作らない。
-    const float3 keyDirection = normalize(float3(-0.86f, 0.45f, 0.24f));
+    // カメラ正面(+Z)を0°として方位−120°、仰角27°。左斜め後ろから照らす。
+    const float3 keyDirection = normalize(float3(-0.771634f, 0.453990f, -0.445503f));
     const float3 fillDirection = normalize(float3(0.72f, 0.58f, 0.38f));
     float3 radiance = ShadeDirectionalLight(normal, viewDirection, keyDirection,
         float3(1.0f, 0.90f, 0.78f), 4.8f, diffuseColor, f0, clampedRoughness);
     radiance += ShadeDirectionalLight(normal, viewDirection, fillDirection,
-        float3(0.94f, 0.97f, 1.0f), 1.2f, diffuseColor, f0, clampedRoughness);
+        float3(0.94f, 0.97f, 1.0f), 2.0f, diffuseColor, f0, clampedRoughness);
 
     // 底面を明るく持ち上げず、上側だけに控えめな環境光を補う。
     const float hemisphere = saturate(normal.y * 0.5f + 0.5f);
     radiance += diffuseColor * lerp(0.012f, 0.065f, hemisphere) * ambientOcclusion;
+
+    // 全方向のニュートラルな環境光。陰側の素材色を読みやすくし、
+    // AOによる溝の暗さは残す。金属にも弱い環境反射を補う。
+    radiance += (diffuseColor + f0) * 0.08f * ambientOcclusion;
 
     // 輪郭は「縁を暗く落とす」のではなくアルファで抜く。
     // 落とすと、素材の色によっては濃いグレーの輪郭として見えてしまう。
