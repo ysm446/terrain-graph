@@ -228,8 +228,8 @@ constexpr std::array<PinDefinition, 1> kCloudLinePins = {{{PinKind::Output, Valu
 constexpr std::array<PinDefinition, 1> kCloudShapePins = {{{PinKind::Output, ValueType::CloudShape, "Shape"}}};
 constexpr std::array<PinDefinition, 2> kCloudSpheresPins = {{
     {PinKind::Input, ValueType::CloudLine, "Line"}, {PinKind::Output, ValueType::CloudShape, "Shape"}}};
-constexpr std::array<PinDefinition, 3> kCloudMergePins = {{
-    {PinKind::Input, ValueType::CloudShape, "A"}, {PinKind::Input, ValueType::CloudShape, "B"},
+constexpr std::array<PinDefinition, 2> kCloudMergePins = {{
+    {PinKind::Input, ValueType::CloudShape, "Shape 1"},
     {PinKind::Output, ValueType::CloudShape, "Shape"}}};
 constexpr std::array<PinDefinition, 2> kCloudNoisePins = {{
     {PinKind::Input, ValueType::CloudShape, "Shape"}, {PinKind::Output, ValueType::Volume, "Volume"}}};
@@ -518,6 +518,7 @@ bool NodeGraph::CreateLink(GraphId startPin, GraphId endPin) {
     // 入力ピンは 1 本だけ。既にある接続は置き換える。
     std::erase_if(m_links, [endPin](const Link& link) { return link.endPin == endPin; });
     m_links.push_back({AllocateGraphId(), startPin, endPin});
+    NormalizeCloudMergeInputs();
     MarkDirty();
     return true;
 }
@@ -528,6 +529,7 @@ bool NodeGraph::DeleteLink(GraphId linkId) {
     if (m_links.size() == oldSize) {
         return false;
     }
+    NormalizeCloudMergeInputs();
     MarkDirty();
     return true;
 }
@@ -783,6 +785,7 @@ bool NodeGraph::DeleteNode(GraphId nodeId) {
                std::find(pinIds.begin(), pinIds.end(), link.endPin) != pinIds.end();
     });
     std::erase_if(m_nodes, [nodeId](const Node& candidate) { return candidate.id == nodeId; });
+    NormalizeCloudMergeInputs();
     MarkDirty();
     return true;
 }
@@ -798,7 +801,27 @@ void NodeGraph::Replace(std::vector<Node> nodes, std::vector<Link> links) {
                end->kind != PinKind::Input || start->valueType != end->valueType;
     });
     RebuildNextGraphId();
+    NormalizeCloudMergeInputs();
     MarkDirty();
+}
+
+void NodeGraph::NormalizeCloudMergeInputs() {
+    std::unordered_set<GraphId> connected;
+    for (const auto& link:m_links) connected.insert(link.endPin);
+    for (auto& node:m_nodes) {
+        if (node.kind!=NodeKind::CloudMerge) continue;
+        // 接続済みピンのIDと順序を保ち、空きは末尾の1個にまとめる。
+        std::vector<Pin> inputs;
+        GraphId spare=0;
+        for (const auto& pin:node.inputs) {
+            if (connected.contains(pin.id)) inputs.push_back(pin);
+            else if (!spare) spare=pin.id;
+        }
+        if (!spare) spare=AllocateGraphId();
+        inputs.push_back({spare,node.id,PinKind::Input,ValueType::CloudShape,{}});
+        for (size_t i=0;i<inputs.size();++i) inputs[i].label="Shape "+std::to_string(i+1);
+        node.inputs=std::move(inputs);
+    }
 }
 
 void NodeGraph::RebuildNextGraphId() {

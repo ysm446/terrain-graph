@@ -454,11 +454,11 @@ void Application::PasteGraphNodes(const ImVec2& viewCenter) {
         }
         const GraphClipboardNode& entry = m_graphClipboard[i];
         for (size_t pinIndex = 0; pinIndex < entry.inputs.size(); ++pinIndex) {
-            if (pinIndex >= node->inputs.size()) {
+            if (node->kind!=graph::NodeKind::CloudMerge && pinIndex >= node->inputs.size()) {
                 break;
             }
             const GraphClipboardNode::Source& source = entry.inputs[pinIndex];
-            const graph::GraphId endPin = node->inputs[pinIndex].id;
+            const graph::GraphId endPin = node->kind==graph::NodeKind::CloudMerge ? node->inputs.back().id : node->inputs[pinIndex].id;
             if (source.copiedIndex >= 0 &&
                 static_cast<size_t>(source.copiedIndex) < created.size()) {
                 const graph::Node* upstream = m_graph.FindNode(created[source.copiedIndex]);
@@ -1289,7 +1289,7 @@ void Application::DrawGraphPanel() {
     } else if (auto* cloudMerge = std::get_if<graph::CloudMergeSettings>(&selected->settings)) {
         const graph::CloudMergeSettings defaults;
         bool changed = false;
-        ui::HintText("A と B の形状を同じ座標で統合します。同じ形状の重複接続は1回だけ。入れ子の滑らかさは最大値を全体へ適用します。");
+        ui::HintText("接続した形状を同じ座標で統合します。接続すると次の空き入力が増えます。同じ形状の重複接続は1回だけ。入れ子の滑らかさは最大値を全体へ適用します。");
         if (ui::BeginPropertyTable("CloudMergeRows", "横方向のばらつき")) {
             changed |= ui::PropertyFloat("つなぎの滑らかさ", &cloudMerge->smoothness, 0.0f, 500.0f, defaults.smoothness, "値はメートル単位。", "%.0f m");
             ui::EndPropertyTable();

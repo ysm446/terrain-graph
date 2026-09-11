@@ -1,9 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-11 15:38
+更新日時: 2026-09-11 16:10
 
 ## 現在の状況
+
+**Cloud Merge の可変入力（2026-09-11 16:10）。** Cloud Merge の入力を可変長に変更。新規作成時は Shape 1 のみを表示し、接続すると末尾に次の空き入力を1つ追加する。接続削除や入力元ノード削除時は空きを1つに整理する。接続済みピンのIDと相対順序を維持し、表示名は Shape 1、Shape 2…と振り直す。保存・読み込み・コピー＆ペーストに対応し、旧A/B形式も読み込める。 Debug / Releaseビルド・テスト成功。8入力の追加・削除・置換・復元とID維持を検証し、5接続＋空き1入力の保存・再読み込みとUI画像を確認（`data/cloud-merge-inputs-qa/saved-ui.png`）。
 
 **雲ノード名の英語化（2026-09-11 15:38）。** 雲系ノードの表示名を英語へ統一。Cloud Layer / Cloud Line / Cloud Spheres / Cloud Ellipsoid / Cloud Merge / Cloud Transform / Cloud Replicate / Cloud Noise / Cloud Output とする。実験用ノードは (Experimental)、旧雲塊は Cloud (Legacy) と表示。追加メニュー・ノード見出し・接続先の案内で同じ名前を使い、パラメータ名と説明文は日本語を維持する。保存形式の識別子は変更しない。Debug / Releaseビルドと既存プロジェクトのUI表示を確認。
 

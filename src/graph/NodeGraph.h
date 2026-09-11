@@ -383,6 +383,7 @@ public:
 private:
     GraphId AllocateGraphId() { return m_nextGraphId++; }
     void RebuildNextGraphId();
+    void NormalizeCloudMergeInputs();
     // top から「下地」チェーンを遡る（上から下の順）。
     std::vector<const Node*> ChainFrom(const Node* top) const;
     // CompileChainFrom の途中経過。マスクのプレビューで、チェーンと同じ

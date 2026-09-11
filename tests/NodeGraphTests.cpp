@@ -270,6 +270,39 @@ void RunNodeGraphTests() {
         Check(drag.Update({20000,0},true,false,false,values) && x==10000,"ドラッグと数値入力は同じ移動範囲");
     }
     {
+        Section("Cloud Mergeの可変入力");
+        NodeGraph graph;
+        const auto merge=graph.CreateNode(NodeKind::CloudMerge);
+        Check(graph.FindNode(merge)->inputs.size()==1,"新規マージは空き入力1個");
+        std::array<tg::graph::GraphId,8> parents{},pins{};
+        for (size_t i=0;i<parents.size();++i) {
+            parents[i]=graph.CreateNode(NodeKind::CloudEllipsoid);
+            pins[i]=graph.FindNode(merge)->inputs.back().id;
+            Check(graph.CreateLink(graph.FindNode(parents[i])->outputs[0].id,pins[i]),"空きピンへ形状を接続");
+            Check(graph.FindNode(merge)->inputs.size()==i+2,"接続ごとに空きピンが1個増える");
+        }
+        Check(graph.CompileCloudShapes(merge).primitives.size()==8,"8入力すべてをマージする");
+        const auto output=graph.FindNode(merge)->outputs[0].id;
+        const auto spare=graph.FindNode(merge)->inputs.back().id;
+        Check(!graph.CreateLink(output,spare) && graph.FindNode(merge)->inputs.size()==9,"拒否された循環でピンを増やさない");
+        const auto linkId=graph.Links()[3].id;
+        Check(graph.DeleteLink(linkId),"中間の接続を削除");
+        Check(graph.FindNode(merge)->inputs.size()==8 && graph.FindPin(pins[4])!=nullptr,"空きを整理して後続の接続IDを維持");
+        Check(graph.CompileCloudShapes(merge).primitives.size()==7,"接続削除した形状だけを除く");
+        const auto size=graph.FindNode(merge)->inputs.size();
+        Check(graph.CreateLink(graph.FindNode(parents[0])->outputs[0].id,pins[1]),"接続済み入力を置換");
+        Check(graph.FindNode(merge)->inputs.size()==size,"接続置換ではピン数を増やさない");
+        NodeGraph restored;
+        restored.Replace(graph.Nodes(),graph.Links());
+        Check(restored.FindNode(merge)->inputs.size()==size && restored.FindNode(merge)->outputs[0].id==output,"復元後も入力数と出力IDを維持");
+        Check(restored.CompileCloudShapes(merge).primitives.size()==6,"復元後も全接続と重複除外を維持");
+        const auto extra=restored.CreateNode(NodeKind::CloudEllipsoid);
+        Check(restored.CreateLink(restored.FindNode(extra)->outputs[0].id,restored.FindNode(merge)->inputs.back().id),"復元後も入力を追加できる");
+        Check(restored.FindNode(merge)->inputs.size()==size+1,"復元後の追加でも空き1個を維持");
+        for (const auto parent:parents) graph.DeleteNode(parent);
+        Check(graph.FindNode(merge)->inputs.size()==1 && !graph.CompileCloudShapes(merge).connected,"全入力元の削除で空き1個へ戻る");
+    }
+    {
         Section("雲トランスフォームの連結とマージ");
         NodeGraph graph;
         const auto parent=graph.CreateNode(NodeKind::CloudEllipsoid);
