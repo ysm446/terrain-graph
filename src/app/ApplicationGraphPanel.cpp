@@ -900,6 +900,7 @@ void Application::DrawGraphEditor() {
                         "Mask Area — パスの閉じた鎖の内側をマスクにする（エリア選択）");
         ImGui::Separator();
         ImGui::Separator();
+        addNodeMenuItem(graph::NodeKind::CloudMapGenerate, "Cloud Map Generate (Experimental) — ポイントの分布から雲形状を生成する");
         addNodeMenuItem(graph::NodeKind::CloudLayer, "Cloud Layer — 分布マスクと高度・厚さで広い雲を作る");
         addNodeMenuItem(graph::NodeKind::CloudLine, "Cloud Line (Experimental) — 雲の芯になる3D直線");
         addNodeMenuItem(graph::NodeKind::CloudSpheres, "Cloud Spheres (Experimental) — ラインに沿って球を並べる");
@@ -1293,6 +1294,39 @@ void Application::DrawGraphPanel() {
         if (ui::BeginPropertyTable("CloudMergeRows", "横方向のばらつき")) {
             changed |= ui::PropertyFloat("つなぎの滑らかさ", &cloudMerge->smoothness, 0.0f, 500.0f, defaults.smoothness, "値はメートル単位。", "%.0f m");
             ui::EndPropertyTable();
+        }
+        if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
+    } else if (auto* map = std::get_if<graph::CloudMapSettings>(&selected->settings)) {
+        const graph::CloudMapSettings defaults;
+        bool changed=false;
+        ui::HintText("近傍点を結ぶ線から雲底と上向きの球列を生成。Shape を Cloud Replicate または Cloud Noise へ接続します。");
+        if (ui::BeginPropertyTable("CloudMapRows", "接続線 / 成長ライン")) {
+            changed |= ui::PropertyInt("ポイント数", &map->pointCount, 0, 10000, defaults.pointCount, "指定範囲へ一様ランダムに散布します。");
+            changed |= ui::PropertyInt("シード", &map->seed, 0, 10000, defaults.seed);
+            changed |= ui::PropertyFloat("範囲幅", &map->width, 100.0f, 100000.0f, defaults.width, "メートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("範囲奥行き", &map->depth, 100.0f, 100000.0f, defaults.depth, "メートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("中心 X", &map->centerX, -100000.0f, 100000.0f, defaults.centerX, "メートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("中心 Z", &map->centerZ, -100000.0f, 100000.0f, defaults.centerZ, "メートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("接続距離", &map->connectionDistance, 1.0f, 10000.0f, defaults.connectionDistance, "接続距離以内の全ペアを1回ずつ結びます。", "%.0f m");
+            changed |= ui::PropertyFloat("雲底高度", &map->bottomHeight, -10000.0f, 20000.0f, defaults.bottomHeight, "メートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("雲底の厚さ", &map->bottomThickness, 2.0f, 2000.0f, defaults.bottomThickness, "厚さの半分が楕円体の垂直半径になります。", "%.0f m");
+            changed |= ui::PropertyFloat("成長ライン密度", &map->columnsPerKm, 0.0f, 50.0f, defaults.columnsPerKm, "線の長さに比例した本数。端数は確率で生成します。0で雲底のみ。", "%.1f 本/km");
+            changed |= ui::PropertyFloat("成長高さ 最小", &map->minGrowth, 0.0f, 5000.0f, defaults.minGrowth, "メートル単位。成長高さの最小・最大が逆の場合は入れ替えて評価します。", "%.0f m");
+            changed |= ui::PropertyFloat("成長高さ 最大", &map->maxGrowth, 0.0f, 5000.0f, defaults.maxGrowth, "メートル単位。成長高さの最小・最大が逆の場合は入れ替えて評価します。", "%.0f m");
+            changed |= ui::PropertyFloat("成長球の半径", &map->columnRadius, 10.0f, 1000.0f, defaults.columnRadius, "メートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("孤立点の半径", &map->isolatedRadius, 1.0f, 1000.0f, defaults.isolatedRadius, "メートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("つなぎの滑らかさ", &map->smoothness, 0.0f, 500.0f, defaults.smoothness, "メートル単位。", "%.0f m");
+            changed |= ui::PropertyBool("分布ガイド", &map->showGuides, defaults.showGuides, "散布範囲・ポイント・接続線・成長ラインを表示します。多数の場合は表示のみ間引きます。");
+            const auto generated=m_graph.CompileCloudShapes(selected->id);
+            if (generated.mapGuide) {
+                char text[96];
+                std::snprintf(text,sizeof(text),"%u / %u",generated.mapGuide->edgeCount,generated.mapGuide->columnCount);
+                ui::PropertyValue("接続線 / 成長ライン",text);
+            }
+            char text[48]; std::snprintf(text,sizeof(text),"%zu 個",generated.primitives.size());
+            ui::PropertyValue("合計形状数",text);
+            ui::EndPropertyTable();
+            if (generated.shapeOverflow) ui::HintText("作業メモリ予算を超えました。ポイント数・接続距離・成長ライン密度を下げてください。");
         }
         if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
     } else if (auto* transform = std::get_if<graph::CloudTransformSettings>(&selected->settings)) {

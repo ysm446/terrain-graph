@@ -5,6 +5,7 @@
 // GPU 評価の前段だけを対象にし、入力を外したときに古い結果を残さない規則を固定する。
 
 #include "graph/NodeGraph.h"
+#include "graph/CloudMapGenerator.h"
 #include "renderer/CloudMotion.h"
 #include "renderer/CloudSpatialIndex.h"
 #include "renderer/CloudShapeCache.h"
@@ -268,6 +269,62 @@ void RunNodeGraphTests() {
         Check(!drag.Update({80,0},true,false,true,values) && drag.axis==-1 && z==30,"Altの視点操作へ入力を譲る");
         drag.axis=0; drag.start=x;
         Check(drag.Update({20000,0},true,false,false,values) && x==10000,"ドラッグと数値入力は同じ移動範囲");
+    }
+    {
+        Section("Cloud Map Generateの分布と成長");
+        NodeGraph graph;
+        const auto map=graph.CreateNode(NodeKind::CloudMapGenerate);
+        const auto replicate=graph.CreateNode(NodeKind::CloudReplicate);
+        auto& settings=std::get<tg::graph::CloudMapSettings>(graph.FindMutableNode(map)->settings);
+        settings.width=settings.depth=1000; settings.pointCount=40; settings.connectionDistance=400;
+        settings.centerX=250; settings.centerZ=-120; settings.bottomHeight=600; settings.columnsPerKm=0;
+        const auto base=graph.CompileCloudShapes(map);
+        Check(base.connected && base.mapGuide && base.mapGuide->points.size()==40,"指定数の点から雲底を生成");
+        bool inBounds=true,edgesCorrect=true;
+        size_t expectedEdges=0,isolated=0;
+        for (size_t i=0;i<base.mapGuide->points.size();++i) {
+            const auto a=base.mapGuide->points[i];
+            inBounds &= a.x>=-250 && a.x<=750 && a.z>=-620 && a.z<=380;
+            bool connected=false;
+            for (size_t j=0;j<base.mapGuide->points.size();++j) {
+                if (i==j) continue;
+                const auto b=base.mapGuide->points[j];
+                const bool close=std::hypot(b.x-a.x,b.z-a.z)<=400;
+                connected |= close;
+                if (j<=i) continue;
+                size_t matches=0;
+                for (const auto edge:base.mapGuide->edges) if (edge.a==i && edge.b==j) ++matches;
+                edgesCorrect &= matches==(close?1u:0u);
+                if (close) ++expectedEdges;
+            }
+            if (!connected) ++isolated;
+        }
+        Check(inBounds && edgesCorrect && base.mapGuide->edgeCount==expectedEdges,"セル検索が全ペア検索と一致し重複線を作らない");
+        Check(base.primitives.size()==expectedEdges+isolated && base.mapGuide->columnCount==0,"成長密度0では接続線と孤立点の雲底のみ");
+        bool bases=true;
+        for (const auto& p:base.primitives) bases &= p.centerY==700 && p.radiusY==100 && p.radiusX==p.radiusZ;
+        Check(bases,"厚さ200mの扁平楕円体を雲底高度600mへ配置");
+        const auto cached=graph.CompileCloudShapes(map);
+        Check(cached.mapGuide==base.mapGuide,"同じ設定では生成した分布を再利用");
+        settings.columnsPerKm=10; settings.minGrowth=200; settings.maxGrowth=600;
+        const auto grown=graph.CompileCloudShapes(map);
+        bool columns=!grown.mapGuide->columns.empty();
+        for (const auto& line:grown.mapGuide->columns) columns &= line.start.x==line.end.x && line.start.z==line.end.z &&
+            line.end.y-line.start.y>=199.99f && line.end.y-line.start.y<=600.01f;
+        Check(columns && grown.primitives.size()>base.primitives.size(),"指定高さ内で上向きラインと球列を生成");
+        Check(grown.mapGuide->points[0].x==base.mapGuide->points[0].x,"成長設定を変えても元の散布点は維持");
+        settings.seed++;
+        Check(graph.CompileCloudShapes(map).mapGuide->points[0].x!=base.mapGuide->points[0].x,"シード変更で分布を更新");
+        Check(graph.CreateLink(graph.FindNode(map)->outputs[0].id,graph.FindNode(replicate)->inputs[0].id),"既存のCloud Replicateへ接続できる");
+        Check(graph.CompileCloudShapes(replicate).connected,"生成形状を置き換え処理へ渡せる");
+        settings.pointCount=1;
+        Check(graph.CompileCloudShapes(map).primitives.size()==1,"孤立点にも土台を作る");
+        settings.pointCount=0;
+        Check(!graph.CompileCloudShapes(map).connected && graph.CompileCloudShapes(map).primitives.empty(),"0点で古い雲を消す");
+        settings.width=settings.depth=100; settings.pointCount=10000; settings.connectionDistance=10000;
+        settings.bottomThickness=2; settings.columnsPerKm=50; settings.minGrowth=settings.maxGrowth=5000;
+        const auto excessive=tg::graph::GenerateCloudMap(settings,map);
+        Check(excessive.shapeOverflow && !excessive.connected,"極端な生成は作業予算で停止し部分的な雲を表示しない");
     }
     {
         Section("Cloud Mergeの可変入力");

@@ -1439,6 +1439,23 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["proceduralCloud"]["radiusZ"] = cloudEllipsoid->radiusZ;
         } else if (const auto* cloudMerge = std::get_if<graph::CloudMergeSettings>(&node.settings)) {
             item["proceduralCloud"]["smoothness"] = cloudMerge->smoothness;
+        } else if (const auto* map = std::get_if<graph::CloudMapSettings>(&node.settings)) {
+            item["proceduralCloud"]["width"] = map->width;
+            item["proceduralCloud"]["depth"] = map->depth;
+            item["proceduralCloud"]["centerX"] = map->centerX;
+            item["proceduralCloud"]["centerZ"] = map->centerZ;
+            item["proceduralCloud"]["connectionDistance"] = map->connectionDistance;
+            item["proceduralCloud"]["bottomHeight"] = map->bottomHeight;
+            item["proceduralCloud"]["bottomThickness"] = map->bottomThickness;
+            item["proceduralCloud"]["columnsPerKm"] = map->columnsPerKm;
+            item["proceduralCloud"]["minGrowth"] = map->minGrowth;
+            item["proceduralCloud"]["maxGrowth"] = map->maxGrowth;
+            item["proceduralCloud"]["columnRadius"] = map->columnRadius;
+            item["proceduralCloud"]["isolatedRadius"] = map->isolatedRadius;
+            item["proceduralCloud"]["smoothness"] = map->smoothness;
+            item["proceduralCloud"]["pointCount"] = map->pointCount;
+            item["proceduralCloud"]["seed"] = map->seed;
+            item["proceduralCloud"]["showGuides"] = map->showGuides;
         } else if (const auto* transform = std::get_if<graph::CloudTransformSettings>(&node.settings)) {
             item["proceduralCloud"]={{"translateX",transform->translateX},{"translateY",transform->translateY},{"translateZ",transform->translateZ}};
         } else if (const auto* replicate = std::get_if<graph::CloudReplicateSettings>(&node.settings)) {
@@ -1671,6 +1688,27 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.smoothness = std::clamp(ReadFloat(*shape, "smoothness", settings.smoothness), 0.0f, 500.0f);
                 }
                 created.settings = settings;
+            } else if (created.kind == graph::NodeKind::CloudMapGenerate) {
+                graph::CloudMapSettings settings;
+                if (const auto* shape=FindMember(item,"proceduralCloud"); shape && shape->is_object()) {
+                    settings.width=std::clamp(ReadFloat(*shape,"width",settings.width),100.0f,100000.0f);
+                    settings.depth=std::clamp(ReadFloat(*shape,"depth",settings.depth),100.0f,100000.0f);
+                    settings.centerX=std::clamp(ReadFloat(*shape,"centerX",settings.centerX),-100000.0f,100000.0f);
+                    settings.centerZ=std::clamp(ReadFloat(*shape,"centerZ",settings.centerZ),-100000.0f,100000.0f);
+                    settings.connectionDistance=std::clamp(ReadFloat(*shape,"connectionDistance",settings.connectionDistance),1.0f,10000.0f);
+                    settings.bottomHeight=std::clamp(ReadFloat(*shape,"bottomHeight",settings.bottomHeight),-10000.0f,20000.0f);
+                    settings.bottomThickness=std::clamp(ReadFloat(*shape,"bottomThickness",settings.bottomThickness),2.0f,2000.0f);
+                    settings.columnsPerKm=std::clamp(ReadFloat(*shape,"columnsPerKm",settings.columnsPerKm),0.0f,50.0f);
+                    settings.minGrowth=std::clamp(ReadFloat(*shape,"minGrowth",settings.minGrowth),0.0f,5000.0f);
+                    settings.maxGrowth=std::clamp(ReadFloat(*shape,"maxGrowth",settings.maxGrowth),0.0f,5000.0f);
+                    settings.columnRadius=std::clamp(ReadFloat(*shape,"columnRadius",settings.columnRadius),10.0f,1000.0f);
+                    settings.isolatedRadius=std::clamp(ReadFloat(*shape,"isolatedRadius",settings.isolatedRadius),1.0f,1000.0f);
+                    settings.smoothness=std::clamp(ReadFloat(*shape,"smoothness",settings.smoothness),0.0f,500.0f);
+                    settings.pointCount=std::clamp(ReadInt(*shape,"pointCount",settings.pointCount),0,10000);
+                    settings.seed=std::clamp(ReadInt(*shape,"seed",settings.seed),0,10000);
+                    settings.showGuides=ReadBool(*shape,"showGuides",settings.showGuides);
+                }
+                created.settings=settings;
             } else if (created.kind == graph::NodeKind::CloudTransform) {
                 graph::CloudTransformSettings settings;
                 if (const auto* shape=FindMember(item,"proceduralCloud"); shape && shape->is_object()) {

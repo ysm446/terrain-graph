@@ -1,9 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-11 16:10
+更新日時: 2026-09-11 16:47
 
 ## 現在の状況
+
+**Cloud Map Generate（2026-09-11 16:47）。** Cloud Map Generate (Experimental) を追加。10km四方・400点・接続距離500m・雲底厚さ200mを既定とし、範囲内の一様ランダム点から近傍接続、扁平な雲底、上向きの球列を生成する。Shape を Cloud Replicate / Cloud Noise へ接続できる。Debug / Releaseビルド・テスト成功。近傍セル検索と全ペア比較の一致、再現性、キャッシュ再利用、雲底のみ、垂直成長、孤立点・0点・作業予算超過、Cloud Replicate接続を確認。10km四方・400点から576接続線・366成長ラインを生成し、Releaseの描画・UI・保存再読み込みを確認した。実行ファイルは `build/cloud-buffer/Release/terrain_graph.exe`、サンプルは `data/cloud-map-qa/saved.tgproj`。
 
 **Cloud Merge の可変入力（2026-09-11 16:10）。** Cloud Merge の入力を可変長に変更。新規作成時は Shape 1 のみを表示し、接続すると末尾に次の空き入力を1つ追加する。接続削除や入力元ノード削除時は空きを1つに整理する。接続済みピンのIDと相対順序を維持し、表示名は Shape 1、Shape 2…と振り直す。保存・読み込み・コピー＆ペーストに対応し、旧A/B形式も読み込める。 Debug / Releaseビルド・テスト成功。8入力の追加・削除・置換・復元とID維持を検証し、5接続＋空き1入力の保存・再読み込みとUI画像を確認（`data/cloud-merge-inputs-qa/saved-ui.png`）。
 

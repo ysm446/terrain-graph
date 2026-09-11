@@ -6,6 +6,8 @@
 #include "graph/Path.h"
 
 #include <cstdint>
+#include <memory>
+#include <unordered_map>
 #include <span>
 #include <string>
 #include <string_view>
@@ -114,6 +116,7 @@ enum class NodeKind : uint32_t {
     CloudNoise = 38,
     CloudReplicate = 39,
     CloudTransform = 40,
+    CloudMapGenerate = 41,
 };
 
 struct PinDefinition {
@@ -244,6 +247,24 @@ struct CloudEllipsoidSettings {
     float centerX=0, centerY=200, centerZ=0;
     float radiusX=1000, radiusY=250, radiusZ=700;
 };
+struct CloudMapSettings {
+    float width=10000, depth=10000, centerX=0, centerZ=0;
+    int pointCount=400, seed=1;
+    float connectionDistance=500, bottomHeight=1000, bottomThickness=200;
+    float columnsPerKm=2, minGrowth=200, maxGrowth=1200, columnRadius=120;
+    float isolatedRadius=100, smoothness=30;
+    bool showGuides=true;
+    bool operator==(const CloudMapSettings&) const = default;
+};
+struct CloudMapGuide {
+    struct Point { float x=0,y=0,z=0; };
+    struct Edge { uint32_t a=0,b=0; };
+    struct Column { Point start,end; };
+    std::vector<Point> points;
+    std::vector<Edge> edges;
+    std::vector<Column> columns;
+    uint32_t edgeCount=0,columnCount=0;
+};
 struct CloudTransformSettings { float translateX=0, translateY=0, translateZ=0; };
 struct CloudMergeSettings { float smoothness=80; };
 struct CloudReplicateSettings {
@@ -273,6 +294,7 @@ inline constexpr size_t CloudShapeMemoryBudget=32*1024*1024;
 
 // 雲出力が未接続でも hasOutput は真。古い雲へ戻らず表示を消す。
 struct CompiledCloud {
+    std::shared_ptr<const CloudMapGuide> mapGuide;
     bool hasOutput = false;
     std::vector<CloudPrimitive> primitives;
     float smoothness = 0;
@@ -290,7 +312,7 @@ struct OutputNodeSettings {};
 
 using NodeSettings =
     std::variant<LayerNodeSettings, MaskNodeSettings, OutputNodeSettings, PathNodeSettings, CloudNodeSettings,
-                 CloudLineSettings, CloudSpheresSettings, CloudEllipsoidSettings, CloudMergeSettings, CloudNoiseSettings, CloudReplicateSettings, CloudTransformSettings>;
+                 CloudLineSettings, CloudSpheresSettings, CloudEllipsoidSettings, CloudMergeSettings, CloudNoiseSettings, CloudReplicateSettings, CloudTransformSettings, CloudMapSettings>;
 
 struct Node {
     GraphId id = 0;
@@ -435,6 +457,8 @@ private:
     // producer の出力を辿って target に届くか（循環チェック用）。
     bool ReachesDownstream(GraphId fromNodeId, GraphId targetNodeId) const;
 
+    struct CloudMapCache { CloudMapSettings settings; CompiledCloud result; };
+    mutable std::unordered_map<GraphId,CloudMapCache> m_cloudMapCache;
     std::vector<Node> m_nodes;
     std::vector<Link> m_links;
     GraphId m_nextGraphId = 1;

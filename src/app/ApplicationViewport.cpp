@@ -257,6 +257,30 @@ void Application::DrawCloudShapeGizmo(const ImVec2& viewportMin, const ImVec2& v
         const auto pb=ProjectToViewport(viewProjection,b,viewportMin,size);
         if (pa.visible && pb.visible) drawList->AddLine(pa.screen,pb.screen,color,ui::Scaled(1.25f));
     };
+    if (const auto* map=std::get_if<graph::CloudMapSettings>(&node->settings)) {
+        if (map->showGuides) {
+            const float x=map->centerX,z=map->centerZ,w=map->width*0.5f,d=map->depth*0.5f,y=map->bottomHeight;
+            const XMFLOAT3 corners[]{{x-w,y,z-d},{x+w,y,z-d},{x+w,y,z+d},{x-w,y,z+d}};
+            for (int i=0;i<4;++i) segment(corners[i],corners[(i+1)%4]);
+            const auto generated=m_graph.CompileCloudShapes(node->id);
+            if (generated.mapGuide) {
+                const auto& guide=*generated.mapGuide;
+                const size_t stride=std::max(size_t(1),(guide.points.size()+1023)/1024);
+                for (size_t i=0;i<guide.points.size();i+=stride) {
+                    const auto& point=guide.points[i];
+                    const auto projected=ProjectToViewport(viewProjection,{point.x,point.y,point.z},viewportMin,size);
+                    if (projected.visible) drawList->AddCircleFilled(projected.screen,ui::Scaled(2.5f),color);
+                }
+                for (const auto& edge:guide.edges) {
+                    const auto& a=guide.points[edge.a]; const auto& b=guide.points[edge.b];
+                    segment({a.x,a.y,a.z},{b.x,b.y,b.z});
+                }
+                for (const auto& line:guide.columns) segment({line.start.x,line.start.y,line.start.z},{line.end.x,line.end.y,line.end.z});
+            }
+        }
+        drawList->PopClipRect();
+        return;
+    }
     const auto drawLine=[&](const graph::Node* lineNode) {
         const auto* line=lineNode ? std::get_if<graph::CloudLineSettings>(&lineNode->settings) : nullptr;
         if (!line) return;
