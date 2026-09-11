@@ -834,15 +834,6 @@ void Application::DrawGraphEditor() {
                 settings->layer.name +=
                     " " + std::to_string(m_graph.Nodes().size());
             }
-            if (auto* cloud = std::get_if<graph::CloudNodeSettings>(&node->settings); cloud && kind == graph::NodeKind::Cloud) {
-                const float size = m_renderer.PlaneSize();
-                const float height = m_renderer.DisplacementScale();
-                cloud->width = std::clamp(size * 0.3f, 10.0f, 20000.0f);
-                cloud->depth = std::clamp(size * 0.2f, 10.0f, 20000.0f);
-                cloud->thickness = std::clamp(height * 0.4f, 10.0f, 20000.0f);
-                cloud->centerY = height * 0.2f;
-                cloud->noiseScale = cloud->width;
-            }
             node->posX = addNodePosition.x;
             node->posY = addNodePosition.y;
             node->positionValid = true;
@@ -909,7 +900,6 @@ void Application::DrawGraphEditor() {
                         "Mask Area — パスの閉じた鎖の内側をマスクにする（エリア選択）");
         ImGui::Separator();
         ImGui::Separator();
-        addNodeMenuItem(graph::NodeKind::Cloud, "雲塊 — 位置・寸法・輪郭を指定する立体の雲");
         addNodeMenuItem(graph::NodeKind::CloudLayer, "雲層 — 分布マスクと高度・厚さで広い雲を作る");
         addNodeMenuItem(graph::NodeKind::CloudLine, "雲ライン（実験） — 雲の芯になる3D直線");
         addNodeMenuItem(graph::NodeKind::CloudSpheres, "雲の球配置（実験） — ラインに沿って球を並べる");
@@ -1481,8 +1471,8 @@ void Application::DrawGraphPanel() {
             MarkDocumentChanged(false);
         }
     } else if (selected->kind == graph::NodeKind::CloudOutput) {
-        ui::HintText("雲塊の Volume を接続して表示します。未接続なら雲は表示しません");
-        ui::HintText("従来の雲塊・雲層、または実験用の雲ノイズを接続できます");
+        ui::HintText("雲ノイズまたは雲層の Volume を接続して表示します。未接続なら雲は表示しません");
+        ui::HintText("保存済みの旧形式の雲塊も引き続き表示できます");
         if (!m_renderer.AtmosphericMode() && ui::Button("大気散乱へ切替", ui::kWideButtonWidth)) {
             m_renderer.AtmosphericMode() = true;
             MarkDocumentChanged();
