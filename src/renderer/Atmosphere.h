@@ -65,11 +65,12 @@ struct AtmosphereSettings {
         float upper[4]={}; // 中心群のAABB最大座標、最大半径。
         uint32_t start=0, count=0, escape=0, padding=0;
     };
+    float loopCenterX=0, loopCenterZ=0, loopWidth=10000, loopDepth=10000;
     uint32_t shapeCacheIndex = UINT32_MAX;
     uint32_t shapeCacheSize[3] = {};
 
 };
-static_assert(sizeof(AtmosphereSettings) == 240);
+static_assert(sizeof(AtmosphereSettings) == 256);
 
 struct CloudGeometry {
     std::vector<AtmosphereSettings::Primitive> primitives;

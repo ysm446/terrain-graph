@@ -369,6 +369,10 @@ int Application::Run() {
             }
             cloudSettings.distributionMask = CloudDistributionMask();
             cloudSettings.animateClouds = cloud.animate ? 1u : 0u;
+            cloudSettings.loopCenterX=compiledCloud.animation.centerX;
+            cloudSettings.loopCenterZ=compiledCloud.animation.centerZ;
+            cloudSettings.loopWidth=compiledCloud.animation.width;
+            cloudSettings.loopDepth=compiledCloud.animation.depth;
             cloudSettings.cloudMotionMode = static_cast<uint32_t>(cloud.motionMode);
             m_renderer.SetCloudPrimitives(primitives);
             cloudSettings.cloudSource = static_cast<uint32_t>(compiledCloud.sourceId);

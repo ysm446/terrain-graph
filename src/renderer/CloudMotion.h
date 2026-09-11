@@ -21,6 +21,9 @@ struct CloudMotion {
         // 細部ノイズ (3.1 倍) と共通の周期で丸め、長時間再生の精度低下を防ぐ。
         return mode == 2 ? static_cast<float>(std::fmod(-displacement, scale * 10.0)) : 0.0f;
     }
+    static float LoopOffset(double displacement, double extent) {
+        return static_cast<float>(displacement-std::floor(displacement/extent)*extent);
+    }
     void Reset() { x = z = driftX = driftZ = 0.0; }
 };
 } // namespace tg::renderer

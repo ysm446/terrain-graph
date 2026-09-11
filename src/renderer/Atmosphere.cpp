@@ -119,7 +119,10 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
     AtmosphereSettings settings = requested;
     settings.shapeCacheIndex = UINT32_MAX;
     settings.cloudCellIndex = m_cloudCells.SrvIndex();
-    if (requested.localCloud && requested.cloudMotionMode != 1) {
+    if (requested.cloudMotionMode == 3) {
+        settings.windOffsetX=CloudMotion::LoopOffset(m_motion.x,requested.loopWidth);
+        settings.windOffsetZ=CloudMotion::LoopOffset(m_motion.z,requested.loopDepth);
+    } else if (requested.localCloud && requested.cloudMotionMode != 1) {
         settings.fieldCenterX += static_cast<float>(m_motion.x);
         settings.fieldCenterZ += static_cast<float>(m_motion.z);
         // 範囲より模様を遅く進める。追加サンプルなしで異なる場所の密度を読む。

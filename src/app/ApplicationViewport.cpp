@@ -257,6 +257,22 @@ void Application::DrawCloudShapeGizmo(const ImVec2& viewportMin, const ImVec2& v
         const auto pb=ProjectToViewport(viewProjection,b,viewportMin,size);
         if (pa.visible && pb.visible) drawList->AddLine(pa.screen,pb.screen,color,ui::Scaled(1.25f));
     };
+    if (const auto* animation=std::get_if<graph::CloudAnimationSettings>(&node->settings)) {
+        const auto cloud=m_graph.CompileCloud();
+        if (cloud.connected && cloud.sourceId==node->id) {
+            const float x=animation->centerX,z=animation->centerZ,w=animation->width*0.5f,d=animation->depth*0.5f;
+            const float bottom=cloud.cloud.centerY-cloud.cloud.thickness*0.5f,top=bottom+cloud.cloud.thickness;
+            const XMFLOAT3 corners[]{{x-w,bottom,z-d},{x+w,bottom,z-d},{x+w,bottom,z+d},{x-w,bottom,z+d},
+                {x-w,top,z-d},{x+w,top,z-d},{x+w,top,z+d},{x-w,top,z+d}};
+            for (int i=0;i<4;++i) {
+                segment(corners[i],corners[(i+1)%4]);
+                segment(corners[i+4],corners[(i+1)%4+4]);
+                segment(corners[i],corners[i+4]);
+            }
+        }
+        drawList->PopClipRect();
+        return;
+    }
     if (const auto* map=std::get_if<graph::CloudMapSettings>(&node->settings)) {
         if (map->showGuides) {
             const float x=map->centerX,z=map->centerZ,w=map->width*0.5f,d=map->depth*0.5f,y=map->bottomHeight;

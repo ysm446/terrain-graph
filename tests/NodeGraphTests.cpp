@@ -48,6 +48,42 @@ bool StartsWithNeutralPlane(const tg::graph::CompiledGraph& compiled) {
 
 void RunNodeGraphTests() {
     {
+        Section("Cloud Animation の接続と循環");
+        NodeGraph graph;
+        const auto shape=graph.CreateNode(NodeKind::CloudEllipsoid);
+        const auto noise=graph.CreateNode(NodeKind::CloudNoise);
+        const auto animation=graph.CreateNode(NodeKind::CloudAnimation);
+        const auto output=graph.CreateNode(NodeKind::CloudOutput);
+        const auto link=[&](auto a,auto b) {
+            return graph.CreateLink(graph.FindNode(a)->outputs[0].id,graph.FindNode(b)->inputs[0].id);
+        };
+        Check(link(shape,noise) && link(noise,animation) && link(animation,output),"Volume の後段へ接続できる");
+        const auto compiled=graph.CompileCloud();
+        Check(compiled.connected && compiled.cloud.animate && compiled.cloud.motionMode==3 &&
+            compiled.sourceId==animation && !compiled.primitives.empty(),"形状を保持してループ設定を適用");
+        auto& settings=std::get<tg::graph::CloudAnimationSettings>(graph.FindMutableNode(animation)->settings);
+        settings.playing=false; settings.width=400; settings.speed=70;
+        const auto paused=graph.CompileCloud();
+        Check(!paused.cloud.animate && paused.animation.width==400 && paused.cloud.windSpeed==70 &&
+            paused.cloud.width==compiled.cloud.width,"ループ範囲は元の形状ベイク範囲を変更しない");
+        graph.DeleteNode(noise);
+        Check(!graph.CompileCloud().connected,"入力切断で古い雲を残さない");
+        using tg::renderer::CloudMotion;
+        Check(CloudMotion::LoopOffset(1000,1000)==0 && CloudMotion::LoopOffset(-10,1000)==990 &&
+            CloudMotion::LoopOffset(1000000025.0,1000)==25,"境界・逆方向・長時間の循環");
+        CloudMotion motion;
+        motion.Advance(1,true,100,1.57079632679f);
+        const auto x=motion.x;
+        motion.Advance(1,false,100,0);
+        Check(motion.x==x && std::abs(x-100)<0.001,"停止位置を保持する");
+        motion.Reset();
+        Check(motion.x==0 && motion.z==0,"開始位置へ戻せる");
+        tg::renderer::AtmosphereSettings a,b;
+        b.cloudMotionMode=3; b.windOffsetX=500; b.loopWidth=2000;
+        Check(tg::renderer::SameCloudShapeCache(a,b),"時間と循環範囲は形状再ベイクを起こさない");
+    }
+
+    {
         Section("雲形状ベイクの更新条件と格子範囲");
         tg::renderer::AtmosphereSettings a;
         a.primitiveCount=1;
@@ -304,8 +340,9 @@ void RunNodeGraphTests() {
         Check(inBounds && edgesCorrect && base.mapGuide->edgeCount==expectedEdges,"セル検索が全ペア検索と一致し重複線を作らない");
         Check(base.primitives.size()==expectedEdges+isolated && base.mapGuide->columnCount==0,"成長密度0では接続線と孤立点の雲底のみ");
         bool bases=true;
-        for (const auto& p:base.primitives) bases &= p.centerY==700 && p.radiusY==100 && p.radiusX==p.radiusZ;
-        Check(bases,"厚さ200mの扁平楕円体を雲底高度600mへ配置");
+        for (const auto& p:base.primitives) bases &= std::abs(p.centerY-p.radiusY-600)<0.001f &&
+            p.radiusY==std::max(1.0f,std::min(100.0f,p.radiusX*0.5f)) && p.radiusX==p.radiusZ;
+        Check(bases,"厚さを横幅に合わせても全雲底の底面高度を600mへ揃える");
         const auto cached=graph.CompileCloudShapes(map);
         Check(cached.mapGuide==base.mapGuide,"同じ設定では生成した分布を再利用");
         settings.removeIsolated=true;
@@ -317,8 +354,8 @@ void RunNodeGraphTests() {
         const auto grown=graph.CompileCloudShapes(map);
         bool columns=!grown.mapGuide->columns.empty();
         for (const auto& line:grown.mapGuide->columns) columns &= line.start.x==line.end.x && line.start.z==line.end.z &&
-            line.end.y-line.start.y>=199.99f && line.end.y-line.start.y<=600.01f;
-        Check(columns && grown.primitives.size()>base.primitives.size(),"指定高さ内で上向きラインと球列を生成");
+            line.end.y-line.start.y>0 && line.end.y-line.start.y<=200.01f;
+        Check(columns && grown.primitives.size()>base.primitives.size(),"横幅の比率を優先し最小成長高さを下回る場合も制限");
         Check(grown.mapGuide->points[0].x==base.mapGuide->points[0].x,"成長設定を変えても元の散布点は維持");
         settings.seed++;
         Check(graph.CompileCloudShapes(map).mapGuide->points[0].x!=base.mapGuide->points[0].x,"シード変更で分布を更新");
@@ -335,6 +372,56 @@ void RunNodeGraphTests() {
         settings.bottomThickness=2; settings.columnsPerKm=50; settings.minGrowth=settings.maxGrowth=5000;
         const auto excessive=tg::graph::GenerateCloudMap(settings,map);
         Check(excessive.shapeOverflow && !excessive.connected,"極端な生成は作業予算で停止し部分的な雲を表示しない");
+    }
+    {
+        Section("Cloud Mapの横幅に比例した成長制限");
+        tg::graph::CloudMapSettings settings;
+        Check(settings.maxHeightRatio==0.5f,"高さ比率の既定値は0.5");
+        settings.pointCount=2; settings.width=settings.depth=1000; settings.connectionDistance=10000;
+        settings.columnsPerKm=50; settings.minGrowth=settings.maxGrowth=5000;
+        const auto half=tg::graph::GenerateCloudMap(settings,1);
+        const auto a=half.mapGuide->points[0],b=half.mapGuide->points[1];
+        const float width=std::hypot(a.x-b.x,a.z-b.z);
+        bool limited=!half.mapGuide->columns.empty();
+        for (const auto& line:half.mapGuide->columns) limited &= std::abs(line.end.y-line.start.y-width*0.5f)<0.001f;
+        Check(limited,"大きい成長高さの指定でも接続線の半分へ制限");
+        settings.maxHeightRatio=1;
+        const auto full=tg::graph::GenerateCloudMap(settings,1);
+        bool samePositions=full.mapGuide->columns.size()==half.mapGuide->columns.size();
+        for (size_t i=0;i<full.mapGuide->columns.size();++i) {
+            const auto& line=full.mapGuide->columns[i];
+            samePositions &= line.start.x==half.mapGuide->columns[i].start.x && line.start.z==half.mapGuide->columns[i].start.z;
+            samePositions &= std::abs(line.end.y-line.start.y-width)<0.001f;
+        }
+        Check(samePositions,"比率変更は根元の位置とライン本数を維持");
+        settings.maxHeightRatio=0;
+        const auto flat=tg::graph::GenerateCloudMap(settings,1);
+        Check(flat.connected && flat.primitives.size()==1 && flat.mapGuide->columnCount==0,"比率0は雲底のみを残す");
+        settings.maxHeightRatio=1; settings.minGrowth=settings.maxGrowth=10;
+        const auto shortGrowth=tg::graph::GenerateCloudMap(settings,1);
+        bool staysShort=!shortGrowth.mapGuide->columns.empty();
+        for (const auto& line:shortGrowth.mapGuide->columns) staysShort &= std::abs(line.end.y-line.start.y-10)<0.001f;
+        Check(staysShort,"上限より低い成長高さを引き伸ばさない");
+    }
+    {
+        Section("Cloud Mapの雲底厚さ制限");
+        tg::graph::CloudMapSettings settings;
+        Check(tg::graph::CloudMapHalfThickness(settings,20)==10,"直径40m・比率0.5の厚さは20m");
+        Check(tg::graph::CloudMapHalfThickness(settings,500)==100,"大きい土台は指定厚さ200mを維持");
+        settings.pointCount=1; settings.removeIsolated=false; settings.isolatedRadius=20; settings.bottomHeight=800;
+        auto base=tg::graph::GenerateCloudMap(settings,1);
+        Check(base.primitives[0].radiusY==10 && base.primitives[0].centerY==810,"孤立点にも比率と共通底面高度を適用");
+        settings.maxThicknessRatio=1;
+        base=tg::graph::GenerateCloudMap(settings,1);
+        Check(base.primitives[0].radiusY==20 && base.primitives[0].centerY==820,"比率変更で厚さと中心を一緒に変更");
+        settings.pointCount=2; settings.width=settings.depth=100; settings.connectionDistance=1000;
+        settings.columnsPerKm=50; settings.minGrowth=settings.maxGrowth=100;
+        base=tg::graph::GenerateCloudMap(settings,1);
+        bool attached=!base.mapGuide->columns.empty();
+        for (const auto& column:base.mapGuide->columns) attached &= column.start.y==base.primitives[0].centerY;
+        Check(attached,"成長ラインの根元も各土台の中心高度に追従");
+        settings.maxThicknessRatio=0.01f;
+        Check(tg::graph::CloudMapHalfThickness(settings,1)==1,"極端に薄い土台は描画の最小厚さ2mに揃える");
     }
     {
         Section("Cloud Mergeの可変入力");

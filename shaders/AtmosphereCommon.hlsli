@@ -21,6 +21,7 @@ struct AtmosphericParameters {
     uint cloudCellCount; float proceduralBottomHeight; float proceduralBottomFeather; uint cellPadding;
     uint primitiveCount; float primitiveSmoothness; float primitiveDisplacement; float primitiveDetail;
     uint primitiveBufferIndex; uint primitiveBvhIndex; uint primitiveBvhCount; uint primitiveRevision;
+    float loopCenterX; float loopCenterZ; float loopWidth; float loopDepth;
     uint shapeCacheIndex; uint3 shapeCacheSize;
 };
 float3 AtmosphereSun(AtmosphericParameters p) {
@@ -47,6 +48,31 @@ float3 LocalCloudCenter(AtmosphericParameters p) {
 }
 float3 LocalCloudRadii(AtmosphericParameters p) {
     return float3(p.radiusX, p.cloudThickness * 0.5, p.radiusZ);
+}
+// ベイクは元の範囲を維持し、表示・照明だけループ範囲で評価する。
+float3 CloudRenderCenter(AtmosphericParameters p) {
+    float3 center=LocalCloudCenter(p);
+    if (p.cloudMotionMode==3) center.xz=float2(p.loopCenterX,p.loopCenterZ);
+    return center;
+}
+float3 CloudRenderRadii(AtmosphericParameters p) {
+    float3 radii=LocalCloudRadii(p);
+    if (p.cloudMotionMode==3) radii.xz=float2(p.loopWidth,p.loopDepth)*0.5;
+    return radii;
+}
+bool LoopCloudPosition(inout float3 position, AtmosphericParameters p, out float seamDistance) {
+    seamDistance=1e9;
+    if (p.cloudMotionMode!=3) return true;
+    float2 extent=max(float2(p.loopWidth,p.loopDepth),1);
+    float2 lower=float2(p.loopCenterX,p.loopCenterZ)-extent*0.5;
+    float2 uv=(position.xz-lower)/extent;
+    if (any(uv<0) || any(uv>1)) return false;
+    float2 local=frac((position.xz-lower-float2(p.windOffsetX,p.windOffsetZ))/extent)*extent;
+    position.xz=lower+local;
+    // 循環の継ぎ目の向こうには別の雲があるため、空間スキップを継ぎ目までに制限する。
+    float2 edge=min(local,extent-local);
+    seamDistance=min(edge.x,edge.y);
+    return true;
 }
 float CloudBottomFade(float h, float shape, float detail) {
     // 同じ高さを基準に、浅い起伏と薄い密度の縁を残す。既存ノイズを共有する。
@@ -194,7 +220,7 @@ float ProceduralCloudShape(float3 position, AtmosphericParameters p, out float e
     if (p.primitiveSmoothness>0 && weight>0) distance-=p.primitiveSmoothness*log(weight);
     return distance;
 }
-float ProceduralCloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex, out float emptyDistance) {
+float ProceduralCloudSourceDensity(float3 position, AtmosphericParameters p, uint noiseIndex, out float emptyDistance) {
     if (p.flatCloudBottom!=0 && position.y<=p.proceduralBottomHeight) {
         emptyDistance=max(0,p.proceduralBottomHeight-position.y);
         return 0;
@@ -203,7 +229,10 @@ float ProceduralCloudDensity(float3 position, AtmosphericParameters p, uint nois
     if (p.shapeCacheIndex != 0xffffffff) {
         float3 uvw=(position-LocalCloudCenter(p))/LocalCloudRadii(p)*0.5+0.5;
         emptyDistance=0;
-        if (any(uvw<0) || any(uvw>1)) return 0;
+        if (any(uvw<0) || any(uvw>1)) {
+            emptyDistance=length(max(abs(position-LocalCloudCenter(p))-LocalCloudRadii(p),0));
+            return 0;
+        }
         float3 grid=uvw*float3(p.shapeCacheSize-1);
         float2 uv=(grid.xy+0.5)/float2(p.shapeCacheSize.xy);
         Texture2DArray<float2> cache=ResourceDescriptorHeap[p.shapeCacheIndex];
@@ -228,9 +257,23 @@ float ProceduralCloudDensity(float3 position, AtmosphericParameters p, uint nois
         density*=smoothstep(0,p.proceduralBottomFeather,position.y-p.proceduralBottomHeight);
     return density;
 }
+float ProceduralCloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex, out float emptyDistance) {
+    float seamDistance;
+    emptyDistance=0;
+    if (!LoopCloudPosition(position,p,seamDistance)) return 0;
+    float density=ProceduralCloudSourceDensity(position,p,noiseIndex,emptyDistance);
+    emptyDistance=min(emptyDistance,seamDistance);
+    return density;
+}
 float CloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex) {
     if (p.clouds == 0) return 0;
     if (p.localCloud==3) { float emptyDistance; return ProceduralCloudDensity(position,p,noiseIndex,emptyDistance); }
+    if (p.cloudMotionMode==3) {
+        float seamDistance;
+        if (!LoopCloudPosition(position,p,seamDistance)) return 0;
+        p.cloudMotionMode=0;
+        p.windOffsetX=p.windOffsetZ=0;
+    }
     if (p.localCloud == 1) return LocalCloudDensity(position,p,noiseIndex);
     if (p.localCloud == 2) {
         float3 offset = position - LocalCloudCenter(p);
@@ -285,9 +328,9 @@ float CloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex) {
 bool CloudInterval(float3 origin, float3 ray, float limit, AtmosphericParameters p,
                    out float start, out float end) {
     start=0; end=limit;
-    if (p.localCloud == 3 || p.localCloud == 2 || (p.localCloud == 1 && p.flatCloudBottom != 0)) {
-        float3 offset = origin-LocalCloudCenter(p);
-        float3 radii = LocalCloudRadii(p);
+    if (p.cloudMotionMode == 3 || p.localCloud == 3 || p.localCloud == 2 || (p.localCloud == 1 && p.flatCloudBottom != 0)) {
+        float3 offset = origin-CloudRenderCenter(p);
+        float3 radii = CloudRenderRadii(p);
         [unroll] for (uint axis=0; axis<3; ++axis) {
             if (abs(ray[axis]) < 1e-7) {
                 if (abs(offset[axis]) >= radii[axis]) return false;
@@ -357,7 +400,7 @@ bool HasCloudOpticalCache(AtmosphericParameters p) {
     return (p.localCloud==2 || p.localCloud==3) && (asuint(p.shapeStrength)&0x80000000)!=0 && asuint(p.shapeStrength)!=0xffffffff;
 }
 float3 SampleCloudOpticalCache(float3 position, AtmosphericParameters p) {
-    float3 uvw=saturate((position-LocalCloudCenter(p))/LocalCloudRadii(p)*0.5+0.5);
+    float3 uvw=saturate((position-CloudRenderCenter(p))/CloudRenderRadii(p)*0.5+0.5);
     float2 uv=(uvw.xy*float2(63,31)+0.5)/float2(64,32);
     float z=uvw.z*63;
     Texture2DArray<float4> cache=ResourceDescriptorHeap[asuint(p.shapeStrength)&0x7fffffff];

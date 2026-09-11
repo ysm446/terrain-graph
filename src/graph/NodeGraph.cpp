@@ -238,7 +238,9 @@ constexpr std::array<PinDefinition, 2> kCloudNoisePins = {{
 constexpr std::array<PinDefinition, 2> kCloudReplicatePins = {{
     {PinKind::Input, ValueType::CloudShape, "Shape"}, {PinKind::Output, ValueType::CloudShape, "Shape"}}};
 
-constexpr std::array<NodeDefinition, 42> kNodeDefinitions = {{
+constexpr std::array<PinDefinition, 2> kCloudAnimationPins = {{{PinKind::Input, ValueType::Volume, "Volume"}, {PinKind::Output, ValueType::Volume, "Volume"}}};
+
+constexpr std::array<NodeDefinition, 43> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -275,6 +277,7 @@ constexpr std::array<NodeDefinition, 42> kNodeDefinitions = {{
     {NodeKind::CloudSpheres, "cloudSpheres", "Cloud Spheres (Experimental)", kCloudSpheresPins},
     {NodeKind::CloudEllipsoid, "cloudEllipsoid", "Cloud Ellipsoid (Experimental)", kCloudShapePins},
     {NodeKind::CloudMerge, "cloudMerge", "Cloud Merge (Experimental)", kCloudMergePins},
+    {NodeKind::CloudAnimation, "cloudAnimation", "Cloud Animation", kCloudAnimationPins},
     {NodeKind::CloudNoise, "cloudNoise", "Cloud Noise (Experimental)", kCloudNoisePins},
     {NodeKind::CloudMapGenerate, "cloudMapGenerate", "Cloud Map Generate (Experimental)", kCloudShapePins},
     {NodeKind::CloudTransform, "cloudTransform", "Cloud Transform (Experimental)", kCloudReplicatePins},
@@ -663,6 +666,11 @@ CompiledCloud NodeGraph::CompileCloud() const {
         if (node.kind != NodeKind::CloudOutput) continue;
         result.hasOutput = true;
         const Node* source = UpstreamOf(node, ValueType::Volume);
+        const Node* animation=nullptr;
+        for (size_t depth=0; source && source->kind==NodeKind::CloudAnimation && depth<m_nodes.size(); ++depth) {
+            if (!animation) animation=source;
+            source=UpstreamOf(*source,ValueType::Volume);
+        }
         if (source != nullptr && (source->kind == NodeKind::Cloud || source->kind == NodeKind::CloudLayer)) {
             if (const auto* cloud = std::get_if<CloudNodeSettings>(&source->settings)) {
                 result.cloud = *cloud;
@@ -715,6 +723,16 @@ CompiledCloud NodeGraph::CompileCloud() const {
                 cloud.width=hiX-loX; cloud.thickness=hiY-loY; cloud.depth=hiZ-loZ;
             }
         }
+        if (animation && result.connected) {
+            result.animation=std::get<CloudAnimationSettings>(animation->settings);
+            result.animation.width=std::clamp(result.animation.width,100.0f,100000.0f);
+            result.animation.depth=std::clamp(result.animation.depth,100.0f,100000.0f);
+            result.cloud.animate=result.animation.playing;
+            result.cloud.windSpeed=std::clamp(result.animation.speed,0.0f,1000.0f);
+            result.cloud.windDirection=result.animation.direction;
+            result.cloud.motionMode=3;
+            result.sourceId=animation->id;
+        }
         break; // 雲出力は一つ。壊れたファイルに複数あっても先頭を採用する。
     }
     return result;
@@ -749,6 +767,7 @@ GraphId NodeGraph::CreateNode(NodeKind kind) {
     } else if (kind == NodeKind::CloudSpheres) { node.settings = CloudSpheresSettings{};
     } else if (kind == NodeKind::CloudEllipsoid) { node.settings = CloudEllipsoidSettings{};
     } else if (kind == NodeKind::CloudMerge) { node.settings = CloudMergeSettings{};
+    } else if (kind == NodeKind::CloudAnimation) { node.settings = CloudAnimationSettings{};
     } else if (kind == NodeKind::CloudNoise) { node.settings = CloudNoiseSettings{};
     } else if (kind == NodeKind::CloudMapGenerate) { node.settings = CloudMapSettings{};
     } else if (kind == NodeKind::CloudTransform) { node.settings = CloudTransformSettings{};

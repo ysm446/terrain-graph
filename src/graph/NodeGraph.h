@@ -117,6 +117,7 @@ enum class NodeKind : uint32_t {
     CloudReplicate = 39,
     CloudTransform = 40,
     CloudMapGenerate = 41,
+    CloudAnimation = 42,
 };
 
 struct PinDefinition {
@@ -253,6 +254,7 @@ struct CloudMapSettings {
     float connectionDistance=500, bottomHeight=1000, bottomThickness=200;
     float columnsPerKm=2, minGrowth=200, maxGrowth=1200, columnRadius=120;
     float isolatedRadius=100, smoothness=30;
+    float maxHeightRatio=0.5f, maxThicknessRatio=0.5f;
     bool showGuides=true, removeIsolated=true;
     bool operator==(const CloudMapSettings&) const = default;
 };
@@ -265,6 +267,11 @@ struct CloudMapGuide {
     std::vector<Edge> edges;
     std::vector<Column> columns;
     uint32_t edgeCount=0,columnCount=0;
+};
+struct CloudAnimationSettings {
+    float centerX=0, centerZ=0, width=10000, depth=10000;
+    float speed=100, direction=90;
+    bool playing=true;
 };
 struct CloudTransformSettings { float translateX=0, translateY=0, translateZ=0; };
 struct CloudMergeSettings { float smoothness=80; };
@@ -301,6 +308,7 @@ struct CompiledCloud {
     float smoothness = 0;
     bool shapeOverflow = false;
     CloudNodeSettings cloud;
+    CloudAnimationSettings animation;
     float bottomHeight=0, bottomFeather=20;
     bool connected = false;
     GraphId sourceId = 0;
@@ -313,7 +321,7 @@ struct OutputNodeSettings {};
 
 using NodeSettings =
     std::variant<LayerNodeSettings, MaskNodeSettings, OutputNodeSettings, PathNodeSettings, CloudNodeSettings,
-                 CloudLineSettings, CloudSpheresSettings, CloudEllipsoidSettings, CloudMergeSettings, CloudNoiseSettings, CloudReplicateSettings, CloudTransformSettings, CloudMapSettings>;
+                 CloudLineSettings, CloudSpheresSettings, CloudEllipsoidSettings, CloudMergeSettings, CloudNoiseSettings, CloudReplicateSettings, CloudTransformSettings, CloudMapSettings, CloudAnimationSettings>;
 
 struct Node {
     GraphId id = 0;

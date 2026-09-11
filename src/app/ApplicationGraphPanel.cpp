@@ -908,6 +908,7 @@ void Application::DrawGraphEditor() {
         addNodeMenuItem(graph::NodeKind::CloudMerge, "Cloud Merge (Experimental) — 基本形状を統合する");
         addNodeMenuItem(graph::NodeKind::CloudTransform, "Cloud Transform (Experimental) — 雲形状を移動する");
         addNodeMenuItem(graph::NodeKind::CloudReplicate, "Cloud Replicate (Experimental) — 表面に小さな球を追加する");
+        addNodeMenuItem(graph::NodeKind::CloudAnimation, "Cloud Animation — 指定範囲で雲を繰り返し移動する");
         addNodeMenuItem(graph::NodeKind::CloudNoise, "Cloud Noise (Experimental) — 輪郭と密度を作る");
         addNodeMenuItem(graph::NodeKind::CloudOutput, "Cloud Output — Volume を繋いで雲を表示する");
         ImGui::Separator();
@@ -1310,9 +1311,11 @@ void Application::DrawGraphPanel() {
             changed |= ui::PropertyFloat("接続距離", &map->connectionDistance, 1.0f, 10000.0f, defaults.connectionDistance, "接続距離以内の全ペアを1回ずつ結びます。", "%.0f m");
             changed |= ui::PropertyFloat("雲底高度", &map->bottomHeight, -10000.0f, 20000.0f, defaults.bottomHeight, "メートル単位。", "%.0f m");
             changed |= ui::PropertyFloat("雲底の厚さ", &map->bottomThickness, 2.0f, 2000.0f, defaults.bottomThickness, "厚さの半分が楕円体の垂直半径になります。", "%.0f m");
+            changed |= ui::PropertyFloat("厚さ／横幅の上限", &map->maxThicknessRatio, 0.01f, 1.0f, defaults.maxThicknessRatio, "雲底の厚さを水平直径×比率以下に抑えます。底面高度は共通。最小厚さは2mです。", "%.2f");
             changed |= ui::PropertyFloat("成長ライン密度", &map->columnsPerKm, 0.0f, 50.0f, defaults.columnsPerKm, "線の長さに比例した本数。端数は確率で生成します。0で雲底のみ。", "%.1f 本/km");
             changed |= ui::PropertyFloat("成長高さ 最小", &map->minGrowth, 0.0f, 5000.0f, defaults.minGrowth, "メートル単位。成長高さの最小・最大が逆の場合は入れ替えて評価します。", "%.0f m");
             changed |= ui::PropertyFloat("成長高さ 最大", &map->maxGrowth, 0.0f, 5000.0f, defaults.maxGrowth, "メートル単位。成長高さの最小・最大が逆の場合は入れ替えて評価します。", "%.0f m");
+            changed |= ui::PropertyFloat("高さ／横幅の上限", &map->maxHeightRatio, 0.0f, 1.0f, defaults.maxHeightRatio, "接続線の長さ×比率で成長ラインを制限します。成長高さの最小値より優先。0で成長なし。雲底の厚さ・球の半径は含みません。", "%.2f");
             changed |= ui::PropertyFloat("成長球の半径", &map->columnRadius, 10.0f, 1000.0f, defaults.columnRadius, "メートル単位。", "%.0f m");
             changed |= ui::PropertyBool("孤立点を除外", &map->removeIsolated, defaults.removeIsolated, "他のポイントとつながらない点を雲形状と分布ガイドから除外します。");
             if (!map->removeIsolated) changed |= ui::PropertyFloat("孤立点の半径", &map->isolatedRadius, 1.0f, 1000.0f, defaults.isolatedRadius, "メートル単位。", "%.0f m");
@@ -1329,6 +1332,29 @@ void Application::DrawGraphPanel() {
             ui::EndPropertyTable();
             if (generated.shapeOverflow) ui::HintText("作業メモリ予算を超えました。ポイント数・接続距離・成長ライン密度を下げてください。");
         }
+        if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
+    } else if (auto* animation = std::get_if<graph::CloudAnimationSettings>(&selected->settings)) {
+        const graph::CloudAnimationSettings defaults;
+        bool changed=false;
+        ui::HintText("Cloud Noise → Cloud Animation → Cloud Output と接続します。指定範囲の雲を水平に循環させます。範囲外の元形状は使いません。");
+        if (ui::BeginPropertyTable("CloudAnimationRows", "中心 X")) {
+            changed |= ui::PropertyBool("再生", &animation->playing, defaults.playing, "オフで現在位置に一時停止します。");
+            changed |= ui::PropertyFloat("中心 X", &animation->centerX, -100000, 100000, defaults.centerX, "方向は0°が+Z、90°が+X。範囲はワールド座標で指定します。", "%.1f m");
+            changed |= ui::PropertyFloat("中心 Z", &animation->centerZ, -100000, 100000, defaults.centerZ, "方向は0°が+Z、90°が+X。範囲はワールド座標で指定します。", "%.1f m");
+            changed |= ui::PropertyFloat("幅", &animation->width, 100, 100000, defaults.width, "方向は0°が+Z、90°が+X。範囲はワールド座標で指定します。", "%.1f m");
+            changed |= ui::PropertyFloat("奥行き", &animation->depth, 100, 100000, defaults.depth, "方向は0°が+Z、90°が+X。範囲はワールド座標で指定します。", "%.1f m");
+            changed |= ui::PropertyFloat("速度", &animation->speed, 0, 1000, defaults.speed, "方向は0°が+Z、90°が+X。範囲はワールド座標で指定します。", "%.1f m/s");
+            changed |= ui::PropertyFloat("方向", &animation->direction, 0, 360, defaults.direction, "方向は0°が+Z、90°が+X。範囲はワールド座標で指定します。", "%.1f °");
+            ui::PropertyLabelEmpty("resetCloudAnimation");
+            if (ui::Button("開始位置へ戻す", ui::kWideButtonWidth)) {
+                animation->playing=false;
+                if (m_graph.CompileCloud().sourceId==selected->id) m_renderer.ResetCloudMotion();
+                changed=true;
+            }
+            ui::PropertyEnd();
+            ui::EndPropertyTable();
+        }
+        ui::HintText("高さは入力の雲を維持します。複数接続時は出力に近い Animation の設定を使います。再生位置は保存しません。");
         if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
     } else if (auto* transform = std::get_if<graph::CloudTransformSettings>(&selected->settings)) {
         const graph::CloudTransformSettings defaults;

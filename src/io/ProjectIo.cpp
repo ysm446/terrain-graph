@@ -1450,6 +1450,8 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["proceduralCloud"]["columnsPerKm"] = map->columnsPerKm;
             item["proceduralCloud"]["minGrowth"] = map->minGrowth;
             item["proceduralCloud"]["maxGrowth"] = map->maxGrowth;
+            item["proceduralCloud"]["maxHeightRatio"] = map->maxHeightRatio;
+            item["proceduralCloud"]["maxThicknessRatio"] = map->maxThicknessRatio;
             item["proceduralCloud"]["columnRadius"] = map->columnRadius;
             item["proceduralCloud"]["isolatedRadius"] = map->isolatedRadius;
             item["proceduralCloud"]["smoothness"] = map->smoothness;
@@ -1457,6 +1459,10 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["proceduralCloud"]["seed"] = map->seed;
             item["proceduralCloud"]["showGuides"] = map->showGuides;
             item["proceduralCloud"]["removeIsolated"] = map->removeIsolated;
+        } else if (const auto* animation = std::get_if<graph::CloudAnimationSettings>(&node.settings)) {
+            item["cloudAnimation"]={{"centerX",animation->centerX},{"centerZ",animation->centerZ},
+                {"width",animation->width},{"depth",animation->depth},{"speed",animation->speed},
+                {"direction",animation->direction},{"playing",animation->playing}};
         } else if (const auto* transform = std::get_if<graph::CloudTransformSettings>(&node.settings)) {
             item["proceduralCloud"]={{"translateX",transform->translateX},{"translateY",transform->translateY},{"translateZ",transform->translateZ}};
         } else if (const auto* replicate = std::get_if<graph::CloudReplicateSettings>(&node.settings)) {
@@ -1702,6 +1708,8 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.columnsPerKm=std::clamp(ReadFloat(*shape,"columnsPerKm",settings.columnsPerKm),0.0f,50.0f);
                     settings.minGrowth=std::clamp(ReadFloat(*shape,"minGrowth",settings.minGrowth),0.0f,5000.0f);
                     settings.maxGrowth=std::clamp(ReadFloat(*shape,"maxGrowth",settings.maxGrowth),0.0f,5000.0f);
+                    settings.maxHeightRatio=std::clamp(ReadFloat(*shape,"maxHeightRatio",settings.maxHeightRatio),0.0f,1.0f);
+                    settings.maxThicknessRatio=std::clamp(ReadFloat(*shape,"maxThicknessRatio",settings.maxThicknessRatio),0.01f,1.0f);
                     settings.columnRadius=std::clamp(ReadFloat(*shape,"columnRadius",settings.columnRadius),10.0f,1000.0f);
                     settings.isolatedRadius=std::clamp(ReadFloat(*shape,"isolatedRadius",settings.isolatedRadius),1.0f,1000.0f);
                     settings.smoothness=std::clamp(ReadFloat(*shape,"smoothness",settings.smoothness),0.0f,500.0f);
@@ -1709,6 +1717,18 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.seed=std::clamp(ReadInt(*shape,"seed",settings.seed),0,10000);
                     settings.showGuides=ReadBool(*shape,"showGuides",settings.showGuides);
                     settings.removeIsolated=ReadBool(*shape,"removeIsolated",settings.removeIsolated);
+                }
+                created.settings=settings;
+            } else if (created.kind == graph::NodeKind::CloudAnimation) {
+                graph::CloudAnimationSettings settings;
+                if (const auto* value=FindMember(item,"cloudAnimation");value && value->is_object()) {
+                    settings.centerX=std::clamp(ReadFloat(*value,"centerX",settings.centerX),-100000.0f,100000.0f);
+                    settings.centerZ=std::clamp(ReadFloat(*value,"centerZ",settings.centerZ),-100000.0f,100000.0f);
+                    settings.width=std::clamp(ReadFloat(*value,"width",settings.width),100.0f,100000.0f);
+                    settings.depth=std::clamp(ReadFloat(*value,"depth",settings.depth),100.0f,100000.0f);
+                    settings.speed=std::clamp(ReadFloat(*value,"speed",settings.speed),0.0f,1000.0f);
+                    settings.direction=std::clamp(ReadFloat(*value,"direction",settings.direction),0.0f,360.0f);
+                    settings.playing=ReadBool(*value,"playing",settings.playing);
                 }
                 created.settings=settings;
             } else if (created.kind == graph::NodeKind::CloudTransform) {
