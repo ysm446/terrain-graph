@@ -253,7 +253,7 @@ struct CloudMapSettings {
     float connectionDistance=500, bottomHeight=1000, bottomThickness=200;
     float columnsPerKm=2, minGrowth=200, maxGrowth=1200, columnRadius=120;
     float isolatedRadius=100, smoothness=30;
-    bool showGuides=true;
+    bool showGuides=true, removeIsolated=true;
     bool operator==(const CloudMapSettings&) const = default;
 };
 struct CloudMapGuide {
@@ -261,6 +261,7 @@ struct CloudMapGuide {
     struct Edge { uint32_t a=0,b=0; };
     struct Column { Point start,end; };
     std::vector<Point> points;
+    std::vector<uint8_t> pointConnected;
     std::vector<Edge> edges;
     std::vector<Column> columns;
     uint32_t edgeCount=0,columnCount=0;

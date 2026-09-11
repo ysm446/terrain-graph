@@ -267,6 +267,7 @@ void Application::DrawCloudShapeGizmo(const ImVec2& viewportMin, const ImVec2& v
                 const auto& guide=*generated.mapGuide;
                 const size_t stride=std::max(size_t(1),(guide.points.size()+1023)/1024);
                 for (size_t i=0;i<guide.points.size();i+=stride) {
+                    if (map->removeIsolated && !guide.pointConnected[i]) continue;
                     const auto& point=guide.points[i];
                     const auto projected=ProjectToViewport(viewProjection,{point.x,point.y,point.z},viewportMin,size);
                     if (projected.visible) drawList->AddCircleFilled(projected.screen,ui::Scaled(2.5f),color);

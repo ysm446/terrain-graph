@@ -1314,7 +1314,8 @@ void Application::DrawGraphPanel() {
             changed |= ui::PropertyFloat("成長高さ 最小", &map->minGrowth, 0.0f, 5000.0f, defaults.minGrowth, "メートル単位。成長高さの最小・最大が逆の場合は入れ替えて評価します。", "%.0f m");
             changed |= ui::PropertyFloat("成長高さ 最大", &map->maxGrowth, 0.0f, 5000.0f, defaults.maxGrowth, "メートル単位。成長高さの最小・最大が逆の場合は入れ替えて評価します。", "%.0f m");
             changed |= ui::PropertyFloat("成長球の半径", &map->columnRadius, 10.0f, 1000.0f, defaults.columnRadius, "メートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("孤立点の半径", &map->isolatedRadius, 1.0f, 1000.0f, defaults.isolatedRadius, "メートル単位。", "%.0f m");
+            changed |= ui::PropertyBool("孤立点を除外", &map->removeIsolated, defaults.removeIsolated, "他のポイントとつながらない点を雲形状と分布ガイドから除外します。");
+            if (!map->removeIsolated) changed |= ui::PropertyFloat("孤立点の半径", &map->isolatedRadius, 1.0f, 1000.0f, defaults.isolatedRadius, "メートル単位。", "%.0f m");
             changed |= ui::PropertyFloat("つなぎの滑らかさ", &map->smoothness, 0.0f, 500.0f, defaults.smoothness, "メートル単位。", "%.0f m");
             changed |= ui::PropertyBool("分布ガイド", &map->showGuides, defaults.showGuides, "散布範囲・ポイント・接続線・成長ラインを表示します。多数の場合は表示のみ間引きます。");
             const auto generated=m_graph.CompileCloudShapes(selected->id);

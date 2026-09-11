@@ -1456,6 +1456,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["proceduralCloud"]["pointCount"] = map->pointCount;
             item["proceduralCloud"]["seed"] = map->seed;
             item["proceduralCloud"]["showGuides"] = map->showGuides;
+            item["proceduralCloud"]["removeIsolated"] = map->removeIsolated;
         } else if (const auto* transform = std::get_if<graph::CloudTransformSettings>(&node.settings)) {
             item["proceduralCloud"]={{"translateX",transform->translateX},{"translateY",transform->translateY},{"translateZ",transform->translateZ}};
         } else if (const auto* replicate = std::get_if<graph::CloudReplicateSettings>(&node.settings)) {
@@ -1707,6 +1708,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.pointCount=std::clamp(ReadInt(*shape,"pointCount",settings.pointCount),0,10000);
                     settings.seed=std::clamp(ReadInt(*shape,"seed",settings.seed),0,10000);
                     settings.showGuides=ReadBool(*shape,"showGuides",settings.showGuides);
+                    settings.removeIsolated=ReadBool(*shape,"removeIsolated",settings.removeIsolated);
                 }
                 created.settings=settings;
             } else if (created.kind == graph::NodeKind::CloudTransform) {

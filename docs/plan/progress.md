@@ -1,9 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-11 16:47
+更新日時: 2026-09-11 17:01
 
 ## 現在の状況
+
+**Cloud Map Generate の孤立点除外（2026-09-11 17:01）。** Cloud Map Generate に「孤立点を除外」を追加し、既定でオンにした。他の点と接続しない点の雲底と分布ガイドを除外する。オフにすると従来の孤立点の土台を作り、「孤立点の半径」を編集できる。切り替えても散布位置・接続線・成長ラインは変わらない。設定を保存し、この項目のない既存データでも既定のオンを適用する。Debug / Releaseビルド・テスト成功。孤立点除外の切替と接続形状の維持、既存データへの既定値適用、設定の保存・再読み込みとUI表示を確認（`data/cloud-map-qa/filtered-ui.png`）。
 
 **Cloud Map Generate（2026-09-11 16:47）。** Cloud Map Generate (Experimental) を追加。10km四方・400点・接続距離500m・雲底厚さ200mを既定とし、範囲内の一様ランダム点から近傍接続、扁平な雲底、上向きの球列を生成する。Shape を Cloud Replicate / Cloud Noise へ接続できる。Debug / Releaseビルド・テスト成功。近傍セル検索と全ペア比較の一致、再現性、キャッシュ再利用、雲底のみ、垂直成長、孤立点・0点・作業予算超過、Cloud Replicate接続を確認。10km四方・400点から576接続線・366成長ラインを生成し、Releaseの描画・UI・保存再読み込みを確認した。実行ファイルは `build/cloud-buffer/Release/terrain_graph.exe`、サンプルは `data/cloud-map-qa/saved.tgproj`。
 

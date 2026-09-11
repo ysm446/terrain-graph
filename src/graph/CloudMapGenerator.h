@@ -42,7 +42,8 @@ inline CompiledCloud GenerateCloudMap(const CloudMapSettings& settings,GraphId n
         result.primitives.push_back({x,y,z,0,rx,ry,rz,0,nodeId,static_cast<uint32_t>(result.primitives.size())});
         return true;
     };
-    std::vector<bool> connected(count,false);
+    guide->pointConnected.resize(count,0);
+    auto& connected=guide->pointConnected;
     constexpr size_t GuideLimit=4096;
     for (uint32_t i=0;i<guide->points.size();++i) {
         const auto a=guide->points[i];
@@ -86,7 +87,7 @@ inline CompiledCloud GenerateCloudMap(const CloudMapSettings& settings,GraphId n
         }
     }
     for (size_t i=0;i<guide->points.size();++i) {
-        if (connected[i]) continue;
+        if (connected[i] || settings.removeIsolated) continue;
         const auto point=guide->points[i];
         const float radius=std::clamp(settings.isolatedRadius,1.0f,1000.0f);
         if (!append(point.x,baseY,point.z,radius,halfThickness,radius)) return result;

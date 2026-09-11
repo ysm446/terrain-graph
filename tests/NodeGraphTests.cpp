@@ -276,6 +276,8 @@ void RunNodeGraphTests() {
         const auto map=graph.CreateNode(NodeKind::CloudMapGenerate);
         const auto replicate=graph.CreateNode(NodeKind::CloudReplicate);
         auto& settings=std::get<tg::graph::CloudMapSettings>(graph.FindMutableNode(map)->settings);
+        Check(settings.removeIsolated,"新規マップは孤立点を除外する");
+        settings.removeIsolated=false;
         settings.width=settings.depth=1000; settings.pointCount=40; settings.connectionDistance=400;
         settings.centerX=250; settings.centerZ=-120; settings.bottomHeight=600; settings.columnsPerKm=0;
         const auto base=graph.CompileCloudShapes(map);
@@ -306,6 +308,11 @@ void RunNodeGraphTests() {
         Check(bases,"厚さ200mの扁平楕円体を雲底高度600mへ配置");
         const auto cached=graph.CompileCloudShapes(map);
         Check(cached.mapGuide==base.mapGuide,"同じ設定では生成した分布を再利用");
+        settings.removeIsolated=true;
+        const auto filtered=graph.CompileCloudShapes(map);
+        Check(filtered.primitives.size()==expectedEdges && filtered.mapGuide->edgeCount==base.mapGuide->edgeCount,
+            "孤立点の除外は接続線とつながった雲底を変えない");
+        Check(filtered.mapGuide->points[0].x==base.mapGuide->points[0].x,"孤立点除外の切替で散布位置を変えない");
         settings.columnsPerKm=10; settings.minGrowth=200; settings.maxGrowth=600;
         const auto grown=graph.CompileCloudShapes(map);
         bool columns=!grown.mapGuide->columns.empty();
@@ -318,7 +325,10 @@ void RunNodeGraphTests() {
         Check(graph.CreateLink(graph.FindNode(map)->outputs[0].id,graph.FindNode(replicate)->inputs[0].id),"既存のCloud Replicateへ接続できる");
         Check(graph.CompileCloudShapes(replicate).connected,"生成形状を置き換え処理へ渡せる");
         settings.pointCount=1;
-        Check(graph.CompileCloudShapes(map).primitives.size()==1,"孤立点にも土台を作る");
+        const auto isolatedResult=graph.CompileCloudShapes(map);
+        Check(isolatedResult.primitives.empty() && !isolatedResult.connected && isolatedResult.mapGuide->pointConnected[0]==0,"単独点は雲形状とガイドから除外できる");
+        settings.removeIsolated=false;
+        Check(graph.CompileCloudShapes(map).primitives.size()==1,"除外オフで孤立点の土台を復元する");
         settings.pointCount=0;
         Check(!graph.CompileCloudShapes(map).connected && graph.CompileCloudShapes(map).primitives.empty(),"0点で古い雲を消す");
         settings.width=settings.depth=100; settings.pointCount=10000; settings.connectionDistance=10000;
