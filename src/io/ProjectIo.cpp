@@ -162,6 +162,7 @@ const char* const kRockStyleNames[] = {"classic", "polygonal", "shard"};
 const char* const kTonemapNames[] = {"none", "reinhard", "aces"};
 const char* const kSkySourceNames[] = {"procedural", "hdri"};
 const char* const kCloudNoiseNames[] = {"perlinFbm", "perlinWorley"};
+const char* const kCloudReplicationNames[] = {"count", "surfaceDensity", "volumeDensity"};
 const char* const kProceduralCloudNoiseNames[] = {"perlin", "perlinFbm", "perlinWorley"};
 const char* const kApertureShapeNames[] = {"circle", "triangle", "hexagon", "octagon"};
 
@@ -1438,12 +1439,22 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["proceduralCloud"]["radiusZ"] = cloudEllipsoid->radiusZ;
         } else if (const auto* cloudMerge = std::get_if<graph::CloudMergeSettings>(&node.settings)) {
             item["proceduralCloud"]["smoothness"] = cloudMerge->smoothness;
+        } else if (const auto* transform = std::get_if<graph::CloudTransformSettings>(&node.settings)) {
+            item["proceduralCloud"]={{"translateX",transform->translateX},{"translateY",transform->translateY},{"translateZ",transform->translateZ}};
+        } else if (const auto* replicate = std::get_if<graph::CloudReplicateSettings>(&node.settings)) {
+            item["proceduralCloud"]={{"distribution",EnumName(kCloudReplicationNames,static_cast<uint32_t>(replicate->distribution))},
+                {"packingDensity",replicate->packingDensity},{"count",replicate->count},{"radiusScale",replicate->radiusScale},
+                {"radiusVariation",replicate->radiusVariation},{"jitter",replicate->jitter},
+                {"smoothness",replicate->smoothness},{"seed",replicate->seed},{"keepSource",replicate->keepSource}};
         } else if (const auto* cloudNoise = std::get_if<graph::CloudNoiseSettings>(&node.settings)) {
             item["proceduralCloud"]["noiseType"] = EnumName(kProceduralCloudNoiseNames, static_cast<uint32_t>(cloudNoise->noiseType));
             item["proceduralCloud"]["scale"] = cloudNoise->scale;
             item["proceduralCloud"]["displacement"] = cloudNoise->displacement;
             item["proceduralCloud"]["detail"] = cloudNoise->detail;
             item["proceduralCloud"]["feather"] = cloudNoise->feather;
+            item["proceduralCloud"]["flattenBottom"] = cloudNoise->flattenBottom;
+            item["proceduralCloud"]["bottomHeight"] = cloudNoise->bottomHeight;
+            item["proceduralCloud"]["bottomFeather"] = cloudNoise->bottomFeather;
             item["proceduralCloud"]["extinction"] = cloudNoise->extinction;
             item["proceduralCloud"]["indirectLight"] = cloudNoise->indirectLight;
             item["proceduralCloud"]["ambientLight"] = cloudNoise->ambientLight;
@@ -1623,7 +1634,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
             } else if (created.kind == graph::NodeKind::CloudSpheres) {
                 graph::CloudSpheresSettings settings;
                 if (const auto* shape = FindMember(item, "proceduralCloud"); shape && shape->is_object()) {
-                    settings.count = std::clamp(ReadInt(*shape, "count", settings.count), 1, static_cast<int>(graph::MaxCloudPrimitives));
+                    settings.count = std::max(ReadInt(*shape, "count", settings.count), 1);
                     settings.startRadius = std::clamp(ReadFloat(*shape, "startRadius", settings.startRadius), 10.0f, 3000.0f);
                     settings.endRadius = std::clamp(ReadFloat(*shape, "endRadius", settings.endRadius), 10.0f, 3000.0f);
                     settings.jitter = std::clamp(ReadFloat(*shape, "jitter", settings.jitter), 0.0f, 1.0f);
@@ -1648,6 +1659,29 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.smoothness = std::clamp(ReadFloat(*shape, "smoothness", settings.smoothness), 0.0f, 500.0f);
                 }
                 created.settings = settings;
+            } else if (created.kind == graph::NodeKind::CloudTransform) {
+                graph::CloudTransformSettings settings;
+                if (const auto* shape=FindMember(item,"proceduralCloud"); shape && shape->is_object()) {
+                    settings.translateX=std::clamp(ReadFloat(*shape,"translateX",0),-10000.0f,10000.0f);
+                    settings.translateY=std::clamp(ReadFloat(*shape,"translateY",0),-10000.0f,10000.0f);
+                    settings.translateZ=std::clamp(ReadFloat(*shape,"translateZ",0),-10000.0f,10000.0f);
+                }
+                created.settings=settings;
+            } else if (created.kind == graph::NodeKind::CloudReplicate) {
+                graph::CloudReplicateSettings settings;
+                settings.distribution=0; // 未指定の既存ノードは元の個数と配置を維持。
+                if (const auto* shape=FindMember(item,"proceduralCloud");shape && shape->is_object()) {
+                    settings.distribution=static_cast<int>(EnumValue(kCloudReplicationNames,*shape,"distribution",0));
+                    settings.packingDensity=std::clamp(ReadFloat(*shape,"packingDensity",settings.packingDensity),0.0f,10000.0f);
+                    settings.count=std::max(ReadInt(*shape,"count",settings.count),1);
+                    settings.radiusScale=std::clamp(ReadFloat(*shape,"radiusScale",settings.radiusScale),0.05f,1.0f);
+                    settings.radiusVariation=std::clamp(ReadFloat(*shape,"radiusVariation",settings.radiusVariation),0.0f,0.9f);
+                    settings.jitter=std::clamp(ReadFloat(*shape,"jitter",settings.jitter),0.0f,1.0f);
+                    settings.smoothness=std::clamp(ReadFloat(*shape,"smoothness",settings.smoothness),0.0f,500.0f);
+                    settings.seed=std::clamp(ReadInt(*shape,"seed",settings.seed),0,10000);
+                    settings.keepSource=ReadBool(*shape,"keepSource",settings.keepSource);
+                }
+                created.settings=settings;
             } else if (created.kind == graph::NodeKind::CloudNoise) {
                 graph::CloudNoiseSettings settings;
                 if (const auto* shape = FindMember(item, "proceduralCloud"); shape && shape->is_object()) {
@@ -1656,6 +1690,9 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.displacement = std::clamp(ReadFloat(*shape, "displacement", settings.displacement), 0.0f, 500.0f);
                     settings.detail = std::clamp(ReadFloat(*shape, "detail", settings.detail), 0.0f, 200.0f);
                     settings.feather = std::clamp(ReadFloat(*shape, "feather", settings.feather), 1.0f, 300.0f);
+                    settings.flattenBottom=ReadBool(*shape,"flattenBottom",settings.flattenBottom);
+                    settings.bottomHeight=std::clamp(ReadFloat(*shape,"bottomHeight",settings.bottomHeight),-20000.0f,20000.0f);
+                    settings.bottomFeather=std::clamp(ReadFloat(*shape,"bottomFeather",settings.bottomFeather),0.0f,300.0f);
                     settings.extinction = std::clamp(ReadFloat(*shape, "extinction", settings.extinction), 0.0001f, 0.03f);
                     settings.indirectLight = std::clamp(ReadFloat(*shape, "indirectLight", settings.indirectLight), 0.0f, 5.0f);
                     settings.ambientLight = std::clamp(ReadFloat(*shape, "ambientLight", settings.ambientLight), 0.0f, 5.0f);

@@ -21,6 +21,7 @@
 #include "rhi/ShaderCompiler.h"
 #include "ui/ImGuiLayer.h"
 #include "ui/Toast.h"
+#include "ui/AxisTranslationDrag.h"
 
 #include <imgui.h>
 
@@ -238,6 +239,8 @@ private:
     // ビューポート上の F / A キーで視点をメッシュへ戻す。
     void HandleCameraShortcuts(bool itemHovered);
     // ライトの向きを示すギズモ。動かしている間と、その直後だけ出す。
+    bool HandleCloudTransformGizmo(bool itemActive, bool itemHovered, const ImVec2& viewportMin, const ImVec2& viewportMax);
+    ui::AxisTranslationDrag m_cloudTransformDrag;
     void DrawCloudShapeGizmo(const ImVec2& viewportMin, const ImVec2& viewportMax);
     void DrawLightGizmo(const ImVec2& viewportMin, const ImVec2& viewportMax);
     // ハイトの範囲。height 0 / 0.5 / 1 がワールドのどこに来るかを枠で示す

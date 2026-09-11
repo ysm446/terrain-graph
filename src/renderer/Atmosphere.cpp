@@ -1,4 +1,6 @@
 #include "renderer/Atmosphere.h"
+#include "renderer/CloudShapeCache.h"
+#include "renderer/CloudSpatialIndex.h"
 #include "core/Log.h"
 #include <pix3.h>
 #include <cstring>
@@ -6,6 +8,8 @@
 #include <cmath>
 
 namespace tg::renderer {
+static_assert(sizeof(AtmosphereSettings::Primitive)==32);
+static_assert(sizeof(AtmosphereSettings::PrimitiveBvhNode)==48);
 namespace {
 constexpr auto ReadState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 bool CreateTarget(rhi::Device& device, rhi::GpuTexture& texture, uint32_t size, DXGI_FORMAT format, uint32_t arraySize = 1, uint32_t height = 0) {
@@ -21,6 +25,62 @@ bool CreateTarget(rhi::Device& device, rhi::GpuTexture& texture, uint32_t size, 
     return device.Allocator().CreateTexture2D(desc, texture);
 }
 }
+void Atmosphere::SetCloudPrimitives(std::span<const AtmosphereSettings::Primitive> primitives) {
+    if (primitives.size()==m_sourcePrimitives.size() && (primitives.empty() ||
+        std::memcmp(primitives.data(),m_sourcePrimitives.data(),primitives.size_bytes())==0)) return;
+    m_sourcePrimitives.assign(primitives.begin(),primitives.end());
+    m_geometry.primitives=m_sourcePrimitives;
+    BuildCloudSpatialIndex(m_geometry);
+    ++m_geometryRevision;
+    m_geometryDirty=true;
+    m_shapeDirty=true;
+    m_opticalDirty=true;
+}
+bool Atmosphere::UploadCloudGeometry(rhi::Device& device) {
+    if (!m_geometryDirty) return true;
+    // 編集時だけ確保する不変バッファ。以前のフレームが使う領域は遅延解放する。
+    rhi::GpuBuffer primitives,nodes;
+    const auto upload=[&](const auto& source,const wchar_t* name,rhi::GpuBuffer& buffer) {
+        if (source.empty()) return true;
+        const uint32_t stride=sizeof(source[0]);
+        if (!device.Allocator().CreateStructuredBuffer(static_cast<uint32_t>(source.size()),stride,name,buffer)) return false;
+        const uint64_t bytes=source.size()*uint64_t(stride);
+        const uint64_t available=device.Upload().BytesPerFrame()-device.Upload().UsedBytes();
+        if (available<=65536) return false;
+        const auto staging=device.Upload().Allocate(std::min({bytes,uint64_t(1024*1024),available-65536}),16);
+        if (!staging.IsValid()) return false;
+        for (uint64_t offset=0;offset<bytes;) {
+            const uint64_t size=std::min(staging.size,bytes-offset);
+            std::memcpy(staging.cpu,reinterpret_cast<const uint8_t*>(source.data())+offset,size);
+            // 同じフレームリング領域の再利用は、この転送のGPU完了を待った後だけ。
+            if (!device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commands) {
+                PIXBeginEvent(commands,PIX_COLOR(120,180,255),"CloudGeometryUpload");
+                commands->CopyBufferRegion(buffer.resource.Get(),offset,staging.resource,staging.offset,size);
+                if (offset+size==bytes) {
+                    D3D12_RESOURCE_BARRIER barrier{};
+                    barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+                    barrier.Transition.pResource=buffer.resource.Get();
+                    barrier.Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+                    barrier.Transition.StateBefore=D3D12_RESOURCE_STATE_COPY_DEST;
+                    barrier.Transition.StateAfter=ReadState;
+                    commands->ResourceBarrier(1,&barrier);
+                    buffer.state=ReadState;
+                }
+                PIXEndEvent(commands);
+            })) return false;
+            offset+=size;
+        }
+        return true;
+    };
+    if (!upload(m_geometry.primitives,L"CloudPrimitives",primitives) || !upload(m_geometry.primitiveBvh,L"CloudBvh",nodes)) {
+        device.DeferRelease(primitives); device.DeferRelease(nodes);
+        return false;
+    }
+    device.DeferRelease(m_primitiveBuffer); device.DeferRelease(m_primitiveBvhBuffer);
+    m_primitiveBuffer=std::move(primitives); m_primitiveBvhBuffer=std::move(nodes);
+    m_geometryDirty=false;
+    return true;
+}
 void Atmosphere::ResetCloudMotion() {
     m_motion.Reset();
     m_lastTick = {};
@@ -32,7 +92,16 @@ void Atmosphere::ResetAnimation() {
     m_cloudTime = m_environmentTime = 0.0f;
     m_ready = false;
 }
-bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, const AtmosphereSettings& requested) {
+bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, const AtmosphereSettings& input) {
+    AtmosphereSettings requested=input;
+    if (requested.localCloud==3) {
+        if (!UploadCloudGeometry(device)) return false;
+        requested.primitiveCount=static_cast<uint32_t>(m_geometry.primitives.size());
+        requested.primitiveBvhCount=static_cast<uint32_t>(m_geometry.primitiveBvh.size());
+        requested.primitiveBufferIndex=m_primitiveBuffer.srv.index;
+        requested.primitiveBvhIndex=m_primitiveBvhBuffer.srv.index;
+        requested.primitiveRevision=m_geometryRevision;
+    }
     if ((requested.localCloud == 2 || requested.localCloud == 3) && !m_opticalDepth.IsValid()) {
         if (!CreateTarget(device, m_opticalDepth, 64, DXGI_FORMAT_R16G16B16A16_FLOAT, 64, 32)) return false;
         m_opticalDirty = true;
@@ -48,6 +117,7 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
     m_motion.Advance(delta, playing, requested.windSpeed, requested.windDirection, requested.noiseSpeedRatio);
     if (playing) m_cloudTime += delta;
     AtmosphereSettings settings = requested;
+    settings.shapeCacheIndex = UINT32_MAX;
     settings.cloudCellIndex = m_cloudCells.SrvIndex();
     if (requested.localCloud && requested.cloudMotionMode != 1) {
         settings.fieldCenterX += static_cast<float>(m_motion.x);
@@ -199,6 +269,9 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
 }
 void Atmosphere::Shutdown(rhi::Device& device) {
     m_environment.Shutdown(device);
+    device.DeferRelease(m_primitiveBuffer);
+    device.DeferRelease(m_primitiveBvhBuffer);
+    m_geometryDirty=true;
     device.DeferRelease(m_multiScatter);
     device.DeferRelease(m_noise);
     device.DeferRelease(m_skyView);
@@ -211,13 +284,49 @@ void Atmosphere::Shutdown(rhi::Device& device) {
     m_lastTick = {};
     m_cloudTime = m_environmentTime = 0.0f;
     m_motion.Reset();
+    device.DeferRelease(m_shapeCache);
+    m_shapeDirty = true;
     device.DeferRelease(m_opticalDepth);
     m_opticalDirty = true;
     m_cloudEnvironmentDirty = false;
 }
-// 雲の形は元の密度で描き、低周波な光学的厚さだけを共有する。
+// 球群の合成だけを焼き込み、ノイズは各描画パスで評価する。
+void Atmosphere::UpdateFrameShape(rhi::Device& device, rhi::PipelineCache& pipelines,
+                                  ID3D12GraphicsCommandList* commands) {
+    m_applied.shapeCacheIndex = UINT32_MAX;
+    if (!m_ready || !m_applied.clouds || m_applied.localCloud != 3 || !m_applied.primitiveCount) return;
+    const auto size = CloudShapeCacheSize(m_applied);
+    if (m_shapeCache.width != size[0] || m_shapeCache.height != size[1] ||
+        m_shapeCache.arraySize != size[2] || !m_shapeCache.IsValid()) {
+        device.DeferRelease(m_shapeCache);
+        m_shapeDirty = true;
+        if (!CreateTarget(device, m_shapeCache, size[0], DXGI_FORMAT_R32G32_FLOAT, size[2], size[1])) return;
+    }
+    std::copy(size.begin(), size.end(), m_applied.shapeCacheSize);
+    if (m_shapeDirty || !SameCloudShapeCache(m_applied, m_shapeSettings)) {
+        auto* pipeline = pipelines.GetCompute(L"AtmosphereCloudShape.hlsl", L"CsMain");
+        struct Constants { AtmosphereSettings settings; uint32_t output, pad[3]; };
+        const auto allocation = device.Upload().Allocate(sizeof(Constants), 256);
+        if (!pipeline || !allocation.IsValid()) return;
+        const Constants constants{m_applied, m_shapeCache.UavIndex(), {0,0,0}};
+        std::memcpy(allocation.cpu, &constants, sizeof(constants));
+        PIXBeginEvent(commands, PIX_COLOR(120,180,255), "CloudShapeBake");
+        TransitionIfNeeded(commands, m_shapeCache, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        commands->SetComputeRootSignature(pipelines.GlobalRootSignature());
+        commands->SetComputeRootConstantBufferView(1, allocation.gpuAddress);
+        commands->SetPipelineState(pipeline);
+        commands->Dispatch((size[0]+3)/4, (size[1]+3)/4, (size[2]+3)/4);
+        TransitionIfNeeded(commands, m_shapeCache, ReadState);
+        PIXEndEvent(commands);
+        m_shapeSettings = m_applied;
+        m_shapeDirty = false;
+        m_opticalDirty = true;
+    }
+    m_applied.shapeCacheIndex = m_shapeCache.SrvIndex();
+}
 void Atmosphere::UpdateFrameLighting(rhi::Device& device, rhi::PipelineCache& pipelines,
                                    ID3D12GraphicsCommandList* commands) {
+    UpdateFrameShape(device, pipelines, commands);
     if (!m_ready || !m_applied.clouds || (m_applied.localCloud != 2 && m_applied.localCloud != 3) || !m_opticalDepth.IsValid()) return;
     auto settings = m_applied;
     settings.opticalDepthIndex = UINT32_MAX;

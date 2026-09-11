@@ -358,15 +358,19 @@ int Application::Run() {
             cloudSettings.primitiveSmoothness = compiledCloud.smoothness;
             cloudSettings.primitiveDisplacement = cloud.shapeStrength;
             cloudSettings.primitiveDetail = cloud.detailStrength;
+            cloudSettings.proceduralBottomHeight = compiledCloud.bottomHeight;
+            cloudSettings.proceduralBottomFeather = compiledCloud.bottomFeather;
+            std::vector<renderer::AtmosphereSettings::Primitive> primitives(compiledCloud.primitives.size());
             for (size_t i=0;i<compiledCloud.primitives.size();++i) {
                 const auto& primitive=compiledCloud.primitives[i];
-                auto& target=cloudSettings.primitives[i];
+                auto& target=primitives[i];
                 target.center[0]=primitive.centerX; target.center[1]=primitive.centerY; target.center[2]=primitive.centerZ;
                 target.radius[0]=primitive.radiusX; target.radius[1]=primitive.radiusY; target.radius[2]=primitive.radiusZ;
             }
             cloudSettings.distributionMask = CloudDistributionMask();
             cloudSettings.animateClouds = cloud.animate ? 1u : 0u;
             cloudSettings.cloudMotionMode = static_cast<uint32_t>(cloud.motionMode);
+            m_renderer.SetCloudPrimitives(primitives);
             cloudSettings.cloudSource = static_cast<uint32_t>(compiledCloud.sourceId);
             cloudSettings.noiseSpeedRatio = cloud.noiseSpeedRatio;
             cloudSettings.windSpeed = cloud.windSpeed;

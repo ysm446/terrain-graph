@@ -4,6 +4,8 @@
 #include "renderer/CloudMotion.h"
 #include <cstdint>
 #include <chrono>
+#include <span>
+#include <vector>
 
 namespace tg::renderer {
 // HLSL の AtmosphericParameters と同じ配置。距離は m、太陽は大気圏外照度 lux。
@@ -50,15 +52,29 @@ struct AtmosphereSettings {
     uint32_t cloudCellIndex = UINT32_MAX; // 実行時のみ。周期セルの事前計算。
     uint32_t cloudNoiseType = 0; // 0: Perlin fBM、1: Perlin-Worley。旧 padding を利用する。
     uint32_t cloudCellCount = 10;
-    uint32_t cellPadding[3] = {};
+    float proceduralBottomHeight=0, proceduralBottomFeather=20;
+    uint32_t cellPadding=0;
     uint32_t primitiveCount = 0;
     float primitiveSmoothness = 0;
     float primitiveDisplacement = 0, primitiveDetail = 0;
     struct Primitive { float center[4] = {}; float radius[4] = {}; };
-    Primitive primitives[TG_MAX_CLOUD_PRIMITIVES] = {};
+    uint32_t primitiveBufferIndex=UINT32_MAX, primitiveBvhIndex=UINT32_MAX;
+    uint32_t primitiveBvhCount=0, primitiveRevision=0;
+    struct PrimitiveBvhNode {
+        float lower[4]={}; // 中心群のAABB最小座標、最小rMin/rMax。
+        float upper[4]={}; // 中心群のAABB最大座標、最大半径。
+        uint32_t start=0, count=0, escape=0, padding=0;
+    };
+    uint32_t shapeCacheIndex = UINT32_MAX;
+    uint32_t shapeCacheSize[3] = {};
 
 };
-static_assert(sizeof(AtmosphereSettings) == 208 + 32 * TG_MAX_CLOUD_PRIMITIVES);
+static_assert(sizeof(AtmosphereSettings) == 240);
+
+struct CloudGeometry {
+    std::vector<AtmosphereSettings::Primitive> primitives;
+    std::vector<AtmosphereSettings::PrimitiveBvhNode> primitiveBvh;
+};
 
 struct GodRaySettings {
     bool enabled = false;
@@ -68,13 +84,15 @@ struct GodRaySettings {
 
 class Atmosphere {
 public:
+    void SetCloudPrimitives(std::span<const AtmosphereSettings::Primitive> primitives);
     void SetDistributionMask(uint32_t index, uint64_t revision) {
         m_applied.distributionMask = index;
         if (revision != m_distributionRevision) m_opticalDirty = true;
         m_distributionRevision = revision;
     }
+    void UpdateFrameShape(rhi::Device& device, rhi::PipelineCache& pipelines, ID3D12GraphicsCommandList* commands);
     void UpdateFrameLighting(rhi::Device& device, rhi::PipelineCache& pipelines, ID3D12GraphicsCommandList* commands);
-    void InvalidateFrameLighting() { m_opticalDirty = true; m_cellsDirty = true; }
+    void InvalidateFrameLighting() { m_opticalDirty = true; m_cellsDirty = true; m_shapeDirty = true; }
     GodRaySettings& GodRays() { return m_godRays; }
     bool& FullResolutionClouds() { return m_fullResolutionClouds; }
     void ResetAnimation();
@@ -91,6 +109,12 @@ public:
                 const DirectX::XMFLOAT4X4& lightViewProjection, uint32_t shadowIndex,
                 float shadowTexelSize, float shadowBias);
 private:
+    bool UploadCloudGeometry(rhi::Device& device);
+    CloudGeometry m_geometry;
+    std::vector<AtmosphereSettings::Primitive> m_sourcePrimitives;
+    rhi::GpuBuffer m_primitiveBuffer, m_primitiveBvhBuffer;
+    uint32_t m_geometryRevision=0;
+    bool m_geometryDirty=false;
     Environment m_environment;
     rhi::GpuTexture m_multiScatter;
     rhi::GpuTexture m_noise;
@@ -111,6 +135,9 @@ private:
     std::chrono::steady_clock::time_point m_lastTick{};
     float m_cloudTime = 0.0f;
     float m_environmentTime = 0.0f;
+    rhi::GpuTexture m_shapeCache;
+    AtmosphereSettings m_shapeSettings;
+    bool m_shapeDirty = true;
     rhi::GpuTexture m_opticalDepth;
     AtmosphereSettings m_opticalSettings;
     uint64_t m_distributionRevision = 0;

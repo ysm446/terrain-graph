@@ -331,6 +331,22 @@ bool ResourceAllocator::CreateUploadBuffer(uint64_t sizeInBytes, const wchar_t* 
     return true;
 }
 
+bool ResourceAllocator::CreateStructuredBuffer(uint32_t count, uint32_t stride,
+                                                const wchar_t* debugName, GpuBuffer& outBuffer) {
+    if (!count || !stride || !m_srvHeap) return false;
+    if (!CreateDefaultBuffer(uint64_t(count)*stride, D3D12_RESOURCE_STATE_COPY_DEST, debugName, outBuffer)) return false;
+    outBuffer.srv=m_srvHeap->Allocate();
+    if (!outBuffer.srv.IsValid()) { outBuffer={}; return false; }
+    D3D12_SHADER_RESOURCE_VIEW_DESC desc{};
+    desc.Format=DXGI_FORMAT_UNKNOWN;
+    desc.ViewDimension=D3D12_SRV_DIMENSION_BUFFER;
+    desc.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    desc.Buffer.NumElements=count;
+    desc.Buffer.StructureByteStride=stride;
+    m_device->CreateShaderResourceView(outBuffer.resource.Get(),&desc,outBuffer.srv.cpu);
+    return true;
+}
+
 bool ResourceAllocator::CreateReadbackBuffer(uint64_t sizeInBytes, const wchar_t* debugName,
                                             GpuBuffer& outBuffer) {
     if (!m_allocator || sizeInBytes == 0) {

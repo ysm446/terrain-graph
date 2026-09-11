@@ -112,6 +112,8 @@ enum class NodeKind : uint32_t {
     CloudEllipsoid = 36,
     CloudMerge = 37,
     CloudNoise = 38,
+    CloudReplicate = 39,
+    CloudTransform = 40,
 };
 
 struct PinDefinition {
@@ -242,18 +244,32 @@ struct CloudEllipsoidSettings {
     float centerX=0, centerY=200, centerZ=0;
     float radiusX=1000, radiusY=250, radiusZ=700;
 };
+struct CloudTransformSettings { float translateX=0, translateY=0, translateZ=0; };
 struct CloudMergeSettings { float smoothness=80; };
+struct CloudReplicateSettings {
+    int count=12, seed=1; // 旧形式の元形状1個あたりの追加数。
+    int distribution=1; // 0: 旧個数指定、1: 表面密度、2: 体積密度。
+    float packingDensity=10; // 表面は個/km²、内部は個/km³。
+    float radiusScale=0.3f, radiusVariation=0.25f, jitter=0.15f;
+    float smoothness=10;
+    bool keepSource=true;
+};
 struct CloudNoiseSettings {
     int noiseType=0; // 0: Perlin（従来）、1: Perlin fBM、2: Perlin-Worley。
     float scale=500, displacement=120, detail=40, feather=60;
+    bool flattenBottom=false;
+    float bottomHeight=0, bottomFeather=20;
     float extinction=0.012f, indirectLight=1, ambientLight=1;
     int seed=1;
 };
 struct CloudPrimitive {
     float centerX=0, centerY=0, centerZ=0, padding=0;
     float radiusX=1, radiusY=1, radiusZ=1, padding2=0;
+    GraphId originId=0;
+    uint32_t originIndex=0; // 分岐して再マージした元形状を重複させないための識別子。
 };
-inline constexpr size_t MaxCloudPrimitives=TG_MAX_CLOUD_PRIMITIVES;
+// CPUでの暴走生成を防ぐ作業予算。GPUの配列長とは独立。
+inline constexpr size_t CloudShapeMemoryBudget=32*1024*1024;
 
 // 雲出力が未接続でも hasOutput は真。古い雲へ戻らず表示を消す。
 struct CompiledCloud {
@@ -262,6 +278,7 @@ struct CompiledCloud {
     float smoothness = 0;
     bool shapeOverflow = false;
     CloudNodeSettings cloud;
+    float bottomHeight=0, bottomFeather=20;
     bool connected = false;
     GraphId sourceId = 0;
     bool layer = false;
@@ -273,7 +290,7 @@ struct OutputNodeSettings {};
 
 using NodeSettings =
     std::variant<LayerNodeSettings, MaskNodeSettings, OutputNodeSettings, PathNodeSettings, CloudNodeSettings,
-                 CloudLineSettings, CloudSpheresSettings, CloudEllipsoidSettings, CloudMergeSettings, CloudNoiseSettings>;
+                 CloudLineSettings, CloudSpheresSettings, CloudEllipsoidSettings, CloudMergeSettings, CloudNoiseSettings, CloudReplicateSettings, CloudTransformSettings>;
 
 struct Node {
     GraphId id = 0;

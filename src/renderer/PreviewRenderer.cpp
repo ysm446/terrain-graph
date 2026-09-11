@@ -669,7 +669,10 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     // 描画の量はフレームごとに数え直す。**描くところで足す**ので、
     // パスを増やしたときに数え漏らしても、増やした本人が気づきやすい。
     m_stats = RenderStats{};
-    if (m_atmosphericMode && m_cloudLightingCache) m_atmosphere.UpdateFrameLighting(device, pipelineCache, commandList);
+    if (m_atmosphericMode) {
+        if (m_cloudLightingCache) m_atmosphere.UpdateFrameLighting(device, pipelineCache, commandList);
+        else m_atmosphere.UpdateFrameShape(device, pipelineCache, commandList);
+    }
 
     // レイヤースタックに変更があれば評価を投入し、終わった評価があれば結果を受け取る。
     // 評価はコンピュートキューで走るので、このフレームは前回の結果を描く。

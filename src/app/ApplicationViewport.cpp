@@ -271,7 +271,10 @@ void Application::DrawCloudShapeGizmo(const ImVec2& viewportMin, const ImVec2& v
     if (node->kind==graph::NodeKind::CloudSpheres && !node->inputs.empty())
         drawLine(m_graph.FindUpstreamNodeForPin(node->inputs.front().id));
     const auto shapes=m_graph.CompileCloudShapes(node->id);
-    for (const auto& shape : shapes.primitives) {
+    // 配置ガイドだけを間引く。生成・ベイクには全形状を使う。
+    const size_t stride=std::max(size_t(1),(shapes.primitives.size()+255)/256);
+    for (size_t i=0;i<shapes.primitives.size();i+=stride) {
+        const auto& shape=shapes.primitives[i];
         // 元形状を3つの大円で表示。ノイズ適用後の輪郭とは独立した配置ガイド。
         for (int plane=0;plane<3;++plane) {
             XMFLOAT3 previous{};
@@ -288,6 +291,81 @@ void Application::DrawCloudShapeGizmo(const ImVec2& viewportMin, const ImVec2& v
         }
     }
     drawList->PopClipRect();
+}
+
+bool Application::HandleCloudTransformGizmo(bool itemActive, bool itemHovered, const ImVec2& viewportMin, const ImVec2& viewportMax) {
+    auto* node=m_graph.FindMutableNode(m_selectedGraphNode);
+    auto* transform=node ? std::get_if<graph::CloudTransformSettings>(&node->settings) : nullptr;
+    auto& drag=m_cloudTransformDrag;
+    const auto& io=ImGui::GetIO();
+    if (!transform || drag.node!=m_selectedGraphNode) drag={};
+    if (!transform) return false;
+    float* values[]{&transform->translateX,&transform->translateY,&transform->translateZ};
+    const bool cancel=drag.axis>=0 && ImGui::IsKeyPressed(ImGuiKey_Escape);
+    if (drag.Update(io.MousePos,ImGui::IsMouseDown(ImGuiMouseButton_Left),cancel,io.KeyAlt,values)) {
+        m_graph.MarkCloudDirty(); MarkDocumentChanged(false);
+    }
+    if (cancel) return true;
+    const auto shapes=m_graph.CompileCloudShapes(node->id);
+    if (!shapes.connected || shapes.primitives.empty()) { drag={}; return false; }
+    using namespace DirectX;
+    XMFLOAT3 lower{FLT_MAX,FLT_MAX,FLT_MAX},upper{-FLT_MAX,-FLT_MAX,-FLT_MAX};
+    for (const auto& p:shapes.primitives) {
+        lower.x=std::min(lower.x,p.centerX-p.radiusX); upper.x=std::max(upper.x,p.centerX+p.radiusX);
+        lower.y=std::min(lower.y,p.centerY-p.radiusY); upper.y=std::max(upper.y,p.centerY+p.radiusY);
+        lower.z=std::min(lower.z,p.centerZ-p.radiusZ); upper.z=std::max(upper.z,p.centerZ+p.radiusZ);
+    }
+    const XMFLOAT3 center{(lower.x+upper.x)*0.5f,(lower.y+upper.y)*0.5f,(lower.z+upper.z)*0.5f};
+    const auto& camera=m_renderer.GetCamera();
+    const XMMATRIX vp=camera.ViewMatrix()*camera.ProjectionMatrix();
+    const ImVec2 size{viewportMax.x-viewportMin.x,viewportMax.y-viewportMin.y};
+    if (size.x<=0 || size.y<=0) return false;
+    const auto projected=ProjectToViewport(vp,center,viewportMin,size);
+    if (!projected.visible) return drag.axis>=0;
+    XMFLOAT3 viewCenter;
+    XMStoreFloat3(&viewCenter,XMVector3TransformCoord(XMLoadFloat3(&center),camera.ViewMatrix()));
+    const float worldLength=std::max(0.001f,std::abs(viewCenter.z)*2*std::tan(camera.FovY()*0.5f)*ui::Scaled(90)/size.y);
+    ImVec2 tips[3]{},directions[3]{};
+    float lengths[3]{};
+    int hover=-1;
+    float best=ui::Scaled(9);
+    for (int axis=0;axis<3;++axis) {
+        XMFLOAT3 endpoint=center;
+        if (axis==0) endpoint.x+=worldLength;
+        if (axis==1) endpoint.y+=worldLength;
+        if (axis==2) endpoint.z+=worldLength;
+        const auto tip=ProjectToViewport(vp,endpoint,viewportMin,size);
+        if (!tip.visible) continue;
+        const float x=tip.screen.x-projected.screen.x,y=tip.screen.y-projected.screen.y;
+        const float length=std::sqrt(x*x+y*y);
+        // 視線に重なった軸は操作できないため表示しない。視点を回すか数値欄を使う。
+        if (length<ui::Scaled(12)) continue;
+        tips[axis]=tip.screen; lengths[axis]=length; directions[axis]={x/length,y/length};
+        const float mx=io.MousePos.x-projected.screen.x,my=io.MousePos.y-projected.screen.y;
+        const float t=std::clamp((mx*x+my*y)/(length*length),0.15f,1.0f);
+        const float distance=std::hypot(mx-t*x,my-t*y);
+        if (itemHovered && !io.KeyAlt && !ImGui::IsKeyDown(ImGuiKey_L) && distance<best) { best=distance; hover=axis; }
+    }
+    if (drag.axis<0 && hover>=0 && itemActive && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        drag.node=node->id; drag.axis=hover; drag.press=io.MousePos;
+        drag.direction=directions[hover]; drag.metersPerPixel=worldLength/lengths[hover]; drag.start=*values[hover];
+    }
+    auto* draw=ImGui::GetWindowDrawList();
+    draw->PushClipRect(viewportMin,viewportMax,true);
+    const char* labels[]{"X","Y","Z"};
+    for (int axis=0;axis<3;++axis) {
+        if (lengths[axis]==0) continue;
+        const bool active=drag.axis==axis || hover==axis;
+        const ImU32 color=active ? ImGui::GetColorU32(ImGuiCol_PlotLinesHovered) : ui::TransformAxisColor(axis);
+        draw->AddLine(projected.screen,tips[axis],color,ui::Scaled(active?4:2.5f));
+        const auto d=directions[axis]; const auto tip=tips[axis]; const float arrow=ui::Scaled(9);
+        draw->AddTriangleFilled(tip,{tip.x-d.x*arrow-d.y*arrow*0.45f,tip.y-d.y*arrow+d.x*arrow*0.45f},
+            {tip.x-d.x*arrow+d.y*arrow*0.45f,tip.y-d.y*arrow-d.x*arrow*0.45f},color);
+        draw->AddText({tip.x+d.x*ui::Scaled(7),tip.y+d.y*ui::Scaled(7)},color,labels[axis]);
+    }
+    draw->PopClipRect();
+    if (hover>=0 || drag.axis>=0) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    return drag.axis>=0 || hover>=0;
 }
 
 void Application::DrawLightGizmo(const ImVec2& viewportMin, const ImVec2& viewportMax) {
@@ -561,11 +639,14 @@ void Application::DrawViewportPanel() {
 
             // L + 左ドラッグはライトの向き。ブラシや軌道より先に見る。
             const bool lightDragging = HandleLightDrag(itemActive);
+            const ImVec2 imageMax(imageOrigin.x + available.x, imageOrigin.y + available.y);
+            DrawCloudShapeGizmo(imageOrigin, imageMax);
+            const bool cloudDragging=HandleCloudTransformGizmo(itemActive && !lightDragging,itemHovered && !lightDragging,imageOrigin,imageMax);
 
             // ペイントモードの間は左 / 右ドラッグをブラシが受け取る。
             // 視点操作を残すため、軌道は Alt + 左ドラッグへ移す。
             compositor::MaterialLayer* paintLayer = CurrentPaintLayer();
-            const bool brushEnabled = (paintLayer != nullptr) && !io.KeyAlt && !lightDragging;
+            const bool brushEnabled = (paintLayer != nullptr) && !io.KeyAlt && !lightDragging && !cloudDragging;
 
             if (brushEnabled) {
                 HandlePaintInput(*paintLayer, itemActive, imageOrigin, available);
@@ -575,7 +656,6 @@ void Application::DrawViewportPanel() {
 
             // Path ノードを選んでいる間は、左クリック / ドラッグと右クリックがパスの編集。
             // ペイントと同じく、視点は Alt を押している間だけ動く。
-            const ImVec2 imageMax(imageOrigin.x + available.x, imageOrigin.y + available.y);
             graph::Node* pathNode = CurrentPathNode();
             const bool pathEnabled = (pathNode != nullptr) && !brushEnabled && !lightDragging;
             if (pathEnabled && !io.KeyAlt) {
@@ -601,7 +681,7 @@ void Application::DrawViewportPanel() {
                 }
             }
 
-            if (itemHovered && io.MouseWheel != 0.0f) {
+            if (itemHovered && !cloudDragging && io.MouseWheel != 0.0f) {
                 camera.Zoom(io.MouseWheel);
             }
 
@@ -610,7 +690,6 @@ void Application::DrawViewportPanel() {
             DrawAxisGizmo(camera, imageOrigin, imageMax);
             DrawHeightGuide(imageOrigin, imageMax);
             DrawLightGizmo(imageOrigin, imageMax);
-            DrawCloudShapeGizmo(imageOrigin, imageMax);
             if (pathNode != nullptr) {
                 DrawPathOverlay(*pathNode, imageOrigin, imageMax);
             }

@@ -4,13 +4,40 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <functional>
 #include <unordered_set>
+#include <unordered_map>
 #include <utility>
 
 namespace tg::graph {
 namespace {
+
+// 楕円体の表面積を球面上の面積要素から数値積分する。球では4πr²に一致する。
+// 形状はm単位なので、密度の単位に合わせてkmへ変換して積分する。
+double CloudSurfaceArea(const CloudPrimitive& parent) {
+    const double a=parent.radiusX*0.001,b=parent.radiusY*0.001,c=parent.radiusZ*0.001;
+    double sum=0;
+    constexpr int Samples=256;
+    for (int i=0;i<Samples;++i) {
+        const double y=1-2*(i+0.5)/Samples;
+        const double ring=std::sqrt(1-y*y),angle=i*2.399963229728653;
+        const double x=ring*std::cos(angle),z=ring*std::sin(angle);
+        sum+=std::sqrt(x*x/(a*a)+y*y/(b*b)+z*z/(c*c));
+    }
+    return 12.566370614359172*a*b*c*sum/Samples;
+}
+int CloudReplicateCount(const CloudPrimitive& parent,const CloudReplicateSettings& settings) {
+    if (settings.distribution==0) return std::max(settings.count,1);
+    const double density=std::clamp(settings.packingDensity,0.0f,10000.0f);
+    if (density==0) return 0;
+    const double measure=settings.distribution==2
+        ? 4.188790204786391*(parent.radiusX*0.001)*(parent.radiusY*0.001)*(parent.radiusZ*0.001)
+        : CloudSurfaceArea(parent);
+    // 上限超過も必ず検出し、巨大な入力でも生成ループを有界に保つ。
+    return static_cast<int>(std::clamp(std::floor(measure*density+0.5),1.0,double(CloudShapeMemoryBudget/sizeof(CloudPrimitive)+1)));
+}
 
 // --- 定義テーブル ---------------------------------------------------------
 // ノードの種類・保存名・表示名・ピン構成。CreateNode() がここからピンを作る。
@@ -207,7 +234,10 @@ constexpr std::array<PinDefinition, 3> kCloudMergePins = {{
 constexpr std::array<PinDefinition, 2> kCloudNoisePins = {{
     {PinKind::Input, ValueType::CloudShape, "Shape"}, {PinKind::Output, ValueType::Volume, "Volume"}}};
 
-constexpr std::array<NodeDefinition, 39> kNodeDefinitions = {{
+constexpr std::array<PinDefinition, 2> kCloudReplicatePins = {{
+    {PinKind::Input, ValueType::CloudShape, "Shape"}, {PinKind::Output, ValueType::CloudShape, "Shape"}}};
+
+constexpr std::array<NodeDefinition, 41> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -245,6 +275,8 @@ constexpr std::array<NodeDefinition, 39> kNodeDefinitions = {{
     {NodeKind::CloudEllipsoid, "cloudEllipsoid", "雲楕円体（実験）", kCloudShapePins},
     {NodeKind::CloudMerge, "cloudMerge", "雲形状マージ（実験）", kCloudMergePins},
     {NodeKind::CloudNoise, "cloudNoise", "雲ノイズ（実験）", kCloudNoisePins},
+    {NodeKind::CloudTransform, "cloudTransform", "雲トランスフォーム（実験）", kCloudReplicatePins},
+    {NodeKind::CloudReplicate, "cloudReplicate", "雲形状複製（実験）", kCloudReplicatePins},
     {NodeKind::CloudOutput, "cloudOutput", "雲出力", kCloudOutputPins},
     {NodeKind::Output, "output", "Output", kOutputNodePins},
 }};
@@ -501,24 +533,32 @@ bool NodeGraph::DeleteLink(GraphId linkId) {
 }
 
 CompiledCloud NodeGraph::CompileCloudShapes(GraphId shapeId) const {
-    CompiledCloud result;
-    std::unordered_set<GraphId> visited;
-    const auto append = [&](CloudPrimitive primitive) {
-        if (result.primitives.size() >= MaxCloudPrimitives) { result.shapeOverflow = true; return; }
-        result.primitives.push_back(primitive);
-    };
-    std::function<void(const Node*, int)> gather = [&](const Node* shape, int depth) {
-        if (!shape || depth > 128 || !visited.insert(shape->id).second) return;
+    std::unordered_map<GraphId,CompiledCloud> cache;
+    std::unordered_set<GraphId> active;
+    std::function<CompiledCloud(const Node*,int)> evaluate = [&](const Node* shape,int depth) -> CompiledCloud {
+        CompiledCloud result;
+        if (!shape) return result;
+        if (depth>128 || active.contains(shape->id)) { result.shapeOverflow=true; return result; }
+        if (const auto found=cache.find(shape->id);found!=cache.end()) return found->second;
+        active.insert(shape->id);
+        std::unordered_set<uint64_t> identities;
+        const auto append = [&](CloudPrimitive primitive) {
+            const uint64_t key=(uint64_t(static_cast<uint32_t>(primitive.originId))<<32)|primitive.originIndex;
+            if (!identities.insert(key).second) return;
+            if ((result.primitives.size()+1)*sizeof(CloudPrimitive)>CloudShapeMemoryBudget) { result.shapeOverflow=true; return; }
+            result.primitives.push_back(primitive);
+        };
         if (const auto* ellipsoid = std::get_if<CloudEllipsoidSettings>(&shape->settings)) {
             append({ellipsoid->centerX,ellipsoid->centerY,ellipsoid->centerZ,0,
-                std::max(1.0f,ellipsoid->radiusX),std::max(1.0f,ellipsoid->radiusY),std::max(1.0f,ellipsoid->radiusZ),0});
+                std::max(1.0f,ellipsoid->radiusX),std::max(1.0f,ellipsoid->radiusY),std::max(1.0f,ellipsoid->radiusZ),0,shape->id,0});
         } else if (const auto* spheres = std::get_if<CloudSpheresSettings>(&shape->settings)) {
             const auto* lineNode = UpstreamOf(*shape,ValueType::CloudLine);
             const auto* line = lineNode ? std::get_if<CloudLineSettings>(&lineNode->settings) : nullptr;
-            if (!line) return;
+            if (!line) { active.erase(shape->id); return result; }
             uint32_t state=static_cast<uint32_t>(spheres->seed);
             const auto random = [&]() { state=state*1664525u+1013904223u; return float(state>>8)/16777215.0f*2-1; };
-            const int count=std::clamp(spheres->count,1,static_cast<int>(MaxCloudPrimitives));
+            const int count=std::max(spheres->count,1);
+            if (size_t(count)*sizeof(CloudPrimitive)>CloudShapeMemoryBudget) { result.shapeOverflow=true; active.erase(shape->id); return result; }
             for (int i=0;i<count;++i) {
                 const float t=count==1 ? 0.0f : float(i)/float(count-1);
                 const float radius=std::max(1.0f,std::lerp(spheres->startRadius,spheres->endRadius,t)
@@ -526,17 +566,84 @@ CompiledCloud NodeGraph::CompileCloudShapes(GraphId shapeId) const {
                 const float jitter=radius*std::clamp(spheres->jitter,0.0f,1.0f);
                 append({std::lerp(line->startX,line->endX,t)+random()*jitter,
                     std::lerp(line->startY,line->endY,t),
-                    std::lerp(line->startZ,line->endZ,t)+random()*jitter,0,radius,radius,radius,0});
+                    std::lerp(line->startZ,line->endZ,t)+random()*jitter,0,radius,radius,radius,0,shape->id,static_cast<uint32_t>(i)});
             }
-        } else if (const auto* merge = std::get_if<CloudMergeSettings>(&shape->settings)) {
-            // 一つのフィールド全体で同じ滑らかさを使用する。入れ子は最大値。
-            result.smoothness=std::max(result.smoothness,std::clamp(merge->smoothness,0.0f,500.0f));
-            for (const auto& input : shape->inputs) gather(FindUpstreamNodeForPin(input.id),depth+1);
+        } else if (const auto* merge=std::get_if<CloudMergeSettings>(&shape->settings)) {
+            result.smoothness=std::clamp(merge->smoothness,0.0f,500.0f);
+            for (const auto& pin:shape->inputs) {
+                const auto input=evaluate(FindUpstreamNodeForPin(pin.id),depth+1);
+                result.shapeOverflow|=input.shapeOverflow;
+                result.smoothness=std::max(result.smoothness,input.smoothness);
+                for (const auto& primitive:input.primitives) append(primitive);
+            }
+        } else if (const auto* transform=std::get_if<CloudTransformSettings>(&shape->settings)) {
+            result=evaluate(UpstreamOf(*shape,ValueType::CloudShape),depth+1);
+            uint32_t index=0;
+            for (auto& primitive:result.primitives) {
+                primitive.centerX+=transform->translateX;
+                primitive.centerY+=transform->translateY;
+                primitive.centerZ+=transform->translateZ;
+                // 変換した枝は元形状と再マージしても重複除外しない。
+                primitive.originId=shape->id;
+                primitive.originIndex=index++;
+            }
+        } else if (const auto* replicate=std::get_if<CloudReplicateSettings>(&shape->settings)) {
+            const auto input=evaluate(UpstreamOf(*shape,ValueType::CloudShape),depth+1);
+            result.shapeOverflow=input.shapeOverflow;
+            result.smoothness=std::clamp(replicate->smoothness,0.0f,500.0f);
+            if (replicate->keepSource) for (const auto& primitive:input.primitives) append(primitive);
+            uint32_t childIndex=0;
+            for (const auto& parent:input.primitives) {
+                const int count=CloudReplicateCount(parent,*replicate);
+                if ((result.primitives.size()+size_t(count))*sizeof(CloudPrimitive)>CloudShapeMemoryBudget) { result.shapeOverflow=true; break; }
+                // 親ごとの乱数で、別の枝を追加しても既存の親の模様を変えない。
+                uint32_t state=static_cast<uint32_t>(replicate->seed)^std::bit_cast<uint32_t>(parent.centerX)*747796405u
+                    ^std::bit_cast<uint32_t>(parent.centerY)*2891336453u^std::bit_cast<uint32_t>(parent.centerZ);
+                const auto random=[&]() { state=state*1664525u+1013904223u; return float(state>>8)/16777215.0f; };
+                const float phase=random()*6.283185307f;
+                for (int i=0;i<count;++i) {
+                    float y=1-2*(float(i)+0.5f)/float(count);
+                    float ring=std::sqrt(std::max(0.0f,1-y*y));
+                    float angle=phase+float(i)*2.39996323f;
+                    // 密度指定では、楕円体へ引き伸ばした際の面積の偏りを補正する。
+                    // 旧個数指定は従来の方向と乱数列を維持する。
+                    if (replicate->distribution==1) {
+                        const float minRadius=std::min({parent.radiusX,parent.radiusY,parent.radiusZ});
+                        for (int attempt=0;attempt<256;++attempt) {
+                            y=2*random()-1; ring=std::sqrt(std::max(0.0f,1-y*y)); angle=phase+random()*6.283185307f;
+                            const float nx=ring*std::cos(angle)/parent.radiusX,ny=y/parent.radiusY,nz=ring*std::sin(angle)/parent.radiusZ;
+                            if (random()<=minRadius*std::sqrt(nx*nx+ny*ny+nz*nz)) break;
+                        }
+                    }
+                    const float radial=replicate->distribution==2 ? std::cbrt(random()) : 1.0f;
+                    const float radius=std::max(1.0f,std::min({parent.radiusX,parent.radiusY,parent.radiusZ})
+                        *std::clamp(replicate->radiusScale,0.05f,1.0f)
+                        *(1+(2*random()-1)*std::clamp(replicate->radiusVariation,0.0f,0.9f)));
+                    const float jitter=radius*std::clamp(replicate->jitter,0.0f,1.0f);
+                    float x=parent.radiusX*radial*ring*std::cos(angle)+(2*random()-1)*jitter;
+                    float offsetY=parent.radiusY*radial*y+(2*random()-1)*jitter;
+                    float z=parent.radiusZ*radial*ring*std::sin(angle)+(2*random()-1)*jitter;
+                    // ばらつき適用後も子球の中心を親の表面・内部に保つ。
+                    const double nx=double(x)/parent.radiusX,ny=double(offsetY)/parent.radiusY,nz=double(z)/parent.radiusZ;
+                    const double distance=std::sqrt(nx*nx+ny*ny+nz*nz);
+                    if (distance>1.0) {
+                        x=static_cast<float>(x/distance);
+                        offsetY=static_cast<float>(offsetY/distance);
+                        z=static_cast<float>(z/distance);
+                    }
+                    append({parent.centerX+x,parent.centerY+offsetY,parent.centerZ+z,0,
+                        radius,radius,radius,0,shape->id,childIndex++});
+                    if (result.shapeOverflow) break;
+                }
+                if (result.shapeOverflow) break;
+            }
         }
+        active.erase(shape->id);
+        result.connected=!result.primitives.empty() && !result.shapeOverflow;
+        cache.emplace(shape->id,result);
+        return result;
     };
-    gather(FindNode(shapeId),0);
-    result.connected = !result.primitives.empty() && !result.shapeOverflow;
-    return result;
+    return evaluate(FindNode(shapeId),0);
 }
 
 CompiledCloud NodeGraph::CompileCloud() const {
@@ -569,7 +676,9 @@ CompiledCloud NodeGraph::CompileCloud() const {
             result.hasOutput=true;
             result.sourceId=source->id;
             auto& cloud=result.cloud;
-            cloud.flatBottom=false;
+            cloud.flatBottom=noise.flattenBottom;
+            result.bottomHeight=noise.bottomHeight;
+            result.bottomFeather=std::clamp(noise.bottomFeather,0.0f,300.0f);
             cloud.animate=false;
             cloud.noiseScale=noise.scale;
             cloud.noiseType=noise.noiseType==0 ? 2 : std::clamp(noise.noiseType-1,0,1);
@@ -630,6 +739,8 @@ GraphId NodeGraph::CreateNode(NodeKind kind) {
     } else if (kind == NodeKind::CloudEllipsoid) { node.settings = CloudEllipsoidSettings{};
     } else if (kind == NodeKind::CloudMerge) { node.settings = CloudMergeSettings{};
     } else if (kind == NodeKind::CloudNoise) { node.settings = CloudNoiseSettings{};
+    } else if (kind == NodeKind::CloudTransform) { node.settings = CloudTransformSettings{};
+    } else if (kind == NodeKind::CloudReplicate) { node.settings = CloudReplicateSettings{};
     } else if (kind == NodeKind::Path) {
         node.settings = PathNodeSettings{};
     } else {

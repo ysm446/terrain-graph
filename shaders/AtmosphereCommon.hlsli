@@ -5,6 +5,7 @@
 #include "AtmosphereScattering.hlsli"
 #include "CloudScattering.hlsli"
 struct CloudPrimitive { float4 center; float4 radius; };
+struct CloudBvhNode { float4 lower; float4 upper; uint start; uint count; uint escape; uint padding; };
 struct AtmosphericParameters {
     float azimuth; float elevation; float illuminance; float density;
     float mie; float eccentricity; float altitude; float groundAlbedo;
@@ -17,9 +18,10 @@ struct AtmosphericParameters {
     float shapeStrength; float detailStrength; uint cloudMotionMode; uint cloudSource;
     float flatCloudBottom; float cloudSkylightIntensity; float cloudBodyOffsetX; float cloudBodyOffsetZ;
     float indirectLight; float ambientLight; uint cloudCellIndex; uint cloudNoiseType;
-    uint cloudCellCount; uint3 cellPadding;
+    uint cloudCellCount; float proceduralBottomHeight; float proceduralBottomFeather; uint cellPadding;
     uint primitiveCount; float primitiveSmoothness; float primitiveDisplacement; float primitiveDetail;
-    CloudPrimitive primitives[TG_MAX_CLOUD_PRIMITIVES];
+    uint primitiveBufferIndex; uint primitiveBvhIndex; uint primitiveBvhCount; uint primitiveRevision;
+    uint shapeCacheIndex; uint3 shapeCacheSize;
 };
 float3 AtmosphereSun(AtmosphericParameters p) {
     return float3(cos(p.elevation) * sin(p.azimuth), sin(p.elevation), cos(p.elevation) * cos(p.azimuth));
@@ -138,24 +140,80 @@ float CloudLayerBody(float2 position, float h, AtmosphericParameters p, float di
 }
 // 64 枚の 2D 配列で周期 3D 密度を持つ。XY はハードウェア補間、Z のみ手動補間。
 // 楕円体の距離近似をmで評価。log-sum-expの和は入力順に依存しない。
-float ProceduralCloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex, out float emptyDistance) {
+void AccumulateCloudPrimitive(float3 position, AtmosphericParameters p, uint i,
+                              inout float distance, inout float weight, inout float emptyDistance) {
+    StructuredBuffer<CloudPrimitive> primitives=ResourceDescriptorHeap[p.primitiveBufferIndex];
+    CloudPrimitive primitive=primitives[i];
+    float3 radii=max(primitive.radius.xyz,1);
+    float3 offset=position-primitive.center.xyz;
+    float k0=length(offset/radii), k1=length(offset/(radii*radii));
+    // 1-Lipschitzな距離下界。unionの膨張と最大変位を引けば安全に空白を飛ばせる。
+    emptyDistance=min(emptyDistance,min(radii.x,min(radii.y,radii.z))*(k0-1));
+    float d=k1>1e-7 ? k0*(k0-1)/k1 : -min(radii.x,min(radii.y,radii.z));
+    float k=p.primitiveSmoothness;
+    if (k>0) {
+        // 最小距離を基準に指数和を蓄積し、logは形状群につき1回だけ評価する。
+        if (d<distance) { weight=weight*exp((d-distance)/k)+1; distance=d; }
+        else weight+=exp((distance-d)/k);
+    } else distance=min(distance,d);
+}
+float CloudBvhLowerBound(float3 position, CloudBvhNode node) {
+    return length(max(max(node.lower.xyz-position,position-node.upper.xyz),0))*node.lower.w-node.upper.w;
+}
+// 距離と安全な空白距離の下界を格子に保存する。ノイズは含めない。
+float ProceduralCloudShape(float3 position, AtmosphericParameters p, out float emptyDistance) {
     float distance=1e9, weight=0;
     emptyDistance=1e9;
-    [loop] for(uint i=0;i<min(p.primitiveCount,(uint)TG_MAX_CLOUD_PRIMITIVES);++i) {
-        float3 radii=max(p.primitives[i].radius.xyz,1);
-        float3 offset=position-p.primitives[i].center.xyz;
-        float k0=length(offset/radii), k1=length(offset/(radii*radii));
-        // 1-Lipschitzな距離下界。unionの膨張と最大変位を引けば安全に空白を飛ばせる。
-        emptyDistance=min(emptyDistance,min(radii.x,min(radii.y,radii.z))*(k0-1));
-        float d=k1>1e-7 ? k0*(k0-1)/k1 : -min(radii.x,min(radii.y,radii.z));
-        float k=p.primitiveSmoothness;
-        if (k>0) {
-            // 最小距離を基準に指数和を蓄積し、logは形状群につき1回だけ評価する。
-            if (d<distance) { weight=weight*exp((d-distance)/k)+1; distance=d; }
-            else weight+=exp((distance-d)/k);
-        } else distance=min(distance,d);
+    const float expansion=p.primitiveSmoothness*log(float(max(p.primitiveCount,1u)))+p.primitiveDisplacement;
+    if (p.primitiveBvhCount>0) {
+        StructuredBuffer<CloudBvhNode> nodes=ResourceDescriptorHeap[p.primitiveBvhIndex];
+        float lower=CloudBvhLowerBound(position,nodes[0]);
+#ifndef TG_BAKE_CLOUD_SHAPE
+        if (lower>expansion+0.01) { emptyDistance=lower; return lower-p.primitiveSmoothness*log(float(max(p.primitiveCount,1u))); }
+#endif
+        // 全省略項のSDFへの寄与を1mm以下に抑える。smoothness=0では厳密なmin。
+        float cutoff=p.primitiveSmoothness>0 ? p.primitiveSmoothness
+            *log(max(float(p.primitiveCount)*p.primitiveSmoothness/TG_CLOUD_BVH_ERROR_METERS,1)) : 0;
+        uint nodeIndex=0;
+        [loop] while (nodeIndex<p.primitiveBvhCount) {
+            CloudBvhNode node=nodes[nodeIndex];
+            lower=CloudBvhLowerBound(position,node);
+            if (lower>distance+cutoff+0.01) {
+                emptyDistance=min(emptyDistance,lower);
+                nodeIndex=node.escape;
+            } else {
+                [loop] for (uint i=node.start;i<node.start+node.count;++i)
+                    AccumulateCloudPrimitive(position,p,i,distance,weight,emptyDistance);
+                ++nodeIndex;
+            }
+        }
+    } else {
+        [loop] for(uint i=0;i<p.primitiveCount;++i)
+            AccumulateCloudPrimitive(position,p,i,distance,weight,emptyDistance);
     }
     if (p.primitiveSmoothness>0 && weight>0) distance-=p.primitiveSmoothness*log(weight);
+    return distance;
+}
+float ProceduralCloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex, out float emptyDistance) {
+    if (p.flatCloudBottom!=0 && position.y<=p.proceduralBottomHeight) {
+        emptyDistance=max(0,p.proceduralBottomHeight-position.y);
+        return 0;
+    }
+    float distance;
+    if (p.shapeCacheIndex != 0xffffffff) {
+        float3 uvw=(position-LocalCloudCenter(p))/LocalCloudRadii(p)*0.5+0.5;
+        emptyDistance=0;
+        if (any(uvw<0) || any(uvw>1)) return 0;
+        float3 grid=uvw*float3(p.shapeCacheSize-1);
+        float2 uv=(grid.xy+0.5)/float2(p.shapeCacheSize.xy);
+        Texture2DArray<float2> cache=ResourceDescriptorHeap[p.shapeCacheIndex];
+        float2 value=lerp(cache.SampleLevel(g_samplerLinearClamp,float3(uv,floor(grid.z)),0),
+            cache.SampleLevel(g_samplerLinearClamp,float3(uv,min(floor(grid.z)+1,p.shapeCacheSize.z-1)),0),frac(grid.z));
+        distance=value.x;
+        // 補間点から格子頂点までの最大距離を引き、細い雲を飛び越さない。
+        float diagonal=length(2*LocalCloudRadii(p)/float3(p.shapeCacheSize-1));
+        emptyDistance=value.y-diagonal;
+    } else distance=ProceduralCloudShape(position,p,emptyDistance);
     emptyDistance=max(0,emptyDistance-p.primitiveSmoothness*log(float(max(p.primitiveCount,1u)))-p.primitiveDisplacement-0.01);
     if (distance>p.primitiveDisplacement) return 0;
     float3 uvw=position/(4*max(p.cloudScale,1));
@@ -165,7 +223,10 @@ float ProceduralCloudDensity(float3 position, AtmosphericParameters p, uint nois
     uint detailChannel=p.cloudNoiseType==1 ? 2u : shapeChannel;
     distance+=((SampleCloudNoise(uvw,noiseIndex,shapeChannel)*0.7+SampleCloudNoise(uvw*2+0.37,noiseIndex,shapeChannel)*0.3)*2-1)*p.primitiveDisplacement;
     distance+=(1-SampleCloudNoise(uvw*3.1+0.173,noiseIndex,detailChannel))*p.primitiveDetail;
-    return smoothstep(0,max(p.edgeSoftness,1),-distance);
+    float density=smoothstep(0,max(p.edgeSoftness,1),-distance);
+    if (p.flatCloudBottom!=0 && p.proceduralBottomFeather>0)
+        density*=smoothstep(0,p.proceduralBottomFeather,position.y-p.proceduralBottomHeight);
+    return density;
 }
 float CloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex) {
     if (p.clouds == 0) return 0;

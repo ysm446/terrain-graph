@@ -915,6 +915,8 @@ void Application::DrawGraphEditor() {
         addNodeMenuItem(graph::NodeKind::CloudSpheres, "雲の球配置（実験） — ラインに沿って球を並べる");
         addNodeMenuItem(graph::NodeKind::CloudEllipsoid, "雲楕円体（実験） — 雲の土台となる形");
         addNodeMenuItem(graph::NodeKind::CloudMerge, "雲形状マージ（実験） — 基本形状を統合する");
+        addNodeMenuItem(graph::NodeKind::CloudTransform, "雲トランスフォーム（実験） — 雲形状を移動する");
+        addNodeMenuItem(graph::NodeKind::CloudReplicate, "雲形状複製（実験） — 表面に小さな球を追加する");
         addNodeMenuItem(graph::NodeKind::CloudNoise, "雲ノイズ（実験） — 輪郭と密度を作る");
         addNodeMenuItem(graph::NodeKind::CloudOutput, "雲出力 — Volume を繋いで雲を表示する");
         ImGui::Separator();
@@ -1271,7 +1273,7 @@ void Application::DrawGraphPanel() {
         bool changed = false;
         ui::HintText("ラインに沿って球を配置します。横方向のずれは XZ 平面。シードを固定すると再現できます。");
         if (ui::BeginPropertyTable("CloudSpheresRows", "横方向のばらつき")) {
-            changed |= ui::PropertyInt("球の数", &cloudSpheres->count, 1, static_cast<int>(graph::MaxCloudPrimitives), defaults.count, "ラインに沿って球を配置します。横方向のずれは XZ 平面。シードを固定すると再現できます。");
+            changed |= ui::PropertyInt("球の数", &cloudSpheres->count, 1, INT_MAX, defaults.count, "ラインに沿って球を配置します。横方向のずれは XZ 平面。シードを固定すると再現できます。");
             changed |= ui::PropertyFloat("始点の半径", &cloudSpheres->startRadius, 10.0f, 3000.0f, defaults.startRadius, "値はメートル単位。", "%.0f m");
             changed |= ui::PropertyFloat("終点の半径", &cloudSpheres->endRadius, 10.0f, 3000.0f, defaults.endRadius, "値はメートル単位。", "%.0f m");
             changed |= ui::PropertyFloat("横方向のばらつき", &cloudSpheres->jitter, 0.0f, 1.0f, defaults.jitter, "ラインに沿って球を配置します。横方向のずれは XZ 平面。シードを固定すると再現できます。", "%.2f");
@@ -1303,10 +1305,50 @@ void Application::DrawGraphPanel() {
             ui::EndPropertyTable();
         }
         if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
+    } else if (auto* transform = std::get_if<graph::CloudTransformSettings>(&selected->settings)) {
+        const graph::CloudTransformSettings defaults;
+        bool changed=false;
+        ui::HintText("Shape を接続すると、形状全体を移動できます。軸を左ドラッグで移動、Esc で取消。Alt + ドラッグは視点操作です。");
+        if (ui::BeginPropertyTable("CloudTransformRows", "移動 X")) {
+            changed |= ui::PropertyFloat("移動 X", &transform->translateX, -10000, 10000, defaults.translateX, "元形状からの移動量。", "%.1f m");
+            changed |= ui::PropertyFloat("移動 Y", &transform->translateY, -10000, 10000, defaults.translateY, "元形状からの移動量。", "%.1f m");
+            changed |= ui::PropertyFloat("移動 Z", &transform->translateZ, -10000, 10000, defaults.translateZ, "元形状からの移動量。", "%.1f m");
+            ui::EndPropertyTable();
+        }
+        if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
+    } else if (auto* replicate = std::get_if<graph::CloudReplicateSettings>(&selected->settings)) {
+        const graph::CloudReplicateSettings defaults;
+        bool changed=false;
+        ui::HintText("親形状の面積・体積に応じて球を配置します。雲底は後段の雲ノイズで整えます。");
+        if (ui::BeginPropertyTable("CloudReplicateRows", "親1個あたりの球数")) {
+            const char* distributions[]={"個数（従来）","表面密度","体積密度"};
+            changed|=ui::PropertyCombo("配置方式",&replicate->distribution,distributions,3,defaults.distribution,
+                "表面は面積、内部は体積に比例して球数を決めます。個数指定は以前の配置を再現します。");
+            if (replicate->distribution==0)
+                changed|=ui::PropertyInt("親1個あたりの球数",&replicate->count,1,INT_MAX,defaults.count,"入力の球・楕円体それぞれに追加する数。");
+            else
+                changed|=ui::PropertyFloat("配置密度",&replicate->packingDensity,0.0f,10000.0f,defaults.packingDensity,
+                    "大きくすると球数が増えます。0では複製しません。半径の倍率は独立して調整できます。",
+                    replicate->distribution==1 ? "%.2f 個/km²" : "%.2f 個/km³",ImGuiSliderFlags_Logarithmic);
+            changed|=ui::PropertyFloat("半径の倍率",&replicate->radiusScale,0.05f,1.0f,defaults.radiusScale,"元形状の最小半径に対する倍率。","%.2f");
+            changed|=ui::PropertyFloat("半径のばらつき",&replicate->radiusVariation,0.0f,0.9f,defaults.radiusVariation);
+            changed|=ui::PropertyFloat("位置のばらつき",&replicate->jitter,0.0f,1.0f,defaults.jitter);
+            changed|=ui::PropertyFloat("つなぎの滑らかさ",&replicate->smoothness,0.0f,500.0f,defaults.smoothness,"細かい球の膨らみを残すには小さめに設定します。","%.0f m");
+            changed|=ui::PropertyInt("シード",&replicate->seed,0,10000,defaults.seed);
+            changed|=ui::PropertyBool("元形状を残す",&replicate->keepSource,defaults.keepSource);
+            const auto generated=m_graph.CompileCloudShapes(selected->id);
+            if (generated.shapeOverflow) ui::PropertyValue("合計形状数","作業メモリ予算を超過");
+            else ui::PropertyValue("合計形状数","%zu 個",generated.primitives.size());
+            if (generated.primitives.size()>256) ui::PropertyValue("配置ガイド","間引き表示（雲は全形状を使用）");
+            ui::EndPropertyTable();
+        }
+        if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
+        if (m_graph.CompileCloudShapes(selected->id).shapeOverflow)
+            ui::HintText("形状生成の作業メモリ予算を超えています。配置密度・球数を下げてください。");
     } else if (auto* cloudNoise = std::get_if<graph::CloudNoiseSettings>(&selected->settings)) {
         const graph::CloudNoiseSettings defaults;
         bool changed = false;
-        ui::HintText("形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。最大256個の基本形状に対応します。");
+        ui::HintText("形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。");
         if (ui::BeginPropertyTable("CloudNoiseRows", "横方向のばらつき")) {
             const char* noiseTypes[] = {"Perlin（従来）", "Perlin fBM", "Perlin-Worley"};
             changed |= ui::PropertyCombo("ノイズの種類", &cloudNoise->noiseType, noiseTypes, 3, defaults.noiseType,
@@ -1315,14 +1357,22 @@ void Application::DrawGraphPanel() {
             changed |= ui::PropertyFloat("輪郭の変位", &cloudNoise->displacement, 0.0f, 500.0f, defaults.displacement, "値はメートル単位。", "%.0f m");
             changed |= ui::PropertyFloat("細部の削り", &cloudNoise->detail, 0.0f, 200.0f, defaults.detail, "値はメートル単位。", "%.0f m");
             changed |= ui::PropertyFloat("境界の柔らかさ", &cloudNoise->feather, 1.0f, 300.0f, defaults.feather, "値はメートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("密度", &cloudNoise->extinction, 0.0001f, 0.03f, defaults.extinction, "形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。最大256個の基本形状に対応します。", "%.4f");
-            changed |= ui::PropertyFloat("Indirect Light", &cloudNoise->indirectLight, 0.0f, 5.0f, defaults.indirectLight, "形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。最大256個の基本形状に対応します。", "%.2f");
-            changed |= ui::PropertyFloat("Ambient Light", &cloudNoise->ambientLight, 0.0f, 5.0f, defaults.ambientLight, "形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。最大256個の基本形状に対応します。", "%.2f");
-            changed |= ui::PropertyInt("シード", &cloudNoise->seed, 0, 10000, defaults.seed, "形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。最大256個の基本形状に対応します。");
+            changed |= ui::PropertyBool("雲底を平らにする", &cloudNoise->flattenBottom, defaults.flattenBottom,
+                "指定した高さより下の密度を削ります。球のない隙間を埋める機能ではありません。");
+            if (cloudNoise->flattenBottom) {
+                changed |= ui::PropertyFloat("雲底の高さ", &cloudNoise->bottomHeight, -20000.0f, 20000.0f, defaults.bottomHeight,
+                    "ワールド座標の高さ。雲の内部を横切る高さに設定すると平らな雲底になります。", "%.0f m");
+                changed |= ui::PropertyFloat("雲底のぼかし幅", &cloudNoise->bottomFeather, 0.0f, 300.0f, defaults.bottomFeather,
+                    "雲底から上方向に密度を立ち上げる幅。0では水平面で切り取ります。", "%.0f m");
+            }
+            changed |= ui::PropertyFloat("密度", &cloudNoise->extinction, 0.0001f, 0.03f, defaults.extinction, "形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。", "%.4f");
+            changed |= ui::PropertyFloat("Indirect Light", &cloudNoise->indirectLight, 0.0f, 5.0f, defaults.indirectLight, "形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。", "%.2f");
+            changed |= ui::PropertyFloat("Ambient Light", &cloudNoise->ambientLight, 0.0f, 5.0f, defaults.ambientLight, "形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。", "%.2f");
+            changed |= ui::PropertyInt("シード", &cloudNoise->seed, 0, 10000, defaults.seed, "形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。");
             ui::EndPropertyTable();
         }
         const auto compiled = m_graph.CompileCloud();
-        if (compiled.shapeOverflow) ui::HintText("基本形状が256個を超えています。球の数を減らしてください。表示は停止しています。");
+        if (compiled.shapeOverflow) ui::HintText("形状生成の作業メモリ予算を超えています。球の数や配置密度を下げてください。");
         if (!m_renderer.AtmosphericMode() && ui::Button("大気散乱へ切替", ui::kWideButtonWidth)) {
             m_renderer.AtmosphericMode() = true;
             MarkDocumentChanged(false);

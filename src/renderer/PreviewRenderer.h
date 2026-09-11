@@ -194,6 +194,7 @@ public:
     GodRaySettings& GodRays() { return m_atmosphere.GodRays(); }
     bool& CloudLightingCache() { return m_cloudLightingCache; }
     bool& FullResolutionClouds() { return m_atmosphere.FullResolutionClouds(); }
+    void SetCloudPrimitives(std::span<const AtmosphereSettings::Primitive> primitives) { m_atmosphere.SetCloudPrimitives(primitives); }
     void InvalidateCloudLighting() { m_atmosphere.InvalidateFrameLighting(); }
     void ResetCloudMotion() { m_atmosphere.ResetCloudMotion(); }
     void ResetAtmosphereAnimation() { m_atmosphere.ResetAnimation(); }

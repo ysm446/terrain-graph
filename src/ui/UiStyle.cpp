@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <array>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -421,7 +422,12 @@ float TextScaled(float value) {
     return value * g_dpiScale * FontScale();
 }
 
+namespace { ImVec4 g_transformAxisColors[3]; }
+ImU32 TransformAxisColor(int axis) { return ImGui::ColorConvertFloat4ToU32(g_transformAxisColors[std::clamp(axis,0,2)]); }
 void ApplyTheme(float dpiScale) {
+    g_transformAxisColors[0]=ImVec4(0.886f,0.376f,0.376f,1);
+    g_transformAxisColors[1]=ImVec4(0.376f,0.82f,0.49f,1);
+    g_transformAxisColors[2]=ImVec4(0.376f,0.573f,0.886f,1);
     g_dpiScale = (dpiScale > 0.0f) ? dpiScale : 1.0f;
 
     // 拡大率を変えて呼び直しても累積しないよう、毎回既定値から作り直す。
@@ -682,7 +688,12 @@ bool PropertyInt(const char* label, int* value, int minValue, int maxValue, int 
     PropertyLabel(label, NumericTooltip(tooltip));
     ImGui::SetNextItemWidth(ValueWidth(kSliderMinWidth, kSliderMaxWidth));
     int shown = *value;
-    const bool edited = ImGui::SliderInt("##value", &shown, minValue, maxValue);
+    // SliderInt の対応範囲を超える個数は、ドラッグと直接入力で編集する。
+    const bool wideRange = minValue < std::numeric_limits<int>::min() / 2 ||
+                           maxValue > std::numeric_limits<int>::max() / 2;
+    const bool edited = wideRange
+        ? ImGui::DragInt("##value", &shown, 1.0f, minValue, maxValue)
+        : ImGui::SliderInt("##value", &shown, minValue, maxValue);
     bool changed = CommitDeferredInput(value, shown, edited, minValue, maxValue);
 
     if (ResetDot(*value == defaultValue, std::to_string(defaultValue))) {

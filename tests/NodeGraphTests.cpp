@@ -1,8 +1,14 @@
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 // ノードグラフから評価用レイヤー列へのコンパイルを確かめる。
 // GPU 評価の前段だけを対象にし、入力を外したときに古い結果を残さない規則を固定する。
 
 #include "graph/NodeGraph.h"
 #include "renderer/CloudMotion.h"
+#include "renderer/CloudSpatialIndex.h"
+#include "renderer/CloudShapeCache.h"
+#include "ui/AxisTranslationDrag.h"
 
 #include "TestSupport.h"
 
@@ -41,6 +47,42 @@ bool StartsWithNeutralPlane(const tg::graph::CompiledGraph& compiled) {
 
 void RunNodeGraphTests() {
     {
+        Section("雲形状ベイクの更新条件と格子範囲");
+        tg::renderer::AtmosphereSettings a;
+        a.primitiveCount=1;
+        a.radiusX=a.radiusZ=500;
+        a.cloudThickness=1000;
+        const auto cube=tg::renderer::CloudShapeCacheSize(a);
+        Check(cube==std::array<uint32_t,3>{192,192,192},"立方体は192点の格子、最大54MiB");
+        auto b=a;
+        b.seed++; b.cloudNoiseType++; b.primitiveDetail+=50; b.extinction*=2;
+        b.elevation+=0.1f; b.samples=128; b.shapeCacheIndex=12;
+        Check(tg::renderer::SameCloudShapeCache(a,b),"ノイズ・照明・密度・描画品質だけでは形状を焼き直さない");
+        b.primitiveRevision++;
+        Check(!tg::renderer::SameCloudShapeCache(a,b),"球の移動で形状を焼き直す");
+        b=a; b.primitiveRevision+=2;
+        Check(!tg::renderer::SameCloudShapeCache(a,b),"球の半径変更で形状を焼き直す");
+        b=a; b.primitiveSmoothness+=1;
+        Check(!tg::renderer::SameCloudShapeCache(a,b),"接合幅変更で形状を焼き直す");
+        b=a; b.primitiveCount++;
+        Check(!tg::renderer::SameCloudShapeCache(a,b),"球数変更で形状を焼き直す");
+        b=a; b.radiusX*=2;
+        Check(!tg::renderer::SameCloudShapeCache(a,b),"包囲範囲の変更で格子を更新する");
+        b.radiusX=10000; b.radiusZ=1; b.cloudThickness=1000;
+        const auto thin=tg::renderer::CloudShapeCacheSize(b);
+        Check(thin[0]==512 && thin[1]>=8 && thin[1]<192 && thin[2]==8,
+              "細長い範囲は短軸の格子数を減らし長軸の精度を上げる");
+        bool bounded=true;
+        for (int i=1;i<=100;++i) {
+            b.radiusX=float(i*100); b.radiusZ=float((101-i)*37); b.cloudThickness=float(i*19);
+            const auto grid=tg::renderer::CloudShapeCacheSize(b);
+            bounded &= grid[0]*grid[1]*grid[2]<=192u*192u*192u;
+            for (auto axis:grid) bounded &= axis>=8 && axis<=512;
+        }
+        Check(bounded,"縦横比によらずメモリ上限と各軸の格子数を守る");
+    }
+
+    {
         Section("手続き雲の形状構築");
         auto graph = NodeGraph::CreateDefault();
         const auto line=graph.CreateNode(NodeKind::CloudLine);
@@ -65,13 +107,13 @@ void RunNodeGraphTests() {
         sphereSettings.count=64;
         Check(graph.CompileCloud().connected && graph.CompileCloud().primitives.size()==65,
             "旧上限を超えた64球と楕円体をマージできる");
-        sphereSettings.count=static_cast<int>(tg::graph::MaxCloudPrimitives)-1;
-        Check(graph.CompileCloud().connected && graph.CompileCloud().primitives.size()==tg::graph::MaxCloudPrimitives,
-            "マージした合計256個を欠落なく保持する");
-        sphereSettings.count=static_cast<int>(tg::graph::MaxCloudPrimitives);
-        Check(graph.CompileCloud().shapeOverflow && !graph.CompileCloud().connected,"上限を超えた形状を黙って切り捨てず表示を停止する");
+        sphereSettings.count=4095;
+        Check(graph.CompileCloud().connected && graph.CompileCloud().primitives.size()==4096,
+            "マージした合計4096個を欠落なく保持する");
+        sphereSettings.count=4096;
+        Check(graph.CompileCloud().connected && graph.CompileCloud().primitives.size()==4097,"4096個を超えてもマージできる");
         Check(link(spheres,merge,1),"同じ形状を両入力に繋げる");
-        Check(graph.CompileCloud().primitives.size()==tg::graph::MaxCloudPrimitives && !graph.CompileCloud().shapeOverflow,"共有された形状は一度だけ取り込む");
+        Check(graph.CompileCloud().primitives.size()==4096 && !graph.CompileCloud().shapeOverflow,"共有された形状は一度だけ取り込む");
         Check(!link(merge,merge),"形状マージの循環を拒否する");
         sphereSettings.count=1; sphereSettings.jitter=0; sphereSettings.radiusVariation=0;
         const auto single=graph.CompileCloud();
@@ -114,6 +156,277 @@ void RunNodeGraphTests() {
             "変位なしの単体は元形状の包囲範囲に一致する");
         graph.DeleteNode(shape);
         Check(graph.CompileCloudShapes(shape).primitives.empty(),"削除した形状のガイドを残さない");
+    }
+
+    {
+        Section("雲形状複製");
+        NodeGraph graph;
+        const auto parent=graph.CreateNode(NodeKind::CloudEllipsoid);
+        const auto replicate=graph.CreateNode(NodeKind::CloudReplicate);
+        const auto merge=graph.CreateNode(NodeKind::CloudMerge);
+        const auto second=graph.CreateNode(NodeKind::CloudReplicate);
+        const auto line=graph.CreateNode(NodeKind::CloudLine);
+        const auto link=[&](auto from,auto to,size_t pin=0) {
+            return graph.CreateLink(graph.FindNode(from)->outputs[0].id,graph.FindNode(to)->inputs[pin].id);
+        };
+        Check(!graph.CompileCloudShapes(replicate).connected,"未接続の複製は空形状");
+        Check(!link(line,replicate),"ラインを直接複製しない");
+        Check(link(parent,replicate),"Shapeを受けてShapeを出す");
+        auto& settings=std::get<tg::graph::CloudReplicateSettings>(graph.FindMutableNode(replicate)->settings);
+        settings.distribution=0; settings.count=12; settings.jitter=0; settings.radiusVariation=0;
+        const auto generated=graph.CompileCloudShapes(replicate);
+        Check(generated.connected && generated.primitives.size()==13,"元形状1個と追加12個を生成");
+        const auto& source=generated.primitives[0];
+        bool onSurface=true;
+        for (size_t i=1;i<generated.primitives.size();++i) {
+            const auto& child=generated.primitives[i];
+            const float x=(child.centerX-source.centerX)/source.radiusX;
+            const float y=(child.centerY-source.centerY)/source.radiusY;
+            const float z=(child.centerZ-source.centerZ)/source.radiusZ;
+            onSurface &= std::abs(x*x+y*y+z*z-1)<1e-5f && child.radiusX==child.radiusY && child.radiusY==child.radiusZ;
+        }
+        Check(onSurface,"追加球の中心を楕円体の表面へ配置する");
+        const auto same=graph.CompileCloudShapes(replicate);
+        Check(same.primitives[1].centerX==generated.primitives[1].centerX,"同一シードで同じ配置");
+        settings.seed++;
+        Check(graph.CompileCloudShapes(replicate).primitives[1].centerX!=generated.primitives[1].centerX,"シード変更で配置が変わる");
+        settings.keepSource=false;
+        Check(graph.CompileCloudShapes(replicate).primitives.size()==12,"元形状を除いて小球だけを出せる");
+        settings.keepSource=true;
+        Check(link(parent,merge) && link(replicate,merge,1),"複製結果を元形状と再マージ");
+        Check(graph.CompileCloudShapes(merge).primitives.size()==13,"保持した元形状を再マージで重複させない");
+        Check(link(replicate,merge),"共有する複製結果を両入力へ接続");
+        Check(graph.CompileCloudShapes(merge).primitives.size()==13,"同じ複製結果を二重に数えない");
+        Check(link(replicate,second),"複製ノードを連結できる");
+        auto& secondSettings=std::get<tg::graph::CloudReplicateSettings>(graph.FindMutableNode(second)->settings);
+        secondSettings.distribution=0; secondSettings.count=2;
+        Check(graph.CompileCloudShapes(second).primitives.size()==39,"二段目は一段目の全形状を複製");
+        secondSettings.count=64;
+        Check(graph.CompileCloudShapes(second).connected && graph.CompileCloudShapes(second).primitives.size()==845,"複製を重ねて256個を超えても表示できる");
+        Check(!link(second,replicate),"複製を含む循環を拒否");
+        graph.DeleteNode(parent);
+        Check(!graph.CompileCloudShapes(replicate).connected,"元形状削除で複製も消える");
+    }
+    {
+        Section("雲形状複製の面積・体積密度");
+        NodeGraph graph;
+        const auto parent=graph.CreateNode(NodeKind::CloudEllipsoid);
+        const auto replicate=graph.CreateNode(NodeKind::CloudReplicate);
+        graph.CreateLink(graph.FindNode(parent)->outputs[0].id,graph.FindNode(replicate)->inputs[0].id);
+        auto& source=std::get<tg::graph::CloudEllipsoidSettings>(graph.FindMutableNode(parent)->settings);
+        auto& settings=std::get<tg::graph::CloudReplicateSettings>(graph.FindMutableNode(replicate)->settings);
+        Check(settings.distribution==1,"新規ノードは表面密度を使う");
+        settings.keepSource=false; settings.jitter=0; settings.radiusVariation=0;
+        source.radiusX=source.radiusY=source.radiusZ=500;
+        const auto smallShape=graph.CompileCloudShapes(replicate);
+        Check(smallShape.primitives.size()==31,"半径500m・10個/km²では表面積から31個を生成");
+        bool surface=true;
+        for (const auto& p:smallShape.primitives) {
+            const float x=(p.centerX-source.centerX)/500,y=(p.centerY-source.centerY)/500,z=(p.centerZ-source.centerZ)/500;
+            surface &= std::abs(x*x+y*y+z*z-1)<1e-5f;
+        }
+        Check(surface,"表面密度の球中心は親の表面にある");
+        source.radiusX=source.radiusY=source.radiusZ=1000;
+        Check(graph.CompileCloudShapes(replicate).primitives.size()==126,"半径2倍では表面積4倍に比例する");
+        settings.distribution=2;
+        const auto volume=graph.CompileCloudShapes(replicate);
+        Check(volume.primitives.size()==42,"半径1000m・10個/km³では体積から42個を生成");
+        bool inside=true,central=false;
+        for (const auto& p:volume.primitives) {
+            const float x=(p.centerX-source.centerX)/1000,y=(p.centerY-source.centerY)/1000,z=(p.centerZ-source.centerZ)/1000;
+            inside &= x*x+y*y+z*z<=1.00001f;
+            central |= x*x+y*y+z*z<0.25f;
+        }
+        Check(inside && central,"体積密度では中心寄りも含めて内部に分布する");
+        const auto same=graph.CompileCloudShapes(replicate);
+        Check(same.primitives[0].centerY==volume.primitives[0].centerY,"密度指定も同じシードで再現する");
+        source.radiusX=source.radiusY=source.radiusZ=500;
+        Check(graph.CompileCloudShapes(replicate).primitives.size()==5,"半径半分では体積1/8に比例する");
+        settings.packingDensity=0;
+        Check(graph.CompileCloudShapes(replicate).primitives.empty(),"密度0は追加しない");
+        settings.keepSource=true;
+        Check(graph.CompileCloudShapes(replicate).primitives.size()==1,"密度0でも元形状を保持できる");
+        settings.packingDensity=10000;
+        Check(graph.CompileCloudShapes(replicate).connected && graph.CompileCloudShapes(replicate).primitives.size()>5000,"密度指定で5000個以上を生成できる");
+        source.radiusX=source.radiusY=source.radiusZ=100000;
+        Check(graph.CompileCloudShapes(replicate).shapeOverflow,"極端な生成は作業メモリ予算で停止する");
+    }
+    {
+        Section("軸ドラッグの入力と取消");
+        float x=10,y=20,z=30;
+        float* values[]{&x,&y,&z};
+        tg::ui::AxisTranslationDrag drag;
+        drag.axis=1; drag.press={100,200}; drag.direction={0,-1}; drag.start=y; drag.metersPerPixel=2;
+        Check(drag.Update({100,150},true,false,false,values) && y==120 && x==10 && z==30,"上向きY軸ドラッグはYだけを移動する");
+        Check(!drag.Update({160,150},true,false,false,values) && y==120,"軸に垂直なドラッグで移動量が変わらない");
+        Check(drag.Update({160,150},true,true,false,values) && y==20 && drag.axis==-1,"Escは押下前の移動量に戻す");
+        drag.axis=0; drag.press={0,0}; drag.direction={1,0}; drag.start=x; drag.metersPerPixel=1;
+        Check(drag.Update({40,0},true,false,false,values) && x==50,"ドラッグ開始位置から差分を加算する");
+        Check(!drag.Update({40,0},false,false,false,values) && drag.axis==-1 && x==50,"ボタンを離すと位置を確定");
+        Check(!drag.Update({80,0},false,false,false,values) && x==50,"リリース後のマウス移動では値を変えない");
+        drag.axis=2; drag.start=z;
+        Check(!drag.Update({80,0},true,false,true,values) && drag.axis==-1 && z==30,"Altの視点操作へ入力を譲る");
+        drag.axis=0; drag.start=x;
+        Check(drag.Update({20000,0},true,false,false,values) && x==10000,"ドラッグと数値入力は同じ移動範囲");
+    }
+    {
+        Section("雲トランスフォームの連結とマージ");
+        NodeGraph graph;
+        const auto parent=graph.CreateNode(NodeKind::CloudEllipsoid);
+        const auto transform=graph.CreateNode(NodeKind::CloudTransform);
+        const auto second=graph.CreateNode(NodeKind::CloudTransform);
+        const auto merge=graph.CreateNode(NodeKind::CloudMerge);
+        const auto link=[&](auto from,auto to,int pin=0) { return graph.CreateLink(graph.FindNode(from)->outputs[0].id,graph.FindNode(to)->inputs[pin].id); };
+        Check(!graph.CompileCloudShapes(transform).connected,"未接続の変換は形状を出さない");
+        Check(link(parent,transform) && link(transform,second),"Shapeの変換を連結できる");
+        const auto original=graph.CompileCloudShapes(parent).primitives[0];
+        auto& settings=std::get<tg::graph::CloudTransformSettings>(graph.FindMutableNode(transform)->settings);
+        const auto identity=graph.CompileCloudShapes(transform).primitives[0];
+        Check(identity.centerX==original.centerX && identity.radiusX==original.radiusX,"既定の移動量0で形状を維持");
+        settings.translateX=123; settings.translateY=-45; settings.translateZ=67;
+        const auto moved=graph.CompileCloudShapes(transform).primitives[0];
+        Check(moved.centerX==original.centerX+123 && moved.centerY==original.centerY-45 && moved.centerZ==original.centerZ+67,"3軸の移動が反映される");
+        Check(moved.radiusX==original.radiusX && moved.radiusY==original.radiusY && moved.radiusZ==original.radiusZ,"移動で球の半径を変えない");
+        auto& next=std::get<tg::graph::CloudTransformSettings>(graph.FindMutableNode(second)->settings);
+        next.translateX=-123; next.translateY=45; next.translateZ=-67;
+        const auto restored=graph.CompileCloudShapes(second).primitives[0];
+        Check(restored.centerX==original.centerX && restored.centerY==original.centerY && restored.centerZ==original.centerZ,"連結した逆移動で位置が戻る");
+        Check(link(parent,merge) && link(transform,merge,1),"元形状と変換した形状をマージできる");
+        Check(graph.CompileCloudShapes(merge).primitives.size()==2,"同じ元形状でも移動した枝を重複除外しない");
+        Check(link(transform,merge),"同じ変換を両入力へ分岐");
+        Check(graph.CompileCloudShapes(merge).primitives.size()==1,"同一変換の共有は重複を除外");
+        Check(!link(second,transform),"変換を含む循環を拒否");
+        graph.DeleteNode(parent);
+        Check(!graph.CompileCloudShapes(second).connected,"入力削除で下流の変換も空になる");
+    }
+    {
+        Section("複製球の中心を元形状に拘束");
+        NodeGraph graph;
+        const auto parent=graph.CreateNode(NodeKind::CloudEllipsoid);
+        const auto replicate=graph.CreateNode(NodeKind::CloudReplicate);
+        graph.CreateLink(graph.FindNode(parent)->outputs[0].id,graph.FindNode(replicate)->inputs[0].id);
+        auto& source=std::get<tg::graph::CloudEllipsoidSettings>(graph.FindMutableNode(parent)->settings);
+        auto& settings=std::get<tg::graph::CloudReplicateSettings>(graph.FindMutableNode(replicate)->settings);
+        source.centerX=1200; source.centerY=-350; source.centerZ=780;
+        source.radiusX=800; source.radiusY=80; source.radiusZ=300;
+        settings.keepSource=false; settings.count=128; settings.packingDensity=100;
+        settings.jitter=1; settings.radiusScale=1; settings.radiusVariation=0.9f;
+        for (int mode=0;mode<3;++mode) {
+            settings.distribution=mode;
+            bool contained=true,interior=false;
+            for (int seed=0;seed<8;++seed) {
+                settings.seed=seed;
+                const auto generated=graph.CompileCloudShapes(replicate);
+                contained &= generated.connected && !generated.primitives.empty();
+                for (const auto& p:generated.primitives) {
+                    const double x=(double(p.centerX)-source.centerX)/source.radiusX;
+                    const double y=(double(p.centerY)-source.centerY)/source.radiusY;
+                    const double z=(double(p.centerZ)-source.centerZ)/source.radiusZ;
+                    const double distanceSquared=x*x+y*y+z*z;
+                    contained &= distanceSquared<=1.00001;
+                    interior |= distanceSquared<0.9;
+                }
+            }
+            Check(contained,"最大ばらつきでも全配置方式の球中心は親楕円体の外へ出ない");
+            Check(interior,"内側へずれた中心は表面へ押し戻さない");
+        }
+    }
+    {
+        Section("手続き雲の雲底設定");
+        NodeGraph graph;
+        const auto parent=graph.CreateNode(NodeKind::CloudEllipsoid);
+        const auto noise=graph.CreateNode(NodeKind::CloudNoise);
+        const auto output=graph.CreateNode(NodeKind::CloudOutput);
+        graph.CreateLink(graph.FindNode(parent)->outputs[0].id,graph.FindNode(noise)->inputs[0].id);
+        graph.CreateLink(graph.FindNode(noise)->outputs[0].id,graph.FindNode(output)->inputs[0].id);
+        const auto before=graph.CompileCloud();
+        auto& settings=std::get<tg::graph::CloudNoiseSettings>(graph.FindMutableNode(noise)->settings);
+        Check(!before.cloud.flatBottom,"雲底を指定しない場合は従来形状");
+        settings.flattenBottom=true; settings.bottomHeight=350; settings.bottomFeather=40;
+        const auto after=graph.CompileCloud();
+        Check(after.cloud.flatBottom && after.bottomHeight==350 && after.bottomFeather==40,"雲底の高さとぼかし幅を描画へ渡す");
+        Check(before.cloud.centerY==after.cloud.centerY && before.cloud.thickness==after.cloud.thickness,
+              "雲底の調整でベイク範囲を変えない");
+        tg::renderer::AtmosphereSettings a,b;
+        b.flatCloudBottom=1; b.proceduralBottomHeight=350; b.proceduralBottomFeather=40;
+        Check(tg::renderer::SameCloudShapeCache(a,b),"雲底の変更では形状キャッシュを再生成しない");
+    }
+    {
+        Section("雲の空間分割");
+        constexpr uint32_t TestPrimitiveCount=4096;
+        tg::renderer::CloudGeometry settings;
+        settings.primitives.resize(TestPrimitiveCount);
+        for (uint32_t i=0;i<TestPrimitiveCount;++i) {
+            auto& p=settings.primitives[i];
+            p.center[0]=float(i%16)*300; p.center[1]=float(i%7)*20; p.center[2]=float(i/16)*300;
+            p.radius[0]=30+float(i%5); p.radius[1]=5+float(i%9); p.radius[2]=20;
+        }
+        tg::renderer::CloudGeometry few;
+        few.primitives.assign(settings.primitives.begin(),settings.primitives.begin()+16);
+        tg::renderer::BuildCloudSpatialIndex(few);
+        Check(few.primitiveBvh.empty(),"16個以下は並べ替えず従来の評価を維持");
+        tg::renderer::BuildCloudSpatialIndex(settings);
+        Check(settings.primitiveBvh.size()<=TestPrimitiveCount && settings.primitiveBvh[0].escape==settings.primitiveBvh.size(),
+            "4096形状の木を必要なサイズで構築する");
+        std::array<int,TestPrimitiveCount> visits{};
+        bool valid=true;
+        for (uint32_t i=0;i<settings.primitiveBvh.size();++i) {
+            const auto& node=settings.primitiveBvh[i];
+            valid &= node.escape>i && node.escape<=settings.primitiveBvh.size() && node.count<=TG_CLOUD_BVH_LEAF_SIZE;
+            for (uint32_t j=node.start;j<node.start+node.count;++j) { if(j<visits.size()) ++visits[j]; else valid=false; }
+        }
+        for (int count:visits) valid &= count==1;
+        Check(valid,"各形状を1つの葉だけが参照し、飛び先が木の範囲内にある");
+        const auto distanceAt=[](const auto& primitive,const float* position) {
+            double k0=0,k1=0;
+            for (int axis=0;axis<3;++axis) {
+                const double r=primitive.radius[axis],o=position[axis]-primitive.center[axis];
+                k0+=o*o/(r*r); k1+=o*o/(r*r*r*r);
+            }
+            k0=std::sqrt(k0);k1=std::sqrt(k1);
+            return k1>1e-7 ? k0*(k0-1)/k1 : -double(std::min({primitive.radius[0],primitive.radius[1],primitive.radius[2]}));
+        };
+        bool conservative=true,accurate=true;
+        uint32_t tested=0;
+        for (int sample=0;sample<64;++sample) {
+            const float position[]={float(sample%8)*600-10,float(sample%5)*25,float(sample/8)*600-15};
+            for (uint32_t i=0;i<settings.primitiveBvh.size();++i) {
+                const auto& node=settings.primitiveBvh[i];
+                const double lower=tg::renderer::CloudSpatialLowerBound(node,position);
+                for (uint32_t j=i;j<node.escape;++j) {
+                    const auto& leaf=settings.primitiveBvh[j];
+                    for (uint32_t k=leaf.start;k<leaf.start+leaf.count;++k)
+                        conservative &= lower<=distanceAt(settings.primitives[k],position)+0.001;
+                }
+            }
+            for (double smoothness:{0.0,5.0,80.0}) {
+                double minimum=1e30,full=0;
+                for (const auto& primitive:settings.primitives) minimum=std::min(minimum,distanceAt(primitive,position));
+                if (smoothness>0) for (const auto& primitive:settings.primitives) full+=std::exp((minimum-distanceAt(primitive,position))/smoothness);
+                const double reference=smoothness>0 ? minimum-smoothness*std::log(full) : minimum;
+                double nearest=1e30,weight=0;
+                const double cutoff=smoothness>0 ? smoothness*std::log(TestPrimitiveCount*smoothness/TG_CLOUD_BVH_ERROR_METERS) : 0;
+                uint32_t i=0;
+                while(i<settings.primitiveBvh.size()) {
+                    const auto& node=settings.primitiveBvh[i];
+                    if(tg::renderer::CloudSpatialLowerBound(node,position)>nearest+cutoff+0.01) { i=node.escape;continue; }
+                    for (uint32_t j=node.start;j<node.start+node.count;++j) {
+                        const double d=distanceAt(settings.primitives[j],position);
+                        if(smoothness==5) ++tested;
+                        if(smoothness>0) {
+                            if(d<nearest) {weight=weight*std::exp((d-nearest)/smoothness)+1;nearest=d;}
+                            else weight+=std::exp((nearest-d)/smoothness);
+                        } else nearest=std::min(nearest,d);
+                    }
+                    ++i;
+                }
+                const double accelerated=smoothness>0 ? nearest-smoothness*std::log(weight) : nearest;
+                accurate &= std::abs(accelerated-reference)<=TG_CLOUD_BVH_ERROR_METERS+1e-5;
+            }
+        }
+        Check(conservative,"細長い楕円体を含む全階層で距離下界が保守的");
+        Check(accurate,"通常unionとsmooth unionの全数評価との差が1mm以下");
+        Check(tested<64*TestPrimitiveCount/2,"離れた形状群では評価する形状数を半分以下へ減らす");
     }
 
     Section("雲の時間更新");

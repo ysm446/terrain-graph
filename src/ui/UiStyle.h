@@ -46,6 +46,7 @@ inline constexpr float kTextInputWidth = 190.0f;
 
 // グレー基調のテーマを適用する。ImGui のコンテキストを作った直後に 1 回だけ呼ぶ。
 void ApplyTheme(float dpiScale);
+ImU32 TransformAxisColor(int axis);
 
 // 96 DPI 基準の寸法を現在の DPI へ合わせる。
 float Scaled(float value);
