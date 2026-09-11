@@ -900,15 +900,15 @@ void Application::DrawGraphEditor() {
                         "Mask Area — パスの閉じた鎖の内側をマスクにする（エリア選択）");
         ImGui::Separator();
         ImGui::Separator();
-        addNodeMenuItem(graph::NodeKind::CloudLayer, "雲層 — 分布マスクと高度・厚さで広い雲を作る");
-        addNodeMenuItem(graph::NodeKind::CloudLine, "雲ライン（実験） — 雲の芯になる3D直線");
-        addNodeMenuItem(graph::NodeKind::CloudSpheres, "雲の球配置（実験） — ラインに沿って球を並べる");
-        addNodeMenuItem(graph::NodeKind::CloudEllipsoid, "雲楕円体（実験） — 雲の土台となる形");
-        addNodeMenuItem(graph::NodeKind::CloudMerge, "雲形状マージ（実験） — 基本形状を統合する");
-        addNodeMenuItem(graph::NodeKind::CloudTransform, "雲トランスフォーム（実験） — 雲形状を移動する");
-        addNodeMenuItem(graph::NodeKind::CloudReplicate, "雲形状複製（実験） — 表面に小さな球を追加する");
-        addNodeMenuItem(graph::NodeKind::CloudNoise, "雲ノイズ（実験） — 輪郭と密度を作る");
-        addNodeMenuItem(graph::NodeKind::CloudOutput, "雲出力 — Volume を繋いで雲を表示する");
+        addNodeMenuItem(graph::NodeKind::CloudLayer, "Cloud Layer — 分布マスクと高度・厚さで広い雲を作る");
+        addNodeMenuItem(graph::NodeKind::CloudLine, "Cloud Line (Experimental) — 雲の芯になる3D直線");
+        addNodeMenuItem(graph::NodeKind::CloudSpheres, "Cloud Spheres (Experimental) — ラインに沿って球を並べる");
+        addNodeMenuItem(graph::NodeKind::CloudEllipsoid, "Cloud Ellipsoid (Experimental) — 雲の土台となる形");
+        addNodeMenuItem(graph::NodeKind::CloudMerge, "Cloud Merge (Experimental) — 基本形状を統合する");
+        addNodeMenuItem(graph::NodeKind::CloudTransform, "Cloud Transform (Experimental) — 雲形状を移動する");
+        addNodeMenuItem(graph::NodeKind::CloudReplicate, "Cloud Replicate (Experimental) — 表面に小さな球を追加する");
+        addNodeMenuItem(graph::NodeKind::CloudNoise, "Cloud Noise (Experimental) — 輪郭と密度を作る");
+        addNodeMenuItem(graph::NodeKind::CloudOutput, "Cloud Output — Volume を繋いで雲を表示する");
         ImGui::Separator();
         addNodeMenuItem(graph::NodeKind::Output, "Output — ここに繋いだ結果をプレビューする");
         ImGui::EndPopup();
@@ -1275,7 +1275,7 @@ void Application::DrawGraphPanel() {
     } else if (auto* cloudEllipsoid = std::get_if<graph::CloudEllipsoidSettings>(&selected->settings)) {
         const graph::CloudEllipsoidSettings defaults;
         bool changed = false;
-        ui::HintText("軸に沿った楕円体。Shape を形状マージまたは雲ノイズへ接続します。");
+        ui::HintText("軸に沿った楕円体。Shape をCloud Merge または Cloud Noise へ接続します。");
         if (ui::BeginPropertyTable("CloudEllipsoidRows", "横方向のばらつき")) {
             changed |= ui::PropertyFloat("中心 X", &cloudEllipsoid->centerX, -10000.0f, 10000.0f, defaults.centerX, "値はメートル単位。", "%.0f m");
             changed |= ui::PropertyFloat("中心 Y", &cloudEllipsoid->centerY, -10000.0f, 10000.0f, defaults.centerY, "値はメートル単位。", "%.0f m");
@@ -1309,7 +1309,7 @@ void Application::DrawGraphPanel() {
     } else if (auto* replicate = std::get_if<graph::CloudReplicateSettings>(&selected->settings)) {
         const graph::CloudReplicateSettings defaults;
         bool changed=false;
-        ui::HintText("親形状の面積・体積に応じて球を配置します。雲底は後段の雲ノイズで整えます。");
+        ui::HintText("親形状の面積・体積に応じて球を配置します。雲底は後段の Cloud Noise で整えます。");
         if (ui::BeginPropertyTable("CloudReplicateRows", "親1個あたりの球数")) {
             const char* distributions[]={"個数（従来）","表面密度","体積密度"};
             changed|=ui::PropertyCombo("配置方式",&replicate->distribution,distributions,3,defaults.distribution,
@@ -1338,7 +1338,7 @@ void Application::DrawGraphPanel() {
     } else if (auto* cloudNoise = std::get_if<graph::CloudNoiseSettings>(&selected->settings)) {
         const graph::CloudNoiseSettings defaults;
         bool changed = false;
-        ui::HintText("形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。");
+        ui::HintText("形状を一体にしてノイズと密度を評価します。Volume をCloud Output へ接続。");
         if (ui::BeginPropertyTable("CloudNoiseRows", "横方向のばらつき")) {
             const char* noiseTypes[] = {"Perlin（従来）", "Perlin fBM", "Perlin-Worley"};
             changed |= ui::PropertyCombo("ノイズの種類", &cloudNoise->noiseType, noiseTypes, 3, defaults.noiseType,
@@ -1355,10 +1355,10 @@ void Application::DrawGraphPanel() {
                 changed |= ui::PropertyFloat("雲底のぼかし幅", &cloudNoise->bottomFeather, 0.0f, 300.0f, defaults.bottomFeather,
                     "雲底から上方向に密度を立ち上げる幅。0では水平面で切り取ります。", "%.0f m");
             }
-            changed |= ui::PropertyFloat("密度", &cloudNoise->extinction, 0.0001f, 0.03f, defaults.extinction, "形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。", "%.4f");
-            changed |= ui::PropertyFloat("Indirect Light", &cloudNoise->indirectLight, 0.0f, 5.0f, defaults.indirectLight, "形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。", "%.2f");
-            changed |= ui::PropertyFloat("Ambient Light", &cloudNoise->ambientLight, 0.0f, 5.0f, defaults.ambientLight, "形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。", "%.2f");
-            changed |= ui::PropertyInt("シード", &cloudNoise->seed, 0, 10000, defaults.seed, "形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。");
+            changed |= ui::PropertyFloat("密度", &cloudNoise->extinction, 0.0001f, 0.03f, defaults.extinction, "形状を一体にしてノイズと密度を評価します。Volume をCloud Output へ接続。", "%.4f");
+            changed |= ui::PropertyFloat("Indirect Light", &cloudNoise->indirectLight, 0.0f, 5.0f, defaults.indirectLight, "形状を一体にしてノイズと密度を評価します。Volume をCloud Output へ接続。", "%.2f");
+            changed |= ui::PropertyFloat("Ambient Light", &cloudNoise->ambientLight, 0.0f, 5.0f, defaults.ambientLight, "形状を一体にしてノイズと密度を評価します。Volume をCloud Output へ接続。", "%.2f");
+            changed |= ui::PropertyInt("シード", &cloudNoise->seed, 0, 10000, defaults.seed, "形状を一体にしてノイズと密度を評価します。Volume をCloud Output へ接続。");
             ui::EndPropertyTable();
         }
         const auto compiled = m_graph.CompileCloud();
@@ -1461,7 +1461,7 @@ void Application::DrawGraphPanel() {
             changed |= ui::PropertyInt("シード", &cloud->seed, 0, 10000, defaults.seed);
             ui::EndPropertyTable();
         }
-        ui::HintText("Volume を雲出力へ接続して表示。太陽と照明はライティング設定を共有します");
+        ui::HintText("Volume をCloud Output へ接続して表示。太陽と照明はライティング設定を共有します");
         if (!m_renderer.AtmosphericMode() && ui::Button("大気散乱へ切替", ui::kWideButtonWidth)) {
             m_renderer.AtmosphericMode() = true;
             MarkDocumentChanged(false);
@@ -1471,8 +1471,8 @@ void Application::DrawGraphPanel() {
             MarkDocumentChanged(false);
         }
     } else if (selected->kind == graph::NodeKind::CloudOutput) {
-        ui::HintText("雲ノイズまたは雲層の Volume を接続して表示します。未接続なら雲は表示しません");
-        ui::HintText("保存済みの旧形式の雲塊も引き続き表示できます");
+        ui::HintText("Cloud Noise または Cloud Layer の Volume を接続して表示します。未接続なら雲は表示しません");
+        ui::HintText("保存済みのCloud (Legacy) も引き続き表示できます");
         if (!m_renderer.AtmosphericMode() && ui::Button("大気散乱へ切替", ui::kWideButtonWidth)) {
             m_renderer.AtmosphericMode() = true;
             MarkDocumentChanged();

@@ -329,7 +329,7 @@ void Application::DrawLightingPanel() {
             }
             ui::SectionHeader("雲");
             const bool nodeCloud = m_graph.CompileCloud().hasOutput;
-            if (nodeCloud) ui::HintText("雲はグラフの雲ノイズ・雲層・雲出力で設定します");
+            if (nodeCloud) ui::HintText("雲はグラフの Cloud Noise・Cloud Layer・Cloud Output で設定します");
             if (!nodeCloud && ui::BeginPropertyTable("cloudRows")) {
                 bool clouds = sky.clouds != 0;
                 if (ui::PropertyBool("雲を描画", &clouds, defaults.clouds != 0,
