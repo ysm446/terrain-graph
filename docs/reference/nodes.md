@@ -1,7 +1,7 @@
 # nodes — ノードのリファレンス
 
 作成日時: 2026-09-03 17:30
-更新日時: 2026-09-11 11:25
+更新日時: 2026-09-11 13:11
 
 ノード 1 つずつの、**役割・ピン・パラメータ**の一覧。
 
@@ -12,7 +12,7 @@
 
 ## 実験用の手続き雲
 
-雲ライン（`cloudLine`）→雲の球配置（`cloudSpheres`）、雲楕円体（`cloudEllipsoid`）→雲形状マージ（`cloudMerge`）→雲ノイズ（`cloudNoise`）→既存の雲出力で、一つの雲フィールドを組み立てる。形状は最大32個。操作・各設定・制限は [手続き雲](../design/procedural-clouds.md) を参照。
+雲ライン（`cloudLine`）→雲の球配置（`cloudSpheres`）、雲楕円体（`cloudEllipsoid`）→雲形状マージ（`cloudMerge`）→雲ノイズ（`cloudNoise`）→既存の雲出力で、一つの雲フィールドを組み立てる。形状は最大256個。操作・各設定・制限は [手続き雲](../design/procedural-clouds.md) を参照。
 
 実験用の`Line`は3D直線、`Shape`は形状の集合で、既存の地形用`Path`とは別の型。`Volume`に変換するのは雲ノイズ。既存Volumeのマージは未対応。
 

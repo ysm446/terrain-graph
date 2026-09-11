@@ -1,4 +1,5 @@
 #pragma once
+#include "../../shaders/CloudLimits.hlsli"
 
 #include "compositor/MaterialLayer.h"
 #include "compositor/MaskGraph.h"
@@ -252,7 +253,7 @@ struct CloudPrimitive {
     float centerX=0, centerY=0, centerZ=0, padding=0;
     float radiusX=1, radiusY=1, radiusZ=1, padding2=0;
 };
-inline constexpr size_t MaxCloudPrimitives=32;
+inline constexpr size_t MaxCloudPrimitives=TG_MAX_CLOUD_PRIMITIVES;
 
 // 雲出力が未接続でも hasOutput は真。古い雲へ戻らず表示を消す。
 struct CompiledCloud {

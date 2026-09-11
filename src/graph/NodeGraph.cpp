@@ -518,7 +518,7 @@ CompiledCloud NodeGraph::CompileCloudShapes(GraphId shapeId) const {
             if (!line) return;
             uint32_t state=static_cast<uint32_t>(spheres->seed);
             const auto random = [&]() { state=state*1664525u+1013904223u; return float(state>>8)/16777215.0f*2-1; };
-            const int count=std::clamp(spheres->count,1,32);
+            const int count=std::clamp(spheres->count,1,static_cast<int>(MaxCloudPrimitives));
             for (int i=0;i<count;++i) {
                 const float t=count==1 ? 0.0f : float(i)/float(count-1);
                 const float radius=std::max(1.0f,std::lerp(spheres->startRadius,spheres->endRadius,t)

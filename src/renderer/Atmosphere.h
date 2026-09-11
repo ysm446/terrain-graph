@@ -1,4 +1,5 @@
 #pragma once
+#include "../../shaders/CloudLimits.hlsli"
 #include "renderer/Environment.h"
 #include "renderer/CloudMotion.h"
 #include <cstdint>
@@ -54,10 +55,10 @@ struct AtmosphereSettings {
     float primitiveSmoothness = 0;
     float primitiveDisplacement = 0, primitiveDetail = 0;
     struct Primitive { float center[4] = {}; float radius[4] = {}; };
-    Primitive primitives[32] = {};
+    Primitive primitives[TG_MAX_CLOUD_PRIMITIVES] = {};
 
 };
-static_assert(sizeof(AtmosphereSettings) == 1232);
+static_assert(sizeof(AtmosphereSettings) == 208 + 32 * TG_MAX_CLOUD_PRIMITIVES);
 
 struct GodRaySettings {
     bool enabled = false;

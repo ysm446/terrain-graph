@@ -1,9 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-11 12:28
+更新日時: 2026-09-11 13:11
 
 ## 現在の状況
+
+**手続き雲の上限を256個へ拡張（2026-09-11 13:11）。** 球配置単体とマージ後の合計を32→256個へ。Debug / Releaseビルド・テスト・DXC・256形状のRelease描画とUI・保存再読み込みを確認。既存7形状の画像は全画素一致。Debug GPU実行は未確認。空間分割・複製ノードは未実装。更新版は `build/cloud-limit/Release/terrain_graph.exe`、検証用データは `data/cloud-limit-qa/`。詳細は [手続き雲](../design/procedural-clouds.md)。
 
 **実験用「雲ノイズ」に種類の選択を追加（2026-09-11 12:28）。** Perlin（従来）/ Perlin fBM / Perlin-Worleyの3種類。省略時の互換性・保存対応。Debug / Releaseビルド・テスト・DXC・Releaseの3種類の描画・UI・保存再読み込みを確認し、従来設定は全画素一致。Debug GPU実行は未確認。起動中の通常版を保持し、更新版は `build/cloud-opt/Release/terrain_graph.exe` に配置。詳細は [手続き雲](../design/procedural-clouds.md)。
 

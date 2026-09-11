@@ -1271,7 +1271,7 @@ void Application::DrawGraphPanel() {
         bool changed = false;
         ui::HintText("ラインに沿って球を配置します。横方向のずれは XZ 平面。シードを固定すると再現できます。");
         if (ui::BeginPropertyTable("CloudSpheresRows", "横方向のばらつき")) {
-            changed |= ui::PropertyInt("球の数", &cloudSpheres->count, 1, 32, defaults.count, "ラインに沿って球を配置します。横方向のずれは XZ 平面。シードを固定すると再現できます。");
+            changed |= ui::PropertyInt("球の数", &cloudSpheres->count, 1, static_cast<int>(graph::MaxCloudPrimitives), defaults.count, "ラインに沿って球を配置します。横方向のずれは XZ 平面。シードを固定すると再現できます。");
             changed |= ui::PropertyFloat("始点の半径", &cloudSpheres->startRadius, 10.0f, 3000.0f, defaults.startRadius, "値はメートル単位。", "%.0f m");
             changed |= ui::PropertyFloat("終点の半径", &cloudSpheres->endRadius, 10.0f, 3000.0f, defaults.endRadius, "値はメートル単位。", "%.0f m");
             changed |= ui::PropertyFloat("横方向のばらつき", &cloudSpheres->jitter, 0.0f, 1.0f, defaults.jitter, "ラインに沿って球を配置します。横方向のずれは XZ 平面。シードを固定すると再現できます。", "%.2f");
@@ -1306,7 +1306,7 @@ void Application::DrawGraphPanel() {
     } else if (auto* cloudNoise = std::get_if<graph::CloudNoiseSettings>(&selected->settings)) {
         const graph::CloudNoiseSettings defaults;
         bool changed = false;
-        ui::HintText("形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。最大32個の基本形状に対応します。");
+        ui::HintText("形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。最大256個の基本形状に対応します。");
         if (ui::BeginPropertyTable("CloudNoiseRows", "横方向のばらつき")) {
             const char* noiseTypes[] = {"Perlin（従来）", "Perlin fBM", "Perlin-Worley"};
             changed |= ui::PropertyCombo("ノイズの種類", &cloudNoise->noiseType, noiseTypes, 3, defaults.noiseType,
@@ -1315,14 +1315,14 @@ void Application::DrawGraphPanel() {
             changed |= ui::PropertyFloat("輪郭の変位", &cloudNoise->displacement, 0.0f, 500.0f, defaults.displacement, "値はメートル単位。", "%.0f m");
             changed |= ui::PropertyFloat("細部の削り", &cloudNoise->detail, 0.0f, 200.0f, defaults.detail, "値はメートル単位。", "%.0f m");
             changed |= ui::PropertyFloat("境界の柔らかさ", &cloudNoise->feather, 1.0f, 300.0f, defaults.feather, "値はメートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("密度", &cloudNoise->extinction, 0.0001f, 0.03f, defaults.extinction, "形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。最大32個の基本形状に対応します。", "%.4f");
-            changed |= ui::PropertyFloat("Indirect Light", &cloudNoise->indirectLight, 0.0f, 5.0f, defaults.indirectLight, "形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。最大32個の基本形状に対応します。", "%.2f");
-            changed |= ui::PropertyFloat("Ambient Light", &cloudNoise->ambientLight, 0.0f, 5.0f, defaults.ambientLight, "形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。最大32個の基本形状に対応します。", "%.2f");
-            changed |= ui::PropertyInt("シード", &cloudNoise->seed, 0, 10000, defaults.seed, "形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。最大32個の基本形状に対応します。");
+            changed |= ui::PropertyFloat("密度", &cloudNoise->extinction, 0.0001f, 0.03f, defaults.extinction, "形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。最大256個の基本形状に対応します。", "%.4f");
+            changed |= ui::PropertyFloat("Indirect Light", &cloudNoise->indirectLight, 0.0f, 5.0f, defaults.indirectLight, "形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。最大256個の基本形状に対応します。", "%.2f");
+            changed |= ui::PropertyFloat("Ambient Light", &cloudNoise->ambientLight, 0.0f, 5.0f, defaults.ambientLight, "形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。最大256個の基本形状に対応します。", "%.2f");
+            changed |= ui::PropertyInt("シード", &cloudNoise->seed, 0, 10000, defaults.seed, "形状を一体にしてノイズと密度を評価します。Volume を雲出力へ接続。最大256個の基本形状に対応します。");
             ui::EndPropertyTable();
         }
         const auto compiled = m_graph.CompileCloud();
-        if (compiled.shapeOverflow) ui::HintText("基本形状が32個を超えています。球の数を減らしてください。表示は停止しています。");
+        if (compiled.shapeOverflow) ui::HintText("基本形状が256個を超えています。球の数を減らしてください。表示は停止しています。");
         if (!m_renderer.AtmosphericMode() && ui::Button("大気散乱へ切替", ui::kWideButtonWidth)) {
             m_renderer.AtmosphericMode() = true;
             MarkDocumentChanged(false);

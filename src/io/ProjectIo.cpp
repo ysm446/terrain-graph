@@ -1623,7 +1623,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
             } else if (created.kind == graph::NodeKind::CloudSpheres) {
                 graph::CloudSpheresSettings settings;
                 if (const auto* shape = FindMember(item, "proceduralCloud"); shape && shape->is_object()) {
-                    settings.count = std::clamp(ReadInt(*shape, "count", settings.count), 1, 32);
+                    settings.count = std::clamp(ReadInt(*shape, "count", settings.count), 1, static_cast<int>(graph::MaxCloudPrimitives));
                     settings.startRadius = std::clamp(ReadFloat(*shape, "startRadius", settings.startRadius), 10.0f, 3000.0f);
                     settings.endRadius = std::clamp(ReadFloat(*shape, "endRadius", settings.endRadius), 10.0f, 3000.0f);
                     settings.jitter = std::clamp(ReadFloat(*shape, "jitter", settings.jitter), 0.0f, 1.0f);

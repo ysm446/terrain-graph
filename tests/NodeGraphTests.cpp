@@ -62,10 +62,16 @@ void RunNodeGraphTests() {
         const auto repeated=graph.CompileCloud();
         Check(repeated.primitives[0].centerX==compiled.primitives[0].centerX,"同じシードで同じ配置を再現する");
         auto& sphereSettings=std::get<tg::graph::CloudSpheresSettings>(graph.FindMutableNode(spheres)->settings);
-        sphereSettings.count=32;
+        sphereSettings.count=64;
+        Check(graph.CompileCloud().connected && graph.CompileCloud().primitives.size()==65,
+            "旧上限を超えた64球と楕円体をマージできる");
+        sphereSettings.count=static_cast<int>(tg::graph::MaxCloudPrimitives)-1;
+        Check(graph.CompileCloud().connected && graph.CompileCloud().primitives.size()==tg::graph::MaxCloudPrimitives,
+            "マージした合計256個を欠落なく保持する");
+        sphereSettings.count=static_cast<int>(tg::graph::MaxCloudPrimitives);
         Check(graph.CompileCloud().shapeOverflow && !graph.CompileCloud().connected,"上限を超えた形状を黙って切り捨てず表示を停止する");
         Check(link(spheres,merge,1),"同じ形状を両入力に繋げる");
-        Check(graph.CompileCloud().primitives.size()==32 && !graph.CompileCloud().shapeOverflow,"共有された形状は一度だけ取り込む");
+        Check(graph.CompileCloud().primitives.size()==tg::graph::MaxCloudPrimitives && !graph.CompileCloud().shapeOverflow,"共有された形状は一度だけ取り込む");
         Check(!link(merge,merge),"形状マージの循環を拒否する");
         sphereSettings.count=1; sphereSettings.jitter=0; sphereSettings.radiusVariation=0;
         const auto single=graph.CompileCloud();

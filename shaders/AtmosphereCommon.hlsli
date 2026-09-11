@@ -1,5 +1,6 @@
 #ifndef TG_ATMOSPHERE_COMMON
 #define TG_ATMOSPHERE_COMMON
+#include "CloudLimits.hlsli"
 #include "EnvCommon.hlsli"
 #include "AtmosphereScattering.hlsli"
 #include "CloudScattering.hlsli"
@@ -18,7 +19,7 @@ struct AtmosphericParameters {
     float indirectLight; float ambientLight; uint cloudCellIndex; uint cloudNoiseType;
     uint cloudCellCount; uint3 cellPadding;
     uint primitiveCount; float primitiveSmoothness; float primitiveDisplacement; float primitiveDetail;
-    CloudPrimitive primitives[32];
+    CloudPrimitive primitives[TG_MAX_CLOUD_PRIMITIVES];
 };
 float3 AtmosphereSun(AtmosphericParameters p) {
     return float3(cos(p.elevation) * sin(p.azimuth), sin(p.elevation), cos(p.elevation) * cos(p.azimuth));
@@ -140,7 +141,7 @@ float CloudLayerBody(float2 position, float h, AtmosphericParameters p, float di
 float ProceduralCloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex, out float emptyDistance) {
     float distance=1e9, weight=0;
     emptyDistance=1e9;
-    [loop] for(uint i=0;i<min(p.primitiveCount,32u);++i) {
+    [loop] for(uint i=0;i<min(p.primitiveCount,(uint)TG_MAX_CLOUD_PRIMITIVES);++i) {
         float3 radii=max(p.primitives[i].radius.xyz,1);
         float3 offset=position-p.primitives[i].center.xyz;
         float k0=length(offset/radii), k1=length(offset/(radii*radii));
