@@ -327,10 +327,14 @@ float WeatherCloudDensity(float3 position, AtmosphericParameters p, uint noiseIn
     // 周期は「細部の大きさ」で独立に指定。遠景では細部を省き、平均値相当で薄く削る。
     float erosion=p.detailStrength*lerp(1+p.weatherWisp,0.5,saturate(h*3));
     float detailFade=1-smoothstep(12000,30000,viewDistance);
+    // 刻み幅が細部の最小構造（周期の約1/8）より粗くなると平均へ寄せ、サンプリングのちらつきを抑える。
+    float stepLength=max(p.weatherDetailScale*0.06,viewDistance*0.004*64.0/max(p.samples,16u));
+    detailFade*=saturate(2-stepLength/(p.weatherDetailScale*0.125));
     float coarse=density*(1-erosion*0.35);
     if (detailFade>0.001) {
         float3 duv=(offset-float3(p.windOffsetX,0,p.windOffsetZ))/max(p.weatherDetailScale,10)+0.173;
-        float detail=CloudDetailNoise(duv,p,noiseIndex);
+        // 最小構造の細かい侵食チャンネルではなく、Perlin-Worley（セル 4/8/16）を細部に使う。
+        float detail=SampleCloudNoise(duv,noiseIndex,1);
         float dn=lerp(1-detail,detail,saturate(h*8));
         float eroded=saturate((density-erosion*dn)/max(1-erosion*dn,1e-3));
         density=lerp(coarse,eroded,detailFade);
@@ -510,7 +514,7 @@ float4 IntegrateCloud(float3 origin, float3 ray, float limit, AtmosphericParamet
     // 天候層は距離適応の刻み。近景は細部の大きさに合わせて細かく、遠景ほど長く進める。
     float minStep=0, stepGrowth=0;
     if (p.localCloud==4) {
-        minStep=max(p.weatherDetailScale*0.08,8);
+        minStep=max(p.weatherDetailScale*0.06,8);
         stepGrowth=0.004*64.0/max(p.samples,16u);
         count=2048;
     }
