@@ -901,7 +901,7 @@ void Application::DrawGraphEditor() {
                         "Mask Area — パスの閉じた鎖の内側をマスクにする（エリア選択）");
         ImGui::Separator();
         ImGui::Separator();
-        addNodeMenuItem(graph::NodeKind::CloudWeatherLayer, "Cloud Weather Layer (Experimental) — 雲量と雲種のマップで広域の雲層を作る");
+        addNodeMenuItem(graph::NodeKind::CloudWeatherLayer, "Cloud Weather Layer — 雲量と雲種のマップで広域の雲層を作る");
         addNodeMenuItem(graph::NodeKind::CloudShapeGenerate, "Cloud Shape Generate (Experimental) — 単独の積雲を生成する");
         addNodeMenuItem(graph::NodeKind::CloudMapGenerate, "Cloud Map Generate (Experimental) — ポイントの分布から雲形状を生成する");
         addNodeMenuItem(graph::NodeKind::CloudLine, "Cloud Line (Experimental) — 雲の芯になる3D直線");
