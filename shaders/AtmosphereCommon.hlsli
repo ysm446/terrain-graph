@@ -320,8 +320,9 @@ float WeatherCloudDensity(float3 position, AtmosphericParameters p, uint noiseIn
     if (coverage<=0.001) return 0;
     // 刻み幅（距離適応）に対して各ノイズ成分を帯域制限し、カメラ移動時のちらつきを抑える。
     // 最小構造は Perlin-Worley の 16 セルで周期/16。刻みがその半分を超えたら平均へ寄せる。
-    float stepLength=max(p.weatherDetailScale*0.03,viewDistance*0.003*64.0/max(p.samples,16u));
-    float fade2=saturate(2-2*stepLength/(p.cloudScale/2.3/16));
+    float stepLength=max(p.weatherDetailScale*0.03,viewDistance*0.002*64.0/max(p.samples,16u));
+    // 移行は最小構造の 1/2 倍から 1.5 倍の刻みにかけて緩やかに行い、切り替わりを目立たせない。
+    float fade2=saturate(1.5-stepLength/(p.cloudScale/2.3/16));
     // 周期の異なる2オクターブで繰り返しを崩す。
     // 1オクターブ目は雲の本体なので移動量で進め、2オクターブ目と細部だけを相対移動で進めて形を変える。
     float shape=CloudShapeNoise(body,p,noiseIndex)*0.65+lerp(0.7,CloudShapeNoise(uvw*2.3+float3(0.29,0.71,0.13),p,noiseIndex),fade2)*0.35;
@@ -334,9 +335,9 @@ float WeatherCloudDensity(float3 position, AtmosphericParameters p, uint noiseIn
     // 細部の削り。雲底付近は筋状にほどけ、上部は丸い膨らみを残す。
     // 周期は「細部の大きさ」で独立に指定。遠景では細部を省き、平均値相当で薄く削る。
     float erosion=p.detailStrength*lerp(1+p.weatherWisp,0.5,saturate(h*3));
-    float detailFade=1-smoothstep(12000,30000,viewDistance);
+    float detailFade=1-smoothstep(25000,60000,viewDistance);
     // 刻み幅が細部の最小構造（周期/16）の半分を超えると平均へ寄せ、サンプリングのちらつきを抑える。
-    detailFade*=saturate(2-2*stepLength/(p.weatherDetailScale/16));
+    detailFade*=saturate(1.5-stepLength/(p.weatherDetailScale/16));
     float coarse=density*(1-erosion*0.35);
     if (detailFade>0.001) {
         float3 duv=(offset-float3(p.windOffsetX,0,p.windOffsetZ))/max(p.weatherDetailScale,10)+0.173;
@@ -533,7 +534,7 @@ float4 IntegrateCloud(float3 origin, float3 ray, float limit, AtmosphericParamet
     float minStep=0, stepGrowth=0;
     if (p.localCloud==4) {
         minStep=max(p.weatherDetailScale*0.03,8);
-        stepGrowth=0.003*64.0/max(p.samples,16u);
+        stepGrowth=0.002*64.0/max(p.samples,16u);
         count=2048;
     }
     float3 sun=AtmosphereSun(p);
