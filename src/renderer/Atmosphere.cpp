@@ -310,6 +310,7 @@ void Atmosphere::Shutdown(rhi::Device& device) {
     m_motion.Reset();
     device.DeferRelease(m_shapeCache);
     m_shapeDirty = true;
+    device.DeferRelease(m_farCloud);
     device.DeferRelease(m_opticalDepth);
     m_opticalDirty = true;
     m_cloudEnvironmentDirty = false;
@@ -398,8 +399,8 @@ void Atmosphere::Render(rhi::Device& device, rhi::PipelineCache& pipelines,
         AtmosphereSettings settings;
         uint32_t depth, lut, noise, environment;
         uint32_t halfCloud, halfDepth, width, height;
-        uint32_t halfCloudOutput, halfDepthOutput, padding[2];
-        uint32_t godRays; float rayDensity, rayDistance, rayPadding;
+        uint32_t halfCloudOutput, halfDepthOutput, farCloud, farCloudOutput;
+        uint32_t godRays; float rayDensity, rayDistance, farDistance;
         DirectX::XMFLOAT4X4 lightViewProjection;
         uint32_t shadowIndex; float shadowTexelSize, shadowBias, shadowPadding;
     };
@@ -407,12 +408,36 @@ void Atmosphere::Render(rhi::Device& device, rhi::PipelineCache& pipelines,
     if (!pipeline || !allocation.IsValid()) return;
     Constants constants{inverseViewProjection, camera, showSky ? 1u : 0u, m_applied,
         depth.SrvIndex(), m_skyView.SrvIndex(), m_noise.SrvIndex(), m_cloudLighting.SrvIndex(),
-        UINT32_MAX, UINT32_MAX, scene.width, scene.height, UINT32_MAX, UINT32_MAX, {0,0},
-        m_godRays.enabled ? 1u : 0u, m_godRays.density, m_godRays.distance, 0,
+        UINT32_MAX, UINT32_MAX, scene.width, scene.height, UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX,
+        m_godRays.enabled ? 1u : 0u, m_godRays.density, m_godRays.distance, m_applied.weatherFar,
         lightViewProjection, shadowIndex, shadowTexelSize, shadowBias, 0};
     // 深度は compute と pixel の両方から読む。DSV を先に外す。
     commands->OMSetRenderTargets(1, &scene.rtv.cpu, FALSE, nullptr);
     TransitionIfNeeded(commands, depth, ReadState);
+    // 天候層の遠景パス。1/4 解像度で遠景の開始距離より先だけを積分し、後段が合成する。
+    if (m_applied.clouds && m_applied.localCloud == 4 && m_applied.weatherFar > 0) {
+        const uint32_t width = (scene.width + 3) / 4, height = (scene.height + 3) / 4;
+        if (m_farCloud.width != width || m_farCloud.height != height) {
+            device.DeferRelease(m_farCloud);
+            if (!CreateTarget(device, m_farCloud, width, DXGI_FORMAT_R16G16B16A16_FLOAT, 1, height))
+                device.DeferRelease(m_farCloud);
+        }
+        auto* farPipeline = pipelines.GetCompute(L"AtmosphereComposite.hlsl", L"CsCloudFar");
+        const auto farAllocation = device.Upload().Allocate(sizeof(Constants), 256);
+        if (m_farCloud.IsValid() && farPipeline && farAllocation.IsValid()) {
+            constants.farCloudOutput = m_farCloud.UavIndex();
+            std::memcpy(farAllocation.cpu, &constants, sizeof(constants));
+            PIXBeginEvent(commands, PIX_COLOR(120,180,255), "CloudFarQuarterResolution");
+            TransitionIfNeeded(commands, m_farCloud, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            commands->SetComputeRootSignature(pipelines.GlobalRootSignature());
+            commands->SetComputeRootConstantBufferView(1, farAllocation.gpuAddress);
+            commands->SetPipelineState(farPipeline);
+            commands->Dispatch(rhi::DispatchCount(width), rhi::DispatchCount(height), 1);
+            TransitionIfNeeded(commands, m_farCloud, ReadState);
+            PIXEndEvent(commands);
+            constants.farCloud = m_farCloud.SrvIndex();
+        }
+    }
     if ((m_applied.clouds || m_godRays.enabled) && !m_fullResolutionClouds) {
         const uint32_t width = (scene.width + 1) / 2, height = (scene.height + 1) / 2;
         if (m_halfCloud.width != width || m_halfCloud.height != height || !m_halfDepth.IsValid()) {

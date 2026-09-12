@@ -716,13 +716,19 @@ CompiledCloud NodeGraph::CompileCloud() const {
             result.variation = std::clamp(weather.variation, 0.0f, 1.0f);
             result.detailScale = std::clamp(weather.detailScale, 20.0f, 5000.0f);
             result.distanceLod = weather.distanceLod;
+            result.farDistance = std::clamp(weather.farDistance, 0.0f, 200000.0f);
             auto& cloud = result.cloud;
             cloud.enabled = true;
             cloud.centerX = weather.centerX; cloud.centerZ = weather.centerZ;
             cloud.width = std::clamp(weather.width, 100.0f, 200000.0f);
             cloud.depth = std::clamp(weather.depth, 100.0f, 200000.0f);
-            cloud.thickness = std::clamp(weather.maxThickness, 100.0f, 20000.0f);
-            cloud.centerY = weather.bottomHeight + cloud.thickness * 0.5f;
+            result.weatherThickness = std::clamp(weather.maxThickness, 100.0f, 20000.0f);
+            result.weatherBottom = weather.bottomHeight;
+            // 球殻の沈み分（範囲の対角の端で d²/(2R)）だけ包囲箱を下へ広げる。
+            const float halfDiagonal = std::sqrt(cloud.width * cloud.width + cloud.depth * cloud.depth) * 0.5f;
+            const float drop = halfDiagonal * halfDiagonal / (2.0f * 6360000.0f);
+            cloud.thickness = result.weatherThickness + drop;
+            cloud.centerY = weather.bottomHeight - drop + cloud.thickness * 0.5f;
             cloud.coverage = std::clamp(weather.coverage, 0.0f, 1.0f);
             cloud.noiseScale = std::clamp(weather.noiseScale, 100.0f, 50000.0f);
             cloud.noiseType = std::clamp(weather.noiseType, 0, 1);

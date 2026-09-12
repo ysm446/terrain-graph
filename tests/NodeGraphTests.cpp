@@ -759,7 +759,9 @@ void RunNodeGraphTests() {
         Check(graph.CreateLink(graph.FindNode(layer)->outputs.front().id, graph.FindNode(output)->inputs.front().id), "天候層は雲出力へ接続できる");
         auto cloud = graph.CompileCloud();
         Check(cloud.connected && cloud.layer && cloud.weather && cloud.maskPin==0 && cloud.typeMaskPin==0, "未接続の天候層は一様な雲量・雲種");
-        Check(cloud.cloud.width==30000.0f && cloud.cloud.thickness==5000.0f && cloud.cloud.centerY==1500.0f+2500.0f, "既定の範囲・厚さ・雲底を描画設定へ変換");
+        Check(cloud.cloud.width==30000.0f && cloud.weatherThickness==5000.0f && cloud.weatherBottom==1500.0f, "既定の範囲・厚さ・雲底を描画設定へ変換");
+        Check(cloud.cloud.thickness>5000.0f && cloud.cloud.centerY-cloud.cloud.thickness*0.5f<1500.0f && cloud.cloud.centerY+cloud.cloud.thickness*0.5f==6500.0f, "包囲箱は球殻の沈み分だけ下へ広がり、上端は変わらない");
+        Check(cloud.farDistance==20000.0f, "遠景パスの既定開始距離は20km");
         Check(cloud.cloud.coverage==0.4f && std::abs(cloud.cloudType-0.3f)<1e-6f && cloud.cloud.noiseType==1, "雲量・雲種・Perlin-Worley を渡す");
         Check(graph.CreateLink(graph.FindNode(coverageMask)->outputs.front().id, graph.FindNode(layer)->inputs[0].id), "Coverage にマスクを接続できる");
         Check(graph.CreateLink(graph.FindNode(typeMask)->outputs.front().id, graph.FindNode(layer)->inputs[1].id), "Type にマスクを接続できる");
@@ -769,7 +771,7 @@ void RunNodeGraphTests() {
         settings.cloudType = 1.0f; settings.maxThickness = 8000; settings.bottomHeight = 1000;
         graph.MarkCloudDirty();
         cloud = graph.CompileCloud();
-        Check(cloud.cloudType==1.0f && cloud.cloud.thickness==8000.0f && cloud.cloud.centerY==5000.0f, "雲種と厚さの変更を反映する");
+        Check(cloud.cloudType==1.0f && cloud.weatherThickness==8000.0f && cloud.weatherBottom==1000.0f, "雲種と厚さの変更を反映する");
         Check(cloud.cloud.noiseSpeedRatio==1.0f, "模様を変化がオフなら模様の速度比は1");
         settings.evolveNoise=true; settings.noiseSpeedRatio=0.25f;
         graph.MarkCloudDirty();

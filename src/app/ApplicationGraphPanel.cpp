@@ -1317,7 +1317,7 @@ void Application::DrawGraphPanel() {
         if (ui::BeginPropertyTable("CloudWeatherRangeRows", "積乱雲の広がり")) {
             changed |= ui::PropertyFloat("中心 X", &weather->centerX, -100000.0f, 100000.0f, defaults.centerX, "メートル単位。", "%.0f m");
             changed |= ui::PropertyFloat("中心 Z", &weather->centerZ, -100000.0f, 100000.0f, defaults.centerZ, "メートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("範囲幅", &weather->width, 100.0f, 200000.0f, defaults.width, "マスク全体をこの範囲に割り当てます。", "%.0f m");
+            changed |= ui::PropertyFloat("範囲幅", &weather->width, 100.0f, 200000.0f, defaults.width, "マスク全体をこの範囲に割り当てます。範囲を広げると遠くの雲が地平線へ沈みます（100 km で約 800 m）。", "%.0f m");
             changed |= ui::PropertyFloat("範囲奥行き", &weather->depth, 100.0f, 200000.0f, defaults.depth, "マスク全体をこの範囲に割り当てます。", "%.0f m");
             changed |= ui::PropertyFloat("雲底高度", &weather->bottomHeight, -10000.0f, 20000.0f, defaults.bottomHeight, "メートル単位。", "%.0f m");
             changed |= ui::PropertyFloat("最大厚さ", &weather->maxThickness, 100.0f, 20000.0f, defaults.maxThickness, "雲種 1（積乱雲）で使う厚さ。層雲はこの約2割、積雲は約5割の高さまで。", "%.0f m");
@@ -1331,6 +1331,7 @@ void Application::DrawGraphPanel() {
             changed |= ui::PropertyFloat("模様の大きさ", &weather->noiseScale, 100.0f, 50000.0f, defaults.noiseScale, "形状ノイズの周期。", "%.0f m");
             changed |= ui::PropertyFloat("細部の大きさ", &weather->detailScale, 20.0f, 5000.0f, defaults.detailScale, "細部ノイズの周期。小さいほど縁が細かくなり、近景の刻み幅もこれに合わせて細かくなります。12〜30 km より遠くでは細部を省きます。", "%.0f m");
             changed |= ui::PropertyFloat("細部の削り", &weather->detailStrength, 0.0f, 1.0f, defaults.detailStrength, nullptr, "%.2f");
+            changed |= ui::PropertyFloat("遠景の開始距離", &weather->farDistance, 0.0f, 200000.0f, defaults.farDistance, "この距離より先の雲を 1/4 解像度の別パスで描き、手前と合成します。0 で無効。層は地球と同心の球殻として扱い、遠くの雲は地平線へ沈みます。", "%.0f m");
             changed |= ui::PropertyBool("距離 LOD", &weather->distanceLod, defaults.distanceLod, "オンで遠景ほど刻みを伸ばし、刻みより細かいノイズを平均へ寄せ、25〜60 km より先で細部を省きます。オフは全距離を近景の刻みで評価するため負荷が上がります。");
             changed |= ui::PropertyFloat("密度", &weather->extinction, 0.0001f, 0.03f, defaults.extinction, nullptr, "%.4f");
             changed |= ui::PropertyFloat("Indirect Light", &weather->indirectLight, 0.0f, 5.0f, defaults.indirectLight, nullptr, "%.2f");

@@ -5,8 +5,8 @@ cbuffer Constants : register(b1) {
     AtmosphericParameters settings;
     uint depthIndex; uint lutIndex; uint noiseIndex; uint environmentIndex;
     uint halfCloudIndex; uint halfDepthIndex; uint2 fullSize;
-    uint halfCloudOutput; uint halfDepthOutput; uint2 padding;
-    uint godRays; float rayDensity; float rayDistance; float rayPadding;
+    uint halfCloudOutput; uint halfDepthOutput; uint farCloudIndex; uint farCloudOutput;
+    uint godRays; float rayDensity; float rayDistance; float farDistance;
     float4x4 lightViewProjection;
     uint shadowIndex; float shadowTexelSize; float shadowBias; float shadowPadding;
 };
@@ -38,8 +38,20 @@ float TerrainRayVisibility(float3 position) {
     }
     return visibility/9;
 }
-float4 IntegrateCloudAndRays(float3 ray, float limit) {
-    float4 cloud=IntegrateCloud(camera,ray,limit,settings,noiseIndex,environmentIndex);
+// 遠景パスの結果を手前の結果の後ろに合成する。遠景テクスチャは 1/4 解像度でバイリニア補間。
+float4 CombineFarCloud(float4 near, float2 pixel, float limit) {
+    if (farCloudIndex==0xffffffff || limit<=farDistance || near.a<=0.001) return near;
+    Texture2D<float4> far=ResourceDescriptorHeap[farCloudIndex];
+    uint2 farSize=(fullSize+3)/4;
+    float2 uv=(pixel/float2(fullSize));
+    float4 f=far.SampleLevel(g_samplerLinearClamp,uv,0);
+    return float4(near.rgb+near.a*f.rgb,near.a*f.a);
+}
+float4 IntegrateCloudAndRays(float3 ray, float limit, float2 pixel) {
+    // 遠景パスがあるときは手前の積分を遠景の開始距離で打ち切り、後で合成する。
+    float nearLimit=farCloudIndex!=0xffffffff ? min(limit,farDistance) : limit;
+    float4 cloud=IntegrateCloud(camera,ray,nearLimit,settings,noiseIndex,environmentIndex);
+    cloud=CombineFarCloud(cloud,pixel,limit);
     float3 sun=AtmosphereSun(settings);
     if (godRays==0 || rayDensity<=0 || sun.y<=0.001) return cloud;
     float start=0, end=min(limit,rayDistance);
@@ -81,13 +93,26 @@ void CsCloudHalf(uint3 id:SV_DispatchThreadID) {
     float3 ray=CloudViewRay(float2(pixel)+0.5,z,limit);
     RWTexture2D<float4> output=ResourceDescriptorHeap[halfCloudOutput];
     RWTexture2D<float> outputDepth=ResourceDescriptorHeap[halfDepthOutput];
-    output[id.xy]=IntegrateCloudAndRays(ray,limit);
+    output[id.xy]=IntegrateCloudAndRays(ray,limit,float2(pixel)+0.5);
     outputDepth[id.xy]=limit;
+}
+// 遠景の雲を 1/4 解像度で描く。遠景の開始距離より手前は積分しない。
+[numthreads(8,8,1)]
+void CsCloudFar(uint3 id:SV_DispatchThreadID) {
+    uint2 farSize=(fullSize+3)/4;
+    if (any(id.xy>=farSize)) return;
+    Texture2D<float> depth=ResourceDescriptorHeap[depthIndex];
+    uint2 pixel=min(id.xy*4+1,fullSize-1);
+    float z=depth.Load(int3(pixel,0));
+    float limit;
+    float3 ray=CloudViewRay(float2(pixel)+0.5,z,limit);
+    RWTexture2D<float4> output=ResourceDescriptorHeap[farCloudOutput];
+    output[id.xy]=limit>farDistance ? IntegrateCloud(camera,ray,limit,settings,noiseIndex,environmentIndex,farDistance) : float4(0,0,0,1);
 }
 float4 ReconstructCloud(float2 pixel, float3 ray, float limit) {
     if (settings.clouds==0 && godRays==0) return float4(0,0,0,1);
     if (halfCloudIndex==0xffffffff)
-        return IntegrateCloudAndRays(ray,limit);
+        return IntegrateCloudAndRays(ray,limit,pixel);
     Texture2D<float4> clouds=ResourceDescriptorHeap[halfCloudIndex];
     Texture2D<float> depths=ResourceDescriptorHeap[halfDepthIndex];
     float2 low=(pixel-0.5)*0.5;
@@ -104,7 +129,7 @@ float4 ReconstructCloud(float2 pixel, float3 ray, float limit) {
         float weight=(x ? fraction.x : 1-fraction.x)*(y ? fraction.y : 1-fraction.y);
         result+=clouds.Load(int3(coord,0))*weight;
     }
-    if (!compatible) return IntegrateCloudAndRays(ray,limit);
+    if (!compatible) return IntegrateCloudAndRays(ray,limit,pixel);
     return result;
 }
 float4 PsMain(Vertex v):SV_Target {

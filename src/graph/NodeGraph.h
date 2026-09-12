@@ -294,6 +294,7 @@ struct CloudWeatherSettings {
     float noiseScale=4000; // 形状ノイズの周期（m）。
     float detailScale=800; // 細部ノイズの周期（m）。
     bool distanceLod=true; // 距離に応じて細部を省き、刻みを伸ばす。
+    float farDistance=20000; // 遠景パス（1/4 解像度）の開始距離（m）。0 で無効。
     int noiseType=1; // 0: Perlin fBM、1: Perlin-Worley。
     float detailStrength=0.3f;
     float edgeSoftness=0.1f; // 範囲端のフェード（範囲に対する比率）。
@@ -369,6 +370,8 @@ struct CompiledCloud {
     float cloudType = 0.3f, anvil = 0.5f, wisp = 0.5f, streets = 0.5f, variation = 0.5f;
     float detailScale = 800;
     bool distanceLod = true;
+    float farDistance = 20000;
+    float weatherBottom = 1500, weatherThickness = 5000; // 球殻の雲底と厚さ。cloud.centerY/thickness は沈み分を含む包囲箱。
 };
 
 // 出力。ここに繋いだチェーンがプレビューのマテリアルになる。

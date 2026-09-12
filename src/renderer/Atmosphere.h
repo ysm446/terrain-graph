@@ -76,8 +76,12 @@ struct AtmosphereSettings {
     float weatherVariation = 0.5f; // 塊ごとの密度差。
     float weatherDetailScale = 800.0f; // 細部ノイズの周期（m）。
     uint32_t weatherLod = 1; // 距離 LOD（細部の省略・帯域制限・刻みの伸び）。
+    float weatherBottom = 1500.0f; // 球殻の雲底高度（m）。cloudBottom は沈み分だけ下へ広げた包囲箱。
+    float weatherThickness = 5000.0f; // 球殻の厚さ（m）。
+    float weatherFar = 20000.0f; // 遠景パスの開始距離（m）。0 で無効。
+    float weatherPadding = 0;
 };
-static_assert(sizeof(AtmosphereSettings) == 288);
+static_assert(sizeof(AtmosphereSettings) == 304);
 
 struct CloudGeometry {
     std::vector<AtmosphereSettings::Primitive> primitives;
@@ -136,6 +140,7 @@ private:
     rhi::GpuTexture m_cloudCells;
     rhi::GpuTexture m_halfCloud;
     rhi::GpuTexture m_halfDepth;
+    rhi::GpuTexture m_farCloud; // 天候層の遠景（1/4 解像度）。
     GodRaySettings m_godRays;
     bool m_cellsDirty = true;
     bool m_fullResolutionClouds = false;

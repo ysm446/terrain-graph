@@ -1,7 +1,7 @@
 # nodes — ノードのリファレンス
 
 作成日時: 2026-09-03 17:30
-更新日時: 2026-09-12 22:00
+更新日時: 2026-09-12 23:10
 
 ノード 1 つずつの、**役割・ピン・パラメータ**の一覧。
 
@@ -877,6 +877,10 @@ Cloud Merge の入力を可変長に変更。新規作成時は Shape 1 のみ�
 ## Cloud Shape Generate（2026-09-12 12:20）
 
 Cloud Shape Generate (Experimental) を追加。入力なしで単独の積雲を球の集合として生成し、Shape を Cloud Replicate / Cloud Merge / Cloud Noise へ接続できる。雲種（Humilis / Mediocris / Congestus）で土台の厚さと塔の高さ・本数を切り替え、中心XYZ・サイズ（基本半径）・長さ／幅の倍率・球の間隔・乱れ・下側の切り取り・回転・半径のランダム化・二次形状（繰り返し1〜3、押し出し、広がり）・つなぎの滑らかさ・シードを持つ。土台は楕円体内の乱した格子、塔は先端へ細くなる球列、二次形状は上半球方向へ積む子球。Houdini の Cloud Shape Generate を参考にした構成で、Bend と Fuse は未対応。保存識別子は `cloudShapeGenerate`、設定は `proceduralCloud` 節。
+
+## Cloud Weather Layer の遠景（2026-09-12 23:10）
+
+Cloud Weather Layer の遠景対応。(1) 層を地球（半径 6360 km）と同心の球殻として扱い、原点からの水平距離 d に対して層を d²/(2R) 沈める（100 km で約 790 m）。密度評価と in-scatter の高さは沈みを足した高さで計算し、包囲箱は範囲の対角端での沈み分だけ下へ広げる。地形は平らのまま。(2) 「遠景の開始距離」（既定 20 km、0 で無効、保存名 `farDistance`）より先の雲を 1/4 解像度の別パス（`CsCloudFar`）で描き、手前の積分をその距離で打ち切って後ろに合成する。半解像度モードとも併用できる。`AtmosphereSettings` は 304 バイト（weatherBottom / weatherThickness / weatherFar）。
 
 ## Cloud Weather Layer の雲底の明るさ（2026-09-12 22:00）
 
