@@ -274,7 +274,7 @@ struct CloudShapeGenerateSettings {
     bool secondaryShapes=true;
     int iterations=1; // 二次形状の繰り返し（1〜3）。
     float displacement=0.3f, spread=0.5f;
-    float smoothness=60;
+    float smoothnessRatio=1.0f; // つなぎの滑らかさ（球の半径に対する比率）。
     int seed=1;
     bool operator==(const CloudShapeGenerateSettings&) const = default;
 };

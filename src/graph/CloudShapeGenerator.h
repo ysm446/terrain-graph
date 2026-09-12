@@ -24,7 +24,6 @@ inline CloudSpeciesProfile CloudSpecies(int species) {
 // 雲種に応じた上向きの塔を立て、必要なら二次形状を表面へ追加する。
 inline CompiledCloud GenerateCloudShape(const CloudShapeGenerateSettings& settings,GraphId nodeId) {
     CompiledCloud result;
-    result.smoothness=std::clamp(settings.smoothness,0.0f,500.0f);
     const float size=std::clamp(settings.size,10.0f,5000.0f);
     const float rx=size*std::clamp(settings.length,0.1f,5.0f);
     const float rz=size*std::clamp(settings.width,0.1f,5.0f);
@@ -33,6 +32,8 @@ inline CompiledCloud GenerateCloudShape(const CloudShapeGenerateSettings& settin
     const float separation=std::clamp(settings.pointSeparation,0.05f,1.0f);
     const float distortion=std::clamp(settings.distortion,0.0f,1.0f);
     const float sphereRadius=std::max(1.0f,size*separation);
+    // 滑らかさは球の半径に比例させ、サイズや間隔を変えてもくびれの埋まり方を保つ。
+    result.smoothness=std::clamp(sphereRadius*std::clamp(settings.smoothnessRatio,0.0f,3.0f),0.0f,500.0f);
     const float step=sphereRadius*1.1f;
     uint32_t state=static_cast<uint32_t>(settings.seed)*747796405u+2891336453u;
     const auto random=[&]() { state=state*1664525u+1013904223u; return float(state>>8)/16777216.0f; };

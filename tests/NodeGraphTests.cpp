@@ -328,6 +328,10 @@ void RunNodeGraphTests() {
         settings.centerX=1000; settings.centerY=1500; settings.centerZ=-500;
         const auto base=graph.CompileCloudShapes(node);
         Check(base.connected && !base.primitives.empty() && !base.shapeOverflow,"既定設定で球の集合を生成");
+        Check(std::abs(base.smoothness-180.0f)<0.01f,"滑らかさは球の半径（サイズ×間隔）×比率で決まる");
+        settings.size=300;
+        Check(std::abs(graph.CompileCloudShapes(node).smoothness-90.0f)<0.01f,"サイズを変えると滑らかさも比例して変わる");
+        settings.size=600;
         bool bounded=true;
         const float planeY=1500-600*0.55f+0.3f*2*600*0.55f;
         for (const auto& p:base.primitives) {

@@ -1469,7 +1469,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
                 {"randomScale",generate->randomScale},{"scaleMin",generate->scaleMin},{"scaleMax",generate->scaleMax},
                 {"secondaryShapes",generate->secondaryShapes},{"iterations",generate->iterations},
                 {"displacement",generate->displacement},{"spread",generate->spread},
-                {"smoothness",generate->smoothness},{"seed",generate->seed}};
+                {"smoothnessRatio",generate->smoothnessRatio},{"seed",generate->seed}};
         } else if (const auto* animation = std::get_if<graph::CloudAnimationSettings>(&node.settings)) {
             item["cloudAnimation"]={{"centerX",animation->centerX},{"centerZ",animation->centerZ},
                 {"width",animation->width},{"depth",animation->depth},{"speed",animation->speed},
@@ -1752,7 +1752,10 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.iterations=std::clamp(ReadInt(*shape,"iterations",settings.iterations),1,3);
                     settings.displacement=std::clamp(ReadFloat(*shape,"displacement",settings.displacement),0.0f,1.0f);
                     settings.spread=std::clamp(ReadFloat(*shape,"spread",settings.spread),0.0f,1.0f);
-                    settings.smoothness=std::clamp(ReadFloat(*shape,"smoothness",settings.smoothness),0.0f,500.0f);
+                    // 旧形式はメートル指定。球の半径で割って比率へ換算する。
+                    const float sphereRadius=std::max(1.0f,settings.size*settings.pointSeparation);
+                    const float legacyRatio=ReadFloat(*shape,"smoothness",settings.smoothnessRatio*sphereRadius)/sphereRadius;
+                    settings.smoothnessRatio=std::clamp(ReadFloat(*shape,"smoothnessRatio",legacyRatio),0.0f,3.0f);
                     settings.seed=std::clamp(ReadInt(*shape,"seed",settings.seed),0,10000);
                 }
                 created.settings=settings;

@@ -1326,9 +1326,11 @@ void Application::DrawGraphPanel() {
                 changed |= ui::PropertyFloat("押し出し", &generate->displacement, 0.0f, 1.0f, defaults.displacement, "親の半径に対する子球の距離。", "%.2f");
                 changed |= ui::PropertyFloat("広がり", &generate->spread, 0.0f, 1.0f, defaults.spread, "0で真上、1で水平まで方向が散らばります。", "%.2f");
             }
-            changed |= ui::PropertyFloat("つなぎの滑らかさ", &generate->smoothness, 0.0f, 500.0f, defaults.smoothness, "メートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("つなぎの滑らかさ", &generate->smoothnessRatio, 0.0f, 3.0f, defaults.smoothnessRatio, "球の半径（サイズ×球の間隔）に対する比率。実際の値は下に表示します。球のくびれは最大で実際の値の1/4埋まります。", "%.2f");
             const auto generated=m_graph.CompileCloudShapes(selected->id);
-            char text[48]; std::snprintf(text,sizeof(text),"%zu 個",generated.primitives.size());
+            char text[48]; std::snprintf(text,sizeof(text),"%.0f m",generated.smoothness);
+            ui::PropertyValue("実際の滑らかさ",text);
+            std::snprintf(text,sizeof(text),"%zu 個",generated.primitives.size());
             ui::PropertyValue("合計形状数",text);
             ui::EndPropertyTable();
             if (generated.shapeOverflow) ui::HintText("作業メモリ予算を超えました。球の間隔を大きくするか二次形状の繰り返しを減らしてください。");
