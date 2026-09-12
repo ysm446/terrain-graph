@@ -6,6 +6,7 @@
 #include "app/ApplicationUiHelpers.h"
 #include "core/FileDialog.h"
 #include "core/Log.h"
+#include "core/Shell.h"
 #include "io/ProjectIo.h"
 #include "ui/UiStyle.h"
 
@@ -142,6 +143,10 @@ void Application::DrawFileMenu() {
     }
     if (ImGui::MenuItem("名前を付けて保存…", "Ctrl+Shift+S")) {
         RequestSaveProject(true);
+    }
+    // 未保存のプロジェクトには場所が無いので、項目は出したまま無効にする。
+    if (ImGui::MenuItem("ファイルの場所を開く", nullptr, false, !m_projectPath.empty())) {
+        RevealFileInExplorer(m_projectPath);
     }
 
     ImGui::Separator();
