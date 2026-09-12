@@ -339,6 +339,8 @@ int Application::Run() {
             cloudSettings.weatherType = compiledCloud.cloudType;
             cloudSettings.weatherAnvil = compiledCloud.anvil;
             cloudSettings.weatherWisp = compiledCloud.wisp;
+            cloudSettings.weatherStreets = compiledCloud.streets;
+            cloudSettings.weatherVariation = compiledCloud.variation;
             cloudSettings.primitiveCount = static_cast<uint32_t>(compiledCloud.primitives.size());
             cloudSettings.primitiveSmoothness = compiledCloud.smoothness;
             cloudSettings.primitiveDisplacement = cloud.shapeStrength;

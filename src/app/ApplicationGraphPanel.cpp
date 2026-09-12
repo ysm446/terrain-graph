@@ -1309,6 +1309,8 @@ void Application::DrawGraphPanel() {
             changed |= ui::PropertyFloat("雲種", &weather->cloudType, 0.0f, 1.0f, defaults.cloudType, "0 で層雲、0.5 で積雲、1 で積乱雲。高さプロファイルを連続的に補間します。Type マスクの値を掛けます。", "%.2f");
             changed |= ui::PropertyFloat("積乱雲の広がり", &weather->anvil, 0.0f, 1.0f, defaults.anvil, "雲種 0.5 以上で上部を横へ広げます（かなとこ雲）。", "%.2f");
             changed |= ui::PropertyFloat("雲底のほつれ", &weather->wisp, 0.0f, 1.0f, defaults.wisp, "雲底付近の細部の削りを強めます。", "%.2f");
+            changed |= ui::PropertyFloat("帯状の伸び", &weather->streets, 0.0f, 1.0f, defaults.streets, "雲量の分布を風向に沿って引き伸ばし、列状の並びを作ります。", "%.2f");
+            changed |= ui::PropertyFloat("塊の密度差", &weather->variation, 0.0f, 1.0f, defaults.variation, "塊ごとに厚い雲と薄い雲を混ぜます。0 で均一。", "%.2f");
             ui::EndPropertyTable();
         }
         ui::SectionHeader("範囲");

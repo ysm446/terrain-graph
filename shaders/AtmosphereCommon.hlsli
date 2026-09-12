@@ -24,6 +24,7 @@ struct AtmosphericParameters {
     float loopCenterX; float loopCenterZ; float loopWidth; float loopDepth;
     uint shapeCacheIndex; uint3 shapeCacheSize;
     float weatherType; float weatherAnvil; float weatherWisp; uint opticalCacheSize;
+    float weatherStreets; float weatherVariation; float2 weatherPadding;
 };
 float3 AtmosphereSun(AtmosphericParameters p) {
     return float3(cos(p.elevation) * sin(p.azimuth), sin(p.elevation), cos(p.elevation) * cos(p.azimuth));
@@ -294,27 +295,41 @@ float WeatherCloudDensity(float3 position, AtmosphericParameters p, uint noiseIn
     float h=(position.y-p.cloudBottom)/p.cloudThickness;
     if (h<=0 || h>=1) return 0;
     float3 uvw=(offset-float3(p.windOffsetX,0,p.windOffsetZ))/p.cloudScale;
+    // 雲量の場は風向に沿って引き伸ばし、帯状（クラウドストリート）の並びを作る。
+    float2 wind=float2(sin(p.windDirection),cos(p.windDirection));
+    float2 along=dot(uvw.xz,wind)*wind, across=uvw.xz-along;
+    float2 stretched=along/(1+3*p.weatherStreets)+across;
+    float3 buv=float3(stretched.x,uvw.y*0.2,stretched.y);
     // 雲量は低周波の場で地域差を付ける。平均が指定値になり、値が高い場所に塊が集まり低い場所は空く。
-    float broad=SampleCloudNoise(uvw*0.17+0.11,noiseIndex,0)*0.6+SampleCloudNoise(uvw*0.41+0.53,noiseIndex,0)*0.4;
+    // 雲種が高いほど場のスケールを大きく、コントラストを強くし、少数の大きな塔と広い晴れ間を作る。
+    float fieldScale=1-0.45*type;
+    float broad=SampleCloudNoise(buv*0.17*fieldScale+0.11,noiseIndex,0)*0.6+SampleCloudNoise(buv*0.41*fieldScale+0.53,noiseIndex,0)*0.4;
+    broad=saturate((broad-0.5)*(1+2.5*type)+0.5);
     // 塊ごとに頂上の高さを変え、平らな天井を避ける。雲量が高い場所ほど高く成長する。
-    float top=lerp(0.5,1.0,saturate(broad*1.2-0.1));
+    float top=lerp(lerp(0.6,0.35,type),1.0,saturate(broad*1.2-0.1));
     float profile=WeatherHeightProfile(h/top,type);
     if (profile<=0.001) return 0;
     coverage=saturate(coverage*2*broad*(0.9+0.2*type));
     // 積乱雲の上部を横へ広げる（かなとこ雲）。
     float anvil=p.weatherAnvil*saturate((type-0.5)*2)*smoothstep(0.55,0.9,h);
     coverage=saturate(coverage*(1+anvil));
+    if (coverage<=0.001) return 0;
     // 周期の異なる2オクターブで繰り返しを崩す。
     float shape=CloudShapeNoise(uvw,p,noiseIndex)*0.65+CloudShapeNoise(uvw*2.3+float3(0.29,0.71,0.13),p,noiseIndex)*0.35;
     // ノイズの平均が約0.7と高いので、0.5付近を中心へ戻して雲量の閾値と釣り合わせる。
     shape=saturate((shape-0.4)/0.6);
     float base=saturate(shape*profile);
-    float density=saturate((base-(1-coverage))/max(coverage,1e-4));
+    // Nubis 方式: 雲量の閾値で切り、雲量が低い場所ほど薄くする。
+    float density=saturate((base-(1-coverage))/max(coverage,1e-4))*sqrt(coverage);
     if (density<=0) return 0;
-    // 下部ほど細部を強く削り、雲底を筋状にほどく。
+    // 細部の削り。雲底付近は筋状にほどけ、上部は丸い膨らみを残す。
     float detail=CloudDetailNoise(uvw*3.1+0.173,p,noiseIndex);
-    float erosion=p.detailStrength*lerp(1+p.weatherWisp,0.6,saturate(h*3));
-    density=saturate(density-erosion*(1-detail)*(1-density));
+    float dn=lerp(1-detail,detail,saturate(h*8));
+    float erosion=p.detailStrength*lerp(1+p.weatherWisp,0.5,saturate(h*3));
+    density=saturate((density-erosion*dn)/max(1-erosion*dn,1e-3));
+    // 塊ごとの密度差。均一な綿の板にならないよう、厚い塊と薄い塊を混ぜる。
+    float variation=SampleCloudNoise(uvw*0.9+0.77,noiseIndex,0);
+    density*=lerp(1,lerp(0.35,1.15,variation),p.weatherVariation);
     float edge=saturate((1-max(q.x,q.z))/max(p.edgeSoftness,0.01));
     return density*edge;
 }

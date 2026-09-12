@@ -289,6 +289,8 @@ struct CloudWeatherSettings {
     float cloudType=0.3f; // 雲種 0: 層雲、0.5: 積雲、1: 積乱雲。Type マスクで掛ける。
     float anvil=0.5f; // 積乱雲上部の横への広がり。
     float wisp=0.5f; // 雲底付近の削りの強さ。
+    float streets=0.5f; // 風向に沿った帯状の伸び。
+    float variation=0.5f; // 塊ごとの密度差。
     float noiseScale=4000; // 形状ノイズの周期（m）。
     int noiseType=1; // 0: Perlin fBM、1: Perlin-Worley。
     float detailStrength=0.3f;
@@ -360,7 +362,7 @@ struct CompiledCloud {
     GraphId maskNode = 0, maskPin = 0;
     bool weather = false; // 天候層。layer も真で照明キャッシュを使う。
     GraphId typeMaskNode = 0, typeMaskPin = 0;
-    float cloudType = 0.3f, anvil = 0.5f, wisp = 0.5f;
+    float cloudType = 0.3f, anvil = 0.5f, wisp = 0.5f, streets = 0.5f, variation = 0.5f;
 };
 
 // 出力。ここに繋いだチェーンがプレビューのマテリアルになる。

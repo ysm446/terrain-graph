@@ -712,6 +712,8 @@ CompiledCloud NodeGraph::CompileCloud() const {
             result.cloudType = std::clamp(weather.cloudType, 0.0f, 1.0f);
             result.anvil = std::clamp(weather.anvil, 0.0f, 1.0f);
             result.wisp = std::clamp(weather.wisp, 0.0f, 1.0f);
+            result.streets = std::clamp(weather.streets, 0.0f, 1.0f);
+            result.variation = std::clamp(weather.variation, 0.0f, 1.0f);
             auto& cloud = result.cloud;
             cloud.enabled = true;
             cloud.centerX = weather.centerX; cloud.centerZ = weather.centerZ;

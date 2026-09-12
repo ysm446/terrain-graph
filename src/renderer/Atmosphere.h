@@ -72,8 +72,11 @@ struct AtmosphereSettings {
     float weatherAnvil = 0.5f; // 積乱雲上部の横への広がり。
     float weatherWisp = 0.5f; // 雲底付近の削りの強さ。
     uint32_t opticalCacheSize = 64; // 照明キャッシュの XZ 格子数。実行時のみ。
+    float weatherStreets = 0.5f; // 風向に沿った帯状の伸び。
+    float weatherVariation = 0.5f; // 塊ごとの密度差。
+    float weatherPadding[2] = {};
 };
-static_assert(sizeof(AtmosphereSettings) == 272);
+static_assert(sizeof(AtmosphereSettings) == 288);
 
 struct CloudGeometry {
     std::vector<AtmosphereSettings::Primitive> primitives;

@@ -1465,6 +1465,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
                 {"width",weather->width},{"depth",weather->depth},
                 {"bottomHeight",weather->bottomHeight},{"maxThickness",weather->maxThickness},
                 {"coverage",weather->coverage},{"cloudType",weather->cloudType},{"anvil",weather->anvil},{"wisp",weather->wisp},
+                {"streets",weather->streets},{"variation",weather->variation},
                 {"noiseScale",weather->noiseScale},{"noiseType",EnumName(kCloudNoiseNames,static_cast<uint32_t>(weather->noiseType))},
                 {"detailStrength",weather->detailStrength},{"edgeSoftness",weather->edgeSoftness},
                 {"extinction",weather->extinction},{"indirectLight",weather->indirectLight},{"ambientLight",weather->ambientLight},
@@ -1753,6 +1754,8 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.cloudType=std::clamp(ReadFloat(*value,"cloudType",settings.cloudType),0.0f,1.0f);
                     settings.anvil=std::clamp(ReadFloat(*value,"anvil",settings.anvil),0.0f,1.0f);
                     settings.wisp=std::clamp(ReadFloat(*value,"wisp",settings.wisp),0.0f,1.0f);
+                    settings.streets=std::clamp(ReadFloat(*value,"streets",settings.streets),0.0f,1.0f);
+                    settings.variation=std::clamp(ReadFloat(*value,"variation",settings.variation),0.0f,1.0f);
                     settings.noiseScale=std::clamp(ReadFloat(*value,"noiseScale",settings.noiseScale),100.0f,50000.0f);
                     settings.noiseType=static_cast<int>(EnumValue(kCloudNoiseNames,*value,"noiseType",static_cast<uint32_t>(settings.noiseType)));
                     settings.detailStrength=std::clamp(ReadFloat(*value,"detailStrength",settings.detailStrength),0.0f,1.0f);

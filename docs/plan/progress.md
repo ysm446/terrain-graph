@@ -1,9 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-12 14:30
+更新日時: 2026-09-12 15:10
 
 ## 現在の状況
+
+**Cloud Weather Layer の分布改善（2026-09-12 15:10）。** Cloud Weather Layer の分布を改善。Nubis 方式の密度式（雲量の閾値で切った後に √雲量 を掛け、雲量が低い場所ほど薄くする。細部の削りは雲底で筋状、上部で丸い膨らみを残す remap）へ変更。「帯状の伸び」（風向に沿って雲量の場を引き伸ばし、列状の並びを作る）と「塊の密度差」（塊ごとに厚い雲と薄い雲を混ぜる）を追加。雲種が高いほど雲量の場のスケールを大きく、コントラストを強くし、少数の大きな塔と広い晴れ間を作る。積乱雲の頂上高さの幅も広げた。既定の雲量は0.4。保存名は `streets` / `variation`。 `AtmosphereSettings` は288バイト。Debug / Releaseビルド、テスト成功、DXC成功。Releaseで空を表示した状態の積雲（地上）、積乱雲（地上・上空）を確認（`data/cloud-weather-qa/cumulus.png` / `cumulonimbus*.png`）。照明は未改善で、雲が白く平板に見える点は次の課題。
 
 **Cloud Weather Layer（2026-09-12 14:30）。** Cloud Weather Layer (Experimental) を追加。RDR2 / Nubis 方式の天候マップ駆動の雲層で、Coverage / Type の Mask 入力と Volume 出力を持つ。雲量（0〜1）と雲種（0: 層雲、0.5: 積雲、1: 積乱雲）をスライダーで指定し、マスクを接続すると場所ごとに掛ける。雲種は3本の高さプロファイル（層雲 0〜0.2、積雲 0〜0.5、積乱雲 0〜1.0 の正規化高さ）を連続的に補間し、塊ごとに頂上の高さを低周波ノイズで変える。積乱雲の広がり（かなとこ雲）、雲底のほつれ、中心XZ・範囲幅／奥行き・雲底高度・最大厚さ・端のフェード、ノイズの種類・模様の大きさ・細部の削り・密度・Indirect / Ambient Light・シード、再生・風速・風向を持つ。雲量は低周波の場（平均が指定値）で地域差を付け、形状ノイズは2オクターブで繰り返しを崩す。描画は `localCloud=4` の新経路で、雲層の照明キャッシュ・雲影・ゴッドレイ・環境光は共通。照明キャッシュの XZ 格子は天候層で 192（他は従来の 64）、カメラのクリップ範囲は層の包囲箱へ広げる。保存名は `cloudWeatherLayer`、設定は `cloudWeather` 節。 実装は AtmosphereCommon.hlsli の `WeatherCloudDensity`、Application の雲マスク評価を2スロット（雲量・雲種）へ一般化、`AtmosphereSettings` を272バイトへ拡張（typeMask / weatherType / weatherAnvil / weatherWisp / opticalCacheSize）。Debug / Releaseビルド、テスト成功（天候層のピン・接続・既定値・マスク元・雲種変更の検証を追加）、DXC 7エントリ成功。Releaseで層雲・積雲・積乱雲（地上と上空）、Mask Noise を Type に接続した構成、保存・再読み込みを確認（`data/cloud-weather-qa/`）。当初30kmの層でクリップ範囲不足による位置再構成の量子化がブロック状に出たため、クリップ範囲を層の包囲箱へ広げて解消。更新版は `build/cloud-shape/Release/terrain_graph.exe`（通常版が起動中のため分離）。未対応: 多重散乱の段階近似・powder 効果の見直し、時間方向の再投影、天候遷移。Debug GPU実行とマウス操作は未確認。
 
