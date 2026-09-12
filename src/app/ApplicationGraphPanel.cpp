@@ -31,6 +31,8 @@ ImU32 ColorToU32(const ImVec4& color) {
 // 種類ごとのアクセント色。グレー基調を崩さないよう彩度は低め。
 ImVec4 NodeAccentColor(graph::NodeKind kind) {
     switch (kind) {
+        case graph::NodeKind::Missing:
+            return ImGui::ColorConvertU32ToFloat4(ui::ErrorColor());
         case graph::NodeKind::Surface:
             return ImVec4(0.55f, 0.66f, 0.58f, 1.0f);
         case graph::NodeKind::Heightmap:
@@ -96,7 +98,6 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
 ImVec4 PinTypeColor(graph::ValueType valueType) {
     switch (valueType) {
         // マスクはオレンジ。0〜1 の 1 チャンネル。
-        case graph::ValueType::CloudLine:
         case graph::ValueType::CloudShape:
         case graph::ValueType::Volume:
             return ImGui::GetStyleColorVec4(ImGuiCol_Text);
@@ -509,7 +510,10 @@ void Application::DrawGraphNode(const graph::Node& node) {
     // プレビューは別なので、どれが画面に出ているのかが分かるようにする。
     const bool isPreview = (node.id == m_previewGraphNode) ||
                            (m_previewGraphNode == 0 && node.kind == graph::NodeKind::Output);
-    const ImVec4 nodeBorderColor = isPreview ? ImVec4(0.72f, 0.76f, 0.62f, 1.0f)
+    const auto* missingSettings = std::get_if<graph::MissingNodeSettings>(&node.settings);
+    // 扱えないノードはエラー色の枠で目立たせる。
+    const ImVec4 nodeBorderColor = missingSettings != nullptr ? ImGui::ColorConvertU32ToFloat4(ui::ErrorColor())
+                                 : isPreview ? ImVec4(0.72f, 0.76f, 0.62f, 1.0f)
                                              : ImVec4(0.22f, 0.22f, 0.22f, 1.0f);
     const ImVec4 activeNodeBorderColor(0.59f, 0.64f, 0.68f, 1.0f);
     ed::PushStyleVar(ed::StyleVar_NodePadding, ImVec4(12.0f, 10.0f, 12.0f, 10.0f));
@@ -538,8 +542,12 @@ void Application::DrawGraphNode(const graph::Node& node) {
         ImGui::SameLine();
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 2.0f);
         const ImVec4 titleColor =
-            enabled ? ImVec4(0.88f, 0.88f, 0.88f, 1.0f) : ImVec4(0.55f, 0.55f, 0.55f, 1.0f);
-        ImGui::TextColored(titleColor, "%s", NodeDisplayName(node));
+            missingSettings != nullptr ? ImGui::ColorConvertU32ToFloat4(ui::ErrorColor())
+            : enabled ? ImVec4(0.88f, 0.88f, 0.88f, 1.0f) : ImVec4(0.55f, 0.55f, 0.55f, 1.0f);
+        ImGui::TextColored(titleColor, "%s", missingSettings != nullptr ? missingSettings->kindName.c_str() : NodeDisplayName(node));
+        if (missingSettings != nullptr) {
+            ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.55f, 1.0f), "扱えないノード（この版では未対応）");
+        }
         if (isPreview) {
             // ビューポートに出ている印。名前の右に小さく添える。
             ImGui::SameLine();
@@ -904,12 +912,8 @@ void Application::DrawGraphEditor() {
         addNodeMenuItem(graph::NodeKind::CloudWeatherLayer, "Cloud Weather Layer — 雲量と雲種のマップで広域の雲層を作る");
         addNodeMenuItem(graph::NodeKind::CloudShapeGenerate, "Cloud Shape Generate (Experimental) — 単独の積雲を生成する");
         addNodeMenuItem(graph::NodeKind::CloudMapGenerate, "Cloud Map Generate (Experimental) — ポイントの分布から雲形状を生成する");
-        addNodeMenuItem(graph::NodeKind::CloudLine, "Cloud Line (Experimental) — 雲の芯になる3D直線");
-        addNodeMenuItem(graph::NodeKind::CloudSpheres, "Cloud Spheres (Experimental) — ラインに沿って球を並べる");
-        addNodeMenuItem(graph::NodeKind::CloudEllipsoid, "Cloud Ellipsoid (Experimental) — 雲の土台となる形");
         addNodeMenuItem(graph::NodeKind::CloudMerge, "Cloud Merge (Experimental) — 基本形状を統合する");
         addNodeMenuItem(graph::NodeKind::CloudTransform, "Cloud Transform (Experimental) — 雲形状を移動する");
-        addNodeMenuItem(graph::NodeKind::CloudReplicate, "Cloud Replicate (Experimental) — 表面に小さな球を追加する");
         addNodeMenuItem(graph::NodeKind::CloudAnimation, "Cloud Animation — 指定範囲で雲を繰り返し移動する");
         addNodeMenuItem(graph::NodeKind::CloudNoise, "Cloud Noise (Experimental) — 輪郭と密度を作る");
         addNodeMenuItem(graph::NodeKind::CloudOutput, "Cloud Output — Volume を繋いで雲を表示する");
@@ -1248,48 +1252,14 @@ void Application::DrawGraphPanel() {
             m_graph.MarkDirty();
             MarkDocumentChanged();
         }
-    } else if (auto* cloudLine = std::get_if<graph::CloudLineSettings>(&selected->settings)) {
-        const graph::CloudLineSettings defaults;
-        bool changed = false;
-        ui::HintText("始点と終点をワールド座標（m）で指定する直線。球配置の Line へ接続します。");
-        if (ui::BeginPropertyTable("CloudLineRows", "横方向のばらつき")) {
-            changed |= ui::PropertyFloat("始点 X", &cloudLine->startX, -10000.0f, 10000.0f, defaults.startX, "値はメートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("始点 Y", &cloudLine->startY, -10000.0f, 10000.0f, defaults.startY, "値はメートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("始点 Z", &cloudLine->startZ, -10000.0f, 10000.0f, defaults.startZ, "値はメートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("終点 X", &cloudLine->endX, -10000.0f, 10000.0f, defaults.endX, "値はメートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("終点 Y", &cloudLine->endY, -10000.0f, 10000.0f, defaults.endY, "値はメートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("終点 Z", &cloudLine->endZ, -10000.0f, 10000.0f, defaults.endZ, "値はメートル単位。", "%.0f m");
+    } else if (const auto* missing = std::get_if<graph::MissingNodeSettings>(&selected->settings)) {
+        ui::SectionHeader("扱えないノード");
+        if (ui::BeginPropertyTable("missingNodeRows")) {
+            ui::PropertyValue("保存名", "%s", missing->kindName.c_str());
             ui::EndPropertyTable();
         }
-        if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
-    } else if (auto* cloudSpheres = std::get_if<graph::CloudSpheresSettings>(&selected->settings)) {
-        const graph::CloudSpheresSettings defaults;
-        bool changed = false;
-        ui::HintText("ラインに沿って球を配置します。横方向のずれは XZ 平面。シードを固定すると再現できます。");
-        if (ui::BeginPropertyTable("CloudSpheresRows", "横方向のばらつき")) {
-            changed |= ui::PropertyInt("球の数", &cloudSpheres->count, 1, INT_MAX, defaults.count, "ラインに沿って球を配置します。横方向のずれは XZ 平面。シードを固定すると再現できます。");
-            changed |= ui::PropertyFloat("始点の半径", &cloudSpheres->startRadius, 10.0f, 3000.0f, defaults.startRadius, "値はメートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("終点の半径", &cloudSpheres->endRadius, 10.0f, 3000.0f, defaults.endRadius, "値はメートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("横方向のばらつき", &cloudSpheres->jitter, 0.0f, 1.0f, defaults.jitter, "ラインに沿って球を配置します。横方向のずれは XZ 平面。シードを固定すると再現できます。", "%.2f");
-            changed |= ui::PropertyFloat("半径のばらつき", &cloudSpheres->radiusVariation, 0.0f, 0.9f, defaults.radiusVariation, "値はメートル単位。", "%.2f");
-            changed |= ui::PropertyInt("シード", &cloudSpheres->seed, 0, 10000, defaults.seed, "ラインに沿って球を配置します。横方向のずれは XZ 平面。シードを固定すると再現できます。");
-            ui::EndPropertyTable();
-        }
-        if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
-    } else if (auto* cloudEllipsoid = std::get_if<graph::CloudEllipsoidSettings>(&selected->settings)) {
-        const graph::CloudEllipsoidSettings defaults;
-        bool changed = false;
-        ui::HintText("軸に沿った楕円体。Shape をCloud Merge または Cloud Noise へ接続します。");
-        if (ui::BeginPropertyTable("CloudEllipsoidRows", "横方向のばらつき")) {
-            changed |= ui::PropertyFloat("中心 X", &cloudEllipsoid->centerX, -10000.0f, 10000.0f, defaults.centerX, "値はメートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("中心 Y", &cloudEllipsoid->centerY, -10000.0f, 10000.0f, defaults.centerY, "値はメートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("中心 Z", &cloudEllipsoid->centerZ, -10000.0f, 10000.0f, defaults.centerZ, "値はメートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("半径 X", &cloudEllipsoid->radiusX, 10.0f, 3000.0f, defaults.radiusX, "値はメートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("半径 Y", &cloudEllipsoid->radiusY, 10.0f, 3000.0f, defaults.radiusY, "値はメートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("半径 Z", &cloudEllipsoid->radiusZ, 10.0f, 3000.0f, defaults.radiusZ, "値はメートル単位。", "%.0f m");
-            ui::EndPropertyTable();
-        }
-        if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
+        ui::HintText("この版では扱えない種類のノードです。廃止された種類か、新しい版で追加された種類です。"
+                     "評価には使われず、保存時は元の種類名のまま書き戻します。不要なら削除してください。");
     } else if (auto* cloudMerge = std::get_if<graph::CloudMergeSettings>(&selected->settings)) {
         const graph::CloudMergeSettings defaults;
         bool changed = false;
@@ -1464,35 +1434,6 @@ void Application::DrawGraphPanel() {
             ui::EndPropertyTable();
         }
         if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
-    } else if (auto* replicate = std::get_if<graph::CloudReplicateSettings>(&selected->settings)) {
-        const graph::CloudReplicateSettings defaults;
-        bool changed=false;
-        ui::HintText("親形状の面積・体積に応じて球を配置します。雲底は後段の Cloud Noise で整えます。");
-        if (ui::BeginPropertyTable("CloudReplicateRows", "親1個あたりの球数")) {
-            const char* distributions[]={"個数（従来）","表面密度","体積密度"};
-            changed|=ui::PropertyCombo("配置方式",&replicate->distribution,distributions,3,defaults.distribution,
-                "表面は面積、内部は体積に比例して球数を決めます。個数指定は以前の配置を再現します。");
-            if (replicate->distribution==0)
-                changed|=ui::PropertyInt("親1個あたりの球数",&replicate->count,1,INT_MAX,defaults.count,"入力の球・楕円体それぞれに追加する数。");
-            else
-                changed|=ui::PropertyFloat("配置密度",&replicate->packingDensity,0.0f,10000.0f,defaults.packingDensity,
-                    "大きくすると球数が増えます。0では複製しません。半径の倍率は独立して調整できます。",
-                    replicate->distribution==1 ? "%.2f 個/km²" : "%.2f 個/km³",ImGuiSliderFlags_Logarithmic);
-            changed|=ui::PropertyFloat("半径の倍率",&replicate->radiusScale,0.05f,1.0f,defaults.radiusScale,"元形状の最小半径に対する倍率。","%.2f");
-            changed|=ui::PropertyFloat("半径のばらつき",&replicate->radiusVariation,0.0f,0.9f,defaults.radiusVariation);
-            changed|=ui::PropertyFloat("位置のばらつき",&replicate->jitter,0.0f,1.0f,defaults.jitter);
-            changed|=ui::PropertyFloat("つなぎの滑らかさ",&replicate->smoothness,0.0f,500.0f,defaults.smoothness,"細かい球の膨らみを残すには小さめに設定します。","%.0f m");
-            changed|=ui::PropertyInt("シード",&replicate->seed,0,10000,defaults.seed);
-            changed|=ui::PropertyBool("元形状を残す",&replicate->keepSource,defaults.keepSource);
-            const auto generated=m_graph.CompileCloudShapes(selected->id);
-            if (generated.shapeOverflow) ui::PropertyValue("合計形状数","作業メモリ予算を超過");
-            else ui::PropertyValue("合計形状数","%zu 個",generated.primitives.size());
-            if (generated.primitives.size()>256) ui::PropertyValue("配置ガイド","間引き表示（雲は全形状を使用）");
-            ui::EndPropertyTable();
-        }
-        if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
-        if (m_graph.CompileCloudShapes(selected->id).shapeOverflow)
-            ui::HintText("形状生成の作業メモリ予算を超えています。配置密度・球数を下げてください。");
     } else if (auto* cloudNoise = std::get_if<graph::CloudNoiseSettings>(&selected->settings)) {
         const graph::CloudNoiseSettings defaults;
         bool changed = false;

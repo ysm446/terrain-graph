@@ -1,7 +1,7 @@
 # nodes — ノードのリファレンス
 
 作成日時: 2026-09-03 17:30
-更新日時: 2026-09-12 23:10
+更新日時: 2026-09-12 18:50
 
 ノード 1 つずつの、**役割・ピン・パラメータ**の一覧。
 
@@ -12,9 +12,11 @@
 
 ## 実験用の手続き雲
 
-雲ライン（`cloudLine`）→雲の球配置（`cloudSpheres`）、雲楕円体（`cloudEllipsoid`）→雲形状マージ（`cloudMerge`）→雲ノイズ（`cloudNoise`）→既存の雲出力で、一つの雲フィールドを組み立てる。マージ後などに「雲形状複製（`cloudReplicate`）」を挟むと、元形状の表面へ小球を追加できる。形状とBVHは可変長バッファで保持し、256個の上限はない。操作・各設定・制限は [手続き雲](../design/procedural-clouds.md) を参照。
+Cloud Shape Generate（`cloudShapeGenerate`）または Cloud Map Generate（`cloudMapGenerate`）→（Cloud Transform（`cloudTransform`）／Cloud Merge（`cloudMerge`））→Cloud Noise（`cloudNoise`）→Cloud Output で、一つの雲フィールドを組み立てる。形状とBVHは可変長バッファで保持し、256個の上限はない。操作・各設定・制限は [手続き雲](../design/procedural-clouds.md) を参照。
 
-実験用の`Line`は3D直線、`Shape`は形状の集合で、既存の地形用`Path`とは別の型。`Volume`に変換するのは雲ノイズ。既存Volumeのマージは未対応。
+`Shape`は形状（球の集合）の型で、既存の地形用`Path`とは別の型。`Volume`に変換するのは Cloud Noise。既存Volumeのマージは未対応。
+
+2026-09-12 に Cloud Line / Cloud Spheres / Cloud Ellipsoid / Cloud Replicate を廃止した。保存済みのこれらのノードは「扱えないノード」としてエラー色で表示され、評価には使われない。
 
 ## 地形の線は 3 種類
 

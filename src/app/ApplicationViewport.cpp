@@ -298,19 +298,6 @@ void Application::DrawCloudShapeGizmo(const ImVec2& viewportMin, const ImVec2& v
         drawList->PopClipRect();
         return;
     }
-    const auto drawLine=[&](const graph::Node* lineNode) {
-        const auto* line=lineNode ? std::get_if<graph::CloudLineSettings>(&lineNode->settings) : nullptr;
-        if (!line) return;
-        const XMFLOAT3 start{line->startX,line->startY,line->startZ},end{line->endX,line->endY,line->endZ};
-        segment(start,end);
-        for (const auto& point : {start,end}) {
-            const auto projected=ProjectToViewport(viewProjection,point,viewportMin,size);
-            if (projected.visible) drawList->AddCircleFilled(projected.screen,ui::Scaled(3),color);
-        }
-    };
-    if (node->kind==graph::NodeKind::CloudLine) drawLine(node);
-    if (node->kind==graph::NodeKind::CloudSpheres && !node->inputs.empty())
-        drawLine(m_graph.FindUpstreamNodeForPin(node->inputs.front().id));
     const auto shapes=m_graph.CompileCloudShapes(node->id);
     // 配置ガイドだけを間引く。生成・ベイクには全形状を使う。
     const size_t stride=std::max(size_t(1),(shapes.primitives.size()+255)/256);

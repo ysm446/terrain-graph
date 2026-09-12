@@ -1,7 +1,7 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-09-06 21:30
+更新日時: 2026-09-12 18:50
 
 実装は [src/io/ProjectIo.cpp](../../src/io/ProjectIo.cpp)。**形式を変えたらこの文書も直す。**
 
@@ -294,7 +294,11 @@ RGB をそのまま使うマップ（ベースカラー / 法線）はテクス�
   並びで、ピンの型やラベルはノードの定義から再生成する（ファイルには書かない）。
 - `kind` は名前で書く（`surface` / `shape` / `liquid` / `heightmap` /
   `heightmapBlur` / `maskImage` / `maskFluvial` / `maskSlope` / `maskLevels` /
-  `maskBlur` / `maskBlend` / `output`）。知らない種類のノードは読み飛ばす。
+  `maskBlur` / `maskBlend` / `output`）。知らない種類のノード（廃止した種類、
+  または新しい版で増えた種類）は捨てずに、ピンを持たない「扱えないノード」として
+  読み込み、エディタでエラー色で表示する。保存時は元の `kind` 名のまま書き戻す。
+  そのノードに繋がっていたリンクはピンが無いので消える。
+  廃止済みの名前: `cloudLine` / `cloudSpheres` / `cloudEllipsoid` / `cloudReplicate`（2026-09-12）。
 - レイヤー設定を持つノード（surface / shape / liquid / heightmap /
   heightmapBlur）は `layer` に
   旧 `layers[]` の要素と同じ形を持つ。テクスチャ / マテリアル / ペイントの参照も

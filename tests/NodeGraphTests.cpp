@@ -51,7 +51,7 @@ void RunNodeGraphTests() {
     {
         Section("Cloud Animation の接続と循環");
         NodeGraph graph;
-        const auto shape=graph.CreateNode(NodeKind::CloudEllipsoid);
+        const auto shape=graph.CreateNode(NodeKind::CloudShapeGenerate);
         const auto noise=graph.CreateNode(NodeKind::CloudNoise);
         const auto animation=graph.CreateNode(NodeKind::CloudAnimation);
         const auto output=graph.CreateNode(NodeKind::CloudOutput);
@@ -135,54 +135,53 @@ void RunNodeGraphTests() {
     {
         Section("手続き雲の形状構築");
         auto graph = NodeGraph::CreateDefault();
-        const auto line=graph.CreateNode(NodeKind::CloudLine);
-        const auto spheres=graph.CreateNode(NodeKind::CloudSpheres);
-        const auto base=graph.CreateNode(NodeKind::CloudEllipsoid);
+        const auto first=graph.CreateNode(NodeKind::CloudShapeGenerate);
+        const auto second=graph.CreateNode(NodeKind::CloudShapeGenerate);
         const auto merge=graph.CreateNode(NodeKind::CloudMerge);
         const auto noise=graph.CreateNode(NodeKind::CloudNoise);
         const auto output=graph.CreateNode(NodeKind::CloudOutput);
         const auto link=[&](int from,int to,size_t index=0) {
             return graph.CreateLink(graph.FindNode(from)->outputs[0].id,graph.FindNode(to)->inputs[index].id);
         };
+        const auto count=[&](int id) { return graph.CompileCloudShapes(id).primitives.size(); };
         Check(link(noise,output),"実験用の密度フィールドを既存雲出力へ接続できる");
         Check(!graph.CompileCloud().connected,"形状なしは雲を表示しない");
-        Check(!link(line,noise),"ラインを直接密度フィールドへ接続しない");
-        Check(link(line,spheres) && link(spheres,merge) && link(base,merge,1) && link(merge,noise),"形状構築チェーンを接続できる");
+        Check(!link(noise,merge),"Volume を形状マージへ接続しない");
+        std::get<tg::graph::CloudShapeGenerateSettings>(graph.FindMutableNode(second)->settings).centerX=3000;
+        const size_t firstCount=count(first),secondCount=count(second);
+        Check(firstCount>0 && secondCount>0,"Cloud Shape Generate は単独で球の集合を出す");
+        Check(link(first,merge) && link(second,merge,1) && link(merge,noise),"形状構築チェーンを接続できる");
         const auto compiled=graph.CompileCloud();
-        Check(compiled.connected && compiled.primitives.size()==9,"8球と楕円体を同じフィールドにまとめる");
-        Check(!compiled.layer && compiled.cloud.thickness>1400,"地形と独立した立体の包囲箱を作る");
+        Check(compiled.connected && compiled.primitives.size()==firstCount+secondCount,"2つの積雲を同じフィールドにまとめる");
+        Check(!compiled.layer && compiled.cloud.thickness>0,"地形と独立した立体の包囲箱を作る");
         const auto repeated=graph.CompileCloud();
         Check(repeated.primitives[0].centerX==compiled.primitives[0].centerX,"同じシードで同じ配置を再現する");
-        auto& sphereSettings=std::get<tg::graph::CloudSpheresSettings>(graph.FindMutableNode(spheres)->settings);
-        sphereSettings.count=64;
-        Check(graph.CompileCloud().connected && graph.CompileCloud().primitives.size()==65,
-            "旧上限を超えた64球と楕円体をマージできる");
-        sphereSettings.count=4095;
-        Check(graph.CompileCloud().connected && graph.CompileCloud().primitives.size()==4096,
-            "マージした合計4096個を欠落なく保持する");
-        sphereSettings.count=4096;
-        Check(graph.CompileCloud().connected && graph.CompileCloud().primitives.size()==4097,"4096個を超えてもマージできる");
-        Check(link(spheres,merge,1),"同じ形状を両入力に繋げる");
-        Check(graph.CompileCloud().primitives.size()==4096 && !graph.CompileCloud().shapeOverflow,"共有された形状は一度だけ取り込む");
+        Check(link(first,merge,2),"同じ形状を複数の入力に繋げる");
+        Check(graph.CompileCloud().primitives.size()==firstCount+secondCount && !graph.CompileCloud().shapeOverflow,"共有された形状は一度だけ取り込む");
         Check(!link(merge,merge),"形状マージの循環を拒否する");
-        sphereSettings.count=1; sphereSettings.jitter=0; sphereSettings.radiusVariation=0;
-        const auto single=graph.CompileCloud();
-        Check(single.primitives.size()==1 && single.primitives[0].centerY==200 && single.primitives[0].radiusX==350,
-            "球が1つの場合は始点と始点半径を使う");
-        graph.DeleteNode(line);
-        Check(!graph.CompileCloud().connected,"ライン削除後に古い形状を残さない");
+        graph.DeleteNode(first);
+        Check(graph.CompileCloud().connected && graph.CompileCloud().primitives.size()==secondCount,"片方を削除しても残りの形状で雲を作る");
+        graph.DeleteNode(second);
+        Check(!graph.CompileCloud().connected,"形状削除後に古い形状を残さない");
     }
 
     {
         Section("手続き雲の包囲範囲と選択ガイド");
         NodeGraph graph;
-        const auto shape=graph.CreateNode(NodeKind::CloudEllipsoid);
+        const auto shape=graph.CreateNode(NodeKind::CloudShapeGenerate);
         const auto noise=graph.CreateNode(NodeKind::CloudNoise);
         const auto output=graph.CreateNode(NodeKind::CloudOutput);
-        auto& ellipse=std::get<tg::graph::CloudEllipsoidSettings>(graph.FindMutableNode(shape)->settings);
-        ellipse.radiusX=1200; ellipse.radiusY=180; ellipse.radiusZ=700;
-        Check(graph.CompileCloudShapes(shape).primitives.size()==1 && !graph.CompileCloud().connected,
+        const auto shapes=graph.CompileCloudShapes(shape);
+        Check(!shapes.primitives.empty() && !graph.CompileCloud().connected,
             "未接続の形状もガイド用に評価できる");
+        // 元形状の包囲範囲。滑らかさによる膨らみ（最大で滑らかさの 1/4）だけ余白が付く。
+        float minX=1e9f,maxX=-1e9f,minY=1e9f,maxY=-1e9f,minZ=1e9f,maxZ=-1e9f;
+        for (const auto& p:shapes.primitives) {
+            minX=std::min(minX,p.centerX-p.radiusX); maxX=std::max(maxX,p.centerX+p.radiusX);
+            minY=std::min(minY,p.centerY-p.radiusY); maxY=std::max(maxY,p.centerY+p.radiusY);
+            minZ=std::min(minZ,p.centerZ-p.radiusZ); maxZ=std::max(maxZ,p.centerZ+p.radiusZ);
+        }
+        const float margin=shapes.smoothness*0.5f+0.01f;
         graph.CreateLink(graph.FindNode(shape)->outputs[0].id,graph.FindNode(noise)->inputs[0].id);
         graph.CreateLink(graph.FindNode(noise)->outputs[0].id,graph.FindNode(output)->inputs[0].id);
         auto& settings=std::get<tg::graph::CloudNoiseSettings>(graph.FindMutableNode(noise)->settings);
@@ -192,115 +191,24 @@ void RunNodeGraphTests() {
         settings.noiseType=2;
         Check(graph.CompileCloud().cloud.noiseType==1,"手続き雲のPerlin-Worleyを共通描画設定へ渡す");
         settings.noiseType=0;
+        settings.displacement=0;
+        const auto exact=graph.CompileCloud().cloud;
+        Check(exact.width>=maxX-minX-0.01f && exact.width<=maxX-minX+2*margin &&
+              exact.thickness>=maxY-minY-0.01f && exact.thickness<=maxY-minY+2*margin &&
+              exact.depth>=maxZ-minZ-0.01f && exact.depth<=maxZ-minZ+2*margin,
+            "変位なしの包囲範囲は元形状の範囲に滑らかさの余白を足しただけ");
         settings.displacement=120;
         const auto bounds=graph.CompileCloud().cloud;
-        Check(std::abs(bounds.thickness-600)<0.01f,
-            "薄い楕円体の高さに長軸用の余白を加えない");
+        Check(std::abs((bounds.thickness-exact.thickness)-240)<0.01f,
+            "変位は高さに変位量の 2 倍だけ余白を加え、長軸用の余白を加えない");
         settings.detail=500; settings.feather=500;
         const auto inward=graph.CompileCloud().cloud;
         Check(inward.width==bounds.width && inward.thickness==bounds.thickness && inward.depth==bounds.depth,
             "内向きの削りと境界幅で包囲範囲を広げない");
-        settings.displacement=0;
-        const auto exact=graph.CompileCloud().cloud;
-        Check(exact.width==2400 && exact.thickness==360 && exact.depth==1400,
-            "変位なしの単体は元形状の包囲範囲に一致する");
         graph.DeleteNode(shape);
         Check(graph.CompileCloudShapes(shape).primitives.empty(),"削除した形状のガイドを残さない");
     }
 
-    {
-        Section("雲形状複製");
-        NodeGraph graph;
-        const auto parent=graph.CreateNode(NodeKind::CloudEllipsoid);
-        const auto replicate=graph.CreateNode(NodeKind::CloudReplicate);
-        const auto merge=graph.CreateNode(NodeKind::CloudMerge);
-        const auto second=graph.CreateNode(NodeKind::CloudReplicate);
-        const auto line=graph.CreateNode(NodeKind::CloudLine);
-        const auto link=[&](auto from,auto to,size_t pin=0) {
-            return graph.CreateLink(graph.FindNode(from)->outputs[0].id,graph.FindNode(to)->inputs[pin].id);
-        };
-        Check(!graph.CompileCloudShapes(replicate).connected,"未接続の複製は空形状");
-        Check(!link(line,replicate),"ラインを直接複製しない");
-        Check(link(parent,replicate),"Shapeを受けてShapeを出す");
-        auto& settings=std::get<tg::graph::CloudReplicateSettings>(graph.FindMutableNode(replicate)->settings);
-        settings.distribution=0; settings.count=12; settings.jitter=0; settings.radiusVariation=0;
-        const auto generated=graph.CompileCloudShapes(replicate);
-        Check(generated.connected && generated.primitives.size()==13,"元形状1個と追加12個を生成");
-        const auto& source=generated.primitives[0];
-        bool onSurface=true;
-        for (size_t i=1;i<generated.primitives.size();++i) {
-            const auto& child=generated.primitives[i];
-            const float x=(child.centerX-source.centerX)/source.radiusX;
-            const float y=(child.centerY-source.centerY)/source.radiusY;
-            const float z=(child.centerZ-source.centerZ)/source.radiusZ;
-            onSurface &= std::abs(x*x+y*y+z*z-1)<1e-5f && child.radiusX==child.radiusY && child.radiusY==child.radiusZ;
-        }
-        Check(onSurface,"追加球の中心を楕円体の表面へ配置する");
-        const auto same=graph.CompileCloudShapes(replicate);
-        Check(same.primitives[1].centerX==generated.primitives[1].centerX,"同一シードで同じ配置");
-        settings.seed++;
-        Check(graph.CompileCloudShapes(replicate).primitives[1].centerX!=generated.primitives[1].centerX,"シード変更で配置が変わる");
-        settings.keepSource=false;
-        Check(graph.CompileCloudShapes(replicate).primitives.size()==12,"元形状を除いて小球だけを出せる");
-        settings.keepSource=true;
-        Check(link(parent,merge) && link(replicate,merge,1),"複製結果を元形状と再マージ");
-        Check(graph.CompileCloudShapes(merge).primitives.size()==13,"保持した元形状を再マージで重複させない");
-        Check(link(replicate,merge),"共有する複製結果を両入力へ接続");
-        Check(graph.CompileCloudShapes(merge).primitives.size()==13,"同じ複製結果を二重に数えない");
-        Check(link(replicate,second),"複製ノードを連結できる");
-        auto& secondSettings=std::get<tg::graph::CloudReplicateSettings>(graph.FindMutableNode(second)->settings);
-        secondSettings.distribution=0; secondSettings.count=2;
-        Check(graph.CompileCloudShapes(second).primitives.size()==39,"二段目は一段目の全形状を複製");
-        secondSettings.count=64;
-        Check(graph.CompileCloudShapes(second).connected && graph.CompileCloudShapes(second).primitives.size()==845,"複製を重ねて256個を超えても表示できる");
-        Check(!link(second,replicate),"複製を含む循環を拒否");
-        graph.DeleteNode(parent);
-        Check(!graph.CompileCloudShapes(replicate).connected,"元形状削除で複製も消える");
-    }
-    {
-        Section("雲形状複製の面積・体積密度");
-        NodeGraph graph;
-        const auto parent=graph.CreateNode(NodeKind::CloudEllipsoid);
-        const auto replicate=graph.CreateNode(NodeKind::CloudReplicate);
-        graph.CreateLink(graph.FindNode(parent)->outputs[0].id,graph.FindNode(replicate)->inputs[0].id);
-        auto& source=std::get<tg::graph::CloudEllipsoidSettings>(graph.FindMutableNode(parent)->settings);
-        auto& settings=std::get<tg::graph::CloudReplicateSettings>(graph.FindMutableNode(replicate)->settings);
-        Check(settings.distribution==1,"新規ノードは表面密度を使う");
-        settings.keepSource=false; settings.jitter=0; settings.radiusVariation=0;
-        source.radiusX=source.radiusY=source.radiusZ=500;
-        const auto smallShape=graph.CompileCloudShapes(replicate);
-        Check(smallShape.primitives.size()==31,"半径500m・10個/km²では表面積から31個を生成");
-        bool surface=true;
-        for (const auto& p:smallShape.primitives) {
-            const float x=(p.centerX-source.centerX)/500,y=(p.centerY-source.centerY)/500,z=(p.centerZ-source.centerZ)/500;
-            surface &= std::abs(x*x+y*y+z*z-1)<1e-5f;
-        }
-        Check(surface,"表面密度の球中心は親の表面にある");
-        source.radiusX=source.radiusY=source.radiusZ=1000;
-        Check(graph.CompileCloudShapes(replicate).primitives.size()==126,"半径2倍では表面積4倍に比例する");
-        settings.distribution=2;
-        const auto volume=graph.CompileCloudShapes(replicate);
-        Check(volume.primitives.size()==42,"半径1000m・10個/km³では体積から42個を生成");
-        bool inside=true,central=false;
-        for (const auto& p:volume.primitives) {
-            const float x=(p.centerX-source.centerX)/1000,y=(p.centerY-source.centerY)/1000,z=(p.centerZ-source.centerZ)/1000;
-            inside &= x*x+y*y+z*z<=1.00001f;
-            central |= x*x+y*y+z*z<0.25f;
-        }
-        Check(inside && central,"体積密度では中心寄りも含めて内部に分布する");
-        const auto same=graph.CompileCloudShapes(replicate);
-        Check(same.primitives[0].centerY==volume.primitives[0].centerY,"密度指定も同じシードで再現する");
-        source.radiusX=source.radiusY=source.radiusZ=500;
-        Check(graph.CompileCloudShapes(replicate).primitives.size()==5,"半径半分では体積1/8に比例する");
-        settings.packingDensity=0;
-        Check(graph.CompileCloudShapes(replicate).primitives.empty(),"密度0は追加しない");
-        settings.keepSource=true;
-        Check(graph.CompileCloudShapes(replicate).primitives.size()==1,"密度0でも元形状を保持できる");
-        settings.packingDensity=10000;
-        Check(graph.CompileCloudShapes(replicate).connected && graph.CompileCloudShapes(replicate).primitives.size()>5000,"密度指定で5000個以上を生成できる");
-        source.radiusX=source.radiusY=source.radiusZ=100000;
-        Check(graph.CompileCloudShapes(replicate).shapeOverflow,"極端な生成は作業メモリ予算で停止する");
-    }
     {
         Section("軸ドラッグの入力と取消");
         float x=10,y=20,z=30;
@@ -323,7 +231,7 @@ void RunNodeGraphTests() {
         Section("Cloud Shape Generateの単独積雲");
         NodeGraph graph;
         const auto node=graph.CreateNode(NodeKind::CloudShapeGenerate);
-        const auto replicate=graph.CreateNode(NodeKind::CloudReplicate);
+        const auto merge=graph.CreateNode(NodeKind::CloudMerge);
         auto& settings=std::get<tg::graph::CloudShapeGenerateSettings>(graph.FindMutableNode(node)->settings);
         settings.centerX=1000; settings.centerY=1500; settings.centerZ=-500;
         const auto base=graph.CompileCloudShapes(node);
@@ -385,8 +293,8 @@ void RunNodeGraphTests() {
         }
         Check(rotatedMatch,"回転は上方向まわりの回転で球数を変えない");
         settings.rotation=0;
-        Check(graph.CreateLink(graph.FindNode(node)->outputs[0].id,graph.FindNode(replicate)->inputs[0].id) &&
-            graph.CompileCloudShapes(replicate).connected,"Cloud Replicateへ接続できる");
+        Check(graph.CreateLink(graph.FindNode(node)->outputs[0].id,graph.FindNode(merge)->inputs[0].id) &&
+            graph.CompileCloudShapes(merge).connected,"Cloud Mergeへ接続できる");
         settings.size=5000; settings.pointSeparation=0.05f; settings.length=settings.width=5;
         settings.secondaryShapes=true; settings.iterations=3;
         const auto excessive=tg::graph::GenerateCloudShape(settings,node);
@@ -396,7 +304,7 @@ void RunNodeGraphTests() {
         Section("Cloud Map Generateの分布と成長");
         NodeGraph graph;
         const auto map=graph.CreateNode(NodeKind::CloudMapGenerate);
-        const auto replicate=graph.CreateNode(NodeKind::CloudReplicate);
+        const auto merge=graph.CreateNode(NodeKind::CloudMerge);
         auto& settings=std::get<tg::graph::CloudMapSettings>(graph.FindMutableNode(map)->settings);
         Check(settings.removeIsolated,"新規マップは孤立点を除外する");
         settings.removeIsolated=false;
@@ -445,8 +353,8 @@ void RunNodeGraphTests() {
         Check(grown.mapGuide->points[0].x==base.mapGuide->points[0].x,"成長設定を変えても元の散布点は維持");
         settings.seed++;
         Check(graph.CompileCloudShapes(map).mapGuide->points[0].x!=base.mapGuide->points[0].x,"シード変更で分布を更新");
-        Check(graph.CreateLink(graph.FindNode(map)->outputs[0].id,graph.FindNode(replicate)->inputs[0].id),"既存のCloud Replicateへ接続できる");
-        Check(graph.CompileCloudShapes(replicate).connected,"生成形状を置き換え処理へ渡せる");
+        Check(graph.CreateLink(graph.FindNode(map)->outputs[0].id,graph.FindNode(merge)->inputs[0].id),"既存のCloud Mergeへ接続できる");
+        Check(graph.CompileCloudShapes(merge).connected,"生成形状を後段の処理へ渡せる");
         settings.pointCount=1;
         const auto isolatedResult=graph.CompileCloudShapes(map);
         Check(isolatedResult.primitives.empty() && !isolatedResult.connected && isolatedResult.mapGuide->pointConnected[0]==0,"単独点は雲形状とガイドから除外できる");
@@ -515,28 +423,36 @@ void RunNodeGraphTests() {
         const auto merge=graph.CreateNode(NodeKind::CloudMerge);
         Check(graph.FindNode(merge)->inputs.size()==1,"新規マージは空き入力1個");
         std::array<tg::graph::GraphId,8> parents{},pins{};
+        std::array<size_t,8> counts{};
+        size_t total=0;
         for (size_t i=0;i<parents.size();++i) {
-            parents[i]=graph.CreateNode(NodeKind::CloudEllipsoid);
+            parents[i]=graph.CreateNode(NodeKind::CloudShapeGenerate);
+            // 位置をずらし、同じ設定でも別ノードとして数えられることを確かめる。
+            std::get<tg::graph::CloudShapeGenerateSettings>(graph.FindMutableNode(parents[i])->settings).centerX=float(i)*2000;
+            counts[i]=graph.CompileCloudShapes(parents[i]).primitives.size();
+            total+=counts[i];
             pins[i]=graph.FindNode(merge)->inputs.back().id;
             Check(graph.CreateLink(graph.FindNode(parents[i])->outputs[0].id,pins[i]),"空きピンへ形状を接続");
             Check(graph.FindNode(merge)->inputs.size()==i+2,"接続ごとに空きピンが1個増える");
         }
-        Check(graph.CompileCloudShapes(merge).primitives.size()==8,"8入力すべてをマージする");
+        Check(total>0 && graph.CompileCloudShapes(merge).primitives.size()==total,"8入力すべてをマージする");
         const auto output=graph.FindNode(merge)->outputs[0].id;
         const auto spare=graph.FindNode(merge)->inputs.back().id;
         Check(!graph.CreateLink(output,spare) && graph.FindNode(merge)->inputs.size()==9,"拒否された循環でピンを増やさない");
         const auto linkId=graph.Links()[3].id;
         Check(graph.DeleteLink(linkId),"中間の接続を削除");
         Check(graph.FindNode(merge)->inputs.size()==8 && graph.FindPin(pins[4])!=nullptr,"空きを整理して後続の接続IDを維持");
-        Check(graph.CompileCloudShapes(merge).primitives.size()==7,"接続削除した形状だけを除く");
+        Check(graph.CompileCloudShapes(merge).primitives.size()==total-counts[3],"接続削除した形状だけを除く");
         const auto size=graph.FindNode(merge)->inputs.size();
         Check(graph.CreateLink(graph.FindNode(parents[0])->outputs[0].id,pins[1]),"接続済み入力を置換");
         Check(graph.FindNode(merge)->inputs.size()==size,"接続置換ではピン数を増やさない");
+        const size_t replaced=total-counts[3]-counts[1];
+        Check(graph.CompileCloudShapes(merge).primitives.size()==replaced,"置換で外れた形状を除き、重複した形状は一度だけ数える");
         NodeGraph restored;
         restored.Replace(graph.Nodes(),graph.Links());
         Check(restored.FindNode(merge)->inputs.size()==size && restored.FindNode(merge)->outputs[0].id==output,"復元後も入力数と出力IDを維持");
-        Check(restored.CompileCloudShapes(merge).primitives.size()==6,"復元後も全接続と重複除外を維持");
-        const auto extra=restored.CreateNode(NodeKind::CloudEllipsoid);
+        Check(restored.CompileCloudShapes(merge).primitives.size()==replaced,"復元後も全接続と重複除外を維持");
+        const auto extra=restored.CreateNode(NodeKind::CloudShapeGenerate);
         Check(restored.CreateLink(restored.FindNode(extra)->outputs[0].id,restored.FindNode(merge)->inputs.back().id),"復元後も入力を追加できる");
         Check(restored.FindNode(merge)->inputs.size()==size+1,"復元後の追加でも空き1個を維持");
         for (const auto parent:parents) graph.DeleteNode(parent);
@@ -545,7 +461,8 @@ void RunNodeGraphTests() {
     {
         Section("雲トランスフォームの連結とマージ");
         NodeGraph graph;
-        const auto parent=graph.CreateNode(NodeKind::CloudEllipsoid);
+        const auto parent=graph.CreateNode(NodeKind::CloudShapeGenerate);
+        const size_t parentCount=graph.CompileCloudShapes(parent).primitives.size();
         const auto transform=graph.CreateNode(NodeKind::CloudTransform);
         const auto second=graph.CreateNode(NodeKind::CloudTransform);
         const auto merge=graph.CreateNode(NodeKind::CloudMerge);
@@ -565,49 +482,17 @@ void RunNodeGraphTests() {
         const auto restored=graph.CompileCloudShapes(second).primitives[0];
         Check(restored.centerX==original.centerX && restored.centerY==original.centerY && restored.centerZ==original.centerZ,"連結した逆移動で位置が戻る");
         Check(link(parent,merge) && link(transform,merge,1),"元形状と変換した形状をマージできる");
-        Check(graph.CompileCloudShapes(merge).primitives.size()==2,"同じ元形状でも移動した枝を重複除外しない");
+        Check(graph.CompileCloudShapes(merge).primitives.size()==2*parentCount,"同じ元形状でも移動した枝を重複除外しない");
         Check(link(transform,merge),"同じ変換を両入力へ分岐");
-        Check(graph.CompileCloudShapes(merge).primitives.size()==1,"同一変換の共有は重複を除外");
+        Check(graph.CompileCloudShapes(merge).primitives.size()==parentCount,"同一変換の共有は重複を除外");
         Check(!link(second,transform),"変換を含む循環を拒否");
         graph.DeleteNode(parent);
         Check(!graph.CompileCloudShapes(second).connected,"入力削除で下流の変換も空になる");
     }
     {
-        Section("複製球の中心を元形状に拘束");
-        NodeGraph graph;
-        const auto parent=graph.CreateNode(NodeKind::CloudEllipsoid);
-        const auto replicate=graph.CreateNode(NodeKind::CloudReplicate);
-        graph.CreateLink(graph.FindNode(parent)->outputs[0].id,graph.FindNode(replicate)->inputs[0].id);
-        auto& source=std::get<tg::graph::CloudEllipsoidSettings>(graph.FindMutableNode(parent)->settings);
-        auto& settings=std::get<tg::graph::CloudReplicateSettings>(graph.FindMutableNode(replicate)->settings);
-        source.centerX=1200; source.centerY=-350; source.centerZ=780;
-        source.radiusX=800; source.radiusY=80; source.radiusZ=300;
-        settings.keepSource=false; settings.count=128; settings.packingDensity=100;
-        settings.jitter=1; settings.radiusScale=1; settings.radiusVariation=0.9f;
-        for (int mode=0;mode<3;++mode) {
-            settings.distribution=mode;
-            bool contained=true,interior=false;
-            for (int seed=0;seed<8;++seed) {
-                settings.seed=seed;
-                const auto generated=graph.CompileCloudShapes(replicate);
-                contained &= generated.connected && !generated.primitives.empty();
-                for (const auto& p:generated.primitives) {
-                    const double x=(double(p.centerX)-source.centerX)/source.radiusX;
-                    const double y=(double(p.centerY)-source.centerY)/source.radiusY;
-                    const double z=(double(p.centerZ)-source.centerZ)/source.radiusZ;
-                    const double distanceSquared=x*x+y*y+z*z;
-                    contained &= distanceSquared<=1.00001;
-                    interior |= distanceSquared<0.9;
-                }
-            }
-            Check(contained,"最大ばらつきでも全配置方式の球中心は親楕円体の外へ出ない");
-            Check(interior,"内側へずれた中心は表面へ押し戻さない");
-        }
-    }
-    {
         Section("手続き雲の雲底設定");
         NodeGraph graph;
-        const auto parent=graph.CreateNode(NodeKind::CloudEllipsoid);
+        const auto parent=graph.CreateNode(NodeKind::CloudShapeGenerate);
         const auto noise=graph.CreateNode(NodeKind::CloudNoise);
         const auto output=graph.CreateNode(NodeKind::CloudOutput);
         graph.CreateLink(graph.FindNode(parent)->outputs[0].id,graph.FindNode(noise)->inputs[0].id);

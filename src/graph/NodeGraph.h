@@ -42,7 +42,7 @@ enum class ValueType : uint32_t {
     // パス（地形の上に引いた向き付きの線）。Path ノードが出し、Mask Path が読む。
     Path = 2,
     Volume = 3,
-    CloudLine = 4,
+    // 4 は廃止した Cloud Line。番号は再利用しない。
     CloudShape = 5,
 };
 
@@ -109,17 +109,16 @@ enum class NodeKind : uint32_t {
     Lake = 31,
     MaskFlowline = 32,
     MeanderingRivers = 33,
-    CloudLine = 34,
-    CloudSpheres = 35,
-    CloudEllipsoid = 36,
+    // 34〜36、39 は廃止した Cloud Line / Cloud Spheres / Cloud Ellipsoid / Cloud Replicate。番号は再利用しない。
     CloudMerge = 37,
     CloudNoise = 38,
-    CloudReplicate = 39,
     CloudTransform = 40,
     CloudMapGenerate = 41,
     CloudAnimation = 42,
     CloudShapeGenerate = 43,
     CloudWeatherLayer = 44,
+    // 読み込んだファイルにあるが、この版では扱えない種類。ピンを持たず、エラー表示だけする。
+    Missing = 45,
 };
 
 struct PinDefinition {
@@ -236,20 +235,6 @@ struct CloudNodeSettings {
     float windDirection = 90.0f; // 度。0 は +Z、90 は +X。
 };
 
-// 実験用の形状構築。地形用Pathと独立した3D直線と、共通座標の楕円体群。
-struct CloudLineSettings {
-    float startX=0, startY=200, startZ=0;
-    float endX=0, endY=1600, endZ=0;
-};
-struct CloudSpheresSettings {
-    int count=8, seed=1;
-    float startRadius=350, endRadius=500;
-    float jitter=0.25f, radiusVariation=0.2f;
-};
-struct CloudEllipsoidSettings {
-    float centerX=0, centerY=200, centerZ=0;
-    float radiusX=1000, radiusY=250, radiusZ=700;
-};
 struct CloudMapSettings {
     float width=10000, depth=10000, centerX=0, centerZ=0;
     int pointCount=400, seed=1;
@@ -326,14 +311,6 @@ struct CloudAnimationSettings {
 };
 struct CloudTransformSettings { float translateX=0, translateY=0, translateZ=0; };
 struct CloudMergeSettings { float smoothness=80; };
-struct CloudReplicateSettings {
-    int count=12, seed=1; // 旧形式の元形状1個あたりの追加数。
-    int distribution=1; // 0: 旧個数指定、1: 表面密度、2: 体積密度。
-    float packingDensity=10; // 表面は個/km²、内部は個/km³。
-    float radiusScale=0.3f, radiusVariation=0.25f, jitter=0.15f;
-    float smoothness=10;
-    bool keepSource=true;
-};
 struct CloudNoiseSettings {
     int noiseType=0; // 0: Perlin（従来）、1: Perlin fBM、2: Perlin-Worley。
     float scale=500, displacement=120, detail=40, feather=60;
@@ -377,9 +354,12 @@ struct CompiledCloud {
 // 出力。ここに繋いだチェーンがプレビューのマテリアルになる。
 struct OutputNodeSettings {};
 
+// 読み込み時に定義が見つからなかった種類。保存名をそのまま持ち、保存時にも同じ名前で書き戻す。
+struct MissingNodeSettings { std::string kindName; };
+
 using NodeSettings =
     std::variant<LayerNodeSettings, MaskNodeSettings, OutputNodeSettings, PathNodeSettings, CloudNodeSettings,
-                 CloudLineSettings, CloudSpheresSettings, CloudEllipsoidSettings, CloudMergeSettings, CloudNoiseSettings, CloudReplicateSettings, CloudTransformSettings, CloudMapSettings, CloudAnimationSettings, CloudShapeGenerateSettings, CloudWeatherSettings>;
+                 CloudMergeSettings, CloudNoiseSettings, CloudTransformSettings, CloudMapSettings, CloudAnimationSettings, CloudShapeGenerateSettings, CloudWeatherSettings, MissingNodeSettings>;
 
 struct Node {
     GraphId id = 0;

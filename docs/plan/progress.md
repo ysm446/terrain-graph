@@ -1,9 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-12 18:05
+更新日時: 2026-09-12 18:50
 
 ## 現在の状況
+
+**実験ノードの整理（2026-09-12 18:50）。** Cloud Line / Cloud Spheres / Cloud Ellipsoid / Cloud Replicate を廃止（Cloud Shape Generate / Map Generate と二次形状で置き換わったため）。Cloud Transform / Cloud Merge / Cloud Map Generate は残す。`ValueType::CloudLine`（4）と `NodeKind` 34〜36・39 の番号は再利用しない。読み込み時に定義が見つからない `kind` は捨てずに `NodeKind::Missing`（ピンなし、`MissingNodeSettings` に保存名を保持）として残し、ノードカードはエラー色の枠と保存名、プロパティは説明文を出す。保存時は元の `kind` 名で書き戻すので、対応する版で開けば復元できる。繋がっていたリンクはピンが無いので消える。テストは楕円体を使っていた箇所を Cloud Shape Generate に置き換え、球数は生成結果から導く形にした（複製のテスト 3 節は削除）。Debug / Release ビルド、テスト成功。Release で `data/procedural-cloud-qa/tower.tgproj`（廃止ノード 3 個を含む）の保存往復で種類名が保たれること、`--screenshot-ui --select-node 105` でエラー表示とプロパティの説明を確認（`data/cloud-temporal-qa/missing-ui.png`）。手元の `data/` には廃止ノードを含むプロジェクトが 28〜39 件あり、それらの雲は表示されなくなる。
 
 **雲のプレビュー品質トグル追加（2026-09-12 18:05）。** プレビュー設定「ボリューム雲」に「地球の曲率」（保存名 `cloudCurvature`）と「遠景の別パス」（`cloudFarPass`）を追加。いずれも既定オン。曲率は `weatherCurvature`（実行時のみ、旧 `weatherPadding`）として `WeatherCurvedHeight` の沈み量に掛け、遠景パスはオフのとき描画側で `weatherFar` を 0 にする。ノードの「遠景の開始距離」は変更しない。Debug / Release ビルド・テスト・DXC 成功。Release で `data/cloud-weather-qa/wide.tgproj` を曲率オフ・遠景パスオフで描画し、曲率オフでは地平線付近の雲が沈まず帯のまま残ること（既定との平均差 0.77）、遠景パスオフの差分が地平線付近のみ（0.12）であることを確認（`data/cloud-temporal-qa/curvature-compare.png`）。プレビュー設定タブの行は目視未確認。
 
