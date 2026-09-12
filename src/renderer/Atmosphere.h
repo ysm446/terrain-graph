@@ -79,7 +79,7 @@ struct AtmosphereSettings {
     float weatherBottom = 1500.0f; // 球殻の雲底高度（m）。cloudBottom は沈み分だけ下へ広げた包囲箱。
     float weatherThickness = 5000.0f; // 球殻の厚さ（m）。
     float weatherFar = 20000.0f; // 遠景パスの開始距離（m）。0 で無効。
-    float weatherPadding = 0;
+    float weatherCurvature = 1.0f; // 実行時のみ。1 で球殻状に曲げ、0 で平らな層（プレビュー設定）。
 };
 static_assert(sizeof(AtmosphereSettings) == 304);
 

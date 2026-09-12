@@ -189,6 +189,10 @@ void Application::DrawMaterialPanel() {
             if (ui::PropertyCombo("陰影の品質", &lightQuality, lighting, 2, 0,
                 "雲層の内部の陰影と地形への雲影。標準は光学的厚さを格子に保存して再利用します。直接計算は細かな変化を評価しますが重くなります。雲塊には影響しません。"))
                 m_renderer.CloudLightingCache() = lightQuality == 0;
+            ui::PropertyBool("地球の曲率", &m_renderer.CloudCurvature(), true,
+                "Cloud Weather Layer を地球と同心の球殻として曲げ、遠くの雲を地平線へ沈めます。オフでは平らな層として描きます。");
+            ui::PropertyBool("遠景の別パス", &m_renderer.CloudFarPass(), true,
+                "Cloud Weather Layer の「遠景の開始距離」より先を 1/4 解像度の別パスで描きます。オフでは全距離を同じ解像度で積分し、描画負荷が増えます。");
             ui::EndPropertyTable();
         }
         ui::HintText("大気散乱スカイで使用。雲の形と配置は雲ノードで設定します");

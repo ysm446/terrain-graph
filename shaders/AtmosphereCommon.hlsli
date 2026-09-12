@@ -25,7 +25,7 @@ struct AtmosphericParameters {
     uint shapeCacheIndex; uint3 shapeCacheSize;
     float weatherType; float weatherAnvil; float weatherWisp; uint opticalCacheSize;
     float weatherStreets; float weatherVariation; float weatherDetailScale; uint weatherLod;
-    float weatherBottom; float weatherThickness; float weatherFar; float weatherPadding;
+    float weatherBottom; float weatherThickness; float weatherFar; float weatherCurvature;
 };
 float3 AtmosphereSun(AtmosphericParameters p) {
     return float3(cos(p.elevation) * sin(p.azimuth), sin(p.elevation), cos(p.elevation) * cos(p.azimuth));
@@ -284,8 +284,9 @@ float SampleWeatherMask(uint index, float2 uv) {
 // 天候層。雲量・雲種の2Dマップと高さプロファイルで広域の雲を作る（RDR2 / Nubis 方式）。
 // 天候層は地球と同心の球殻として扱う。原点からの水平距離 d に対し、層は d²/(2R) だけ沈む。
 // 平らな座標の高さに沈みを足した値を層内の高さとして使う。地形は平らなまま。
-float WeatherCurvedHeight(float3 position) {
-    return position.y+dot(position.xz,position.xz)/(2*kAtmEarthRadius);
+// weatherCurvature が 0 のときは曲げず、平らな層として扱う（プレビュー設定）。
+float WeatherCurvedHeight(float3 position, AtmosphericParameters p) {
+    return position.y+p.weatherCurvature*dot(position.xz,position.xz)/(2*kAtmEarthRadius);
 }
 // viewDistance はカメラからの距離。遠景では細部ノイズを省き、参照回数を減らす。
 float WeatherCloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex, float viewDistance=0) {
@@ -299,7 +300,7 @@ float WeatherCloudDensity(float3 position, AtmosphericParameters p, uint noiseIn
     float type=saturate(p.weatherType);
     if (p.typeMask!=0xffffffff) type*=SampleWeatherMask(p.typeMask,uv);
     if (coverage<=0.001) return 0;
-    float h=(WeatherCurvedHeight(position)-p.weatherBottom)/p.weatherThickness;
+    float h=(WeatherCurvedHeight(position,p)-p.weatherBottom)/p.weatherThickness;
     if (h<=0 || h>=1) return 0;
     // 本体（雲量の場・1オクターブ目・塊の密度差）は cloudBodyOffset（移動量）、2オクターブ目と細部は windOffset（相対移動を引いた量）で進める。
     // 「模様を変化」がオフなら両者は一致し、形を保ったまま移動する。
@@ -593,7 +594,7 @@ float4 IntegrateCloudEx(float3 origin, float3 ray, float limit, AtmosphericParam
         float inScatter=1;
         if (p.localCloud==4) {
             float typeTop=p.weatherType<0.5 ? lerp(0.2,0.5,p.weatherType*2) : lerp(0.5,1.0,(p.weatherType-0.5)*2);
-            float hh=saturate((WeatherCurvedHeight(pos)-p.weatherBottom)/(p.weatherThickness*typeTop));
+            float hh=saturate((WeatherCurvedHeight(pos,p)-p.weatherBottom)/(p.weatherThickness*typeTop));
             // 密度は輪郭付近で小さいので2倍して評価し、上面の明るさを残す。
             // 雲頂付近で指数を上げると表面の薄い層が暗くなるため、高さ依存は弱くする。
             float depthProbability=0.05+pow(saturate(density*3),lerp(0.5,1.0,smoothstep(0.3,0.85,hh)));

@@ -2039,6 +2039,8 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     atmosphereNode["fullResolutionClouds"] = renderer.FullResolutionClouds();
     atmosphereNode["temporalClouds"] = renderer.TemporalClouds();
     atmosphereNode["cloudLightingCache"] = renderer.CloudLightingCache();
+    atmosphereNode["cloudCurvature"] = renderer.CloudCurvature();
+    atmosphereNode["cloudFarPass"] = renderer.CloudFarPass();
     node["atmosphere"] = std::move(atmosphereNode);
 
 
@@ -2141,6 +2143,8 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
         renderer.FullResolutionClouds() = ReadBool(source, "fullResolutionClouds", false);
         renderer.TemporalClouds() = ReadBool(source, "temporalClouds", true);
         renderer.CloudLightingCache() = ReadBool(source, "cloudLightingCache", true);
+        renderer.CloudCurvature() = ReadBool(source, "cloudCurvature", true);
+        renderer.CloudFarPass() = ReadBool(source, "cloudFarPass", true);
         const auto samples = ReadUInt(source, "samples", defaults.samples);
         atmosphere.samples = samples <= 32 ? 32u : samples <= 64 ? 64u : 128u;
     }

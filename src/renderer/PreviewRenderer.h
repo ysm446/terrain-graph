@@ -194,6 +194,8 @@ public:
     void SetCloudTypeMask(uint32_t index, uint64_t revision) { m_atmosphere.SetTypeMask(index, revision); }
     GodRaySettings& GodRays() { return m_atmosphere.GodRays(); }
     bool& CloudLightingCache() { return m_cloudLightingCache; }
+    bool& CloudCurvature() { return m_cloudCurvature; } // 天候層を球殻状に曲げる。
+    bool& CloudFarPass() { return m_cloudFarPass; } // 遠景を 1/4 解像度の別パスで描く。
     bool& FullResolutionClouds() { return m_atmosphere.FullResolutionClouds(); }
     bool& TemporalClouds() { return m_atmosphere.TemporalClouds(); }
     void SetCloudPrimitives(std::span<const AtmosphereSettings::Primitive> primitives) { m_atmosphere.SetCloudPrimitives(primitives); }
@@ -329,6 +331,8 @@ private:
     Environment m_environment;
     Atmosphere m_atmosphere;
     bool m_cloudLightingCache = true;
+    bool m_cloudCurvature = true;
+    bool m_cloudFarPass = true;
     AtmosphereSettings m_atmosphereSettings;
     LightSettings m_atmosphericLight{0.9f, 0.9f, 120000.0f, {1.0f, 1.0f, 1.0f}};
     bool m_atmosphericMode = false;

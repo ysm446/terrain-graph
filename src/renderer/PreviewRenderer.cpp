@@ -299,6 +299,9 @@ void PreviewRenderer::ProcessPendingWork(rhi::Device& device,
         effective.elevation = m_atmosphericLight.elevation;
         effective.illuminance = m_atmosphericLight.illuminance;
         effective.cloudSkylightIntensity = m_atmosphericEnvironmentIntensity;
+        // 曲率と遠景パスはプレビュー品質の設定。ノードの遠景の開始距離は残し、オフのときだけ 0 にする。
+        effective.weatherCurvature = m_cloudCurvature ? 1.0f : 0.0f;
+        if (!m_cloudFarPass) effective.weatherFar = 0.0f;
         m_atmosphere.Update(device, pipelineCache, effective);
     }
     if (m_requestedMeshSubdivisions != m_meshSubdivisions) {
@@ -377,6 +380,8 @@ void PreviewRenderer::ResetSettings() {
     FullResolutionClouds() = false;
     TemporalClouds() = true;
     m_cloudLightingCache = true;
+    m_cloudCurvature = true;
+    m_cloudFarPass = true;
     m_atmosphericLight = {0.9f, 0.9f, 120000.0f, {1.0f, 1.0f, 1.0f}};
     const PreviewDefaults& defaults = kPreviewDefaults;
     m_tonemap = defaults.tonemap;
