@@ -152,8 +152,9 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
         const double period = requested.cloudScale * (requested.localCloud ? 10.0 : 1.0);
         settings.windOffsetX = static_cast<float>(std::fmod(m_motion.x, period));
         settings.windOffsetZ = static_cast<float>(std::fmod(m_motion.z, period));
-        if (requested.localCloud == 2) {
-            const double bodyPeriod = requested.cloudScale * std::clamp(requested.cloudCellCount, 1u, 32u);
+        if (requested.localCloud == 2 || requested.localCloud == 4) {
+            // 天候層は雲量の場（本体）を移動量で、形状・細部ノイズを相対移動を引いた量で進める。
+            const double bodyPeriod = requested.localCloud == 4 ? period : requested.cloudScale * std::clamp(requested.cloudCellCount, 1u, 32u);
             settings.cloudBodyOffsetX = static_cast<float>(std::fmod(m_motion.x, bodyPeriod));
             settings.cloudBodyOffsetZ = static_cast<float>(std::fmod(m_motion.z, bodyPeriod));
             // 積算済みの相対移動を使い、速度比の編集時に表面を飛ばさない。

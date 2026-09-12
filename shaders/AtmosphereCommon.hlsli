@@ -295,12 +295,15 @@ float WeatherCloudDensity(float3 position, AtmosphericParameters p, uint noiseIn
     if (coverage<=0.001) return 0;
     float h=(position.y-p.cloudBottom)/p.cloudThickness;
     if (h<=0 || h>=1) return 0;
+    // 形状・細部ノイズは windOffset（相対移動を引いた量）、雲量の場と塊の密度差は cloudBodyOffset（移動量）で進める。
+    // 「模様を変化」がオフなら両者は一致し、形を保ったまま移動する。
     float3 uvw=(offset-float3(p.windOffsetX,0,p.windOffsetZ))/p.cloudScale;
+    float3 body=(offset-float3(p.cloudBodyOffsetX,0,p.cloudBodyOffsetZ))/p.cloudScale;
     // 雲量の場は風向に沿って引き伸ばし、帯状（クラウドストリート）の並びを作る。
     float2 wind=float2(sin(p.windDirection),cos(p.windDirection));
-    float2 along=dot(uvw.xz,wind)*wind, across=uvw.xz-along;
+    float2 along=dot(body.xz,wind)*wind, across=body.xz-along;
     float2 stretched=along/(1+3*p.weatherStreets)+across;
-    float3 buv=float3(stretched.x,uvw.y*0.2,stretched.y);
+    float3 buv=float3(stretched.x,body.y*0.2,stretched.y);
     // 雲量は低周波の場で地域差を付ける。平均が指定値になり、値が高い場所に塊が集まり低い場所は空く。
     // 雲種が高いほど場のスケールを大きく、コントラストを強くし、少数の大きな塔と広い晴れ間を作る。
     float fieldScale=1-0.45*type;
@@ -343,7 +346,7 @@ float WeatherCloudDensity(float3 position, AtmosphericParameters p, uint noiseIn
         density=lerp(coarse,eroded,detailFade);
     } else density=coarse;
     // 塊ごとの密度差。均一な綿の板にならないよう、厚い塊と薄い塊を混ぜる。
-    float variation=SampleCloudNoise(uvw*0.9+0.77,noiseIndex,0);
+    float variation=SampleCloudNoise(body*0.9+0.77,noiseIndex,0);
     density*=lerp(1,lerp(0.35,1.15,variation),p.weatherVariation);
     float edge=saturate((1-max(q.x,q.z))/max(p.edgeSoftness,0.01));
     return density*edge;
@@ -491,7 +494,8 @@ float3 CloudCacheShift(AtmosphericParameters p) {
     if (p.localCloud!=4) return 0;
     float n=max(p.opticalCacheSize&0xffffu,2u);
     float2 voxel=2*CloudRenderRadii(p).xz/(n-1);
-    float2 wind=float2(p.windOffsetX,p.windOffsetZ);
+    // 主要な構造は雲量の場なので、その移動量に格子を追従させる。
+    float2 wind=float2(p.cloudBodyOffsetX,p.cloudBodyOffsetZ);
     float2 shift=wind-floor(wind/voxel)*voxel;
     return float3(shift.x,0,shift.y);
 }

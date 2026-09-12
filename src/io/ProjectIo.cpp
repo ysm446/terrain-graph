@@ -1469,7 +1469,8 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
                 {"noiseScale",weather->noiseScale},{"detailScale",weather->detailScale},{"noiseType",EnumName(kCloudNoiseNames,static_cast<uint32_t>(weather->noiseType))},
                 {"detailStrength",weather->detailStrength},{"edgeSoftness",weather->edgeSoftness},
                 {"extinction",weather->extinction},{"indirectLight",weather->indirectLight},{"ambientLight",weather->ambientLight},
-                {"seed",weather->seed},{"animate",weather->animate},{"windSpeed",weather->windSpeed},{"windDirection",weather->windDirection}};
+                {"seed",weather->seed},{"animate",weather->animate},{"windSpeed",weather->windSpeed},{"windDirection",weather->windDirection},
+                {"evolveNoise",weather->evolveNoise},{"noiseSpeedRatio",weather->noiseSpeedRatio}};
         } else if (const auto* generate = std::get_if<graph::CloudShapeGenerateSettings>(&node.settings)) {
             item["proceduralCloud"]={{"species",EnumName(kCloudSpeciesNames,static_cast<uint32_t>(generate->species))},
                 {"centerX",generate->centerX},{"centerY",generate->centerY},{"centerZ",generate->centerZ},
@@ -1768,6 +1769,8 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.animate=ReadBool(*value,"animate",settings.animate);
                     settings.windSpeed=std::clamp(ReadFloat(*value,"windSpeed",settings.windSpeed),0.0f,1000.0f);
                     settings.windDirection=std::clamp(ReadFloat(*value,"windDirection",settings.windDirection),0.0f,360.0f);
+                    settings.evolveNoise=ReadBool(*value,"evolveNoise",settings.evolveNoise);
+                    settings.noiseSpeedRatio=std::clamp(ReadFloat(*value,"noiseSpeedRatio",settings.noiseSpeedRatio),0.0f,1.0f);
                 }
                 created.settings=settings;
             } else if (created.kind == graph::NodeKind::CloudShapeGenerate) {

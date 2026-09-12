@@ -301,6 +301,8 @@ struct CloudWeatherSettings {
     int seed=1;
     bool animate=false;
     float windSpeed=20, windDirection=90;
+    bool evolveNoise=false; // 移動に伴い模様を変化させる。
+    float noiseSpeedRatio=0.75f; // 雲の移動速度に対する模様の速度。
     bool operator==(const CloudWeatherSettings&) const = default;
 };
 struct CloudMapGuide {

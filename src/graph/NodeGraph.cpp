@@ -736,6 +736,7 @@ CompiledCloud NodeGraph::CompileCloud() const {
             cloud.motionMode = 1;
             cloud.windSpeed = weather.windSpeed;
             cloud.windDirection = weather.windDirection;
+            cloud.noiseSpeedRatio = weather.evolveNoise ? std::clamp(weather.noiseSpeedRatio, 0.0f, 1.0f) : 1.0f;
             for (size_t input = 0; input < source->inputs.size() && input < 2; ++input) {
                 for (const auto& link : m_links) {
                     if (link.endPin != source->inputs[input].id) continue;

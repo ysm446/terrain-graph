@@ -1,7 +1,7 @@
 # nodes — ノードのリファレンス
 
 作成日時: 2026-09-03 17:30
-更新日時: 2026-09-12 18:20
+更新日時: 2026-09-12 19:00
 
 ノード 1 つずつの、**役割・ピン・パラメータ**の一覧。
 
@@ -877,6 +877,10 @@ Cloud Merge の入力を可変長に変更。新規作成時は Shape 1 のみ�
 ## Cloud Shape Generate（2026-09-12 12:20）
 
 Cloud Shape Generate (Experimental) を追加。入力なしで単独の積雲を球の集合として生成し、Shape を Cloud Replicate / Cloud Merge / Cloud Noise へ接続できる。雲種（Humilis / Mediocris / Congestus）で土台の厚さと塔の高さ・本数を切り替え、中心XYZ・サイズ（基本半径）・長さ／幅の倍率・球の間隔・乱れ・下側の切り取り・回転・半径のランダム化・二次形状（繰り返し1〜3、押し出し、広がり）・つなぎの滑らかさ・シードを持つ。土台は楕円体内の乱した格子、塔は先端へ細くなる球列、二次形状は上半球方向へ積む子球。Houdini の Cloud Shape Generate を参考にした構成で、Bend と Fuse は未対応。保存識別子は `cloudShapeGenerate`、設定は `proceduralCloud` 節。
+
+## Cloud Weather Layer の模様の変化（2026-09-12 19:00）
+
+Cloud Weather Layer に「模様を変化」（既定オフ）と「模様の速度比」（既定0.75、0〜1）を追加。オフでは雲量の場と形状・細部ノイズが同じ量だけ動き、形を保って移動する。オンでは雲量の場（本体）は移動量で、形状・細部ノイズは相対移動を引いた量で進むため、移動に伴って形が変わる。速度比 1 で形を維持、0 で模様を空間に固定。Cloud Animation と同じ積算方式で、比率の変更やオン／オフで位相を飛ばさない。照明キャッシュの格子は本体の移動量に追従する。保存名は `evolveNoise` / `noiseSpeedRatio`。
 
 ## Cloud Weather Layer の陰影の揺らぎ対策（2026-09-12 18:20）
 

@@ -770,6 +770,10 @@ void RunNodeGraphTests() {
         graph.MarkCloudDirty();
         cloud = graph.CompileCloud();
         Check(cloud.cloudType==1.0f && cloud.cloud.thickness==8000.0f && cloud.cloud.centerY==5000.0f, "雲種と厚さの変更を反映する");
+        Check(cloud.cloud.noiseSpeedRatio==1.0f, "模様を変化がオフなら模様の速度比は1");
+        settings.evolveNoise=true; settings.noiseSpeedRatio=0.25f;
+        graph.MarkCloudDirty();
+        Check(graph.CompileCloud().cloud.noiseSpeedRatio==0.25f, "模様を変化がオンなら速度比を描画へ渡す");
         const auto compiled = graph.CompileLayersTo(cloud.typeMaskNode, cloud.typeMaskPin);
         Check(!compiled.layers.empty(), "雲種マスクをレイヤー列へコンパイルできる");
     }

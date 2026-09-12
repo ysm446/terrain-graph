@@ -1342,6 +1342,9 @@ void Application::DrawGraphPanel() {
             changed |= ui::PropertyBool("再生", &weather->animate, defaults.animate, "風で模様を流します。");
             changed |= ui::PropertyFloat("風速", &weather->windSpeed, 0.0f, 1000.0f, defaults.windSpeed, nullptr, "%.1f m/s");
             changed |= ui::PropertyFloat("風向", &weather->windDirection, 0.0f, 360.0f, defaults.windDirection, "0 は +Z、90 は +X。", "%.0f °");
+            changed |= ui::PropertyBool("模様を変化", &weather->evolveNoise, defaults.evolveNoise, "オフでは現在の形を保ったまま移動します。オンでは雲量の分布は移動し、形状と細部の模様が別の速度で流れて形が変わります。");
+            if (weather->evolveNoise)
+                changed |= ui::PropertyFloat("模様の速度比", &weather->noiseSpeedRatio, 0.0f, 1.0f, defaults.noiseSpeedRatio, "1 で雲と同じ速度（形を維持）、0 で模様を空間に固定。小さいほど移動に伴う形の変化が速くなります。", "%.2f");
             ui::EndPropertyTable();
         }
         if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
