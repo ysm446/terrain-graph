@@ -74,7 +74,7 @@ struct AtmosphereSettings {
     uint32_t opticalCacheSize = 64 | (32u << 16); // 照明キャッシュの格子数。下位16bit: XZ、上位16bit: Y。実行時のみ。
     float weatherStreets = 0.5f; // 風向に沿った帯状の伸び。
     float weatherVariation = 0.5f; // 塊ごとの密度差。
-    float weatherDetailScale = 400.0f; // 細部ノイズの周期（m）。
+    float weatherDetailScale = 800.0f; // 細部ノイズの周期（m）。
     float weatherPadding = 0;
 };
 static_assert(sizeof(AtmosphereSettings) == 288);

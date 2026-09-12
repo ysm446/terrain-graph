@@ -315,8 +315,12 @@ float WeatherCloudDensity(float3 position, AtmosphericParameters p, uint noiseIn
     float anvil=p.weatherAnvil*saturate((type-0.5)*2)*smoothstep(0.55,0.9,h);
     coverage=saturate(coverage*(1+anvil));
     if (coverage<=0.001) return 0;
+    // 刻み幅（距離適応）に対して各ノイズ成分を帯域制限し、カメラ移動時のちらつきを抑える。
+    // 最小構造は Perlin-Worley の 16 セルで周期/16。刻みがその半分を超えたら平均へ寄せる。
+    float stepLength=max(p.weatherDetailScale*0.03,viewDistance*0.003*64.0/max(p.samples,16u));
+    float fade2=saturate(2-2*stepLength/(p.cloudScale/2.3/16));
     // 周期の異なる2オクターブで繰り返しを崩す。
-    float shape=CloudShapeNoise(uvw,p,noiseIndex)*0.65+CloudShapeNoise(uvw*2.3+float3(0.29,0.71,0.13),p,noiseIndex)*0.35;
+    float shape=CloudShapeNoise(uvw,p,noiseIndex)*0.65+lerp(0.7,CloudShapeNoise(uvw*2.3+float3(0.29,0.71,0.13),p,noiseIndex),fade2)*0.35;
     // ノイズの平均が約0.7と高いので、0.5付近を中心へ戻して雲量の閾値と釣り合わせる。
     shape=saturate((shape-0.4)/0.6);
     float base=saturate(shape*profile);
@@ -327,9 +331,8 @@ float WeatherCloudDensity(float3 position, AtmosphericParameters p, uint noiseIn
     // 周期は「細部の大きさ」で独立に指定。遠景では細部を省き、平均値相当で薄く削る。
     float erosion=p.detailStrength*lerp(1+p.weatherWisp,0.5,saturate(h*3));
     float detailFade=1-smoothstep(12000,30000,viewDistance);
-    // 刻み幅が細部の最小構造（周期の約1/8）より粗くなると平均へ寄せ、サンプリングのちらつきを抑える。
-    float stepLength=max(p.weatherDetailScale*0.06,viewDistance*0.004*64.0/max(p.samples,16u));
-    detailFade*=saturate(2-stepLength/(p.weatherDetailScale*0.125));
+    // 刻み幅が細部の最小構造（周期/16）の半分を超えると平均へ寄せ、サンプリングのちらつきを抑える。
+    detailFade*=saturate(2-2*stepLength/(p.weatherDetailScale/16));
     float coarse=density*(1-erosion*0.35);
     if (detailFade>0.001) {
         float3 duv=(offset-float3(p.windOffsetX,0,p.windOffsetZ))/max(p.weatherDetailScale,10)+0.173;
@@ -514,8 +517,8 @@ float4 IntegrateCloud(float3 origin, float3 ray, float limit, AtmosphericParamet
     // 天候層は距離適応の刻み。近景は細部の大きさに合わせて細かく、遠景ほど長く進める。
     float minStep=0, stepGrowth=0;
     if (p.localCloud==4) {
-        minStep=max(p.weatherDetailScale*0.06,8);
-        stepGrowth=0.004*64.0/max(p.samples,16u);
+        minStep=max(p.weatherDetailScale*0.03,8);
+        stepGrowth=0.003*64.0/max(p.samples,16u);
         count=2048;
     }
     float3 sun=AtmosphereSun(p);
