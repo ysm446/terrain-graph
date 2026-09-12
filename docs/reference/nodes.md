@@ -1,7 +1,7 @@
 # nodes — ノードのリファレンス
 
 作成日時: 2026-09-03 17:30
-更新日時: 2026-09-12 19:40
+更新日時: 2026-09-12 20:10
 
 ノード 1 つずつの、**役割・ピン・パラメータ**の一覧。
 
@@ -877,6 +877,10 @@ Cloud Merge の入力を可変長に変更。新規作成時は Shape 1 のみ�
 ## Cloud Shape Generate（2026-09-12 12:20）
 
 Cloud Shape Generate (Experimental) を追加。入力なしで単独の積雲を球の集合として生成し、Shape を Cloud Replicate / Cloud Merge / Cloud Noise へ接続できる。雲種（Humilis / Mediocris / Congestus）で土台の厚さと塔の高さ・本数を切り替え、中心XYZ・サイズ（基本半径）・長さ／幅の倍率・球の間隔・乱れ・下側の切り取り・回転・半径のランダム化・二次形状（繰り返し1〜3、押し出し、広がり）・つなぎの滑らかさ・シードを持つ。土台は楕円体内の乱した格子、塔は先端へ細くなる球列、二次形状は上半球方向へ積む子球。Houdini の Cloud Shape Generate を参考にした構成で、Bend と Fuse は未対応。保存識別子は `cloudShapeGenerate`、設定は `proceduralCloud` 節。
+
+## Cloud Weather Layer の照明調整（2026-09-12 20:10）
+
+Cloud Weather Layer の照明調整。太陽を背にした視点で厚い雲頂が薄い縁より暗く見える逆転を修正。原因は4次で打ち切った前方寄りの位相では逆散乱の反射が不足し、天空光の平坦な明るさが支配していたこと。対策: (1) 高次散乱の残りを等方項 `sunlight × 0.3 × Indirect Light × exp(−sunDepth×0.5)` で補う、(2) 高次散乱の太陽光の減衰係数を 0.5^order → 0.8^order にして陰の側を暗くする、(3) 天空光の比重を 0.6 に下げる、(4) in-scatter の密度指数の高さ依存を 0.5〜2.0 → 0.5〜1.0 に緩め、密度は3倍で評価して雲頂の表面層を暗くしない。天候層のみに適用。
 
 ## Cloud Weather Layer の LOD 切り替え距離（2026-09-12 19:40）
 
