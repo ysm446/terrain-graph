@@ -295,7 +295,7 @@ float WeatherCloudDensity(float3 position, AtmosphericParameters p, uint noiseIn
     if (coverage<=0.001) return 0;
     float h=(position.y-p.cloudBottom)/p.cloudThickness;
     if (h<=0 || h>=1) return 0;
-    // 形状・細部ノイズは windOffset（相対移動を引いた量）、雲量の場と塊の密度差は cloudBodyOffset（移動量）で進める。
+    // 本体（雲量の場・1オクターブ目・塊の密度差）は cloudBodyOffset（移動量）、2オクターブ目と細部は windOffset（相対移動を引いた量）で進める。
     // 「模様を変化」がオフなら両者は一致し、形を保ったまま移動する。
     float3 uvw=(offset-float3(p.windOffsetX,0,p.windOffsetZ))/p.cloudScale;
     float3 body=(offset-float3(p.cloudBodyOffsetX,0,p.cloudBodyOffsetZ))/p.cloudScale;
@@ -323,7 +323,8 @@ float WeatherCloudDensity(float3 position, AtmosphericParameters p, uint noiseIn
     float stepLength=max(p.weatherDetailScale*0.03,viewDistance*0.003*64.0/max(p.samples,16u));
     float fade2=saturate(2-2*stepLength/(p.cloudScale/2.3/16));
     // 周期の異なる2オクターブで繰り返しを崩す。
-    float shape=CloudShapeNoise(uvw,p,noiseIndex)*0.65+lerp(0.7,CloudShapeNoise(uvw*2.3+float3(0.29,0.71,0.13),p,noiseIndex),fade2)*0.35;
+    // 1オクターブ目は雲の本体なので移動量で進め、2オクターブ目と細部だけを相対移動で進めて形を変える。
+    float shape=CloudShapeNoise(body,p,noiseIndex)*0.65+lerp(0.7,CloudShapeNoise(uvw*2.3+float3(0.29,0.71,0.13),p,noiseIndex),fade2)*0.35;
     // ノイズの平均が約0.7と高いので、0.5付近を中心へ戻して雲量の閾値と釣り合わせる。
     shape=saturate((shape-0.4)/0.6);
     float base=saturate(shape*profile);
