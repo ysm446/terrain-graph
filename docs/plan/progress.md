@@ -1,9 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-12 12:20
+更新日時: 2026-09-12 12:45
 
 ## 現在の状況
+
+**Cloud Shape Generate の詰め方改善（2026-09-12 12:45）。** Cloud Shape Generate の球の詰め方を Houdini に近づけた。土台の格子間隔を半径の1.1倍、乱れの移動を格子間隔の±0.3倍、外縁の縮小を最大15%に抑え、隣接する球が必ず重なるようにした。塔は半径の0.8倍刻みで段ごとに半径と横位置を揺らし、整いすぎた円錐を避ける。二次形状は表面の球だけを親にし、親と重なる距離へ子球を置く。新規ノードは二次形状を既定でオンにする（保存済みの値は維持）。 Debug / Releaseビルド、テスト成功（全球が他の球と重なる検証を3構成で追加）。Releaseで既定のMediocrisとCongestus＋半径ランダム化を描画し、輪郭が連続することを確認（`data/cloud-shape-generate-qa/ui.png` / `congestus-ui.png`）。マウス操作とDebug GPU実行は未確認。
 
 **Cloud Shape Generate（2026-09-12 12:20）。** Cloud Shape Generate (Experimental) を追加。入力なしで単独の積雲を球の集合として生成し、Shape を Cloud Replicate / Cloud Merge / Cloud Noise へ接続できる。雲種（Humilis / Mediocris / Congestus）で土台の厚さと塔の高さ・本数を切り替え、中心XYZ・サイズ（基本半径）・長さ／幅の倍率・球の間隔・乱れ・下側の切り取り・回転・半径のランダム化・二次形状（繰り返し1〜3、押し出し、広がり）・つなぎの滑らかさ・シードを持つ。土台は楕円体内の乱した格子、塔は先端へ細くなる球列、二次形状は上半球方向へ積む子球。Houdini の Cloud Shape Generate を参考にした構成で、Bend と Fuse は未対応。保存識別子は `cloudShapeGenerate`、設定は `proceduralCloud` 節。 ノードごとの生成結果をキャッシュし設定が変わった時だけ再生成。Debug / Releaseビルド、テスト成功（追加9件：生成・切り取り平面・再利用・雲種の高さ差・二次形状・シード・回転・Replicate接続・作業予算）。Releaseで既定のMediocris（28球）と Congestus＋二次形状＋半径ランダム化の描画とプロパティUI、保存・再読み込みを確認（`data/cloud-shape-generate-qa/ui.png` / `congestus-ui.png`、`saved.tgproj`）。塔は円錐状に整いすぎる傾向があり、乱れや二次形状で崩す前提。メニューの直接操作・マウス編集・Debug GPU実行は未確認。
 

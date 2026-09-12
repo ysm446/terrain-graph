@@ -347,13 +347,31 @@ void RunNodeGraphTests() {
         for (const auto& p:congestus.primitives) congestusTop=std::max(congestusTop,p.centerY+p.radiusY);
         Check(congestusTop>humilisTop+300,"Congestusは塔でHumilisより高くなる");
         settings.species=1;
+        settings.secondaryShapes=false;
+        const auto plain=graph.CompileCloudShapes(node);
         settings.secondaryShapes=true; settings.iterations=2;
         const auto secondary=graph.CompileCloudShapes(node);
-        Check(secondary.primitives.size()>base.primitives.size()*3,"二次形状の繰り返しで球数が増える");
+        Check(plain.primitives.size()<base.primitives.size() && secondary.primitives.size()>base.primitives.size(),"二次形状の繰り返しで球数が増える");
+        settings.iterations=1;
+        for (const auto* cloud:{&plain,&base,&congestus}) {
+            bool overlapping=true;
+            for (size_t i=0;i<cloud->primitives.size() && overlapping;++i) {
+                const auto& a=cloud->primitives[i]; bool touched=cloud->primitives.size()==1;
+                for (size_t j=0;j<cloud->primitives.size() && !touched;++j) {
+                    if (i==j) continue;
+                    const auto& b=cloud->primitives[j];
+                    const float d=std::sqrt((a.centerX-b.centerX)*(a.centerX-b.centerX)+(a.centerY-b.centerY)*(a.centerY-b.centerY)+(a.centerZ-b.centerZ)*(a.centerZ-b.centerZ));
+                    touched=d<a.radiusX+b.radiusX;
+                }
+                overlapping&=touched;
+            }
+            Check(overlapping,"すべての球が他の球と重なり、孤立した球を作らない");
+        }
         settings.secondaryShapes=false;
         settings.seed++;
-        Check(graph.CompileCloudShapes(node).primitives[0].centerX!=base.primitives[0].centerX,"シード変更で配置を更新");
+        Check(graph.CompileCloudShapes(node).primitives[0].centerX!=plain.primitives[0].centerX,"シード変更で配置を更新");
         settings.seed--;
+        settings.secondaryShapes=true;
         settings.rotation=90;
         const auto rotated=graph.CompileCloudShapes(node);
         bool rotatedMatch=rotated.primitives.size()==base.primitives.size();

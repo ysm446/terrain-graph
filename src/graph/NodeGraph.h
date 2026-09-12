@@ -271,7 +271,7 @@ struct CloudShapeGenerateSettings {
     float rotation=0; // 上方向まわりの回転（度）。
     bool randomScale=false;
     float scaleMin=0.7f, scaleMax=1.3f;
-    bool secondaryShapes=false;
+    bool secondaryShapes=true;
     int iterations=1; // 二次形状の繰り返し（1〜3）。
     float displacement=0.3f, spread=0.5f;
     float smoothness=60;

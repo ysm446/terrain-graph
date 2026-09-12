@@ -33,7 +33,7 @@ inline CompiledCloud GenerateCloudShape(const CloudShapeGenerateSettings& settin
     const float separation=std::clamp(settings.pointSeparation,0.05f,1.0f);
     const float distortion=std::clamp(settings.distortion,0.0f,1.0f);
     const float sphereRadius=std::max(1.0f,size*separation);
-    const float step=sphereRadius*1.5f;
+    const float step=sphereRadius*1.1f;
     uint32_t state=static_cast<uint32_t>(settings.seed)*747796405u+2891336453u;
     const auto random=[&]() { state=state*1664525u+1013904223u; return float(state>>8)/16777216.0f; };
     const auto symmetric=[&]() { return random()*2-1; };
@@ -41,28 +41,30 @@ inline CompiledCloud GenerateCloudShape(const CloudShapeGenerateSettings& settin
     const float scaleMax=std::clamp(std::max(settings.scaleMin,settings.scaleMax),0.1f,3.0f);
     const auto scaleFactor=[&]() { return settings.randomScale ? scaleMin+(scaleMax-scaleMin)*random() : 1.0f; };
 
-    struct Local { float x,y,z,r; };
+    struct Local { float x,y,z,r; bool surface; };
     std::vector<Local> shapes;
     const auto budgetExceeded=[&](size_t count) { return count*sizeof(CloudPrimitive)>CloudShapeMemoryBudget; };
 
-    // 土台。格子を乱して楕円体の内側だけを残す。
+    // 土台。球が必ず重なる間隔で格子を敷き、乱れは重なりを失わない範囲に抑える。
+    // 外縁の球は表面として扱い、二次形状の親になる。
     const int nx=std::max(1,static_cast<int>(std::ceil(rx/step)));
     const int ny=std::max(1,static_cast<int>(std::ceil(ry/step)));
     const int nz=std::max(1,static_cast<int>(std::ceil(rz/step)));
     if (budgetExceeded(size_t(2*nx+1)*size_t(2*ny+1)*size_t(2*nz+1))) { result.shapeOverflow=true; return result; }
     for (int iy=-ny;iy<=ny;++iy) for (int iz=-nz;iz<=nz;++iz) for (int ix=-nx;ix<=nx;++ix) {
-        const float x=ix*step+symmetric()*step*0.5f*distortion;
-        const float y=iy*step+symmetric()*step*0.5f*distortion;
-        const float z=iz*step+symmetric()*step*0.5f*distortion;
+        const float x=ix*step+symmetric()*step*0.3f*distortion;
+        const float y=iy*step+symmetric()*step*0.3f*distortion;
+        const float z=iz*step+symmetric()*step*0.3f*distortion;
         const float inner=(x*x)/(rx*rx)+(y*y)/(ry*ry)+(z*z)/(rz*rz);
         if (inner>1.0f) continue;
-        // 外縁ほど小さくして丸みを出す。
-        const float radius=sphereRadius*(1.0f-0.35f*inner)*(1.0f+0.25f*symmetric()*distortion)*scaleFactor();
-        shapes.push_back({x,y,z,std::max(1.0f,radius)});
+        // 外縁をわずかに小さくして丸みを出す。縮小は重なりを保てる範囲に留める。
+        const float radius=sphereRadius*(1.0f-0.15f*inner)*(1.0f+0.15f*symmetric()*distortion)*scaleFactor();
+        shapes.push_back({x,y,z,std::max(1.0f,radius),inner>0.45f});
     }
-    if (shapes.empty()) shapes.push_back({0,0,0,std::min({rx,ry,rz})});
+    if (shapes.empty()) shapes.push_back({0,0,0,std::min({rx,ry,rz}),true});
 
     // 塔。土台の内側から上へ球列を伸ばし、先端へ向けて細くする。
+    // 各段でわずかに横へ揺らぎ、半径も段ごとに変えて整いすぎた円錐を避ける。
     if (profile.towerHeight>0) {
         const float area=(rx/size)*(rz/size);
         const int towers=std::max(1,static_cast<int>(std::lround(profile.towersPerUnit*area)));
@@ -70,23 +72,23 @@ inline CompiledCloud GenerateCloudShape(const CloudShapeGenerateSettings& settin
         for (int tower=0;tower<towers;++tower) {
             const float angle=random()*2*std::numbers::pi_v<float>;
             const float radial=std::sqrt(random())*0.6f;
-            const float baseX=rx*radial*std::cos(angle),baseZ=rz*radial*std::sin(angle);
+            float x=rx*radial*std::cos(angle),z=rz*radial*std::sin(angle);
             const float height=towerHeight*(0.45f+0.55f*random())*(1.0f-radial*0.5f);
             const float rootRadius=sphereRadius*1.6f,topRadius=sphereRadius*0.9f;
-            const int steps=std::max(1,static_cast<int>(std::ceil(height/(sphereRadius*1.2f))));
-            const float lean=distortion*sphereRadius;
-            const float leanX=symmetric()*lean,leanZ=symmetric()*lean;
+            const int steps=std::max(1,static_cast<int>(std::ceil(height/(sphereRadius*0.8f))));
+            const float leanX=symmetric()*distortion,leanZ=symmetric()*distortion;
             for (int stepIndex=0;stepIndex<=steps;++stepIndex) {
                 const float u=float(stepIndex)/steps;
-                const float r=(rootRadius+(topRadius-rootRadius)*u)*scaleFactor();
-                shapes.push_back({baseX+leanX*u*3+symmetric()*lean*0.5f,
-                    ry*0.5f+height*u,baseZ+leanZ*u*3+symmetric()*lean*0.5f,std::max(1.0f,r)});
+                const float r=(rootRadius+(topRadius-rootRadius)*u)*(1.0f+0.2f*symmetric()*distortion)*scaleFactor();
+                const float wander=sphereRadius*0.35f*distortion;
+                x+=(leanX+symmetric()*0.5f)*wander; z+=(leanZ+symmetric()*0.5f)*wander;
+                shapes.push_back({x,ry*0.5f+height*u,z,std::max(1.0f,r),true});
                 if (budgetExceeded(shapes.size())) { result.shapeOverflow=true; return result; }
             }
         }
     }
 
-    // 二次形状。上半球方向へ子球を積み、繰り返しごとに小さくする。
+    // 二次形状。表面の球の上半球方向へ子球を積み、親と必ず重なる距離に置く。
     if (settings.secondaryShapes) {
         const int iterations=std::clamp(settings.iterations,1,3);
         const float displacement=std::clamp(settings.displacement,0.0f,1.0f);
@@ -95,13 +97,15 @@ inline CompiledCloud GenerateCloudShape(const CloudShapeGenerateSettings& settin
         for (int iteration=0;iteration<iterations;++iteration) {
             for (size_t i=begin;i<end;++i) {
                 const Local parent=shapes[i];
+                if (!parent.surface) continue;
                 for (int child=0;child<2;++child) {
                     const float theta=random()*2*std::numbers::pi_v<float>;
                     const float tilt=spread*random()*std::numbers::pi_v<float>*0.5f;
                     const float dx=std::sin(tilt)*std::cos(theta),dy=std::cos(tilt),dz=std::sin(tilt)*std::sin(theta);
-                    const float r=parent.r*0.6f*scaleFactor();
-                    const float reach=parent.r*(0.5f+displacement);
-                    shapes.push_back({parent.x+dx*reach,parent.y+dy*reach,parent.z+dz*reach,std::max(1.0f,r)});
+                    const float r=parent.r*(0.55f+0.15f*random())*scaleFactor();
+                    // 親半径+子半径より短い距離に置き、重なりを保つ。
+                    const float reach=parent.r*(0.6f+0.5f*displacement);
+                    shapes.push_back({parent.x+dx*reach,parent.y+dy*reach,parent.z+dz*reach,std::max(1.0f,r),true});
                     if (budgetExceeded(shapes.size())) { result.shapeOverflow=true; return result; }
                 }
             }
