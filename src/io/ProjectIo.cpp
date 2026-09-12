@@ -1460,6 +1460,15 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["proceduralCloud"]["seed"] = map->seed;
             item["proceduralCloud"]["showGuides"] = map->showGuides;
             item["proceduralCloud"]["removeIsolated"] = map->removeIsolated;
+        } else if (const auto* weather = std::get_if<graph::CloudWeatherSettings>(&node.settings)) {
+            item["cloudWeather"]={{"centerX",weather->centerX},{"centerZ",weather->centerZ},
+                {"width",weather->width},{"depth",weather->depth},
+                {"bottomHeight",weather->bottomHeight},{"maxThickness",weather->maxThickness},
+                {"coverage",weather->coverage},{"cloudType",weather->cloudType},{"anvil",weather->anvil},{"wisp",weather->wisp},
+                {"noiseScale",weather->noiseScale},{"noiseType",EnumName(kCloudNoiseNames,static_cast<uint32_t>(weather->noiseType))},
+                {"detailStrength",weather->detailStrength},{"edgeSoftness",weather->edgeSoftness},
+                {"extinction",weather->extinction},{"indirectLight",weather->indirectLight},{"ambientLight",weather->ambientLight},
+                {"seed",weather->seed},{"animate",weather->animate},{"windSpeed",weather->windSpeed},{"windDirection",weather->windDirection}};
         } else if (const auto* generate = std::get_if<graph::CloudShapeGenerateSettings>(&node.settings)) {
             item["proceduralCloud"]={{"species",EnumName(kCloudSpeciesNames,static_cast<uint32_t>(generate->species))},
                 {"centerX",generate->centerX},{"centerY",generate->centerY},{"centerZ",generate->centerZ},
@@ -1729,6 +1738,32 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.seed=std::clamp(ReadInt(*shape,"seed",settings.seed),0,10000);
                     settings.showGuides=ReadBool(*shape,"showGuides",settings.showGuides);
                     settings.removeIsolated=ReadBool(*shape,"removeIsolated",settings.removeIsolated);
+                }
+                created.settings=settings;
+            } else if (created.kind == graph::NodeKind::CloudWeatherLayer) {
+                graph::CloudWeatherSettings settings;
+                if (const auto* value=FindMember(item,"cloudWeather"); value && value->is_object()) {
+                    settings.centerX=std::clamp(ReadFloat(*value,"centerX",settings.centerX),-100000.0f,100000.0f);
+                    settings.centerZ=std::clamp(ReadFloat(*value,"centerZ",settings.centerZ),-100000.0f,100000.0f);
+                    settings.width=std::clamp(ReadFloat(*value,"width",settings.width),100.0f,200000.0f);
+                    settings.depth=std::clamp(ReadFloat(*value,"depth",settings.depth),100.0f,200000.0f);
+                    settings.bottomHeight=std::clamp(ReadFloat(*value,"bottomHeight",settings.bottomHeight),-10000.0f,20000.0f);
+                    settings.maxThickness=std::clamp(ReadFloat(*value,"maxThickness",settings.maxThickness),100.0f,20000.0f);
+                    settings.coverage=std::clamp(ReadFloat(*value,"coverage",settings.coverage),0.0f,1.0f);
+                    settings.cloudType=std::clamp(ReadFloat(*value,"cloudType",settings.cloudType),0.0f,1.0f);
+                    settings.anvil=std::clamp(ReadFloat(*value,"anvil",settings.anvil),0.0f,1.0f);
+                    settings.wisp=std::clamp(ReadFloat(*value,"wisp",settings.wisp),0.0f,1.0f);
+                    settings.noiseScale=std::clamp(ReadFloat(*value,"noiseScale",settings.noiseScale),100.0f,50000.0f);
+                    settings.noiseType=static_cast<int>(EnumValue(kCloudNoiseNames,*value,"noiseType",static_cast<uint32_t>(settings.noiseType)));
+                    settings.detailStrength=std::clamp(ReadFloat(*value,"detailStrength",settings.detailStrength),0.0f,1.0f);
+                    settings.edgeSoftness=std::clamp(ReadFloat(*value,"edgeSoftness",settings.edgeSoftness),0.01f,1.0f);
+                    settings.extinction=std::clamp(ReadFloat(*value,"extinction",settings.extinction),0.0001f,0.03f);
+                    settings.indirectLight=std::clamp(ReadFloat(*value,"indirectLight",settings.indirectLight),0.0f,5.0f);
+                    settings.ambientLight=std::clamp(ReadFloat(*value,"ambientLight",settings.ambientLight),0.0f,5.0f);
+                    settings.seed=std::clamp(ReadInt(*value,"seed",settings.seed),0,10000);
+                    settings.animate=ReadBool(*value,"animate",settings.animate);
+                    settings.windSpeed=std::clamp(ReadFloat(*value,"windSpeed",settings.windSpeed),0.0f,1000.0f);
+                    settings.windDirection=std::clamp(ReadFloat(*value,"windDirection",settings.windDirection),0.0f,360.0f);
                 }
                 created.settings=settings;
             } else if (created.kind == graph::NodeKind::CloudShapeGenerate) {

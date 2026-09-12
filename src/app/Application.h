@@ -297,16 +297,24 @@ private:
     // 既存の GPU 評価器で評価する。m_graphStack はそのコンパイル結果。
     graph::NodeGraph m_graph = graph::NodeGraph::CreateDefault();
     compositor::MaterialStack m_graphStack;
-    compositor::MaterialStack m_cloudMaskStack;
-    std::vector<graph::CompiledGraph::MaskOpSource> m_cloudMaskSources;
-    compositor::MaterialEvaluator m_cloudMaskEvaluator;
-    uint64_t m_cloudMaskGraphRevision = 0, m_cloudMaskPaintRevision = 0;
-    graph::GraphId m_cloudMaskPin = 0;
-    uint32_t CloudDistributionMask() const {
-        if (!m_cloudMaskPin) return UINT32_MAX;
-        return m_cloudMaskEvaluator.EvaluatedRevision() == m_cloudMaskStack.Revision()
-            ? m_cloudMaskEvaluator.Textures().baseColor.SrvIndex() : UINT32_MAX-1;
-    }
+    // 雲層の分布・天候層の雲量と雲種のマスク。地形プレビューと独立した 512×512 の評価。
+    struct CloudMaskSlot {
+        compositor::MaterialStack stack;
+        std::vector<graph::CompiledGraph::MaskOpSource> sources;
+        compositor::MaterialEvaluator evaluator;
+        uint64_t graphRevision = 0, paintRevision = 0;
+        graph::GraphId pin = 0;
+        bool Ready() const { return !pin || evaluator.EvaluatedRevision() == stack.Revision(); }
+        bool Idle() const { return !pin || (!evaluator.IsEvaluating() && Ready()); }
+        uint64_t Revision() const { return pin ? evaluator.EvaluatedRevision() : 0; }
+        uint32_t Srv() const {
+            if (!pin) return UINT32_MAX;
+            return Ready() ? evaluator.Textures().baseColor.SrvIndex() : UINT32_MAX-1;
+        }
+    };
+    CloudMaskSlot m_cloudMasks[2]; // 0: 分布／雲量、1: 雲種。
+    // マスクの再コンパイルと評価器の作成。作成に失敗したら偽。
+    bool PrepareCloudMask(CloudMaskSlot& slot, graph::GraphId maskNode, graph::GraphId maskPin);
     uint64_t m_compiledGraphRevision = 0;
     // 前回コンパイルしたプレビュー対象。選択が変わっても再コンパイルするために持つ。
     graph::GraphId m_compiledGraphTarget = 0;

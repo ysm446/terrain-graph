@@ -748,6 +748,32 @@ void RunNodeGraphTests() {
         Check(graph.TerrainRevision()!=terrainRevision, "通常のグラフ編集は地形を更新する");
     }
 
+    Section("天候層の雲量・雲種マップ");
+    {
+        NodeGraph graph = NodeGraph::CreateDefault();
+        const auto layer = graph.CreateNode(NodeKind::CloudWeatherLayer);
+        const auto output = graph.CreateNode(NodeKind::CloudOutput);
+        const auto coverageMask = graph.CreateNode(NodeKind::MaskNoise);
+        const auto typeMask = graph.CreateNode(NodeKind::MaskNoise);
+        Check(graph.FindNode(layer)->inputs.size()==2 && graph.FindNode(layer)->outputs.size()==1,"天候層は Coverage / Type 入力と Volume 出力を持つ");
+        Check(graph.CreateLink(graph.FindNode(layer)->outputs.front().id, graph.FindNode(output)->inputs.front().id), "天候層は雲出力へ接続できる");
+        auto cloud = graph.CompileCloud();
+        Check(cloud.connected && cloud.layer && cloud.weather && cloud.maskPin==0 && cloud.typeMaskPin==0, "未接続の天候層は一様な雲量・雲種");
+        Check(cloud.cloud.width==30000.0f && cloud.cloud.thickness==5000.0f && cloud.cloud.centerY==1500.0f+2500.0f, "既定の範囲・厚さ・雲底を描画設定へ変換");
+        Check(cloud.cloud.coverage==0.4f && std::abs(cloud.cloudType-0.3f)<1e-6f && cloud.cloud.noiseType==1, "雲量・雲種・Perlin-Worley を渡す");
+        Check(graph.CreateLink(graph.FindNode(coverageMask)->outputs.front().id, graph.FindNode(layer)->inputs[0].id), "Coverage にマスクを接続できる");
+        Check(graph.CreateLink(graph.FindNode(typeMask)->outputs.front().id, graph.FindNode(layer)->inputs[1].id), "Type にマスクを接続できる");
+        cloud = graph.CompileCloud();
+        Check(cloud.maskNode==coverageMask && cloud.typeMaskNode==typeMask && cloud.maskPin!=cloud.typeMaskPin, "雲量と雲種のマスク元を区別して保持する");
+        auto& settings = std::get<tg::graph::CloudWeatherSettings>(graph.FindMutableNode(layer)->settings);
+        settings.cloudType = 1.0f; settings.maxThickness = 8000; settings.bottomHeight = 1000;
+        graph.MarkCloudDirty();
+        cloud = graph.CompileCloud();
+        Check(cloud.cloudType==1.0f && cloud.cloud.thickness==8000.0f && cloud.cloud.centerY==5000.0f, "雲種と厚さの変更を反映する");
+        const auto compiled = graph.CompileLayersTo(cloud.typeMaskNode, cloud.typeMaskPin);
+        Check(!compiled.layers.empty(), "雲種マスクをレイヤー列へコンパイルできる");
+    }
+
     Section("雲層の分布入力");
     {
         NodeGraph graph = NodeGraph::CreateDefault();

@@ -119,6 +119,7 @@ enum class NodeKind : uint32_t {
     CloudMapGenerate = 41,
     CloudAnimation = 42,
     CloudShapeGenerate = 43,
+    CloudWeatherLayer = 44,
 };
 
 struct PinDefinition {
@@ -278,6 +279,27 @@ struct CloudShapeGenerateSettings {
     int seed=1;
     bool operator==(const CloudShapeGenerateSettings&) const = default;
 };
+// 天候層。雲量・雲種の2Dマップと高さプロファイルで広域の雲を作る。
+struct CloudWeatherSettings {
+    float centerX=0, centerZ=0;
+    float width=30000, depth=30000;
+    float bottomHeight=1500; // 雲底高度（m）。
+    float maxThickness=5000; // 積乱雲時の最大厚さ（m）。
+    float coverage=0.4f; // 雲量 0〜1。Coverage マスクで場所ごとに掛ける。
+    float cloudType=0.3f; // 雲種 0: 層雲、0.5: 積雲、1: 積乱雲。Type マスクで掛ける。
+    float anvil=0.5f; // 積乱雲上部の横への広がり。
+    float wisp=0.5f; // 雲底付近の削りの強さ。
+    float noiseScale=4000; // 形状ノイズの周期（m）。
+    int noiseType=1; // 0: Perlin fBM、1: Perlin-Worley。
+    float detailStrength=0.3f;
+    float edgeSoftness=0.1f; // 範囲端のフェード（範囲に対する比率）。
+    float extinction=0.008f;
+    float indirectLight=1, ambientLight=1;
+    int seed=1;
+    bool animate=false;
+    float windSpeed=20, windDirection=90;
+    bool operator==(const CloudWeatherSettings&) const = default;
+};
 struct CloudMapGuide {
     struct Point { float x=0,y=0,z=0; };
     struct Edge { uint32_t a=0,b=0; };
@@ -336,6 +358,9 @@ struct CompiledCloud {
     GraphId sourceId = 0;
     bool layer = false;
     GraphId maskNode = 0, maskPin = 0;
+    bool weather = false; // 天候層。layer も真で照明キャッシュを使う。
+    GraphId typeMaskNode = 0, typeMaskPin = 0;
+    float cloudType = 0.3f, anvil = 0.5f, wisp = 0.5f;
 };
 
 // 出力。ここに繋いだチェーンがプレビューのマテリアルになる。
@@ -343,7 +368,7 @@ struct OutputNodeSettings {};
 
 using NodeSettings =
     std::variant<LayerNodeSettings, MaskNodeSettings, OutputNodeSettings, PathNodeSettings, CloudNodeSettings,
-                 CloudLineSettings, CloudSpheresSettings, CloudEllipsoidSettings, CloudMergeSettings, CloudNoiseSettings, CloudReplicateSettings, CloudTransformSettings, CloudMapSettings, CloudAnimationSettings, CloudShapeGenerateSettings>;
+                 CloudLineSettings, CloudSpheresSettings, CloudEllipsoidSettings, CloudMergeSettings, CloudNoiseSettings, CloudReplicateSettings, CloudTransformSettings, CloudMapSettings, CloudAnimationSettings, CloudShapeGenerateSettings, CloudWeatherSettings>;
 
 struct Node {
     GraphId id = 0;

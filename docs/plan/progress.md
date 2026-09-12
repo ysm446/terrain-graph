@@ -1,9 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-12 13:10
+更新日時: 2026-09-12 14:30
 
 ## 現在の状況
+
+**Cloud Weather Layer（2026-09-12 14:30）。** Cloud Weather Layer (Experimental) を追加。RDR2 / Nubis 方式の天候マップ駆動の雲層で、Coverage / Type の Mask 入力と Volume 出力を持つ。雲量（0〜1）と雲種（0: 層雲、0.5: 積雲、1: 積乱雲）をスライダーで指定し、マスクを接続すると場所ごとに掛ける。雲種は3本の高さプロファイル（層雲 0〜0.2、積雲 0〜0.5、積乱雲 0〜1.0 の正規化高さ）を連続的に補間し、塊ごとに頂上の高さを低周波ノイズで変える。積乱雲の広がり（かなとこ雲）、雲底のほつれ、中心XZ・範囲幅／奥行き・雲底高度・最大厚さ・端のフェード、ノイズの種類・模様の大きさ・細部の削り・密度・Indirect / Ambient Light・シード、再生・風速・風向を持つ。雲量は低周波の場（平均が指定値）で地域差を付け、形状ノイズは2オクターブで繰り返しを崩す。描画は `localCloud=4` の新経路で、雲層の照明キャッシュ・雲影・ゴッドレイ・環境光は共通。照明キャッシュの XZ 格子は天候層で 192（他は従来の 64）、カメラのクリップ範囲は層の包囲箱へ広げる。保存名は `cloudWeatherLayer`、設定は `cloudWeather` 節。 実装は AtmosphereCommon.hlsli の `WeatherCloudDensity`、Application の雲マスク評価を2スロット（雲量・雲種）へ一般化、`AtmosphereSettings` を272バイトへ拡張（typeMask / weatherType / weatherAnvil / weatherWisp / opticalCacheSize）。Debug / Releaseビルド、テスト成功（天候層のピン・接続・既定値・マスク元・雲種変更の検証を追加）、DXC 7エントリ成功。Releaseで層雲・積雲・積乱雲（地上と上空）、Mask Noise を Type に接続した構成、保存・再読み込みを確認（`data/cloud-weather-qa/`）。当初30kmの層でクリップ範囲不足による位置再構成の量子化がブロック状に出たため、クリップ範囲を層の包囲箱へ広げて解消。更新版は `build/cloud-shape/Release/terrain_graph.exe`（通常版が起動中のため分離）。未対応: 多重散乱の段階近似・powder 効果の見直し、時間方向の再投影、天候遷移。Debug GPU実行とマウス操作は未確認。
 
 **Cloud Shape Generate の滑らかさを比率へ（2026-09-12 13:10）。** Cloud Shape Generate の「つなぎの滑らかさ」を球の半径（サイズ×球の間隔）に対する比率へ変更（既定1.0、範囲0〜3）。実際の値（m）はプロパティに表示し、上限500mは維持。サイズや間隔を変えても球のくびれの埋まり方が保たれる。保存名は `smoothnessRatio`。旧形式の `smoothness`（m）は球の半径で割って比率へ換算して読み込む。 密度は距離場の深さから作るため、重なった球のくびれは滑らかさで埋める必要があり、絶対値60mでは半径180mの球に対して不足していた。Debug / Releaseビルド、テスト成功（比例の検証2件追加）。起動中の通常版と分けて `build/cloud-shape/Release/terrain_graph.exe` へビルドし、既定設定の描画と保存（`smoothnessRatio`）を確認（`data/cloud-shape-generate-qa/ui.png`）。旧形式の換算はコードで確認、実ファイルでは未確認。
 

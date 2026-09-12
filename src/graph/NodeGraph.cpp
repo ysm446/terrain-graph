@@ -214,6 +214,11 @@ constexpr std::array<PinDefinition, 1> kCloudOutputPins = {{
     {PinKind::Input, ValueType::Volume, "Volume"},
 }};
 
+constexpr std::array<PinDefinition, 3> kCloudWeatherPins = {{
+    {PinKind::Input, ValueType::Mask, "Coverage"},
+    {PinKind::Input, ValueType::Mask, "Type"},
+    {PinKind::Output, ValueType::Volume, "Volume"},
+}};
 constexpr std::array<PinDefinition, 2> kCloudLayerPins = {{
     {PinKind::Input, ValueType::Mask, "Distribution"},
     {PinKind::Output, ValueType::Volume, "Volume"},
@@ -241,7 +246,7 @@ constexpr std::array<PinDefinition, 2> kCloudReplicatePins = {{
 
 constexpr std::array<PinDefinition, 2> kCloudAnimationPins = {{{PinKind::Input, ValueType::Volume, "Volume"}, {PinKind::Output, ValueType::Volume, "Volume"}}};
 
-constexpr std::array<NodeDefinition, 44> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 45> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -274,6 +279,7 @@ constexpr std::array<NodeDefinition, 44> kNodeDefinitions = {{
     {NodeKind::MaskArea, "maskArea", "Mask Area", kMaskPathPins},
     {NodeKind::Cloud, "cloud", "Cloud (Legacy)", kCloudPins},
     {NodeKind::CloudLayer, "cloudLayer", "Cloud Layer (Legacy)", kCloudLayerPins},
+    {NodeKind::CloudWeatherLayer, "cloudWeatherLayer", "Cloud Weather Layer (Experimental)", kCloudWeatherPins},
     {NodeKind::CloudLine, "cloudLine", "Cloud Line (Experimental)", kCloudLinePins},
     {NodeKind::CloudSpheres, "cloudSpheres", "Cloud Spheres (Experimental)", kCloudSpheresPins},
     {NodeKind::CloudEllipsoid, "cloudEllipsoid", "Cloud Ellipsoid (Experimental)", kCloudShapePins},
@@ -697,6 +703,46 @@ CompiledCloud NodeGraph::CompileCloud() const {
                 }
             }
         }
+        if (source && source->kind == NodeKind::CloudWeatherLayer) {
+            const auto& weather = std::get<CloudWeatherSettings>(source->settings);
+            result.connected = true;
+            result.layer = true;
+            result.weather = true;
+            result.sourceId = source->id;
+            result.cloudType = std::clamp(weather.cloudType, 0.0f, 1.0f);
+            result.anvil = std::clamp(weather.anvil, 0.0f, 1.0f);
+            result.wisp = std::clamp(weather.wisp, 0.0f, 1.0f);
+            auto& cloud = result.cloud;
+            cloud.enabled = true;
+            cloud.centerX = weather.centerX; cloud.centerZ = weather.centerZ;
+            cloud.width = std::clamp(weather.width, 100.0f, 200000.0f);
+            cloud.depth = std::clamp(weather.depth, 100.0f, 200000.0f);
+            cloud.thickness = std::clamp(weather.maxThickness, 100.0f, 20000.0f);
+            cloud.centerY = weather.bottomHeight + cloud.thickness * 0.5f;
+            cloud.coverage = std::clamp(weather.coverage, 0.0f, 1.0f);
+            cloud.noiseScale = std::clamp(weather.noiseScale, 100.0f, 50000.0f);
+            cloud.noiseType = std::clamp(weather.noiseType, 0, 1);
+            cloud.detailStrength = std::clamp(weather.detailStrength, 0.0f, 1.0f);
+            cloud.edgeSoftness = std::clamp(weather.edgeSoftness, 0.01f, 1.0f);
+            cloud.extinction = weather.extinction;
+            cloud.indirectLight = weather.indirectLight;
+            cloud.ambientLight = weather.ambientLight;
+            cloud.seed = weather.seed;
+            cloud.flatBottom = false;
+            cloud.animate = weather.animate;
+            cloud.motionMode = 1;
+            cloud.windSpeed = weather.windSpeed;
+            cloud.windDirection = weather.windDirection;
+            for (size_t input = 0; input < source->inputs.size() && input < 2; ++input) {
+                for (const auto& link : m_links) {
+                    if (link.endPin != source->inputs[input].id) continue;
+                    const auto* pin = FindPin(link.startPin);
+                    if (!pin) continue;
+                    if (input == 0) { result.maskNode = pin->nodeId; result.maskPin = pin->id; }
+                    else { result.typeMaskNode = pin->nodeId; result.typeMaskPin = pin->id; }
+                }
+            }
+        }
         if (source && source->kind == NodeKind::CloudNoise) {
             const auto& noise = std::get<CloudNoiseSettings>(source->settings);
             const auto* shape=UpstreamOf(*source,ValueType::CloudShape);
@@ -782,6 +828,7 @@ GraphId NodeGraph::CreateNode(NodeKind kind) {
     } else if (kind == NodeKind::CloudNoise) { node.settings = CloudNoiseSettings{};
     } else if (kind == NodeKind::CloudMapGenerate) { node.settings = CloudMapSettings{};
     } else if (kind == NodeKind::CloudShapeGenerate) { node.settings = CloudShapeGenerateSettings{};
+    } else if (kind == NodeKind::CloudWeatherLayer) { node.settings = CloudWeatherSettings{};
     } else if (kind == NodeKind::CloudTransform) { node.settings = CloudTransformSettings{};
     } else if (kind == NodeKind::CloudReplicate) { node.settings = CloudReplicateSettings{};
     } else if (kind == NodeKind::Path) {

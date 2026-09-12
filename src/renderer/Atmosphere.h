@@ -53,7 +53,7 @@ struct AtmosphereSettings {
     uint32_t cloudNoiseType = 0; // 0: Perlin fBM、1: Perlin-Worley。旧 padding を利用する。
     uint32_t cloudCellCount = 10;
     float proceduralBottomHeight=0, proceduralBottomFeather=20;
-    uint32_t cellPadding=0;
+    uint32_t typeMask = UINT32_MAX; // 天候層の雲種マップ。未接続は一様。
     uint32_t primitiveCount = 0;
     float primitiveSmoothness = 0;
     float primitiveDisplacement = 0, primitiveDetail = 0;
@@ -68,9 +68,12 @@ struct AtmosphereSettings {
     float loopCenterX=0, loopCenterZ=0, loopWidth=10000, loopDepth=10000;
     uint32_t shapeCacheIndex = UINT32_MAX;
     uint32_t shapeCacheSize[3] = {};
-
+    float weatherType = 0.3f; // 天候層の雲種。0: 層雲、1: 積乱雲。
+    float weatherAnvil = 0.5f; // 積乱雲上部の横への広がり。
+    float weatherWisp = 0.5f; // 雲底付近の削りの強さ。
+    uint32_t opticalCacheSize = 64; // 照明キャッシュの XZ 格子数。実行時のみ。
 };
-static_assert(sizeof(AtmosphereSettings) == 256);
+static_assert(sizeof(AtmosphereSettings) == 272);
 
 struct CloudGeometry {
     std::vector<AtmosphereSettings::Primitive> primitives;
@@ -90,6 +93,11 @@ public:
         m_applied.distributionMask = index;
         if (revision != m_distributionRevision) m_opticalDirty = true;
         m_distributionRevision = revision;
+    }
+    void SetTypeMask(uint32_t index, uint64_t revision) {
+        m_applied.typeMask = index;
+        if (revision != m_typeRevision) m_opticalDirty = true;
+        m_typeRevision = revision;
     }
     void UpdateFrameShape(rhi::Device& device, rhi::PipelineCache& pipelines, ID3D12GraphicsCommandList* commands);
     void UpdateFrameLighting(rhi::Device& device, rhi::PipelineCache& pipelines, ID3D12GraphicsCommandList* commands);
@@ -141,7 +149,8 @@ private:
     bool m_shapeDirty = true;
     rhi::GpuTexture m_opticalDepth;
     AtmosphereSettings m_opticalSettings;
-    uint64_t m_distributionRevision = 0;
+    uint64_t m_distributionRevision = 0; uint64_t m_typeRevision = 0;
+    uint32_t m_opticalCacheSize = 64;
     bool m_opticalDirty = true;
     bool m_initialized = false;
     bool m_ready = false;

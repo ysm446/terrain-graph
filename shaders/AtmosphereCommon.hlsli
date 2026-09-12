@@ -18,11 +18,12 @@ struct AtmosphericParameters {
     float shapeStrength; float detailStrength; uint cloudMotionMode; uint cloudSource;
     float flatCloudBottom; float cloudSkylightIntensity; float cloudBodyOffsetX; float cloudBodyOffsetZ;
     float indirectLight; float ambientLight; uint cloudCellIndex; uint cloudNoiseType;
-    uint cloudCellCount; float proceduralBottomHeight; float proceduralBottomFeather; uint cellPadding;
+    uint cloudCellCount; float proceduralBottomHeight; float proceduralBottomFeather; uint typeMask;
     uint primitiveCount; float primitiveSmoothness; float primitiveDisplacement; float primitiveDetail;
     uint primitiveBufferIndex; uint primitiveBvhIndex; uint primitiveBvhCount; uint primitiveRevision;
     float loopCenterX; float loopCenterZ; float loopWidth; float loopDepth;
     uint shapeCacheIndex; uint3 shapeCacheSize;
+    float weatherType; float weatherAnvil; float weatherWisp; uint opticalCacheSize;
 };
 float3 AtmosphereSun(AtmosphericParameters p) {
     return float3(cos(p.elevation) * sin(p.azimuth), sin(p.elevation), cos(p.elevation) * cos(p.azimuth));
@@ -267,6 +268,56 @@ float ProceduralCloudDensity(float3 position, AtmosphericParameters p, uint nois
     emptyDistance=min(emptyDistance,seamDistance);
     return density;
 }
+// 天候層の高さプロファイル。雲種 0: 層雲、0.5: 積雲、1: 積乱雲。雲底からの正規化高さ h に対する密度。
+float WeatherHeightProfile(float h, float type) {
+    float stratus=smoothstep(0.0,0.04,h)*smoothstep(0.20,0.11,h);
+    float cumulus=smoothstep(0.0,0.08,h)*smoothstep(0.50,0.30,h);
+    float cumulonimbus=smoothstep(0.0,0.10,h)*smoothstep(1.0,0.82,h);
+    return type<0.5 ? lerp(stratus,cumulus,type*2) : lerp(cumulus,cumulonimbus,(type-0.5)*2);
+}
+float SampleWeatherMask(uint index, float2 uv) {
+    Texture2D<float3> mask=ResourceDescriptorHeap[index];
+    return saturate(mask.SampleLevel(g_samplerLinearClamp,uv,0).r);
+}
+// 天候層。雲量・雲種の2Dマップと高さプロファイルで広域の雲を作る（RDR2 / Nubis 方式）。
+float WeatherCloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex) {
+    float3 offset=position-LocalCloudCenter(p);
+    float3 q=abs(offset/LocalCloudRadii(p));
+    if (any(q>=1)) return 0;
+    if (p.distributionMask==0xfffffffe || p.typeMask==0xfffffffe) return 0; // 評価待ち。
+    float2 uv=offset.xz/(2*float2(p.radiusX,p.radiusZ))+0.5;
+    float coverage=p.coverage;
+    if (p.distributionMask!=0xffffffff) coverage*=SampleWeatherMask(p.distributionMask,uv);
+    float type=saturate(p.weatherType);
+    if (p.typeMask!=0xffffffff) type*=SampleWeatherMask(p.typeMask,uv);
+    if (coverage<=0.001) return 0;
+    float h=(position.y-p.cloudBottom)/p.cloudThickness;
+    if (h<=0 || h>=1) return 0;
+    float3 uvw=(offset-float3(p.windOffsetX,0,p.windOffsetZ))/p.cloudScale;
+    // 雲量は低周波の場で地域差を付ける。平均が指定値になり、値が高い場所に塊が集まり低い場所は空く。
+    float broad=SampleCloudNoise(uvw*0.17+0.11,noiseIndex,0)*0.6+SampleCloudNoise(uvw*0.41+0.53,noiseIndex,0)*0.4;
+    // 塊ごとに頂上の高さを変え、平らな天井を避ける。雲量が高い場所ほど高く成長する。
+    float top=lerp(0.5,1.0,saturate(broad*1.2-0.1));
+    float profile=WeatherHeightProfile(h/top,type);
+    if (profile<=0.001) return 0;
+    coverage=saturate(coverage*2*broad*(0.9+0.2*type));
+    // 積乱雲の上部を横へ広げる（かなとこ雲）。
+    float anvil=p.weatherAnvil*saturate((type-0.5)*2)*smoothstep(0.55,0.9,h);
+    coverage=saturate(coverage*(1+anvil));
+    // 周期の異なる2オクターブで繰り返しを崩す。
+    float shape=CloudShapeNoise(uvw,p,noiseIndex)*0.65+CloudShapeNoise(uvw*2.3+float3(0.29,0.71,0.13),p,noiseIndex)*0.35;
+    // ノイズの平均が約0.7と高いので、0.5付近を中心へ戻して雲量の閾値と釣り合わせる。
+    shape=saturate((shape-0.4)/0.6);
+    float base=saturate(shape*profile);
+    float density=saturate((base-(1-coverage))/max(coverage,1e-4));
+    if (density<=0) return 0;
+    // 下部ほど細部を強く削り、雲底を筋状にほどく。
+    float detail=CloudDetailNoise(uvw*3.1+0.173,p,noiseIndex);
+    float erosion=p.detailStrength*lerp(1+p.weatherWisp,0.6,saturate(h*3));
+    density=saturate(density-erosion*(1-detail)*(1-density));
+    float edge=saturate((1-max(q.x,q.z))/max(p.edgeSoftness,0.01));
+    return density*edge;
+}
 float CloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex) {
     if (p.clouds == 0) return 0;
     if (p.localCloud==3) { float emptyDistance; return ProceduralCloudDensity(position,p,noiseIndex,emptyDistance); }
@@ -279,6 +330,7 @@ float CloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex) {
         p.cloudBodyOffsetX=p.cloudBodyOffsetZ=0;
     }
     if (p.localCloud == 1) return LocalCloudDensity(position,p,noiseIndex);
+    if (p.localCloud == 4) return WeatherCloudDensity(position,p,noiseIndex);
     if (p.localCloud == 2) {
         float3 offset = position - LocalCloudCenter(p);
         float3 q = abs(offset / LocalCloudRadii(p));
@@ -332,7 +384,7 @@ float CloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex) {
 bool CloudInterval(float3 origin, float3 ray, float limit, AtmosphericParameters p,
                    out float start, out float end) {
     start=0; end=limit;
-    if (p.cloudMotionMode == 3 || p.localCloud == 3 || p.localCloud == 2 || (p.localCloud == 1 && p.flatCloudBottom != 0)) {
+    if (p.cloudMotionMode == 3 || p.localCloud == 3 || p.localCloud == 2 || p.localCloud == 4 || (p.localCloud == 1 && p.flatCloudBottom != 0)) {
         float3 offset = origin-CloudRenderCenter(p);
         float3 radii = CloudRenderRadii(p);
         [unroll] for (uint axis=0; axis<3; ++axis) {
@@ -401,15 +453,17 @@ float CloudOpticalDepth(float3 origin, float3 ray, AtmosphericParameters p, uint
 }
 // 雲層専用。shapeStrength と同じ領域をキャッシュ SRV として使用する。
 bool HasCloudOpticalCache(AtmosphericParameters p) {
-    return (p.localCloud==2 || p.localCloud==3) && (asuint(p.shapeStrength)&0x80000000)!=0 && asuint(p.shapeStrength)!=0xffffffff;
+    return (p.localCloud==2 || p.localCloud==3 || p.localCloud==4) && (asuint(p.shapeStrength)&0x80000000)!=0 && asuint(p.shapeStrength)!=0xffffffff;
 }
 float3 SampleCloudOpticalCache(float3 position, AtmosphericParameters p) {
     float3 uvw=saturate((position-CloudRenderCenter(p))/CloudRenderRadii(p)*0.5+0.5);
-    float2 uv=(uvw.xy*float2(63,31)+0.5)/float2(64,32);
-    float z=uvw.z*63;
+    // XZ の格子数は範囲に応じて変わる。Y は 32 固定。
+    float n=max(p.opticalCacheSize,2u);
+    float2 uv=(uvw.xy*float2(n-1,31)+0.5)/float2(n,32);
+    float z=uvw.z*(n-1);
     Texture2DArray<float4> cache=ResourceDescriptorHeap[asuint(p.shapeStrength)&0x7fffffff];
     return lerp(cache.SampleLevel(g_samplerLinearClamp,float3(uv,floor(z)),0).rgb,
-                cache.SampleLevel(g_samplerLinearClamp,float3(uv,min(floor(z)+1,63)),0).rgb,frac(z));
+                cache.SampleLevel(g_samplerLinearClamp,float3(uv,min(floor(z)+1,n-1)),0).rgb,frac(z));
 }
 float CloudShadow(float3 position, AtmosphericParameters p, uint noiseIndex) {
     float3 sun=AtmosphereSun(p);

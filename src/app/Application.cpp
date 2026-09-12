@@ -180,7 +180,7 @@ void Application::Shutdown() {
     m_device.WaitForGpu();
     // ImGui のコンテキストより先に破棄する（エディタが ImGui に依存している）。
     DestroyGraphEditor();
-    if (m_cloudMaskEvaluator.Resolution() != 0) m_cloudMaskEvaluator.Destroy(m_device);
+    for (auto& slot : m_cloudMasks) if (slot.evaluator.Resolution() != 0) slot.evaluator.Destroy(m_device);
     m_paintMasks.Destroy(m_device);
     m_materialSphere.Destroy(m_device);
     m_skySphere.Destroy(m_device);
@@ -329,31 +329,16 @@ int Application::Run() {
         // 環境マップやマテリアル解像度の作り直しは GPU 待機を伴うため、
         // フレームの外で処理する。
         const graph::CompiledCloud compiledCloud = m_graph.CompileCloud();
-        const auto maskPin = compiledCloud.layer ? compiledCloud.maskPin : 0;
-        if (maskPin && (m_cloudMaskGraphRevision != m_graph.TerrainRevision() ||
-                        m_cloudMaskPin != maskPin || m_cloudMaskPaintRevision != m_paintMasks.Revision())) {
-            auto mask = m_graph.CompileLayersTo(compiledCloud.maskNode, maskPin);
-            // 分布専用の低解像度評価。地形プレビューの選択と独立したキャッシュ。
-            // 表示用の灰色レンジではなく、分布用の正確な 0/1 を出力する。
-            if (mask.layers.size() >= 2) {
-                mask.layers[mask.layers.size()-2].baseColor = {0,0,0};
-                mask.layers.back().baseColor = {1,1,1};
-            }
-            m_cloudMaskSources = std::move(mask.maskOpSources);
-            m_cloudMaskStack.Layers() = std::move(mask.layers);
-            m_cloudMaskStack.MaskOps() = std::move(mask.maskOps);
-            m_cloudMaskStack.MarkDirty();
-            m_cloudMaskGraphRevision = m_graph.TerrainRevision();
-            m_cloudMaskPaintRevision = m_paintMasks.Revision();
-        }
-        m_cloudMaskPin = maskPin;
-        if (maskPin && m_cloudMaskEvaluator.Resolution() == 0 &&
-            !m_cloudMaskEvaluator.Create(m_device, 512, false)) return 1;
+        if (!PrepareCloudMask(m_cloudMasks[0], compiledCloud.maskNode, compiledCloud.layer ? compiledCloud.maskPin : 0)) return 1;
+        if (!PrepareCloudMask(m_cloudMasks[1], compiledCloud.typeMaskNode, compiledCloud.weather ? compiledCloud.typeMaskPin : 0)) return 1;
         renderer::AtmosphereSettings cloudSettings = m_renderer.AtmosphericSettings();
         if (compiledCloud.hasOutput) {
             const auto& cloud = compiledCloud.cloud;
             cloudSettings.clouds = compiledCloud.connected && cloud.enabled ? 1u : 0u;
-            cloudSettings.localCloud = !compiledCloud.primitives.empty() ? 3 : compiledCloud.layer ? 2 : 1;
+            cloudSettings.localCloud = !compiledCloud.primitives.empty() ? 3 : compiledCloud.weather ? 4 : compiledCloud.layer ? 2 : 1;
+            cloudSettings.weatherType = compiledCloud.cloudType;
+            cloudSettings.weatherAnvil = compiledCloud.anvil;
+            cloudSettings.weatherWisp = compiledCloud.wisp;
             cloudSettings.primitiveCount = static_cast<uint32_t>(compiledCloud.primitives.size());
             cloudSettings.primitiveSmoothness = compiledCloud.smoothness;
             cloudSettings.primitiveDisplacement = cloud.shapeStrength;
@@ -367,7 +352,8 @@ int Application::Run() {
                 target.center[0]=primitive.centerX; target.center[1]=primitive.centerY; target.center[2]=primitive.centerZ;
                 target.radius[0]=primitive.radiusX; target.radius[1]=primitive.radiusY; target.radius[2]=primitive.radiusZ;
             }
-            cloudSettings.distributionMask = CloudDistributionMask();
+            cloudSettings.distributionMask = m_cloudMasks[0].Srv();
+            cloudSettings.typeMask = m_cloudMasks[1].Srv();
             cloudSettings.animateClouds = cloud.animate ? 1u : 0u;
             cloudSettings.loopCenterX=compiledCloud.animation.centerX;
             cloudSettings.loopCenterZ=compiledCloud.animation.centerZ;
@@ -477,11 +463,12 @@ int Application::Run() {
 
         // グラフをレイヤー列へコンパイルした結果で評価する。
         SyncGraphStack();
-        if (m_cloudMaskPin) {
-            m_cloudMaskEvaluator.Update(m_device, m_pipelineCache, commandList, m_cloudMaskStack,
-                                        m_textureLibrary, m_materialLibrary, m_paintMasks);
+        for (auto& slot : m_cloudMasks) {
+            if (slot.pin) slot.evaluator.Update(m_device, m_pipelineCache, commandList, slot.stack,
+                                                m_textureLibrary, m_materialLibrary, m_paintMasks);
         }
-        m_renderer.SetCloudDistributionMask(CloudDistributionMask(), m_cloudMaskPin ? m_cloudMaskEvaluator.EvaluatedRevision() : 0);
+        m_renderer.SetCloudDistributionMask(m_cloudMasks[0].Srv(), m_cloudMasks[0].Revision());
+        m_renderer.SetCloudTypeMask(m_cloudMasks[1].Srv(), m_cloudMasks[1].Revision());
         m_renderer.Render(m_device, m_pipelineCache, commandList, m_graphStack,
                           m_textureLibrary, m_materialLibrary, m_paintMasks);
 
@@ -513,8 +500,7 @@ int Application::Run() {
         // UI 込みの書き出しは、バックバッファが描き終わったこのフレームで写す。
         // **合成の評価は非同期なので、走っている最中は撮らない**（前回の絵が写る）。
         const bool evaluationIdle = !m_renderer.Evaluator().IsEvaluating() &&
-            (!m_cloudMaskPin || (!m_cloudMaskEvaluator.IsEvaluating() &&
-             m_cloudMaskEvaluator.EvaluatedRevision() == m_cloudMaskStack.Revision()));
+            m_cloudMasks[0].Idle() && m_cloudMasks[1].Idle();
         const bool captureUi = !m_options.uiScreenshotPath.empty() &&
                                (m_frameCounter + 1) >= m_options.screenshotFrame && evaluationIdle;
         if (captureUi) {
@@ -564,6 +550,27 @@ int Application::Run() {
 
     }
     return 0;
+}
+
+bool Application::PrepareCloudMask(CloudMaskSlot& slot, graph::GraphId maskNode, graph::GraphId maskPin) {
+    if (maskPin && (slot.graphRevision != m_graph.TerrainRevision() ||
+                    slot.pin != maskPin || slot.paintRevision != m_paintMasks.Revision())) {
+        auto mask = m_graph.CompileLayersTo(maskNode, maskPin);
+        // 分布専用の低解像度評価。地形プレビューの選択と独立したキャッシュ。
+        // 表示用の灰色レンジではなく、分布用の正確な 0/1 を出力する。
+        if (mask.layers.size() >= 2) {
+            mask.layers[mask.layers.size()-2].baseColor = {0,0,0};
+            mask.layers.back().baseColor = {1,1,1};
+        }
+        slot.sources = std::move(mask.maskOpSources);
+        slot.stack.Layers() = std::move(mask.layers);
+        slot.stack.MaskOps() = std::move(mask.maskOps);
+        slot.stack.MarkDirty();
+        slot.graphRevision = m_graph.TerrainRevision();
+        slot.paintRevision = m_paintMasks.Revision();
+    }
+    slot.pin = maskPin;
+    return !maskPin || slot.evaluator.Resolution() != 0 || slot.evaluator.Create(m_device, 512, false);
 }
 
 // 開発用オプションで動いているか。対話せずに書き出して終わる経路。

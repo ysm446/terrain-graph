@@ -1,7 +1,11 @@
 # Changelog
 
 作成日時: 2026-08-31 06:18
-更新日時: 2026-09-12 13:10
+更新日時: 2026-09-12 14:30
+
+## 未リリース — Cloud Weather Layer
+
+- 雲量と雲種のマップで広域の雲層を作る Cloud Weather Layer (Experimental) を追加。雲種スライダーで層雲から積乱雲まで連続に変化し、Coverage / Type にマスクを接続すると場所ごとに変えられる。
 
 ## 未リリース — Cloud Shape Generate
 

@@ -5,9 +5,10 @@ cbuffer Constants : register(b1) {
 };
 [numthreads(8,4,4)]
 void CsMain(uint3 id : SV_DispatchThreadID) {
-    if (any(id >= uint3(64,32,64))) return;
+    uint n=max(settings.opticalCacheSize,2u);
+    if (any(id >= uint3(n,32,n))) return;
     // 格子点を範囲の両端へ置き、特に雲底の影をクランプで薄めない。
-    float3 uvw=float3(id)/float3(63,31,63);
+    float3 uvw=float3(id)/float3(n-1,31,n-1);
     float3 position=CloudRenderCenter(settings)+(uvw*2-1)*CloudRenderRadii(settings);
     RWTexture2DArray<float4> output=ResourceDescriptorHeap[outputIndex];
     float sun=CloudOpticalDepth(position,AtmosphereSun(settings),settings,noiseIndex,max(settings.samples/2,16u));

@@ -215,7 +215,7 @@ void Application::ResetProject() {
     m_previewGraphNode = 0;
     m_previewGraphPin = 0;
     m_compiledGraphRevision = 0;
-    m_cloudMaskGraphRevision = 0;
+    for (auto& slot : m_cloudMasks) slot.graphRevision = 0;
     m_graphStack.MarkDirty();
     RequestGraphNodePlacement();
 
@@ -291,7 +291,7 @@ void Application::ProcessPendingFileWork() {
             m_previewGraphNode = 0;
             m_previewGraphPin = 0;
             m_compiledGraphRevision = 0;
-            m_cloudMaskGraphRevision = 0;
+            for (auto& slot : m_cloudMasks) slot.graphRevision = 0;
             m_graphStack.MarkDirty();
             RequestGraphNodePlacement();
             m_selectedMaterial = 0;

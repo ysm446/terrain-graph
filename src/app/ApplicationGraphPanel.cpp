@@ -338,10 +338,11 @@ D3D12_GPU_DESCRIPTOR_HANDLE Application::GraphMaskThumbnail(graph::GraphId nodeI
         }
         break;
     }
-    if (m_cloudMaskPin && m_cloudMaskEvaluator.EvaluatedRevision() == m_cloudMaskStack.Revision()) {
-        for (size_t i=0; i<m_cloudMaskSources.size(); ++i) {
-            if (m_cloudMaskSources[i].nodeId == nodeId && m_cloudMaskSources[i].outputIndex == outputIndex)
-                return m_cloudMaskEvaluator.MaskOpThumbnailHandle(i);
+    for (const auto& slot : m_cloudMasks) {
+        if (!slot.pin || !slot.Ready()) continue;
+        for (size_t i=0; i<slot.sources.size(); ++i) {
+            if (slot.sources[i].nodeId == nodeId && slot.sources[i].outputIndex == outputIndex)
+                return slot.evaluator.MaskOpThumbnailHandle(i);
         }
     }
     return D3D12_GPU_DESCRIPTOR_HANDLE{0};
@@ -900,6 +901,7 @@ void Application::DrawGraphEditor() {
                         "Mask Area — パスの閉じた鎖の内側をマスクにする（エリア選択）");
         ImGui::Separator();
         ImGui::Separator();
+        addNodeMenuItem(graph::NodeKind::CloudWeatherLayer, "Cloud Weather Layer (Experimental) — 雲量と雲種のマップで広域の雲層を作る");
         addNodeMenuItem(graph::NodeKind::CloudShapeGenerate, "Cloud Shape Generate (Experimental) — 単独の積雲を生成する");
         addNodeMenuItem(graph::NodeKind::CloudMapGenerate, "Cloud Map Generate (Experimental) — ポイントの分布から雲形状を生成する");
         addNodeMenuItem(graph::NodeKind::CloudLine, "Cloud Line (Experimental) — 雲の芯になる3D直線");
@@ -1294,6 +1296,49 @@ void Application::DrawGraphPanel() {
         ui::HintText("接続した形状を同じ座標で統合します。接続すると次の空き入力が増えます。同じ形状の重複接続は1回だけ。入れ子の滑らかさは最大値を全体へ適用します。");
         if (ui::BeginPropertyTable("CloudMergeRows", "横方向のばらつき")) {
             changed |= ui::PropertyFloat("つなぎの滑らかさ", &cloudMerge->smoothness, 0.0f, 500.0f, defaults.smoothness, "値はメートル単位。形状の膨らみは最大でこの1/4。", "%.0f m");
+            ui::EndPropertyTable();
+        }
+        if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
+    } else if (auto* weather = std::get_if<graph::CloudWeatherSettings>(&selected->settings)) {
+        const graph::CloudWeatherSettings defaults;
+        bool changed=false;
+        ui::HintText("雲量と雲種のマップで広域の雲層を作ります。Coverage / Type にマスクを接続すると場所ごとに変わり、未接続はスライダーの値を全域に使います。Volume を Cloud Output へ接続。");
+        ui::SectionHeader("雲種");
+        if (ui::BeginPropertyTable("CloudWeatherTypeRows", "積乱雲の広がり")) {
+            changed |= ui::PropertyFloat("雲量", &weather->coverage, 0.0f, 1.0f, defaults.coverage, "雲の占有率。Coverage マスクの値を掛けます。", "%.2f");
+            changed |= ui::PropertyFloat("雲種", &weather->cloudType, 0.0f, 1.0f, defaults.cloudType, "0 で層雲、0.5 で積雲、1 で積乱雲。高さプロファイルを連続的に補間します。Type マスクの値を掛けます。", "%.2f");
+            changed |= ui::PropertyFloat("積乱雲の広がり", &weather->anvil, 0.0f, 1.0f, defaults.anvil, "雲種 0.5 以上で上部を横へ広げます（かなとこ雲）。", "%.2f");
+            changed |= ui::PropertyFloat("雲底のほつれ", &weather->wisp, 0.0f, 1.0f, defaults.wisp, "雲底付近の細部の削りを強めます。", "%.2f");
+            ui::EndPropertyTable();
+        }
+        ui::SectionHeader("範囲");
+        if (ui::BeginPropertyTable("CloudWeatherRangeRows", "積乱雲の広がり")) {
+            changed |= ui::PropertyFloat("中心 X", &weather->centerX, -100000.0f, 100000.0f, defaults.centerX, "メートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("中心 Z", &weather->centerZ, -100000.0f, 100000.0f, defaults.centerZ, "メートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("範囲幅", &weather->width, 100.0f, 200000.0f, defaults.width, "マスク全体をこの範囲に割り当てます。", "%.0f m");
+            changed |= ui::PropertyFloat("範囲奥行き", &weather->depth, 100.0f, 200000.0f, defaults.depth, "マスク全体をこの範囲に割り当てます。", "%.0f m");
+            changed |= ui::PropertyFloat("雲底高度", &weather->bottomHeight, -10000.0f, 20000.0f, defaults.bottomHeight, "メートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("最大厚さ", &weather->maxThickness, 100.0f, 20000.0f, defaults.maxThickness, "雲種 1（積乱雲）で使う厚さ。層雲はこの約2割、積雲は約5割の高さまで。", "%.0f m");
+            changed |= ui::PropertyFloat("端のフェード", &weather->edgeSoftness, 0.01f, 1.0f, defaults.edgeSoftness, "範囲の端で密度を落とす幅（範囲に対する比率）。", "%.2f");
+            ui::EndPropertyTable();
+        }
+        ui::SectionHeader("形状と密度");
+        if (ui::BeginPropertyTable("CloudWeatherShapeRows", "積乱雲の広がり")) {
+            static const char* const kNoise[]={"Perlin fBM","Perlin-Worley"};
+            changed |= ui::PropertyCombo("ノイズの種類", &weather->noiseType, kNoise, 2, defaults.noiseType);
+            changed |= ui::PropertyFloat("模様の大きさ", &weather->noiseScale, 100.0f, 50000.0f, defaults.noiseScale, "形状ノイズの周期。", "%.0f m");
+            changed |= ui::PropertyFloat("細部の削り", &weather->detailStrength, 0.0f, 1.0f, defaults.detailStrength, nullptr, "%.2f");
+            changed |= ui::PropertyFloat("密度", &weather->extinction, 0.0001f, 0.03f, defaults.extinction, nullptr, "%.4f");
+            changed |= ui::PropertyFloat("Indirect Light", &weather->indirectLight, 0.0f, 5.0f, defaults.indirectLight, nullptr, "%.2f");
+            changed |= ui::PropertyFloat("Ambient Light", &weather->ambientLight, 0.0f, 5.0f, defaults.ambientLight, nullptr, "%.2f");
+            changed |= ui::PropertyInt("シード", &weather->seed, 0, 10000, defaults.seed);
+            ui::EndPropertyTable();
+        }
+        ui::SectionHeader("動き");
+        if (ui::BeginPropertyTable("CloudWeatherMotionRows", "積乱雲の広がり")) {
+            changed |= ui::PropertyBool("再生", &weather->animate, defaults.animate, "風で模様を流します。");
+            changed |= ui::PropertyFloat("風速", &weather->windSpeed, 0.0f, 1000.0f, defaults.windSpeed, nullptr, "%.1f m/s");
+            changed |= ui::PropertyFloat("風向", &weather->windDirection, 0.0f, 360.0f, defaults.windDirection, "0 は +Z、90 は +X。", "%.0f °");
             ui::EndPropertyTable();
         }
         if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }

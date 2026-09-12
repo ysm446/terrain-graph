@@ -191,6 +191,7 @@ public:
     // 天球は SkyLibrary が持つので、ここでは触らない。
     void ResetSettings();
     void SetCloudDistributionMask(uint32_t index, uint64_t revision) { m_atmosphere.SetDistributionMask(index, revision); }
+    void SetCloudTypeMask(uint32_t index, uint64_t revision) { m_atmosphere.SetTypeMask(index, revision); }
     GodRaySettings& GodRays() { return m_atmosphere.GodRays(); }
     bool& CloudLightingCache() { return m_cloudLightingCache; }
     bool& FullResolutionClouds() { return m_atmosphere.FullResolutionClouds(); }

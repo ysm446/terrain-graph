@@ -102,9 +102,18 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
         requested.primitiveBvhIndex=m_primitiveBvhBuffer.srv.index;
         requested.primitiveRevision=m_geometryRevision;
     }
-    if ((requested.localCloud == 2 || requested.localCloud == 3) && !m_opticalDepth.IsValid()) {
-        if (!CreateTarget(device, m_opticalDepth, 64, DXGI_FORMAT_R16G16B16A16_FLOAT, 64, 32)) return false;
-        m_opticalDirty = true;
+    // 天候層は数十 km に及ぶため XZ の格子を細かくする。他は従来の 64。
+    requested.opticalCacheSize = requested.localCloud == 4 ? 192u : 64u;
+    if (requested.localCloud == 2 || requested.localCloud == 3 || requested.localCloud == 4) {
+        if (m_opticalDepth.IsValid() && m_opticalCacheSize != requested.opticalCacheSize) {
+            device.DeferRelease(m_opticalDepth);
+            m_opticalDepth = {};
+        }
+        if (!m_opticalDepth.IsValid()) {
+            if (!CreateTarget(device, m_opticalDepth, requested.opticalCacheSize, DXGI_FORMAT_R16G16B16A16_FLOAT, requested.opticalCacheSize, 32)) return false;
+            m_opticalCacheSize = requested.opticalCacheSize;
+            m_opticalDirty = true;
+        }
     }
     const auto now = std::chrono::steady_clock::now();
     const float delta = !m_ready || m_lastTick.time_since_epoch().count() == 0 ? 0.0f :
@@ -166,7 +175,8 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
         const bool sourceChanged = settings.localCloud != baked.localCloud || settings.cloudSource != baked.cloudSource ||
             settings.cloudNoiseType != baked.cloudNoiseType ||
             settings.cloudCellCount != baked.cloudCellCount ||
-            (baked.distributionMask == UINT32_MAX-1 && settings.distributionMask != UINT32_MAX-1);
+            (baked.distributionMask == UINT32_MAX-1 && settings.distributionMask != UINT32_MAX-1) ||
+            (baked.typeMask == UINT32_MAX-1 && settings.typeMask != UINT32_MAX-1);
         if (!skyChanged && !updateCells && !sourceChanged && !(m_cloudEnvironmentDirty && settled)) {
             m_applied = settings;
             m_requested = requested;
@@ -334,7 +344,7 @@ void Atmosphere::UpdateFrameShape(rhi::Device& device, rhi::PipelineCache& pipel
 void Atmosphere::UpdateFrameLighting(rhi::Device& device, rhi::PipelineCache& pipelines,
                                    ID3D12GraphicsCommandList* commands) {
     UpdateFrameShape(device, pipelines, commands);
-    if (!m_ready || !m_applied.clouds || (m_applied.localCloud != 2 && m_applied.localCloud != 3) || !m_opticalDepth.IsValid()) return;
+    if (!m_ready || !m_applied.clouds || (m_applied.localCloud != 2 && m_applied.localCloud != 3 && m_applied.localCloud != 4) || !m_opticalDepth.IsValid()) return;
     auto settings = m_applied;
     settings.opticalDepthIndex = UINT32_MAX;
     settings.ambientLight = 1.0f; // 天空照明の倍率は光学的厚さを変えない。
@@ -352,7 +362,7 @@ void Atmosphere::UpdateFrameLighting(rhi::Device& device, rhi::PipelineCache& pi
         commands->SetComputeRootSignature(pipelines.GlobalRootSignature());
         commands->SetComputeRootConstantBufferView(1, allocation.gpuAddress);
         commands->SetPipelineState(pipeline);
-        commands->Dispatch(8, 8, 16);
+        commands->Dispatch(m_opticalCacheSize / 8, 8, m_opticalCacheSize / 4);
         TransitionIfNeeded(commands, m_opticalDepth, ReadState);
         PIXEndEvent(commands);
         m_opticalSettings = settings;

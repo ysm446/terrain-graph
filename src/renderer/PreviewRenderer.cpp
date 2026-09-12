@@ -657,7 +657,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     // 平面のサイズや変位量はいつでも変わるので、描く直前に見るのが確実。
     float sceneRadius = BoundingRadius();
     if (m_atmosphericMode && m_atmosphere.AppliedSettings().clouds &&
-        m_atmosphere.AppliedSettings().localCloud == 3) {
+        (m_atmosphere.AppliedSettings().localCloud == 3 || m_atmosphere.AppliedSettings().localCloud == 4)) {
         const auto& cloud = m_atmosphere.AppliedSettings();
         // 小さな地面とkm単位の雲を組み合わせても逆投影の精度を保つ。
         const float verticalRadius = cloud.cloudThickness * 0.5f;
