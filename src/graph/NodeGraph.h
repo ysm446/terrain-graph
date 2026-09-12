@@ -118,6 +118,7 @@ enum class NodeKind : uint32_t {
     CloudTransform = 40,
     CloudMapGenerate = 41,
     CloudAnimation = 42,
+    CloudShapeGenerate = 43,
 };
 
 struct PinDefinition {
@@ -258,6 +259,25 @@ struct CloudMapSettings {
     bool showGuides=true, removeIsolated=true;
     bool operator==(const CloudMapSettings&) const = default;
 };
+// 単独の積雲を生成する（Houdini の Cloud Shape Generate を参考）。
+struct CloudShapeGenerateSettings {
+    int species=1; // 0: Humilis（扁平）、1: Mediocris（中程度）、2: Congestus（塔状）。
+    float centerX=0, centerY=1200, centerZ=0;
+    float size=600; // 基本半径（m）。
+    float length=1.0f, width=1.0f; // X / Z 方向の倍率。
+    float pointSeparation=0.3f; // 球の間隔（基本半径に対する比率）。
+    float distortion=0.3f; // 配置の乱れ（0〜1）。
+    float flattenBottom=0.3f; // 下側を切り取る割合（0〜0.9）。
+    float rotation=0; // 上方向まわりの回転（度）。
+    bool randomScale=false;
+    float scaleMin=0.7f, scaleMax=1.3f;
+    bool secondaryShapes=false;
+    int iterations=1; // 二次形状の繰り返し（1〜3）。
+    float displacement=0.3f, spread=0.5f;
+    float smoothness=60;
+    int seed=1;
+    bool operator==(const CloudShapeGenerateSettings&) const = default;
+};
 struct CloudMapGuide {
     struct Point { float x=0,y=0,z=0; };
     struct Edge { uint32_t a=0,b=0; };
@@ -323,7 +343,7 @@ struct OutputNodeSettings {};
 
 using NodeSettings =
     std::variant<LayerNodeSettings, MaskNodeSettings, OutputNodeSettings, PathNodeSettings, CloudNodeSettings,
-                 CloudLineSettings, CloudSpheresSettings, CloudEllipsoidSettings, CloudMergeSettings, CloudNoiseSettings, CloudReplicateSettings, CloudTransformSettings, CloudMapSettings, CloudAnimationSettings>;
+                 CloudLineSettings, CloudSpheresSettings, CloudEllipsoidSettings, CloudMergeSettings, CloudNoiseSettings, CloudReplicateSettings, CloudTransformSettings, CloudMapSettings, CloudAnimationSettings, CloudShapeGenerateSettings>;
 
 struct Node {
     GraphId id = 0;
@@ -470,6 +490,8 @@ private:
 
     struct CloudMapCache { CloudMapSettings settings; CompiledCloud result; };
     mutable std::unordered_map<GraphId,CloudMapCache> m_cloudMapCache;
+    struct CloudShapeGenerateCache { CloudShapeGenerateSettings settings; CompiledCloud result; };
+    mutable std::unordered_map<GraphId,CloudShapeGenerateCache> m_cloudShapeGenerateCache;
     std::vector<Node> m_nodes;
     std::vector<Link> m_links;
     GraphId m_nextGraphId = 1;

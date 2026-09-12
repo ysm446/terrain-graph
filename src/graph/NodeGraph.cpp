@@ -1,5 +1,6 @@
 #include "graph/NodeGraph.h"
 #include "graph/CloudMapGenerator.h"
+#include "graph/CloudShapeGenerator.h"
 
 #include "compositor/MaterialStack.h"
 
@@ -240,7 +241,7 @@ constexpr std::array<PinDefinition, 2> kCloudReplicatePins = {{
 
 constexpr std::array<PinDefinition, 2> kCloudAnimationPins = {{{PinKind::Input, ValueType::Volume, "Volume"}, {PinKind::Output, ValueType::Volume, "Volume"}}};
 
-constexpr std::array<NodeDefinition, 43> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 44> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -279,6 +280,7 @@ constexpr std::array<NodeDefinition, 43> kNodeDefinitions = {{
     {NodeKind::CloudMerge, "cloudMerge", "Cloud Merge (Experimental)", kCloudMergePins},
     {NodeKind::CloudAnimation, "cloudAnimation", "Cloud Animation", kCloudAnimationPins},
     {NodeKind::CloudNoise, "cloudNoise", "Cloud Noise (Experimental)", kCloudNoisePins},
+    {NodeKind::CloudShapeGenerate, "cloudShapeGenerate", "Cloud Shape Generate (Experimental)", kCloudShapePins},
     {NodeKind::CloudMapGenerate, "cloudMapGenerate", "Cloud Map Generate (Experimental)", kCloudShapePins},
     {NodeKind::CloudTransform, "cloudTransform", "Cloud Transform (Experimental)", kCloudReplicatePins},
     {NodeKind::CloudReplicate, "cloudReplicate", "Cloud Replicate (Experimental)", kCloudReplicatePins},
@@ -562,6 +564,13 @@ CompiledCloud NodeGraph::CompileCloudShapes(GraphId shapeId) const {
                 found=m_cloudMapCache.insert_or_assign(shape->id,std::move(generated)).first;
             }
             result=found->second.result;
+        } else if (const auto* generate = std::get_if<CloudShapeGenerateSettings>(&shape->settings)) {
+            auto found=m_cloudShapeGenerateCache.find(shape->id);
+            if (found==m_cloudShapeGenerateCache.end() || !(found->second.settings==*generate)) {
+                CloudShapeGenerateCache generated{*generate,GenerateCloudShape(*generate,shape->id)};
+                found=m_cloudShapeGenerateCache.insert_or_assign(shape->id,std::move(generated)).first;
+            }
+            result=found->second.result;
         } else if (const auto* ellipsoid = std::get_if<CloudEllipsoidSettings>(&shape->settings)) {
             append({ellipsoid->centerX,ellipsoid->centerY,ellipsoid->centerZ,0,
                 std::max(1.0f,ellipsoid->radiusX),std::max(1.0f,ellipsoid->radiusY),std::max(1.0f,ellipsoid->radiusZ),0,shape->id,0});
@@ -772,6 +781,7 @@ GraphId NodeGraph::CreateNode(NodeKind kind) {
     } else if (kind == NodeKind::CloudAnimation) { node.settings = CloudAnimationSettings{};
     } else if (kind == NodeKind::CloudNoise) { node.settings = CloudNoiseSettings{};
     } else if (kind == NodeKind::CloudMapGenerate) { node.settings = CloudMapSettings{};
+    } else if (kind == NodeKind::CloudShapeGenerate) { node.settings = CloudShapeGenerateSettings{};
     } else if (kind == NodeKind::CloudTransform) { node.settings = CloudTransformSettings{};
     } else if (kind == NodeKind::CloudReplicate) { node.settings = CloudReplicateSettings{};
     } else if (kind == NodeKind::Path) {
@@ -816,6 +826,7 @@ bool NodeGraph::DeleteNode(GraphId nodeId) {
                std::find(pinIds.begin(), pinIds.end(), link.endPin) != pinIds.end();
     });
     m_cloudMapCache.erase(nodeId);
+    m_cloudShapeGenerateCache.erase(nodeId);
     std::erase_if(m_nodes, [nodeId](const Node& candidate) { return candidate.id == nodeId; });
     NormalizeCloudMergeInputs();
     MarkDirty();
@@ -824,6 +835,7 @@ bool NodeGraph::DeleteNode(GraphId nodeId) {
 
 void NodeGraph::Replace(std::vector<Node> nodes, std::vector<Link> links) {
     m_cloudMapCache.clear();
+    m_cloudShapeGenerateCache.clear();
     m_nodes = std::move(nodes);
     m_links = std::move(links);
     // 壊れたリンク（ピンが無い・型が合わない）は捨てる。読み込みの安全網。

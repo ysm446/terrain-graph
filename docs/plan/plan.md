@@ -1,9 +1,9 @@
 # plan — 実装方針と優先順位
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-12 10:00
+更新日時: 2026-09-12 12:20
 
-手続き雲は密度指定の形状複製・BVH・自動3Dベイク・密度フィールドの雲底切断まで実装済み。256個の固定上限を撤去し、形状とBVHは編集時に可変長GPUバッファへ転送する。Shapeを移動する雲トランスフォームと軸ギズモも追加済み。雲種（Humilis / Mediocris / Congestus）を選ぶ形状生成は次の候補。
+手続き雲は密度指定の形状複製・BVH・自動3Dベイク・密度フィールドの雲底切断まで実装済み。256個の固定上限を撤去し、形状とBVHは編集時に可変長GPUバッファへ転送する。Shapeを移動する雲トランスフォームと軸ギズモも追加済み。雲種（Humilis / Mediocris / Congestus）を選ぶ Cloud Shape Generate を追加済み。Bend・Fuse・点群入力からの複数生成は未対応。
 
 雲塊ノードを新規追加メニューから撤去した。Cloud Layerも新規追加メニューから撤去した。新規の雲はCloud Map Generateまたは基本形状からCloud Noiseで作成する。既存の雲層はCloud Layer (Legacy)として読み込み・編集・描画を維持する。保存済みプロジェクトの読み込み・編集・描画は互換性のため維持し、既存ノードは「雲塊（旧形式）」と表示する。
 
@@ -275,5 +275,7 @@ F フレーム間隔で N 枚を `指定名_0.png` から連番保存する。�
 計測時のみ VSync とフレーム制限を無効化し、保存設定は変更しない。
 `--cloud-reference` を加えると雲層の照明キャッシュを無効化し、同じ実行ファイルで従来計算と比較できる。
 
+
+Cloud Shape Generate (Experimental) を追加。入力なしで単独の積雲を球の集合として生成し、Shape を Cloud Replicate / Cloud Merge / Cloud Noise へ接続できる。雲種（Humilis / Mediocris / Congestus）で土台の厚さと塔の高さ・本数を切り替え、中心XYZ・サイズ（基本半径）・長さ／幅の倍率・球の間隔・乱れ・下側の切り取り・回転・半径のランダム化・二次形状（繰り返し1〜3、押し出し、広がり）・つなぎの滑らかさ・シードを持つ。土台は楕円体内の乱した格子、塔は先端へ細くなる球列、二次形状は上半球方向へ積む子球。Houdini の Cloud Shape Generate を参考にした構成で、Bend と Fuse は未対応。保存識別子は `cloudShapeGenerate`、設定は `proceduralCloud` 節。
 
 Cloud Map Generate (Experimental) を追加。10km四方・400点・接続距離500m・雲底厚さ200mを既定とし、範囲内の一様ランダム点から近傍接続、扁平な雲底、上向きの球列を生成する。Shape を Cloud Replicate / Cloud Noise へ接続できる。

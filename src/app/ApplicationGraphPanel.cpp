@@ -900,6 +900,7 @@ void Application::DrawGraphEditor() {
                         "Mask Area — パスの閉じた鎖の内側をマスクにする（エリア選択）");
         ImGui::Separator();
         ImGui::Separator();
+        addNodeMenuItem(graph::NodeKind::CloudShapeGenerate, "Cloud Shape Generate (Experimental) — 単独の積雲を生成する");
         addNodeMenuItem(graph::NodeKind::CloudMapGenerate, "Cloud Map Generate (Experimental) — ポイントの分布から雲形状を生成する");
         addNodeMenuItem(graph::NodeKind::CloudLine, "Cloud Line (Experimental) — 雲の芯になる3D直線");
         addNodeMenuItem(graph::NodeKind::CloudSpheres, "Cloud Spheres (Experimental) — ラインに沿って球を並べる");
@@ -1294,6 +1295,43 @@ void Application::DrawGraphPanel() {
         if (ui::BeginPropertyTable("CloudMergeRows", "横方向のばらつき")) {
             changed |= ui::PropertyFloat("つなぎの滑らかさ", &cloudMerge->smoothness, 0.0f, 500.0f, defaults.smoothness, "値はメートル単位。形状の膨らみは最大でこの1/4。", "%.0f m");
             ui::EndPropertyTable();
+        }
+        if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
+    } else if (auto* generate = std::get_if<graph::CloudShapeGenerateSettings>(&selected->settings)) {
+        const graph::CloudShapeGenerateSettings defaults;
+        bool changed=false;
+        ui::HintText("単独の積雲を球の集合として生成。Shape を Cloud Replicate / Cloud Merge / Cloud Noise へ接続します。");
+        if (ui::BeginPropertyTable("CloudShapeGenerateRows", "二次形状の繰り返し")) {
+            static const char* const kSpecies[]={"Humilis（扁平）","Mediocris（中程度）","Congestus（塔状）"};
+            changed |= ui::PropertyCombo("雲種", &generate->species, kSpecies, 3, defaults.species, "土台の厚さと塔の高さ・本数を切り替えます。");
+            changed |= ui::PropertyInt("シード", &generate->seed, 0, 10000, defaults.seed);
+            changed |= ui::PropertyFloat("中心 X", &generate->centerX, -100000.0f, 100000.0f, defaults.centerX, "メートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("中心 Y", &generate->centerY, -10000.0f, 20000.0f, defaults.centerY, "土台の中心高度。メートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("中心 Z", &generate->centerZ, -100000.0f, 100000.0f, defaults.centerZ, "メートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("サイズ", &generate->size, 10.0f, 5000.0f, defaults.size, "基本半径。長さ・幅・球の間隔・塔の高さの基準になります。", "%.0f m");
+            changed |= ui::PropertyFloat("長さ (X)", &generate->length, 0.1f, 5.0f, defaults.length, "サイズに対するX方向の倍率。", "%.2f");
+            changed |= ui::PropertyFloat("幅 (Z)", &generate->width, 0.1f, 5.0f, defaults.width, "サイズに対するZ方向の倍率。", "%.2f");
+            changed |= ui::PropertyFloat("球の間隔", &generate->pointSeparation, 0.05f, 1.0f, defaults.pointSeparation, "サイズに対する比率。小さいほど細かく多数の球を敷き詰めます。", "%.2f");
+            changed |= ui::PropertyFloat("乱れ", &generate->distortion, 0.0f, 1.0f, defaults.distortion, "配置と半径のランダムな乱れ。", "%.2f");
+            changed |= ui::PropertyFloat("下側の切り取り", &generate->flattenBottom, 0.0f, 0.9f, defaults.flattenBottom, "土台の高さに対する割合。平面より下の球を除き、かかる球を持ち上げます。", "%.2f");
+            changed |= ui::PropertyFloat("回転", &generate->rotation, -180.0f, 180.0f, defaults.rotation, "上方向まわりの回転。", "%.0f °");
+            changed |= ui::PropertyBool("半径をランダム化", &generate->randomScale, defaults.randomScale, "球ごとに半径へ乱数倍率を掛けます。");
+            if (generate->randomScale) {
+                changed |= ui::PropertyFloat("倍率 最小", &generate->scaleMin, 0.1f, 3.0f, defaults.scaleMin, nullptr, "%.2f");
+                changed |= ui::PropertyFloat("倍率 最大", &generate->scaleMax, 0.1f, 3.0f, defaults.scaleMax, nullptr, "%.2f");
+            }
+            changed |= ui::PropertyBool("二次形状", &generate->secondaryShapes, defaults.secondaryShapes, "既存の球の上側へ小さな球を積み、輪郭を細かくします。");
+            if (generate->secondaryShapes) {
+                changed |= ui::PropertyInt("二次形状の繰り返し", &generate->iterations, 1, 3, defaults.iterations, "繰り返すごとに球数が約3倍になります。");
+                changed |= ui::PropertyFloat("押し出し", &generate->displacement, 0.0f, 1.0f, defaults.displacement, "親の半径に対する子球の距離。", "%.2f");
+                changed |= ui::PropertyFloat("広がり", &generate->spread, 0.0f, 1.0f, defaults.spread, "0で真上、1で水平まで方向が散らばります。", "%.2f");
+            }
+            changed |= ui::PropertyFloat("つなぎの滑らかさ", &generate->smoothness, 0.0f, 500.0f, defaults.smoothness, "メートル単位。", "%.0f m");
+            const auto generated=m_graph.CompileCloudShapes(selected->id);
+            char text[48]; std::snprintf(text,sizeof(text),"%zu 個",generated.primitives.size());
+            ui::PropertyValue("合計形状数",text);
+            ui::EndPropertyTable();
+            if (generated.shapeOverflow) ui::HintText("作業メモリ予算を超えました。球の間隔を大きくするか二次形状の繰り返しを減らしてください。");
         }
         if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
     } else if (auto* map = std::get_if<graph::CloudMapSettings>(&selected->settings)) {

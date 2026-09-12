@@ -1,9 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-12 11:05
+更新日時: 2026-09-12 12:20
 
 ## 現在の状況
+
+**Cloud Shape Generate（2026-09-12 12:20）。** Cloud Shape Generate (Experimental) を追加。入力なしで単独の積雲を球の集合として生成し、Shape を Cloud Replicate / Cloud Merge / Cloud Noise へ接続できる。雲種（Humilis / Mediocris / Congestus）で土台の厚さと塔の高さ・本数を切り替え、中心XYZ・サイズ（基本半径）・長さ／幅の倍率・球の間隔・乱れ・下側の切り取り・回転・半径のランダム化・二次形状（繰り返し1〜3、押し出し、広がり）・つなぎの滑らかさ・シードを持つ。土台は楕円体内の乱した格子、塔は先端へ細くなる球列、二次形状は上半球方向へ積む子球。Houdini の Cloud Shape Generate を参考にした構成で、Bend と Fuse は未対応。保存識別子は `cloudShapeGenerate`、設定は `proceduralCloud` 節。 ノードごとの生成結果をキャッシュし設定が変わった時だけ再生成。Debug / Releaseビルド、テスト成功（追加9件：生成・切り取り平面・再利用・雲種の高さ差・二次形状・シード・回転・Replicate接続・作業予算）。Releaseで既定のMediocris（28球）と Congestus＋二次形状＋半径ランダム化の描画とプロパティUI、保存・再読み込みを確認（`data/cloud-shape-generate-qa/ui.png` / `congestus-ui.png`、`saved.tgproj`）。塔は円錐状に整いすぎる傾向があり、乱れや二次形状で崩す前提。メニューの直接操作・マウス編集・Debug GPU実行は未確認。
 
 **Cloud Merge の膨張抑制（2026-09-12 11:05）。** log-sum-expのsmooth minimumで近接形状が多いほど輪郭が`k*log(N)`膨らんでいた問題を修正。最も近い2距離の多項式smooth minimumへ置き換え、膨張を最大`k/4`へ固定。BVH除外を`min(d2, d1+k)`の厳密判定に変更し、包囲箱と空白スキップの余白も`k/4`へ縮小。テストに膨張上限の確認を追加。Debug / Releaseビルド（本体exeは起動中のためリンクできず、テストexeのみ更新）、テスト360件成功、AtmosphereCommonを含む7エントリのDXC成功。旧シェーダを`TG_SHADER_DIR`で差し替えて比較し、半径60〜90mの球列＋滑らかさ80mでは旧方式が半径の約3倍に膨らみ、新方式では球列の輪郭を維持（`data/cloud-merge-inflation-qa/chain-before.png` / `chain-after.png`）。サンプルプロジェクトでは雲の画素数の変化0.4%。デバッグレイヤーでのGPU実行は未確認。
 

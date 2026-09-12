@@ -1,7 +1,11 @@
 # Changelog
 
 作成日時: 2026-08-31 06:18
-更新日時: 2026-09-12 11:05
+更新日時: 2026-09-12 12:20
+
+## 未リリース — Cloud Shape Generate
+
+- 単独の積雲を生成する Cloud Shape Generate (Experimental) を追加。雲種・サイズ・縦横比・球の間隔・下側の切り取り・二次形状などを指定し、Shape として後段へ接続できる。
 
 ## 未リリース — Cloud Merge の膨張抑制
 

@@ -163,6 +163,7 @@ const char* const kTonemapNames[] = {"none", "reinhard", "aces"};
 const char* const kSkySourceNames[] = {"procedural", "hdri"};
 const char* const kCloudNoiseNames[] = {"perlinFbm", "perlinWorley"};
 const char* const kCloudReplicationNames[] = {"count", "surfaceDensity", "volumeDensity"};
+const char* const kCloudSpeciesNames[] = {"humilis", "mediocris", "congestus"};
 const char* const kProceduralCloudNoiseNames[] = {"perlin", "perlinFbm", "perlinWorley"};
 const char* const kApertureShapeNames[] = {"circle", "triangle", "hexagon", "octagon"};
 
@@ -1459,6 +1460,16 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["proceduralCloud"]["seed"] = map->seed;
             item["proceduralCloud"]["showGuides"] = map->showGuides;
             item["proceduralCloud"]["removeIsolated"] = map->removeIsolated;
+        } else if (const auto* generate = std::get_if<graph::CloudShapeGenerateSettings>(&node.settings)) {
+            item["proceduralCloud"]={{"species",EnumName(kCloudSpeciesNames,static_cast<uint32_t>(generate->species))},
+                {"centerX",generate->centerX},{"centerY",generate->centerY},{"centerZ",generate->centerZ},
+                {"size",generate->size},{"length",generate->length},{"width",generate->width},
+                {"pointSeparation",generate->pointSeparation},{"distortion",generate->distortion},
+                {"flattenBottom",generate->flattenBottom},{"rotation",generate->rotation},
+                {"randomScale",generate->randomScale},{"scaleMin",generate->scaleMin},{"scaleMax",generate->scaleMax},
+                {"secondaryShapes",generate->secondaryShapes},{"iterations",generate->iterations},
+                {"displacement",generate->displacement},{"spread",generate->spread},
+                {"smoothness",generate->smoothness},{"seed",generate->seed}};
         } else if (const auto* animation = std::get_if<graph::CloudAnimationSettings>(&node.settings)) {
             item["cloudAnimation"]={{"centerX",animation->centerX},{"centerZ",animation->centerZ},
                 {"width",animation->width},{"depth",animation->depth},{"speed",animation->speed},
@@ -1718,6 +1729,31 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.seed=std::clamp(ReadInt(*shape,"seed",settings.seed),0,10000);
                     settings.showGuides=ReadBool(*shape,"showGuides",settings.showGuides);
                     settings.removeIsolated=ReadBool(*shape,"removeIsolated",settings.removeIsolated);
+                }
+                created.settings=settings;
+            } else if (created.kind == graph::NodeKind::CloudShapeGenerate) {
+                graph::CloudShapeGenerateSettings settings;
+                if (const auto* shape=FindMember(item,"proceduralCloud"); shape && shape->is_object()) {
+                    settings.species=static_cast<int>(EnumValue(kCloudSpeciesNames,*shape,"species",static_cast<uint32_t>(settings.species)));
+                    settings.centerX=std::clamp(ReadFloat(*shape,"centerX",settings.centerX),-100000.0f,100000.0f);
+                    settings.centerY=std::clamp(ReadFloat(*shape,"centerY",settings.centerY),-10000.0f,20000.0f);
+                    settings.centerZ=std::clamp(ReadFloat(*shape,"centerZ",settings.centerZ),-100000.0f,100000.0f);
+                    settings.size=std::clamp(ReadFloat(*shape,"size",settings.size),10.0f,5000.0f);
+                    settings.length=std::clamp(ReadFloat(*shape,"length",settings.length),0.1f,5.0f);
+                    settings.width=std::clamp(ReadFloat(*shape,"width",settings.width),0.1f,5.0f);
+                    settings.pointSeparation=std::clamp(ReadFloat(*shape,"pointSeparation",settings.pointSeparation),0.05f,1.0f);
+                    settings.distortion=std::clamp(ReadFloat(*shape,"distortion",settings.distortion),0.0f,1.0f);
+                    settings.flattenBottom=std::clamp(ReadFloat(*shape,"flattenBottom",settings.flattenBottom),0.0f,0.9f);
+                    settings.rotation=std::clamp(ReadFloat(*shape,"rotation",settings.rotation),-180.0f,180.0f);
+                    settings.randomScale=ReadBool(*shape,"randomScale",settings.randomScale);
+                    settings.scaleMin=std::clamp(ReadFloat(*shape,"scaleMin",settings.scaleMin),0.1f,3.0f);
+                    settings.scaleMax=std::clamp(ReadFloat(*shape,"scaleMax",settings.scaleMax),0.1f,3.0f);
+                    settings.secondaryShapes=ReadBool(*shape,"secondaryShapes",settings.secondaryShapes);
+                    settings.iterations=std::clamp(ReadInt(*shape,"iterations",settings.iterations),1,3);
+                    settings.displacement=std::clamp(ReadFloat(*shape,"displacement",settings.displacement),0.0f,1.0f);
+                    settings.spread=std::clamp(ReadFloat(*shape,"spread",settings.spread),0.0f,1.0f);
+                    settings.smoothness=std::clamp(ReadFloat(*shape,"smoothness",settings.smoothness),0.0f,500.0f);
+                    settings.seed=std::clamp(ReadInt(*shape,"seed",settings.seed),0,10000);
                 }
                 created.settings=settings;
             } else if (created.kind == graph::NodeKind::CloudAnimation) {

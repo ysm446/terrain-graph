@@ -6,6 +6,7 @@
 
 #include "graph/NodeGraph.h"
 #include "graph/CloudMapGenerator.h"
+#include "graph/CloudShapeGenerator.h"
 #include "renderer/CloudMotion.h"
 #include "renderer/CloudSpatialIndex.h"
 #include "renderer/CloudShapeCache.h"
@@ -317,6 +318,57 @@ void RunNodeGraphTests() {
         Check(!drag.Update({80,0},true,false,true,values) && drag.axis==-1 && z==30,"Altの視点操作へ入力を譲る");
         drag.axis=0; drag.start=x;
         Check(drag.Update({20000,0},true,false,false,values) && x==10000,"ドラッグと数値入力は同じ移動範囲");
+    }
+    {
+        Section("Cloud Shape Generateの単独積雲");
+        NodeGraph graph;
+        const auto node=graph.CreateNode(NodeKind::CloudShapeGenerate);
+        const auto replicate=graph.CreateNode(NodeKind::CloudReplicate);
+        auto& settings=std::get<tg::graph::CloudShapeGenerateSettings>(graph.FindMutableNode(node)->settings);
+        settings.centerX=1000; settings.centerY=1500; settings.centerZ=-500;
+        const auto base=graph.CompileCloudShapes(node);
+        Check(base.connected && !base.primitives.empty() && !base.shapeOverflow,"既定設定で球の集合を生成");
+        bool bounded=true;
+        const float planeY=1500-600*0.55f+0.3f*2*600*0.55f;
+        for (const auto& p:base.primitives) {
+            bounded &= std::abs(p.centerX-1000)<=600*1.6f && std::abs(p.centerZ+500)<=600*1.6f;
+            bounded &= p.centerY-p.radiusY>=planeY-0.01f && p.radiusX==p.radiusY && p.radiusY==p.radiusZ;
+            bounded &= p.originId==node;
+        }
+        Check(bounded,"球は中心付近に収まり、切り取り平面より下へ出ない");
+        Check(graph.CompileCloudShapes(node).primitives.size()==base.primitives.size() &&
+            graph.CompileCloudShapes(node).primitives[0].centerX==base.primitives[0].centerX,"同じ設定では同じ形状を再利用");
+        settings.species=0;
+        const auto humilis=graph.CompileCloudShapes(node);
+        settings.species=2;
+        const auto congestus=graph.CompileCloudShapes(node);
+        float humilisTop=-1e9f,congestusTop=-1e9f;
+        for (const auto& p:humilis.primitives) humilisTop=std::max(humilisTop,p.centerY+p.radiusY);
+        for (const auto& p:congestus.primitives) congestusTop=std::max(congestusTop,p.centerY+p.radiusY);
+        Check(congestusTop>humilisTop+300,"Congestusは塔でHumilisより高くなる");
+        settings.species=1;
+        settings.secondaryShapes=true; settings.iterations=2;
+        const auto secondary=graph.CompileCloudShapes(node);
+        Check(secondary.primitives.size()>base.primitives.size()*3,"二次形状の繰り返しで球数が増える");
+        settings.secondaryShapes=false;
+        settings.seed++;
+        Check(graph.CompileCloudShapes(node).primitives[0].centerX!=base.primitives[0].centerX,"シード変更で配置を更新");
+        settings.seed--;
+        settings.rotation=90;
+        const auto rotated=graph.CompileCloudShapes(node);
+        bool rotatedMatch=rotated.primitives.size()==base.primitives.size();
+        for (size_t i=0;i<rotated.primitives.size() && rotatedMatch;++i) {
+            const auto& a=base.primitives[i]; const auto& b=rotated.primitives[i];
+            rotatedMatch &= std::abs((b.centerZ+500)-(a.centerX-1000))<0.01f && std::abs((b.centerX-1000)+(a.centerZ+500))<0.01f;
+        }
+        Check(rotatedMatch,"回転は上方向まわりの回転で球数を変えない");
+        settings.rotation=0;
+        Check(graph.CreateLink(graph.FindNode(node)->outputs[0].id,graph.FindNode(replicate)->inputs[0].id) &&
+            graph.CompileCloudShapes(replicate).connected,"Cloud Replicateへ接続できる");
+        settings.size=5000; settings.pointSeparation=0.05f; settings.length=settings.width=5;
+        settings.secondaryShapes=true; settings.iterations=3;
+        const auto excessive=tg::graph::GenerateCloudShape(settings,node);
+        Check(excessive.shapeOverflow && !excessive.connected,"極端な設定は作業予算で停止する");
     }
     {
         Section("Cloud Map Generateの分布と成長");
