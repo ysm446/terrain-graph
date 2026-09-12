@@ -585,7 +585,7 @@ void RunNodeGraphTests() {
             k0=std::sqrt(k0);k1=std::sqrt(k1);
             return k1>1e-7 ? k0*(k0-1)/k1 : -double(std::min({primitive.radius[0],primitive.radius[1],primitive.radius[2]}));
         };
-        bool conservative=true,accurate=true;
+        bool conservative=true,accurate=true,boundedInflation=true;
         uint32_t tested=0;
         for (int sample=0;sample<64;++sample) {
             const float position[]={float(sample%8)*600-10,float(sample%5)*25,float(sample/8)*600-15};
@@ -598,33 +598,38 @@ void RunNodeGraphTests() {
                         conservative &= lower<=distanceAt(settings.primitives[k],position)+0.001;
                 }
             }
+            const auto smoothUnion=[](double first,double second,double k) {
+                if (k<=0) return first;
+                const double h=std::max(k-(second-first),0.0)/k;
+                return first-h*h*k*0.25;
+            };
             for (double smoothness:{0.0,5.0,80.0}) {
-                double minimum=1e30,full=0;
-                for (const auto& primitive:settings.primitives) minimum=std::min(minimum,distanceAt(primitive,position));
-                if (smoothness>0) for (const auto& primitive:settings.primitives) full+=std::exp((minimum-distanceAt(primitive,position))/smoothness);
-                const double reference=smoothness>0 ? minimum-smoothness*std::log(full) : minimum;
-                double nearest=1e30,weight=0;
-                const double cutoff=smoothness>0 ? smoothness*std::log(TestPrimitiveCount*smoothness/TG_CLOUD_BVH_ERROR_METERS) : 0;
+                double minimum=1e30,secondMinimum=1e30;
+                for (const auto& primitive:settings.primitives) {
+                    const double d=distanceAt(primitive,position);
+                    if (d<minimum) { secondMinimum=minimum; minimum=d; } else secondMinimum=std::min(secondMinimum,d);
+                }
+                const double reference=smoothUnion(minimum,secondMinimum,smoothness);
+                double nearest=1e30,second=1e30;
                 uint32_t i=0;
                 while(i<settings.primitiveBvh.size()) {
                     const auto& node=settings.primitiveBvh[i];
-                    if(tg::renderer::CloudSpatialLowerBound(node,position)>nearest+cutoff+0.01) { i=node.escape;continue; }
+                    if(tg::renderer::CloudSpatialLowerBound(node,position)>std::min(second,nearest+smoothness)+0.01) { i=node.escape;continue; }
                     for (uint32_t j=node.start;j<node.start+node.count;++j) {
                         const double d=distanceAt(settings.primitives[j],position);
                         if(smoothness==5) ++tested;
-                        if(smoothness>0) {
-                            if(d<nearest) {weight=weight*std::exp((d-nearest)/smoothness)+1;nearest=d;}
-                            else weight+=std::exp((nearest-d)/smoothness);
-                        } else nearest=std::min(nearest,d);
+                        if(d<nearest) {second=nearest;nearest=d;} else second=std::min(second,d);
                     }
                     ++i;
                 }
-                const double accelerated=smoothness>0 ? nearest-smoothness*std::log(weight) : nearest;
+                const double accelerated=smoothUnion(nearest,second,smoothness);
                 accurate &= std::abs(accelerated-reference)<=TG_CLOUD_BVH_ERROR_METERS+1e-5;
+                boundedInflation &= reference>=minimum-smoothness*0.25-1e-9 && reference<=minimum+1e-9;
             }
         }
         Check(conservative,"細長い楕円体を含む全階層で距離下界が保守的");
         Check(accurate,"通常unionとsmooth unionの全数評価との差が1mm以下");
+        Check(boundedInflation,"smooth unionの膨張が形状数に関係なく滑らかさの1/4以下");
         Check(tested<64*TestPrimitiveCount/2,"離れた形状群では評価する形状数を半分以下へ減らす");
     }
 

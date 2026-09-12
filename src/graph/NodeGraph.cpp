@@ -712,7 +712,8 @@ CompiledCloud NodeGraph::CompileCloud() const {
                 float loX=1e9f,loY=1e9f,loZ=1e9f,hiX=-1e9f,hiY=-1e9f,hiZ=-1e9f;
                 // d >= rMin * (length(offset / radii) - 1)。この下界から各軸の範囲を求める。
                 // 細部の削りと境界幅は内向きなので、外側の余白には加えない。
-                const float expansion=result.smoothness*std::log(float(result.primitives.size()))+noise.displacement;
+                // smooth unionは最も近い2距離の多項式合成なので、膨張は形状数に関係なく最大 k/4。
+                const float expansion=result.smoothness*0.25f+noise.displacement;
                 for (const auto& primitive : result.primitives) {
                     const float scale=1+expansion/std::min({primitive.radiusX,primitive.radiusY,primitive.radiusZ});
                     loX=std::min(loX,primitive.centerX-primitive.radiusX*scale); hiX=std::max(hiX,primitive.centerX+primitive.radiusX*scale);

@@ -1,9 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-12 10:02
+更新日時: 2026-09-12 11:05
 
 ## 現在の状況
+
+**Cloud Merge の膨張抑制（2026-09-12 11:05）。** log-sum-expのsmooth minimumで近接形状が多いほど輪郭が`k*log(N)`膨らんでいた問題を修正。最も近い2距離の多項式smooth minimumへ置き換え、膨張を最大`k/4`へ固定。BVH除外を`min(d2, d1+k)`の厳密判定に変更し、包囲箱と空白スキップの余白も`k/4`へ縮小。テストに膨張上限の確認を追加。Debug / Releaseビルド（本体exeは起動中のためリンクできず、テストexeのみ更新）、テスト360件成功、AtmosphereCommonを含む7エントリのDXC成功。旧シェーダを`TG_SHADER_DIR`で差し替えて比較し、半径60〜90mの球列＋滑らかさ80mでは旧方式が半径の約3倍に膨らみ、新方式では球列の輪郭を維持（`data/cloud-merge-inflation-qa/chain-before.png` / `chain-after.png`）。サンプルプロジェクトでは雲の画素数の変化0.4%。デバッグレイヤーでのGPU実行は未確認。
 
 **Cloud Layerの新規作成廃止（2026-09-12 10:02）。** 新規追加メニューからCloud Layerを撤去し、既存ノードはCloud Layer (Legacy)と表示する。保存識別子・読み込み・編集・描画・既存ノードのコピーを維持。Cloud Outputの案内をCloud Noise / Cloud Animation中心へ更新。Debug / Releaseビルド、既存テスト成功。保存済み雲層の読み込み、Legacy見出し、プロパティと雲・影をRelease UIで確認（`data/cloud-layer-legacy-qa/ui.png`）。メニューの撤去はコードで確認、メニューの直接操作は未確認。
 

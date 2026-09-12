@@ -902,3 +902,12 @@ Cloud Map Generate に「厚さ／横幅の上限」を追加（既定0.5、範�
 - 設定を保存し、再読み込みは開始位置から。直列接続では出力に近いAnimationを採用する。
 
 Cloud Animation の「模様を変化」をオンにすると「模様の速度比」（0〜1、既定0.75）を表示する。1で形を維持し、小さいほど移動に伴い模様が変わる。オフでは現在の模様を維持して移動する。設定は保存される。
+
+## Cloud Layer の新規作成廃止
+
+Cloud Layerを新規追加メニューから外し、既存ノードはCloud Layer (Legacy)と表示する。保存形式のcloudLayer識別子、読み込み・編集・描画と既存ノードのコピーは維持する。新規の雲はCloud Map Generateまたは基本形状 → Cloud Noise → Cloud Outputで作成し、移動にはCloud Animationを挟む。
+
+
+## Cloud Merge の膨張抑制（2026-09-12 11:05）
+
+Cloud Merge / Cloud Replicate / Cloud Map Generate の「つなぎの滑らかさ」を、形状数に依存しない方式へ変更。膨らみは最大で滑らかさの1/4に収まり、孤立した形状は膨らまない。以前は近くの形状が多いほど全体が太っていた。既存プロジェクトは同じ値で輪郭が細くなる。

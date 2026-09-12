@@ -1292,7 +1292,7 @@ void Application::DrawGraphPanel() {
         bool changed = false;
         ui::HintText("接続した形状を同じ座標で統合します。接続すると次の空き入力が増えます。同じ形状の重複接続は1回だけ。入れ子の滑らかさは最大値を全体へ適用します。");
         if (ui::BeginPropertyTable("CloudMergeRows", "横方向のばらつき")) {
-            changed |= ui::PropertyFloat("つなぎの滑らかさ", &cloudMerge->smoothness, 0.0f, 500.0f, defaults.smoothness, "値はメートル単位。", "%.0f m");
+            changed |= ui::PropertyFloat("つなぎの滑らかさ", &cloudMerge->smoothness, 0.0f, 500.0f, defaults.smoothness, "値はメートル単位。形状の膨らみは最大でこの1/4。", "%.0f m");
             ui::EndPropertyTable();
         }
         if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
