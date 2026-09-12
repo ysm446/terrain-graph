@@ -75,7 +75,7 @@ struct AtmosphereSettings {
     float weatherStreets = 0.5f; // 風向に沿った帯状の伸び。
     float weatherVariation = 0.5f; // 塊ごとの密度差。
     float weatherDetailScale = 800.0f; // 細部ノイズの周期（m）。
-    float weatherPadding = 0;
+    uint32_t weatherLod = 1; // 距離 LOD（細部の省略・帯域制限・刻みの伸び）。
 };
 static_assert(sizeof(AtmosphereSettings) == 288);
 

@@ -342,6 +342,7 @@ int Application::Run() {
             cloudSettings.weatherStreets = compiledCloud.streets;
             cloudSettings.weatherVariation = compiledCloud.variation;
             cloudSettings.weatherDetailScale = compiledCloud.detailScale;
+            cloudSettings.weatherLod = compiledCloud.distanceLod ? 1u : 0u;
             cloudSettings.primitiveCount = static_cast<uint32_t>(compiledCloud.primitives.size());
             cloudSettings.primitiveSmoothness = compiledCloud.smoothness;
             cloudSettings.primitiveDisplacement = cloud.shapeStrength;
