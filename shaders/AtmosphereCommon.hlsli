@@ -485,8 +485,18 @@ float CloudOpticalDepth(float3 origin, float3 ray, AtmosphericParameters p, uint
 bool HasCloudOpticalCache(AtmosphericParameters p) {
     return (p.localCloud==2 || p.localCloud==3 || p.localCloud==4) && (asuint(p.shapeStrength)&0x80000000)!=0 && asuint(p.shapeStrength)!=0xffffffff;
 }
+// 天候層の照明キャッシュは風の移動に合わせて格子を1ボクセル未満の範囲でずらし、
+// 雲が固定格子を横切るときに三線形補間で陰影が泳ぐのを防ぐ。
+float3 CloudCacheShift(AtmosphericParameters p) {
+    if (p.localCloud!=4) return 0;
+    float n=max(p.opticalCacheSize&0xffffu,2u);
+    float2 voxel=2*CloudRenderRadii(p).xz/(n-1);
+    float2 wind=float2(p.windOffsetX,p.windOffsetZ);
+    float2 shift=wind-floor(wind/voxel)*voxel;
+    return float3(shift.x,0,shift.y);
+}
 float3 SampleCloudOpticalCache(float3 position, AtmosphericParameters p) {
-    float3 uvw=saturate((position-CloudRenderCenter(p))/CloudRenderRadii(p)*0.5+0.5);
+    float3 uvw=saturate((position-CloudCacheShift(p)-CloudRenderCenter(p))/CloudRenderRadii(p)*0.5+0.5);
     // XZ の格子数は範囲に応じて変わる。Y は 32 固定。
     float n=max(p.opticalCacheSize&0xffffu,2u);
     float ny=max(p.opticalCacheSize>>16,2u);
