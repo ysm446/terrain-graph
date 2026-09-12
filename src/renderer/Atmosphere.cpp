@@ -303,6 +303,9 @@ void Atmosphere::Shutdown(rhi::Device& device) {
     device.DeferRelease(m_cloudCells);
     device.DeferRelease(m_halfCloud);
     device.DeferRelease(m_halfDepth);
+    device.DeferRelease(m_resolvedCloud[0]);
+    device.DeferRelease(m_resolvedCloud[1]);
+    m_historyValid = false;
     m_cellsDirty = true;
     m_initialized = m_ready = false;
     m_lastTick = {};
@@ -403,14 +406,34 @@ void Atmosphere::Render(rhi::Device& device, rhi::PipelineCache& pipelines,
         uint32_t godRays; float rayDensity, rayDistance, farDistance;
         DirectX::XMFLOAT4X4 lightViewProjection;
         uint32_t shadowIndex; float shadowTexelSize, shadowBias, shadowPadding;
+        DirectX::XMFLOAT4X4 previousViewProjection;
+        DirectX::XMFLOAT3 previousCamera; uint32_t frameIndex;
+        uint32_t history, resolvedOutput, temporal; float historyWeight;
     };
     const auto allocation = device.Upload().Allocate(sizeof(Constants), 256);
     if (!pipeline || !allocation.IsValid()) return;
+    // 時間方向の再投影は半解像度のときだけ。編集に相当する変化があれば履歴を捨てる。
+    const bool temporal = m_temporalClouds && !m_fullResolutionClouds && (m_applied.clouds || m_godRays.enabled);
+    // memcmp で比べるので、パディングまで含めてゼロにしてから詰める。
+    HistoryKey key;
+    std::memset(&key, 0, sizeof(key));
+    key.settings = m_applied;
+    key.distributionRevision = m_distributionRevision;
+    key.typeRevision = m_typeRevision;
+    key.geometryRevision = m_geometryRevision;
+    key.width = scene.width; key.height = scene.height; key.showSky = showSky ? 1u : 0u;
+    key.godRays = m_godRays;
+    key.settings.windOffsetX = key.settings.windOffsetZ = 0;
+    key.settings.cloudBodyOffsetX = key.settings.cloudBodyOffsetZ = 0;
+    if (std::memcmp(&key, &m_historyKey, sizeof(key)) != 0) m_historyValid = false;
+    m_historyKey = key;
     Constants constants{inverseViewProjection, camera, showSky ? 1u : 0u, m_applied,
         depth.SrvIndex(), m_skyView.SrvIndex(), m_noise.SrvIndex(), m_cloudLighting.SrvIndex(),
         UINT32_MAX, UINT32_MAX, scene.width, scene.height, UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX,
         m_godRays.enabled ? 1u : 0u, m_godRays.density, m_godRays.distance, m_applied.weatherFar,
-        lightViewProjection, shadowIndex, shadowTexelSize, shadowBias, 0};
+        lightViewProjection, shadowIndex, shadowTexelSize, shadowBias, 0,
+        m_previousViewProjection, m_previousCamera, m_frameIndex,
+        UINT32_MAX, UINT32_MAX, temporal ? 1u : 0u, 0.9f};
     // 深度は compute と pixel の両方から読む。DSV を先に外す。
     commands->OMSetRenderTargets(1, &scene.rtv.cpu, FALSE, nullptr);
     TransitionIfNeeded(commands, depth, ReadState);
@@ -445,10 +468,19 @@ void Atmosphere::Render(rhi::Device& device, rhi::PipelineCache& pipelines,
             device.DeferRelease(m_halfDepth);
             // HDR 散乱光をクリップせず保存する。深度は交差判定用の距離。
             if (!CreateTarget(device, m_halfCloud, width, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, height) ||
-                !CreateTarget(device, m_halfDepth, width, DXGI_FORMAT_R32_FLOAT, 1, height)) {
+                !CreateTarget(device, m_halfDepth, width, DXGI_FORMAT_R32G32_FLOAT, 1, height)) {
                 device.DeferRelease(m_halfCloud);
                 device.DeferRelease(m_halfDepth);
             }
+        }
+        if (temporal && (m_resolvedCloud[0].width != width || m_resolvedCloud[0].height != height)) {
+            // 履歴はバイリニアで再投影するため RGBA16F。書き込み側で 65000 に収める。
+            for (auto& texture : m_resolvedCloud) {
+                device.DeferRelease(texture);
+                if (!CreateTarget(device, texture, width, DXGI_FORMAT_R16G16B16A16_FLOAT, 1, height))
+                    device.DeferRelease(texture);
+            }
+            m_historyValid = false;
         }
         auto* halfPipeline = pipelines.GetCompute(L"AtmosphereComposite.hlsl", L"CsCloudHalf");
         const auto halfAllocation = device.Upload().Allocate(sizeof(Constants), 256);
@@ -468,8 +500,37 @@ void Atmosphere::Render(rhi::Device& device, rhi::PipelineCache& pipelines,
             PIXEndEvent(commands);
             constants.halfCloud = m_halfCloud.SrvIndex();
             constants.halfDepth = m_halfDepth.SrvIndex();
+            // 前フレームの蓄積結果を再投影して今フレームへ混ぜ、合成側にはその結果を読ませる。
+            auto* temporalPipeline = pipelines.GetCompute(L"AtmosphereComposite.hlsl", L"CsCloudTemporal");
+            const auto temporalAllocation = device.Upload().Allocate(sizeof(Constants), 256);
+            rhi::GpuTexture& resolved = m_resolvedCloud[m_historySlot];
+            rhi::GpuTexture& history = m_resolvedCloud[m_historySlot ^ 1];
+            if (temporal && resolved.IsValid() && history.IsValid() && temporalPipeline && temporalAllocation.IsValid()) {
+                constants.history = m_historyValid ? history.SrvIndex() : UINT32_MAX;
+                constants.resolvedOutput = resolved.UavIndex();
+                std::memcpy(temporalAllocation.cpu, &constants, sizeof(constants));
+                PIXBeginEvent(commands, PIX_COLOR(120,180,255), "CloudTemporalReprojection");
+                TransitionIfNeeded(commands, resolved, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                TransitionIfNeeded(commands, history, ReadState);
+                commands->SetComputeRootConstantBufferView(1, temporalAllocation.gpuAddress);
+                commands->SetPipelineState(temporalPipeline);
+                commands->Dispatch(rhi::DispatchCount(width), rhi::DispatchCount(height), 1);
+                TransitionIfNeeded(commands, resolved, ReadState);
+                PIXEndEvent(commands);
+                constants.halfCloud = resolved.SrvIndex();
+                m_historyValid = true;
+                m_historySlot ^= 1;
+            } else {
+                m_historyValid = false;
+            }
         }
     }
+    if (!temporal) m_historyValid = false;
+    // 次フレームの再投影に使う今フレームの視点。
+    DirectX::XMStoreFloat4x4(&m_previousViewProjection,
+        DirectX::XMMatrixInverse(nullptr, DirectX::XMLoadFloat4x4(&inverseViewProjection)));
+    m_previousCamera = camera;
+    ++m_frameIndex;
     std::memcpy(allocation.cpu, &constants, sizeof(constants));
     PIXBeginEvent(commands, PIX_COLOR(120, 180, 255), "AtmosphereComposite");
     // DSV を外してから深度を SRV として読む。

@@ -88,6 +88,7 @@ bool Application::Initialize(const StartupOptions& options) {
     m_options = options;
     m_renderer.CloudLightingCache() = !options.referenceCloudLighting;
     m_renderer.FullResolutionClouds() = options.fullResolutionClouds;
+    m_renderer.TemporalClouds() = !options.disableTemporalClouds;
 
     // ファイル選択ダイアログ（IFileDialog）が COM を使う。
     m_comInitialized =

@@ -375,6 +375,7 @@ void PreviewRenderer::ResetSettings() {
     m_atmosphereSettings = AtmosphereSettings{};
     GodRays() = GodRaySettings{};
     FullResolutionClouds() = false;
+    TemporalClouds() = true;
     m_cloudLightingCache = true;
     m_atmosphericLight = {0.9f, 0.9f, 120000.0f, {1.0f, 1.0f, 1.0f}};
     const PreviewDefaults& defaults = kPreviewDefaults;

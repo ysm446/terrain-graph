@@ -112,6 +112,9 @@ public:
     void InvalidateFrameLighting() { m_opticalDirty = true; m_cellsDirty = true; m_shapeDirty = true; }
     GodRaySettings& GodRays() { return m_godRays; }
     bool& FullResolutionClouds() { return m_fullResolutionClouds; }
+    // 半解像度の雲を前フレームから再投影して蓄積する。全解像度では使わない。
+    bool& TemporalClouds() { return m_temporalClouds; }
+    void ResetCloudHistory() { m_historyValid = false; }
     void ResetAnimation();
     void ResetCloudMotion();
     bool Update(rhi::Device& device, rhi::PipelineCache& pipelines, const AtmosphereSettings& settings);
@@ -141,6 +144,20 @@ private:
     rhi::GpuTexture m_halfCloud;
     rhi::GpuTexture m_halfDepth;
     rhi::GpuTexture m_farCloud; // 天候層の遠景（1/4 解像度）。
+    rhi::GpuTexture m_resolvedCloud[2]; // 時間方向に蓄積した半解像度の雲。前フレームと今フレームで入れ替える。
+    uint32_t m_historySlot = 0;
+    bool m_historyValid = false;
+    bool m_temporalClouds = true;
+    uint32_t m_frameIndex = 0;
+    DirectX::XMFLOAT4X4 m_previousViewProjection{};
+    DirectX::XMFLOAT3 m_previousCamera{};
+    // 履歴を捨てる判定に使う前フレームの状態。風による移流の量は含めない。
+    struct HistoryKey {
+        AtmosphereSettings settings{};
+        uint64_t distributionRevision = 0, typeRevision = 0;
+        uint32_t geometryRevision = 0, width = 0, height = 0, showSky = 0;
+        GodRaySettings godRays{};
+    } m_historyKey{}; // 起動直後は memset 済みのキーと一致しないので、初回は履歴なしで始まる。
     GodRaySettings m_godRays;
     bool m_cellsDirty = true;
     bool m_fullResolutionClouds = false;

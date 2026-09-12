@@ -285,6 +285,7 @@ void Application::ProcessPendingFileWork() {
             // 比較用の起動引数は保存された品質設定より優先する。
             if (m_options.referenceCloudLighting) m_renderer.CloudLightingCache() = false;
             if (m_options.fullResolutionClouds) m_renderer.FullResolutionClouds() = true;
+            if (m_options.disableTemporalClouds) m_renderer.TemporalClouds() = false;
             m_recentProjects.Add(path);
             m_projectPath = path;
             m_selectedGraphNode = m_graph.FindNode(m_options.selectNode) ? m_options.selectNode : 0;

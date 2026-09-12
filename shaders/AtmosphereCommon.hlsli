@@ -530,8 +530,11 @@ float CloudShadow(float3 position, AtmosphericParameters p, uint noiseIndex) {
     return exp(-CloudOpticalDepth(position,sun,p,noiseIndex,max(p.samples/2,16u)));
 }
 // nearLimit より手前は積分しない（遠景パスで使う）。
-float4 IntegrateCloud(float3 origin, float3 ray, float limit, AtmosphericParameters p,
-                      uint noiseIndex, uint lightingIndex, float nearLimit=0) {
+// jitter は各刻みの中でサンプルを取る位置（0〜1、既定は中央）。時間方向の再投影で毎フレームずらす。
+// meanDistance は散乱の寄与で重み付けした雲の平均距離。寄与がなければ 0。再投影の位置合わせに使う。
+float4 IntegrateCloudEx(float3 origin, float3 ray, float limit, AtmosphericParameters p,
+                        uint noiseIndex, uint lightingIndex, float nearLimit, float jitter, out float meanDistance) {
+    meanDistance=0;
     if(p.clouds==0) return float4(0,0,0,1);
     float start,end;
     if(!CloudInterval(origin,ray,limit,p,start,end)) return float4(0,0,0,1);
@@ -561,13 +564,14 @@ float4 IntegrateCloud(float3 origin, float3 ray, float limit, AtmosphericParamet
     phases*=float4(1,contribution,contribution*contribution,contribution*contribution*contribution);
     phases.yzw*=p.indirectLight; // 雲自体の明るさを高次散乱だけで調整する。
     float transmission=1; float3 radiance=0;
+    float weightedDistance=0, weightSum=0;
     float t=start;
     [loop] for(uint i=0;i<count && transmission>0.005;++i) {
         if (p.localCloud==4) {
             if (t>=end) break;
             stepLength=min(max(minStep,t*stepGrowth),end-t);
         }
-        float sampleDistance=t+0.5*stepLength;
+        float sampleDistance=t+jitter*stepLength;
         float3 pos=origin+ray*sampleDistance;
         t+=stepLength;
         float emptyDistance=0;
@@ -619,9 +623,17 @@ float4 IntegrateCloud(float3 origin, float3 ray, float limit, AtmosphericParamet
         // 区間内一定の密度・光源に対する解析積分（Beer-Lambert）。
         float opacity=1-exp(-density*p.extinction*stepLength);
         radiance+=transmission*opacity*light;
+        weightedDistance+=transmission*opacity*sampleDistance;
+        weightSum+=transmission*opacity;
         transmission*=1-opacity;
     }
+    meanDistance=weightSum>0 ? weightedDistance/weightSum : 0;
     return float4(radiance,transmission);
+}
+float4 IntegrateCloud(float3 origin, float3 ray, float limit, AtmosphericParameters p,
+                      uint noiseIndex, uint lightingIndex, float nearLimit=0) {
+    float meanDistance;
+    return IntegrateCloudEx(origin,ray,limit,p,noiseIndex,lightingIndex,nearLimit,0.5,meanDistance);
 }
 float3 AtmosphericSky(float3 ray, AtmosphericParameters p, uint lutIndex, float3 groundRadiance=0) {
     Texture2D<float4> lut=ResourceDescriptorHeap[lutIndex];

@@ -175,6 +175,10 @@ void Application::DrawMaterialPanel() {
             if (ui::PropertyCombo("描画解像度", &resolution, resolutions, 2, 0,
                 "半解像度は軽量な描画。全解像度は雲の細部を確認するための設定で、描画負荷が増えます。"))
                 m_renderer.FullResolutionClouds() = resolution == 1;
+            ImGui::BeginDisabled(m_renderer.FullResolutionClouds());
+            ui::PropertyBool("時間方向の再投影", &m_renderer.TemporalClouds(), true,
+                "半解像度の雲を前フレームから再投影して蓄積し、全解像度に近い見た目にします。雲や視点の編集時は履歴を捨てます。全解像度では使いません。");
+            ImGui::EndDisabled();
             const char* qualities[] = {"低（32）", "標準（64）", "高（128）"};
             int quality = sky.samples <= 32 ? 0 : sky.samples <= 64 ? 1 : 2;
             if (ui::PropertyCombo("レイマーチ品質", &quality, qualities, 3, 1,

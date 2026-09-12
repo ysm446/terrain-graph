@@ -60,6 +60,7 @@ struct StartupOptions {
     uint32_t benchmarkFrames = 0;
     bool referenceCloudLighting = false;
     bool fullResolutionClouds = false;
+    bool disableTemporalClouds = false; // 比較用。時間方向の再投影を無効にする。
     uint32_t screenshotFrame = 8;
     uint32_t screenshotCount = 1; // ビューポート連番の枚数。
     uint32_t screenshotInterval = 1;

@@ -66,6 +66,8 @@ tg::StartupOptions ParseCommandLine() {
             options.referenceCloudLighting = true;
         } else if (argument == L"--cloud-full-resolution") {
             options.fullResolutionClouds = true;
+        } else if (argument == L"--cloud-no-temporal") {
+            options.disableTemporalClouds = true;
         } else if (argument == L"--select-node" && (i + 1) < argc) {
             options.selectNode = ::_wtoi(argv[++i]);
         } else if (argument == L"--screenshot-frame" && (i + 1) < argc) {
