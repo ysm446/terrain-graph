@@ -1,9 +1,12 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-12 06:22
+更新日時: 2026-09-12 10:02
 
 ## 現在の状況
+
+**Cloud Layerの新規作成廃止（2026-09-12 10:02）。** 新規追加メニューからCloud Layerを撤去し、既存ノードはCloud Layer (Legacy)と表示する。保存識別子・読み込み・編集・描画・既存ノードのコピーを維持。Cloud Outputの案内をCloud Noise / Cloud Animation中心へ更新。Debug / Releaseビルド、既存テスト成功。保存済み雲層の読み込み、Legacy見出し、プロパティと雲・影をRelease UIで確認（`data/cloud-layer-legacy-qa/ui.png`）。メニューの撤去はコードで確認、メニューの直接操作は未確認。
+
 
 **サムネイルの全方向アンビエント光（2026-09-12 06:22）。** 既存の2灯と半球光に加えて、無彩色の全方向アンビエント光を強さ0.08で追加。拡散色＋F0へAOを掛けて簡易的な環境反射を補い、金属も含めた暗部を持ち上げる。DXC成功、Releaseで8素材を目視確認（`data/material-lighting-qa/ambient-ui.png`）。C++変更なし。Debug GPU検証は未実施。
 

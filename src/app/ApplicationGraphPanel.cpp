@@ -901,7 +901,6 @@ void Application::DrawGraphEditor() {
         ImGui::Separator();
         ImGui::Separator();
         addNodeMenuItem(graph::NodeKind::CloudMapGenerate, "Cloud Map Generate (Experimental) — ポイントの分布から雲形状を生成する");
-        addNodeMenuItem(graph::NodeKind::CloudLayer, "Cloud Layer — 分布マスクと高度・厚さで広い雲を作る");
         addNodeMenuItem(graph::NodeKind::CloudLine, "Cloud Line (Experimental) — 雲の芯になる3D直線");
         addNodeMenuItem(graph::NodeKind::CloudSpheres, "Cloud Spheres (Experimental) — ラインに沿って球を並べる");
         addNodeMenuItem(graph::NodeKind::CloudEllipsoid, "Cloud Ellipsoid (Experimental) — 雲の土台となる形");
@@ -1537,8 +1536,8 @@ void Application::DrawGraphPanel() {
             MarkDocumentChanged(false);
         }
     } else if (selected->kind == graph::NodeKind::CloudOutput) {
-        ui::HintText("Cloud Noise または Cloud Layer の Volume を接続して表示します。未接続なら雲は表示しません");
-        ui::HintText("保存済みのCloud (Legacy) も引き続き表示できます");
+        ui::HintText("Cloud Noise の Volume を接続して表示します。Cloud Animation を挟むと移動できます。未接続なら雲は表示しません");
+        ui::HintText("保存済みの Cloud / Cloud Layer (Legacy) も引き続き表示できます");
         if (!m_renderer.AtmosphericMode() && ui::Button("大気散乱へ切替", ui::kWideButtonWidth)) {
             m_renderer.AtmosphericMode() = true;
             MarkDocumentChanged();

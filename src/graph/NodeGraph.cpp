@@ -272,7 +272,7 @@ constexpr std::array<NodeDefinition, 43> kNodeDefinitions = {{
     {NodeKind::MaskPath, "maskPath", "Mask Path", kMaskPathPins},
     {NodeKind::MaskArea, "maskArea", "Mask Area", kMaskPathPins},
     {NodeKind::Cloud, "cloud", "Cloud (Legacy)", kCloudPins},
-    {NodeKind::CloudLayer, "cloudLayer", "Cloud Layer", kCloudLayerPins},
+    {NodeKind::CloudLayer, "cloudLayer", "Cloud Layer (Legacy)", kCloudLayerPins},
     {NodeKind::CloudLine, "cloudLine", "Cloud Line (Experimental)", kCloudLinePins},
     {NodeKind::CloudSpheres, "cloudSpheres", "Cloud Spheres (Experimental)", kCloudSpheresPins},
     {NodeKind::CloudEllipsoid, "cloudEllipsoid", "Cloud Ellipsoid (Experimental)", kCloudShapePins},
