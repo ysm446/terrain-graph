@@ -1,7 +1,7 @@
 # nodes — ノードのリファレンス
 
 作成日時: 2026-09-03 17:30
-更新日時: 2026-09-12 15:10
+更新日時: 2026-09-12 15:40
 
 ノード 1 つずつの、**役割・ピン・パラメータ**の一覧。
 
@@ -877,6 +877,10 @@ Cloud Merge の入力を可変長に変更。新規作成時は Shape 1 のみ�
 ## Cloud Shape Generate（2026-09-12 12:20）
 
 Cloud Shape Generate (Experimental) を追加。入力なしで単独の積雲を球の集合として生成し、Shape を Cloud Replicate / Cloud Merge / Cloud Noise へ接続できる。雲種（Humilis / Mediocris / Congestus）で土台の厚さと塔の高さ・本数を切り替え、中心XYZ・サイズ（基本半径）・長さ／幅の倍率・球の間隔・乱れ・下側の切り取り・回転・半径のランダム化・二次形状（繰り返し1〜3、押し出し、広がり）・つなぎの滑らかさ・シードを持つ。土台は楕円体内の乱した格子、塔は先端へ細くなる球列、二次形状は上半球方向へ積む子球。Houdini の Cloud Shape Generate を参考にした構成で、Bend と Fuse は未対応。保存識別子は `cloudShapeGenerate`、設定は `proceduralCloud` 節。
+
+## Cloud Weather Layer の照明（2026-09-12 15:40）
+
+Cloud Weather Layer の照明に Nubis の in-scatter 確率を追加。雲底からの正規化高さ（雲種の最大高さで正規化）と局所密度から `depthProbability = 0.05 + pow(saturate(density×2), remap(h,0.3,0.85,0.5,2))`、`verticalProbability = pow(remap(h,0.07,0.14,0.1,1),0.8)` を求め、高次散乱と天空光へ `lerp(1, depth×vertical, 0.75)` を掛ける。単散乱は変えない。雲底と薄い縁が暗くなり、厚い塊の上面は明るいまま。天候層（`localCloud=4`）のみに適用し、他の雲の見た目は変えない。
 
 ## Cloud Weather Layer の分布改善（2026-09-12 15:10）
 

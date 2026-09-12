@@ -527,14 +527,26 @@ float4 IntegrateCloud(float3 origin, float3 ray, float limit, AtmosphericParamet
             CloudOpticalDepth(pos,float3(0,1,0),p,noiseIndex,8),
             CloudOpticalDepth(pos,float3(0,-1,0),p,noiseIndex,8));
         float sunDepth=depths.x, topDepth=depths.y, bottomDepth=depths.z;
+        // 天候層は Nubis の in-scatter 確率で高次散乱と天空光を減らす。
+        // 雲底と薄い縁は暗く、厚い塊の内部ほど明るい。単散乱はそのまま残す。
+        float inScatter=1;
+        if (p.localCloud==4) {
+            float typeTop=p.weatherType<0.5 ? lerp(0.2,0.5,p.weatherType*2) : lerp(0.5,1.0,(p.weatherType-0.5)*2);
+            float hh=saturate((pos.y-p.cloudBottom)/(p.cloudThickness*typeTop));
+            // 密度は輪郭付近で小さいので2倍して評価し、上面の明るさを残す。
+            float depthProbability=0.05+pow(saturate(density*2),lerp(0.5,2.0,smoothstep(0.3,0.85,hh)));
+            float verticalProbability=pow(lerp(0.1,1.0,smoothstep(0.07,0.14,hh)),0.8);
+            inScatter=lerp(1,depthProbability*verticalProbability,0.75);
+        }
         // 多重散乱のオクターブ近似。太陽光の寄与は上で位相へ適用済み。
         // 地形の直射影にはこの散乱光を使わず、元の Beer 透過率だけを使う。
         float3 light=0;
         [unroll] for(uint order=0;order<4;++order) {
             float attenuation=exp2(-(float)order);
             float weight=attenuation;
-            light+=sunlight*phases[order]*exp(-sunDepth*attenuation)
-                +weight*0.5*(skyAbove*exp(-topDepth*attenuation)+skyBelow*exp(-bottomDepth*attenuation));
+            float scale=order==0 ? 1 : inScatter;
+            light+=sunlight*phases[order]*exp(-sunDepth*attenuation)*scale
+                +weight*0.5*(skyAbove*exp(-topDepth*attenuation)+skyBelow*exp(-bottomDepth*attenuation))*inScatter;
         }
         // 区間内一定の密度・光源に対する解析積分（Beer-Lambert）。
         float opacity=1-exp(-density*p.extinction*stepLength);

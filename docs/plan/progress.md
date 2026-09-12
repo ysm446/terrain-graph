@@ -1,9 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-12 15:10
+更新日時: 2026-09-12 15:40
 
 ## 現在の状況
+
+**Cloud Weather Layer の照明（2026-09-12 15:40）。** Cloud Weather Layer の照明に Nubis の in-scatter 確率を追加。雲底からの正規化高さ（雲種の最大高さで正規化）と局所密度から `depthProbability = 0.05 + pow(saturate(density×2), remap(h,0.3,0.85,0.5,2))`、`verticalProbability = pow(remap(h,0.07,0.14,0.1,1),0.8)` を求め、高次散乱と天空光へ `lerp(1, depth×vertical, 0.75)` を掛ける。単散乱は変えない。雲底と薄い縁が暗くなり、厚い塊の上面は明るいまま。天候層（`localCloud=4`）のみに適用し、他の雲の見た目は変えない。 DXC 成功（C++ 変更なし）。Release で積雲（地上）と積乱雲（上空）を比較し、雲底の灰色と上面の白を確認（`data/cloud-weather-qa/cumulus-lit.png` / `cumulonimbus-above-lit.png`）。
 
 **Cloud Weather Layer の分布改善（2026-09-12 15:10）。** Cloud Weather Layer の分布を改善。Nubis 方式の密度式（雲量の閾値で切った後に √雲量 を掛け、雲量が低い場所ほど薄くする。細部の削りは雲底で筋状、上部で丸い膨らみを残す remap）へ変更。「帯状の伸び」（風向に沿って雲量の場を引き伸ばし、列状の並びを作る）と「塊の密度差」（塊ごとに厚い雲と薄い雲を混ぜる）を追加。雲種が高いほど雲量の場のスケールを大きく、コントラストを強くし、少数の大きな塔と広い晴れ間を作る。積乱雲の頂上高さの幅も広げた。既定の雲量は0.4。保存名は `streets` / `variation`。 `AtmosphereSettings` は288バイト。Debug / Releaseビルド、テスト成功、DXC成功。Releaseで空を表示した状態の積雲（地上）、積乱雲（地上・上空）を確認（`data/cloud-weather-qa/cumulus.png` / `cumulonimbus*.png`）。照明は未改善で、雲が白く平板に見える点は次の課題。
 
