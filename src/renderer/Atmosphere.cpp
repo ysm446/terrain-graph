@@ -103,14 +103,15 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
         requested.primitiveRevision=m_geometryRevision;
     }
     // 天候層は数十 km に及ぶため XZ の格子を細かくする。他は従来の 64。
-    requested.opticalCacheSize = requested.localCloud == 4 ? 192u : 64u;
+    requested.opticalCacheSize = requested.localCloud == 4 ? (192u | (64u << 16)) : (64u | (32u << 16));
+    const uint32_t cacheXZ = requested.opticalCacheSize & 0xffffu, cacheY = requested.opticalCacheSize >> 16;
     if (requested.localCloud == 2 || requested.localCloud == 3 || requested.localCloud == 4) {
         if (m_opticalDepth.IsValid() && m_opticalCacheSize != requested.opticalCacheSize) {
             device.DeferRelease(m_opticalDepth);
             m_opticalDepth = {};
         }
         if (!m_opticalDepth.IsValid()) {
-            if (!CreateTarget(device, m_opticalDepth, requested.opticalCacheSize, DXGI_FORMAT_R16G16B16A16_FLOAT, requested.opticalCacheSize, 32)) return false;
+            if (!CreateTarget(device, m_opticalDepth, cacheXZ, DXGI_FORMAT_R16G16B16A16_FLOAT, cacheXZ, cacheY)) return false;
             m_opticalCacheSize = requested.opticalCacheSize;
             m_opticalDirty = true;
         }
@@ -362,7 +363,7 @@ void Atmosphere::UpdateFrameLighting(rhi::Device& device, rhi::PipelineCache& pi
         commands->SetComputeRootSignature(pipelines.GlobalRootSignature());
         commands->SetComputeRootConstantBufferView(1, allocation.gpuAddress);
         commands->SetPipelineState(pipeline);
-        commands->Dispatch(m_opticalCacheSize / 8, 8, m_opticalCacheSize / 4);
+        commands->Dispatch((m_opticalCacheSize & 0xffffu) / 8, (m_opticalCacheSize >> 16) / 4, (m_opticalCacheSize & 0xffffu) / 4);
         TransitionIfNeeded(commands, m_opticalDepth, ReadState);
         PIXEndEvent(commands);
         m_opticalSettings = settings;

@@ -24,7 +24,7 @@ struct AtmosphericParameters {
     float loopCenterX; float loopCenterZ; float loopWidth; float loopDepth;
     uint shapeCacheIndex; uint3 shapeCacheSize;
     float weatherType; float weatherAnvil; float weatherWisp; uint opticalCacheSize;
-    float weatherStreets; float weatherVariation; float2 weatherPadding;
+    float weatherStreets; float weatherVariation; float weatherDetailScale; float weatherPadding;
 };
 float3 AtmosphereSun(AtmosphericParameters p) {
     return float3(cos(p.elevation) * sin(p.azimuth), sin(p.elevation), cos(p.elevation) * cos(p.azimuth));
@@ -281,7 +281,8 @@ float SampleWeatherMask(uint index, float2 uv) {
     return saturate(mask.SampleLevel(g_samplerLinearClamp,uv,0).r);
 }
 // 天候層。雲量・雲種の2Dマップと高さプロファイルで広域の雲を作る（RDR2 / Nubis 方式）。
-float WeatherCloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex) {
+// viewDistance はカメラからの距離。遠景では細部ノイズを省き、参照回数を減らす。
+float WeatherCloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex, float viewDistance=0) {
     float3 offset=position-LocalCloudCenter(p);
     float3 q=abs(offset/LocalCloudRadii(p));
     if (any(q>=1)) return 0;
@@ -323,17 +324,24 @@ float WeatherCloudDensity(float3 position, AtmosphericParameters p, uint noiseIn
     float density=saturate((base-(1-coverage))/max(coverage,1e-4))*sqrt(coverage);
     if (density<=0) return 0;
     // 細部の削り。雲底付近は筋状にほどけ、上部は丸い膨らみを残す。
-    float detail=CloudDetailNoise(uvw*3.1+0.173,p,noiseIndex);
-    float dn=lerp(1-detail,detail,saturate(h*8));
+    // 周期は「細部の大きさ」で独立に指定。遠景では細部を省き、平均値相当で薄く削る。
     float erosion=p.detailStrength*lerp(1+p.weatherWisp,0.5,saturate(h*3));
-    density=saturate((density-erosion*dn)/max(1-erosion*dn,1e-3));
+    float detailFade=1-smoothstep(12000,30000,viewDistance);
+    float coarse=density*(1-erosion*0.35);
+    if (detailFade>0.001) {
+        float3 duv=(offset-float3(p.windOffsetX,0,p.windOffsetZ))/max(p.weatherDetailScale,10)+0.173;
+        float detail=CloudDetailNoise(duv,p,noiseIndex);
+        float dn=lerp(1-detail,detail,saturate(h*8));
+        float eroded=saturate((density-erosion*dn)/max(1-erosion*dn,1e-3));
+        density=lerp(coarse,eroded,detailFade);
+    } else density=coarse;
     // 塊ごとの密度差。均一な綿の板にならないよう、厚い塊と薄い塊を混ぜる。
     float variation=SampleCloudNoise(uvw*0.9+0.77,noiseIndex,0);
     density*=lerp(1,lerp(0.35,1.15,variation),p.weatherVariation);
     float edge=saturate((1-max(q.x,q.z))/max(p.edgeSoftness,0.01));
     return density*edge;
 }
-float CloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex) {
+float CloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex, float viewDistance=0) {
     if (p.clouds == 0) return 0;
     if (p.localCloud==3) { float emptyDistance; return ProceduralCloudDensity(position,p,noiseIndex,emptyDistance); }
     if (p.cloudMotionMode==3) {
@@ -345,7 +353,7 @@ float CloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex) {
         p.cloudBodyOffsetX=p.cloudBodyOffsetZ=0;
     }
     if (p.localCloud == 1) return LocalCloudDensity(position,p,noiseIndex);
-    if (p.localCloud == 4) return WeatherCloudDensity(position,p,noiseIndex);
+    if (p.localCloud == 4) return WeatherCloudDensity(position,p,noiseIndex,viewDistance);
     if (p.localCloud == 2) {
         float3 offset = position - LocalCloudCenter(p);
         float3 q = abs(offset / LocalCloudRadii(p));
@@ -473,8 +481,9 @@ bool HasCloudOpticalCache(AtmosphericParameters p) {
 float3 SampleCloudOpticalCache(float3 position, AtmosphericParameters p) {
     float3 uvw=saturate((position-CloudRenderCenter(p))/CloudRenderRadii(p)*0.5+0.5);
     // XZ の格子数は範囲に応じて変わる。Y は 32 固定。
-    float n=max(p.opticalCacheSize,2u);
-    float2 uv=(uvw.xy*float2(n-1,31)+0.5)/float2(n,32);
+    float n=max(p.opticalCacheSize&0xffffu,2u);
+    float ny=max(p.opticalCacheSize>>16,2u);
+    float2 uv=(uvw.xy*float2(n-1,ny-1)+0.5)/float2(n,ny);
     float z=uvw.z*(n-1);
     Texture2DArray<float4> cache=ResourceDescriptorHeap[asuint(p.shapeStrength)&0x7fffffff];
     return lerp(cache.SampleLevel(g_samplerLinearClamp,float3(uv,floor(z)),0).rgb,
@@ -498,6 +507,13 @@ float4 IntegrateCloud(float3 origin, float3 ray, float limit, AtmosphericParamet
     uint count=CloudMarchCount(end-start,p,p.samples);
     if (p.localCloud==3) count=(uint)clamp(ceil((end-start)/max(5,min(p.edgeSoftness*0.5,p.cloudScale*0.05))),p.samples,2048u);
     float stepLength=(end-start)/count;
+    // 天候層は距離適応の刻み。近景は細部の大きさに合わせて細かく、遠景ほど長く進める。
+    float minStep=0, stepGrowth=0;
+    if (p.localCloud==4) {
+        minStep=max(p.weatherDetailScale*0.08,8);
+        stepGrowth=0.004*64.0/max(p.samples,16u);
+        count=2048;
+    }
     float3 sun=AtmosphereSun(p);
     float3 sunlight=AtmComputeSunTransmittance(sun,p.density,p.mie,p.altitude+p.cloudBottom)*p.illuminance;
     float mu=dot(ray,sun);
@@ -512,13 +528,21 @@ float4 IntegrateCloud(float3 origin, float3 ray, float limit, AtmosphericParamet
     phases*=float4(1,contribution,contribution*contribution,contribution*contribution*contribution);
     phases.yzw*=p.indirectLight; // 雲自体の明るさを高次散乱だけで調整する。
     float transmission=1; float3 radiance=0;
+    float t=start;
     [loop] for(uint i=0;i<count && transmission>0.005;++i) {
-        float3 pos=origin+ray*(start+(i+0.5)*stepLength);
+        if (p.localCloud==4) {
+            if (t>=end) break;
+            stepLength=min(max(minStep,t*stepGrowth),end-t);
+        }
+        float sampleDistance=t+0.5*stepLength;
+        float3 pos=origin+ray*sampleDistance;
+        t+=stepLength;
         float emptyDistance=0;
         float density=p.localCloud==3 ? ProceduralCloudDensity(pos,p,noiseIndex,emptyDistance)
-                                    : CloudDensity(pos,p,noiseIndex);
+                                    : CloudDensity(pos,p,noiseIndex,sampleDistance);
         if(density<=0) {
-            i+=(uint)min(floor(emptyDistance/stepLength),float(count-1-i));
+            uint skip=(uint)min(floor(emptyDistance/stepLength),float(count-1-i));
+            i+=skip; t+=skip*stepLength;
             continue;
         }
         float3 depths;

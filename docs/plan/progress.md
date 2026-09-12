@@ -1,9 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-12 15:40
+更新日時: 2026-09-12 16:20
 
 ## 現在の状況
+
+**Cloud Weather Layer の細部と距離 LOD（2026-09-12 16:20）。** Cloud Weather Layer の細部と距離 LOD。「細部の大きさ」（既定400m、20〜5000m、保存名 `detailScale`）で細部ノイズの周期を形状ノイズから独立させた（従来は模様の大きさ÷3.1＝約1290m）。主視線のレイマーチを距離適応にし、刻み幅は `max(細部の大きさ×0.08, 距離×0.004×64/サンプル数)`（近景約32m、10kmで40m、30kmで120m、最大2048サンプル）。12〜30km より遠くでは細部ノイズの参照を省き、平均値相当の薄い削りへ置き換える。照明キャッシュの格子数は下位16bitをXZ、上位16bitをYに分け、天候層は192×64×192（他は64×32×64）。他の雲経路の刻みは変えない。 Debug / Releaseビルド、テスト成功、DXC 7エントリ成功。Releaseで積雲（地上）・積乱雲（上空）を描画し、縁の細部が細かくなったことを確認（`data/cloud-weather-qa/cumulus-lod.png` / `cumulonimbus-above-lod.png`）。GPU時間は約7ms→約10ms（2128×1064、この環境）。マウス操作とDebug GPU実行は未確認。
 
 **Cloud Weather Layer の照明（2026-09-12 15:40）。** Cloud Weather Layer の照明に Nubis の in-scatter 確率を追加。雲底からの正規化高さ（雲種の最大高さで正規化）と局所密度から `depthProbability = 0.05 + pow(saturate(density×2), remap(h,0.3,0.85,0.5,2))`、`verticalProbability = pow(remap(h,0.07,0.14,0.1,1),0.8)` を求め、高次散乱と天空光へ `lerp(1, depth×vertical, 0.75)` を掛ける。単散乱は変えない。雲底と薄い縁が暗くなり、厚い塊の上面は明るいまま。天候層（`localCloud=4`）のみに適用し、他の雲の見た目は変えない。 DXC 成功（C++ 変更なし）。Release で積雲（地上）と積乱雲（上空）を比較し、雲底の灰色と上面の白を確認（`data/cloud-weather-qa/cumulus-lit.png` / `cumulonimbus-above-lit.png`）。
 

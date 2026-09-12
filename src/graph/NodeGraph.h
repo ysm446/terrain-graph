@@ -292,6 +292,7 @@ struct CloudWeatherSettings {
     float streets=0.5f; // 風向に沿った帯状の伸び。
     float variation=0.5f; // 塊ごとの密度差。
     float noiseScale=4000; // 形状ノイズの周期（m）。
+    float detailScale=400; // 細部ノイズの周期（m）。
     int noiseType=1; // 0: Perlin fBM、1: Perlin-Worley。
     float detailStrength=0.3f;
     float edgeSoftness=0.1f; // 範囲端のフェード（範囲に対する比率）。
@@ -363,6 +364,7 @@ struct CompiledCloud {
     bool weather = false; // 天候層。layer も真で照明キャッシュを使う。
     GraphId typeMaskNode = 0, typeMaskPin = 0;
     float cloudType = 0.3f, anvil = 0.5f, wisp = 0.5f, streets = 0.5f, variation = 0.5f;
+    float detailScale = 400;
 };
 
 // 出力。ここに繋いだチェーンがプレビューのマテリアルになる。

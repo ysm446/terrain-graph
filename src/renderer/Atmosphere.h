@@ -71,10 +71,11 @@ struct AtmosphereSettings {
     float weatherType = 0.3f; // 天候層の雲種。0: 層雲、1: 積乱雲。
     float weatherAnvil = 0.5f; // 積乱雲上部の横への広がり。
     float weatherWisp = 0.5f; // 雲底付近の削りの強さ。
-    uint32_t opticalCacheSize = 64; // 照明キャッシュの XZ 格子数。実行時のみ。
+    uint32_t opticalCacheSize = 64 | (32u << 16); // 照明キャッシュの格子数。下位16bit: XZ、上位16bit: Y。実行時のみ。
     float weatherStreets = 0.5f; // 風向に沿った帯状の伸び。
     float weatherVariation = 0.5f; // 塊ごとの密度差。
-    float weatherPadding[2] = {};
+    float weatherDetailScale = 400.0f; // 細部ノイズの周期（m）。
+    float weatherPadding = 0;
 };
 static_assert(sizeof(AtmosphereSettings) == 288);
 
