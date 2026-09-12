@@ -1466,7 +1466,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
                 {"bottomHeight",weather->bottomHeight},{"maxThickness",weather->maxThickness},
                 {"coverage",weather->coverage},{"cloudType",weather->cloudType},{"anvil",weather->anvil},{"wisp",weather->wisp},
                 {"streets",weather->streets},{"variation",weather->variation},
-                {"noiseScale",weather->noiseScale},{"detailScale",weather->detailScale},{"distanceLod",weather->distanceLod},{"noiseType",EnumName(kCloudNoiseNames,static_cast<uint32_t>(weather->noiseType))},
+                {"noiseScale",weather->noiseScale},{"detailScale",weather->detailScale},{"distanceLod",weather->distanceLod},{"cacheVoxel",weather->cacheVoxel},{"noiseType",EnumName(kCloudNoiseNames,static_cast<uint32_t>(weather->noiseType))},
                 {"detailStrength",weather->detailStrength},{"edgeSoftness",weather->edgeSoftness},
                 {"extinction",weather->extinction},{"indirectLight",weather->indirectLight},{"ambientLight",weather->ambientLight},
                 {"seed",weather->seed},{"animate",weather->animate},{"windSpeed",weather->windSpeed},{"windDirection",weather->windDirection},
@@ -1760,6 +1760,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.noiseScale=std::clamp(ReadFloat(*value,"noiseScale",settings.noiseScale),100.0f,50000.0f);
                     settings.detailScale=std::clamp(ReadFloat(*value,"detailScale",settings.detailScale),20.0f,5000.0f);
                     settings.distanceLod=ReadBool(*value,"distanceLod",settings.distanceLod);
+                    settings.cacheVoxel=std::clamp(ReadFloat(*value,"cacheVoxel",settings.cacheVoxel),20.0f,500.0f);
                     settings.noiseType=static_cast<int>(EnumValue(kCloudNoiseNames,*value,"noiseType",static_cast<uint32_t>(settings.noiseType)));
                     settings.detailStrength=std::clamp(ReadFloat(*value,"detailStrength",settings.detailStrength),0.0f,1.0f);
                     settings.edgeSoftness=std::clamp(ReadFloat(*value,"edgeSoftness",settings.edgeSoftness),0.01f,1.0f);

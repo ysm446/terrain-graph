@@ -716,6 +716,7 @@ CompiledCloud NodeGraph::CompileCloud() const {
             result.variation = std::clamp(weather.variation, 0.0f, 1.0f);
             result.detailScale = std::clamp(weather.detailScale, 20.0f, 5000.0f);
             result.distanceLod = weather.distanceLod;
+            result.cacheVoxel = std::clamp(weather.cacheVoxel, 20.0f, 500.0f);
             auto& cloud = result.cloud;
             cloud.enabled = true;
             cloud.centerX = weather.centerX; cloud.centerZ = weather.centerZ;

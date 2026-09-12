@@ -103,11 +103,13 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
         requested.primitiveRevision=m_geometryRevision;
     }
     // 天候層は数十 km に及ぶため XZ の格子を細かくする。他は従来の 64。
-    // 天候層は範囲に応じて格子を増やし、ボクセルを約80mに保つ（64〜256、8の倍数）。他は従来の 64×32。
+    // 天候層は範囲と厚さをボクセル寸法で割って格子数を決める（XZ 64〜320、Y 32〜128、8の倍数）。他は従来の 64×32。
     if (requested.localCloud == 4) {
+        const float voxel = std::clamp(requested.opticalCacheVoxel, 20.0f, 500.0f);
         const float extent = 2.0f * std::max(requested.radiusX, requested.radiusZ);
-        const uint32_t cells = static_cast<uint32_t>(std::ceil(extent / 80.0f / 8.0f)) * 8u;
-        requested.opticalCacheSize = std::clamp(cells, 64u, 256u) | (64u << 16);
+        const uint32_t cellsXZ = static_cast<uint32_t>(std::ceil(extent / voxel / 8.0f)) * 8u;
+        const uint32_t cellsY = static_cast<uint32_t>(std::ceil(requested.cloudThickness / voxel / 8.0f)) * 8u;
+        requested.opticalCacheSize = std::clamp(cellsXZ, 64u, 320u) | (std::clamp(cellsY, 32u, 128u) << 16);
     } else requested.opticalCacheSize = 64u | (32u << 16);
     const uint32_t cacheXZ = requested.opticalCacheSize & 0xffffu, cacheY = requested.opticalCacheSize >> 16;
     if (requested.localCloud == 2 || requested.localCloud == 3 || requested.localCloud == 4) {

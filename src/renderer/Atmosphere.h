@@ -76,8 +76,10 @@ struct AtmosphereSettings {
     float weatherVariation = 0.5f; // 塊ごとの密度差。
     float weatherDetailScale = 800.0f; // 細部ノイズの周期（m）。
     uint32_t weatherLod = 1; // 距離 LOD（細部の省略・帯域制限・刻みの伸び）。
+    float opticalCacheVoxel = 80.0f; // 天候層の照明キャッシュの目標ボクセル寸法（m）。
+    float weatherPadding[3] = {};
 };
-static_assert(sizeof(AtmosphereSettings) == 288);
+static_assert(sizeof(AtmosphereSettings) == 304);
 
 struct CloudGeometry {
     std::vector<AtmosphereSettings::Primitive> primitives;

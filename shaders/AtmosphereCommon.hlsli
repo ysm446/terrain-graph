@@ -25,6 +25,7 @@ struct AtmosphericParameters {
     uint shapeCacheIndex; uint3 shapeCacheSize;
     float weatherType; float weatherAnvil; float weatherWisp; uint opticalCacheSize;
     float weatherStreets; float weatherVariation; float weatherDetailScale; uint weatherLod;
+    float opticalCacheVoxel; float3 weatherPadding;
 };
 float3 AtmosphereSun(AtmosphericParameters p) {
     return float3(cos(p.elevation) * sin(p.azimuth), sin(p.elevation), cos(p.elevation) * cos(p.azimuth));
