@@ -1331,7 +1331,6 @@ void Application::DrawGraphPanel() {
             changed |= ui::PropertyFloat("模様の大きさ", &weather->noiseScale, 100.0f, 50000.0f, defaults.noiseScale, "形状ノイズの周期。", "%.0f m");
             changed |= ui::PropertyFloat("細部の大きさ", &weather->detailScale, 20.0f, 5000.0f, defaults.detailScale, "細部ノイズの周期。小さいほど縁が細かくなり、近景の刻み幅もこれに合わせて細かくなります。12〜30 km より遠くでは細部を省きます。", "%.0f m");
             changed |= ui::PropertyFloat("細部の削り", &weather->detailStrength, 0.0f, 1.0f, defaults.detailStrength, nullptr, "%.2f");
-            changed |= ui::PropertyFloat("照明ボクセル", &weather->cacheVoxel, 20.0f, 500.0f, defaults.cacheVoxel, "照明キャッシュ（太陽方向の光学的厚さ）のボクセル寸法。小さいほど陰影が鋭くなりますが、格子は XZ 320・Y 128 で頭打ちになり、再ベイクの負荷が増えます。", "%.0f m");
             changed |= ui::PropertyBool("距離 LOD", &weather->distanceLod, defaults.distanceLod, "オンで遠景ほど刻みを伸ばし、刻みより細かいノイズを平均へ寄せ、25〜60 km より先で細部を省きます。オフは全距離を近景の刻みで評価するため負荷が上がります。");
             changed |= ui::PropertyFloat("密度", &weather->extinction, 0.0001f, 0.03f, defaults.extinction, nullptr, "%.4f");
             changed |= ui::PropertyFloat("Indirect Light", &weather->indirectLight, 0.0f, 5.0f, defaults.indirectLight, nullptr, "%.2f");

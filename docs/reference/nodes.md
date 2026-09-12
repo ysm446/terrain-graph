@@ -1,7 +1,7 @@
 # nodes — ノードのリファレンス
 
 作成日時: 2026-09-03 17:30
-更新日時: 2026-09-12 21:10
+更新日時: 2026-09-12 20:40
 
 ノード 1 つずつの、**役割・ピン・パラメータ**の一覧。
 
@@ -877,10 +877,6 @@ Cloud Merge の入力を可変長に変更。新規作成時は Shape 1 のみ�
 ## Cloud Shape Generate（2026-09-12 12:20）
 
 Cloud Shape Generate (Experimental) を追加。入力なしで単独の積雲を球の集合として生成し、Shape を Cloud Replicate / Cloud Merge / Cloud Noise へ接続できる。雲種（Humilis / Mediocris / Congestus）で土台の厚さと塔の高さ・本数を切り替え、中心XYZ・サイズ（基本半径）・長さ／幅の倍率・球の間隔・乱れ・下側の切り取り・回転・半径のランダム化・二次形状（繰り返し1〜3、押し出し、広がり）・つなぎの滑らかさ・シードを持つ。土台は楕円体内の乱した格子、塔は先端へ細くなる球列、二次形状は上半球方向へ積む子球。Houdini の Cloud Shape Generate を参考にした構成で、Bend と Fuse は未対応。保存識別子は `cloudShapeGenerate`、設定は `proceduralCloud` 節。
-
-## Cloud Weather Layer の照明ボクセル（2026-09-12 21:10）
-
-Cloud Weather Layer に「照明ボクセル」（既定80m、20〜500m、保存名 `cacheVoxel`）を追加。照明キャッシュの格子数を範囲÷ボクセル（XZ 64〜320）と厚さ÷ボクセル（Y 32〜128）で決める。`AtmosphereSettings` は304バイト。上限時のキャッシュは 320×128×320×8B ≒ 105MB。
 
 ## Cloud Weather Layer の距離 LOD 切替（2026-09-12 20:40）
 

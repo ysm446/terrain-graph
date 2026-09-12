@@ -294,7 +294,6 @@ struct CloudWeatherSettings {
     float noiseScale=4000; // 形状ノイズの周期（m）。
     float detailScale=800; // 細部ノイズの周期（m）。
     bool distanceLod=true; // 距離に応じて細部を省き、刻みを伸ばす。
-    float cacheVoxel=80; // 照明キャッシュの目標ボクセル寸法（m）。
     int noiseType=1; // 0: Perlin fBM、1: Perlin-Worley。
     float detailStrength=0.3f;
     float edgeSoftness=0.1f; // 範囲端のフェード（範囲に対する比率）。
@@ -370,7 +369,6 @@ struct CompiledCloud {
     float cloudType = 0.3f, anvil = 0.5f, wisp = 0.5f, streets = 0.5f, variation = 0.5f;
     float detailScale = 800;
     bool distanceLod = true;
-    float cacheVoxel = 80;
 };
 
 // 出力。ここに繋いだチェーンがプレビューのマテリアルになる。

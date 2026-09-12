@@ -1,11 +1,9 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-12 21:10
+更新日時: 2026-09-12 20:40
 
 ## 現在の状況
-
-**Cloud Weather Layer の照明ボクセル（2026-09-12 21:10）。** Cloud Weather Layer に「照明ボクセル」（既定80m、20〜500m、保存名 `cacheVoxel`）を追加。照明キャッシュの格子数を範囲÷ボクセル（XZ 64〜320）と厚さ÷ボクセル（Y 32〜128）で決める。`AtmosphereSettings` は304バイト。上限時のキャッシュは 320×128×320×8B ≒ 105MB。 Debug / Releaseビルド、テスト、DXC成功。40m と 160m の描画差分（平均0.56、最大17/255）と保存往復を確認（`data/cloud-weather-qa/voxel40.png` / `voxel160.png`）。太陽が高い構図では差が小さい。
 
 **Cloud Weather Layer の距離 LOD 切替（2026-09-12 20:40）。** Cloud Weather Layer に「距離 LOD」（既定オン、保存名 `distanceLod`）を追加。オフでは全距離を近景の最小刻み（細部の大きさ×0.03）で評価し、帯域制限と遠景の細部省略も行わない。既定シーンの GPU 時間はオン約18ms、オフ約20ms（サンプル上限2048のため差は小さい）。 Debug / Releaseビルド、テスト、DXC成功。オフの描画と保存往復を確認（`data/cloud-weather-qa/lod-off.png`）。
 
