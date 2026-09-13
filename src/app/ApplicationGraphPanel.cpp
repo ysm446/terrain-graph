@@ -98,6 +98,8 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
 ImVec4 PinTypeColor(graph::ValueType valueType) {
     switch (valueType) {
         // マスクはオレンジ。0〜1 の 1 チャンネル。
+        case graph::ValueType::Points:
+        case graph::ValueType::Instances:
         case graph::ValueType::CloudShape:
         case graph::ValueType::Volume:
             return ImGui::GetStyleColorVec4(ImGuiCol_Text);
@@ -918,6 +920,8 @@ void Application::DrawGraphEditor() {
         addNodeMenuItem(graph::NodeKind::CloudNoise, "Cloud Noise (Experimental) — 輪郭と密度を作る");
         addNodeMenuItem(graph::NodeKind::CloudOutput, "Cloud Output — Volume を繋いで雲を表示する");
         ImGui::Separator();
+        addNodeMenuItem(graph::NodeKind::ModelScatter, "Model Scatter — Points にモデルをランダム配置する");
+        addNodeMenuItem(graph::NodeKind::ModelOutput, "Model Output — モデル配置をビューポートへ出す");
         addNodeMenuItem(graph::NodeKind::Output, "Output — ここに繋いだ結果をプレビューする");
         ImGui::EndPopup();
     }
@@ -1569,6 +1573,44 @@ void Application::DrawGraphPanel() {
             m_graph.MarkCloudDirty();
             MarkDocumentChanged(false);
         }
+    } else if (auto* scatter = std::get_if<graph::ModelScatterSettings>(&selected->settings)) {
+        bool changed = false;
+        ui::HintText("Crumbling の Points を接続し、Instances をModel Outputへ接続します");
+        if (ui::BeginPropertyTable("modelScatterSettings")) {
+            changed |= ui::PropertyInt("シード",&scatter->seed,0,1000000,1);
+            changed |= ui::PropertyBool("ポイントの大きさ",&scatter->usePointSize,true,"モデルの最大寸法を岩片の直径に合わせます");
+            changed |= ui::PropertyFloat("最小スケール",&scatter->scaleMin,0.001f,1000.0f,0.8f);
+            changed |= ui::PropertyFloat("最大スケール",&scatter->scaleMax,0.001f,1000.0f,1.2f);
+            changed |= ui::PropertyFloat("地表に沿う",&scatter->alignToNormal,0,1,1);
+            changed |= ui::PropertyFloat("接地オフセット",&scatter->offset,-10000,10000,0,"負の値で地面へ埋め込みます","%.3f m");
+            changed |= ui::PropertyInt("LOD",&scatter->lod,0,16,0,"モデルにないLODは最も近い段階を使います");
+            ui::EndPropertyTable();
+        }
+        std::vector<const char*> names{"未指定 / 見つからないモデル"};
+        for (const auto& model : m_models) names.push_back(model.name.c_str());
+        int remove = -1;
+        if (ui::BeginPropertyTable("scatterModels")) {
+            for (size_t i=0;i<scatter->models.size();++i) {
+                ImGui::PushID(static_cast<int>(i));
+                auto& choice=scatter->models[i]; int index=0;
+                for(size_t j=0;j<m_models.size();++j) if(m_models[j].id==choice.model) index=static_cast<int>(j)+1;
+                const auto label="モデル "+std::to_string(i+1);
+                if(ui::PropertyCombo(label.c_str(),&index,names.data(),static_cast<int>(names.size()),0)) {
+                    choice.model=index ? m_models[index-1].id : 0; changed=true;
+                }
+                changed |= ui::PropertyFloat("出現比率",&choice.weight,0,1000,1);
+                ui::PropertyLabel("候補"); if(ui::Button("削除")) remove=static_cast<int>(i); ui::PropertyEnd();
+                ImGui::PopID();
+            }
+            ui::EndPropertyTable();
+        }
+        if(remove>=0) { scatter->models.erase(scatter->models.begin()+remove); changed=true; }
+        if(ui::Button("モデルを追加",ui::kWideButtonWidth)) {
+            scatter->models.push_back({m_models.empty()?0:m_models.front().id,1}); changed=true;
+        }
+        if(changed) { m_graph.MarkDirty(); MarkDocumentChanged(false); }
+    } else if (selected->kind == graph::NodeKind::ModelOutput) {
+        ui::HintText("Model Scatter のInstancesを接続します。ハイトマップとは独立してモデルを描画します");
     } else if (selected->kind == graph::NodeKind::CloudOutput) {
         ui::HintText("Cloud Noise の Volume を接続して表示します。Cloud Animation を挟むと移動できます。未接続なら雲は表示しません");
         ui::HintText("保存済みの Cloud / Cloud Layer (Legacy) も引き続き表示できます");

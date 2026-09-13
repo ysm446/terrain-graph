@@ -619,6 +619,7 @@ struct MaterialLayer {
     // 走らせるときに立てる。Result を繋がずに Mask だけを使う繋ぎ方のためのもの。
     // **保存しない。** グラフの繋ぎ方からコンパイルのたびに決まる。
     bool maskOnly = false;
+    bool emitPoints = false; // Model Scatter用の評価だけで有効にする。保存しない。
 
     LayerMask mask;
 

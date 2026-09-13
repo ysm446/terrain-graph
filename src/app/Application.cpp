@@ -187,6 +187,10 @@ void Application::Shutdown() {
     m_paintMasks.Destroy(m_device);
     for (auto& [id, preview] : m_modelPreviews) preview->Destroy(m_device);
     m_modelPreviews.clear();
+    for (auto& [id,slot] : m_modelPoints) slot->evaluator.Destroy(m_device);
+    m_modelPoints.clear();
+    for (auto& [id,mesh] : m_instanceMeshes) mesh->Destroy(m_device);
+    m_instanceMeshes.clear();
     m_materialSphere.Destroy(m_device);
     m_skySphere.Destroy(m_device);
     m_materialLibrary.Destroy(m_device);
@@ -446,6 +450,8 @@ int Application::Run() {
 
         m_imgui.BeginFrame();
         DrawUi();
+        SyncGraphStack();
+        PrepareModelScatters();
 
         ID3D12GraphicsCommandList* commandList =
             m_device.BeginFrame(m_settings.Display().clearColor);
@@ -480,6 +486,8 @@ int Application::Run() {
             if (slot.pin) slot.evaluator.Update(m_device, m_pipelineCache, commandList, slot.stack,
                                                 m_textureLibrary, m_materialLibrary, m_paintMasks);
         }
+        for (auto& [id, slot] : m_modelPoints)
+            slot->evaluator.Update(m_device,m_pipelineCache,commandList,slot->stack,m_textureLibrary,m_materialLibrary,m_paintMasks);
         m_renderer.SetCloudDistributionMask(m_cloudMasks[0].Srv(), m_cloudMasks[0].Revision());
         m_renderer.SetCloudTypeMask(m_cloudMasks[1].Srv(), m_cloudMasks[1].Revision());
         m_renderer.Render(m_device, m_pipelineCache, commandList, m_graphStack,

@@ -49,6 +49,28 @@ bool StartsWithNeutralPlane(const tg::graph::CompiledGraph& compiled) {
 
 void RunNodeGraphTests() {
     {
+        Section("モデル配置はハイト出力から独立する");
+        auto graph = NodeGraph::CreateDefault();
+        const auto original = graph.CompileLayers().layers.size();
+        const auto crumble = graph.CreateNode(NodeKind::Crumbling);
+        const auto scatter = graph.CreateNode(NodeKind::ModelScatter);
+        const auto output = graph.CreateNode(NodeKind::ModelOutput);
+        const auto* c = graph.FindNode(crumble);
+        Check(c->outputs.size()==4 && c->outputs.back().valueType==tg::graph::ValueType::Points,"既存3出力を保ちPointsを追加");
+        const auto points=c->outputs.back().id;
+        const auto input=graph.FindNode(scatter)->inputs[0].id;
+        Check(graph.CreateLink(c->outputs[0].id,input)==0,"MaterialはPointsへ接続できない");
+        Check(graph.CreateLink(points,input)!=0,"CrumblingのPointsを配置へ接続");
+        Check(graph.CompileModelScatters().empty(),"Model Output未接続では配置を出力しない");
+        graph.CreateLink(graph.FindNode(scatter)->outputs[0].id,graph.FindNode(output)->inputs[0].id);
+        const auto compiled=graph.CompileModelScatters();
+        Check(compiled.size()==1 && compiled[0].source==crumble,"配置の点群ソースを解決");
+        Check(graph.CompileLayers().layers.size()==original,"配置の接続でハイトチェーンは変わらない");
+        graph.DeleteNode(crumble);
+        Check(graph.CompileModelScatters().empty(),"点群ソース削除で配置も消える");
+    }
+
+    {
         Section("Cloud Animation の接続と循環");
         NodeGraph graph;
         const auto shape=graph.CreateNode(NodeKind::CloudShapeGenerate);

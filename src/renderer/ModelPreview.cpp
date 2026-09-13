@@ -24,8 +24,13 @@ struct ModelConstants {
     float lightColor[3];
     float iblIntensity;
     DirectX::XMFLOAT4X4 viewProjection;
+    uint32_t points, rows, instanceCount, seed;
+    float weightStart, weightEnd, scaleMin, scaleMax;
+    float pivot[3], modelSize;
+    float align, offset; uint32_t usePointSize, sceneMode;
+    SceneShadowData shadows;
 };
-static_assert(sizeof(ModelConstants) == 192);
+static_assert(sizeof(ModelConstants) == 640);
 
 }  // namespace
 void ModelPreview::Destroy(rhi::Device& device) {
@@ -85,7 +90,7 @@ void ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache
                           const compositor::MaterialLibrary& materials,
                           const compositor::TextureLibrary& textures,
                           const Environment& environment, float iblIntensity,
-                          const LightSettings& light, float exposure, TonemapMode tonemap) {
+                          const LightSettings& light, float exposure, TonemapMode tonemap, const ModelInstanceDraw* instances) {
     if (!m_geometry || m_lod < 0) return;
     rhi::GraphicsPipelineDesc desc;
     desc.shaderPath = L"ModelPreview.hlsl";
@@ -94,8 +99,14 @@ void ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache
     desc.layout = rhi::VertexLayout::MeshStandard;
     desc.rtvFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
     desc.dsvFormat = DXGI_FORMAT_D32_FLOAT;
+    if (instances) {
+        desc.rtvFormat = instances->shadow ? DXGI_FORMAT_UNKNOWN : DXGI_FORMAT_R16G16B16A16_FLOAT;
+        if (instances->shadow) desc.pixelEntry.clear();
+        desc.cullMode = D3D12_CULL_MODE_NONE;
+    }
     auto* pipeline = pipelineCache.GetGraphics(desc);
     if (!pipeline) return;
+    if (!instances) {
     if (!m_output.IsValid()) {
         rhi::TextureDesc target;
         target.width = kOutputSize;
@@ -126,6 +137,9 @@ void ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache
     const D3D12_RECT scissor = {0, 0, kOutputSize, kOutputSize};
     commandList->RSSetViewports(1, &viewport);
     commandList->RSSetScissorRects(1, &scissor);
+    } else {
+        PIXBeginEvent(commandList, PIX_COLOR(120, 200, 200), "ModelInstances");
+    }
     commandList->SetGraphicsRootSignature(pipelineCache.GlobalRootSignature());
     commandList->SetPipelineState(pipeline);
     for (size_t i = 0; i < m_meshes.size(); ++i) {
@@ -175,14 +189,32 @@ void ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache
         constants.prefilteredMipCount = environment.PrefilteredMipCount();
         constants.exposure = exposure;
         constants.tonemapMode = static_cast<uint32_t>(tonemap);
+        if (instances) {
+            const auto& draw = *instances;
+            constants.points = draw.points; constants.rows = draw.rows;
+            constants.instanceCount = draw.count; constants.seed = draw.seed;
+            constants.weightStart = draw.weightStart; constants.weightEnd = draw.weightEnd;
+            constants.scaleMin = draw.scaleMin; constants.scaleMax = draw.scaleMax;
+            constants.align = draw.align; constants.offset = draw.offset;
+            constants.usePointSize = draw.usePointSize; constants.sceneMode = 1;
+            constants.shadows = draw.shadows;
+            const auto& lo = m_geometry->minimum; const auto& hi = m_geometry->maximum;
+            constants.pivot[0] = (lo.x+hi.x)*0.5f; constants.pivot[1] = lo.y;
+            constants.pivot[2] = (lo.z+hi.z)*0.5f;
+            constants.modelSize = std::max({hi.x-lo.x,hi.y-lo.y,hi.z-lo.z,0.0001f});
+            DirectX::XMStoreFloat4x4(&constants.viewProjection,
+                DirectX::XMMatrixTranspose(DirectX::XMLoadFloat4x4(&draw.viewProjection)));
+            std::memcpy(constants.cameraPosition,&draw.cameraPosition,sizeof(constants.cameraPosition));
+        }
+
 
         const auto cb = device.Upload().Allocate(sizeof(constants), 256);
         if (!cb.IsValid()) continue;
         std::memcpy(cb.cpu, &constants, sizeof(constants));
         commandList->SetGraphicsRootConstantBufferView(1, cb.gpuAddress);
-        m_meshes[i].Draw(commandList);
+        m_meshes[i].Draw(commandList, false, instances ? instances->count : 1);
     }
-    rhi::TransitionIfNeeded(commandList, m_output, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    if (!instances) rhi::TransitionIfNeeded(commandList, m_output, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     PIXEndEvent(commandList);
 }
 }  // namespace tg::renderer

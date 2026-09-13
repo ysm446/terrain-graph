@@ -75,12 +75,13 @@ constexpr std::array<PinDefinition, 4> kSedimentPins = {{
 
 // 崩落のピン。発生源のマスクを受け、地形に加えて
 // **岩屑の厚み**と**岩片ごとの乱数**を出す。
-constexpr std::array<PinDefinition, 5> kCrumblingPins = {{
+constexpr std::array<PinDefinition, 6> kCrumblingPins = {{
     {PinKind::Input, ValueType::Material, "Base"},
     {PinKind::Input, ValueType::Mask, "Emission"},
     {PinKind::Output, ValueType::Material, "Result"},
     {PinKind::Output, ValueType::Mask, "Mask"},
     {PinKind::Output, ValueType::Mask, "Unique"},
+    {PinKind::Output, ValueType::Points, "Points"},
 }};
 
 // 河川のピン。川の出どころを絞る Seed（省略可）を受け、地形に加えて
@@ -221,7 +222,14 @@ constexpr std::array<PinDefinition, 2> kCloudTransformPins = {{
 
 constexpr std::array<PinDefinition, 2> kCloudAnimationPins = {{{PinKind::Input, ValueType::Volume, "Volume"}, {PinKind::Output, ValueType::Volume, "Volume"}}};
 
-constexpr std::array<NodeDefinition, 45> kNodeDefinitions = {{
+constexpr std::array<PinDefinition, 2> kModelScatterPins = {{
+    {PinKind::Input, ValueType::Points, "Points"},
+    {PinKind::Output, ValueType::Instances, "Instances"},
+}};
+constexpr std::array<PinDefinition, 1> kModelOutputPins = {{
+    {PinKind::Input, ValueType::Instances, "Instances"},
+}};
+constexpr std::array<NodeDefinition, 47> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -262,6 +270,8 @@ constexpr std::array<NodeDefinition, 45> kNodeDefinitions = {{
     {NodeKind::CloudMapGenerate, "cloudMapGenerate", "Cloud Map Generate (Experimental)", kCloudShapePins},
     {NodeKind::CloudTransform, "cloudTransform", "Cloud Transform (Experimental)", kCloudTransformPins},
     {NodeKind::CloudOutput, "cloudOutput", "Cloud Output", kCloudOutputPins},
+    {NodeKind::ModelScatter, "modelScatter", "Model Scatter", kModelScatterPins},
+    {NodeKind::ModelOutput, "modelOutput", "Model Output", kModelOutputPins},
     {NodeKind::Output, "output", "Output", kOutputNodePins},
     // 追加メニューには出さない。読み込みで定義が見つからなかったノードの受け皿。
     {NodeKind::Missing, "missing", "Missing", {}},
@@ -578,6 +588,21 @@ CompiledCloud NodeGraph::CompileCloudShapes(GraphId shapeId) const {
     return evaluate(FindNode(shapeId),0);
 }
 
+std::vector<CompiledModelScatter> NodeGraph::CompileModelScatters() const {
+    std::vector<CompiledModelScatter> result;
+    for (const auto& output : m_nodes) {
+        if (output.kind != NodeKind::ModelOutput || output.inputs.empty()) continue;
+        const auto* scatter = FindUpstreamNodeForPin(output.inputs[0].id);
+        if (!scatter || scatter->kind != NodeKind::ModelScatter || scatter->inputs.empty()) continue;
+        const auto* source = FindUpstreamNodeForPin(scatter->inputs[0].id);
+        const auto* settings = std::get_if<ModelScatterSettings>(&scatter->settings);
+        if (!source || source->kind != NodeKind::Crumbling || !settings) continue;
+        if (std::none_of(result.begin(), result.end(), [&](const auto& x) { return x.node == scatter->id; }))
+            result.push_back({scatter->id, source->id, *settings});
+    }
+    return result;
+}
+
 CompiledCloud NodeGraph::CompileCloud() const {
     CompiledCloud result;
     for (const Node& node : m_nodes) {
@@ -741,6 +766,7 @@ GraphId NodeGraph::CreateNode(NodeKind kind) {
     } else if (kind == NodeKind::CloudShapeGenerate) { node.settings = CloudShapeGenerateSettings{};
     } else if (kind == NodeKind::CloudWeatherLayer) { node.settings = CloudWeatherSettings{};
     } else if (kind == NodeKind::CloudTransform) { node.settings = CloudTransformSettings{};
+    } else if (kind == NodeKind::ModelScatter) { node.settings = ModelScatterSettings{};
     } else if (kind == NodeKind::Missing) { node.settings = MissingNodeSettings{};
     } else if (kind == NodeKind::Path) {
         node.settings = PathNodeSettings{};

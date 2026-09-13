@@ -1454,6 +1454,14 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
                 {"extinction",weather->extinction},{"indirectLight",weather->indirectLight},{"ambientLight",weather->ambientLight},
                 {"seed",weather->seed},{"animate",weather->animate},{"windSpeed",weather->windSpeed},{"windDirection",weather->windDirection},
                 {"evolveNoise",weather->evolveNoise},{"noiseSpeedRatio",weather->noiseSpeedRatio}};
+        } else if (const auto* scatter = std::get_if<graph::ModelScatterSettings>(&node.settings)) {
+            auto& values = item["modelScatter"];
+            values = {{"seed",scatter->seed},{"scaleMin",scatter->scaleMin},{"scaleMax",scatter->scaleMax},
+                      {"alignToNormal",scatter->alignToNormal},{"offset",scatter->offset},
+                      {"usePointSize",scatter->usePointSize},{"lod",scatter->lod}};
+            values["models"] = json::array();
+            for (const auto& choice : scatter->models)
+                values["models"].push_back({{"model",choice.model},{"weight",choice.weight}});
         } else if (const auto* generate = std::get_if<graph::CloudShapeGenerateSettings>(&node.settings)) {
             item["proceduralCloud"]={{"species",EnumName(kCloudSpeciesNames,static_cast<uint32_t>(generate->species))},
                 {"centerX",generate->centerX},{"centerY",generate->centerY},{"centerZ",generate->centerZ},
@@ -1627,7 +1635,27 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                 }
             }
 
-            if (graph::IsLayerNodeKind(created.kind)) {
+            if (created.kind == graph::NodeKind::ModelScatter) {
+                graph::ModelScatterSettings settings;
+                if (const auto* values = FindMember(item, "modelScatter"); values && values->is_object()) {
+                    settings.seed = ReadInt(*values,"seed",1);
+                    settings.scaleMin = std::clamp(ReadFloat(*values,"scaleMin",0.8f),0.001f,1000.0f);
+                    settings.scaleMax = std::clamp(ReadFloat(*values,"scaleMax",1.2f),settings.scaleMin,1000.0f);
+                    settings.alignToNormal = std::clamp(ReadFloat(*values,"alignToNormal",1),0.0f,1.0f);
+                    settings.offset = std::clamp(ReadFloat(*values,"offset",0),-10000.0f,10000.0f);
+                    settings.usePointSize = ReadBool(*values,"usePointSize",true);
+                    settings.lod = std::clamp(ReadInt(*values,"lod",0),0,16);
+                    if (const auto* choices = FindMember(*values,"models"); choices && choices->is_array()) {
+                        for (const auto& choice : *choices) {
+                            if (!choice.is_object()) continue;
+                            const auto* modelId = FindMember(choice,"model");
+                            if (modelId && modelId->is_number_unsigned())
+                                settings.models.push_back({modelId->get<uint64_t>(),std::clamp(ReadFloat(choice,"weight",1),0.0f,1000.0f)});
+                        }
+                    }
+                }
+                created.settings = std::move(settings);
+            } else if (graph::IsLayerNodeKind(created.kind)) {
                 graph::LayerNodeSettings settings;
                 if (const json* layer = FindMember(item, "layer");
                     layer != nullptr && layer->is_object()) {
@@ -2444,7 +2472,7 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
                 const auto found = materialIndex.find(id);
                 slots.push_back(found == materialIndex.end() ? json() : json(found->second));
             }
-            models.push_back({{"name", asset.name},
+            models.push_back({{"id", asset.id}, {"name", asset.name},
                               {"path", RelativePathString(asset.path, baseDir)},
                               {"materials", slots}});
         }
@@ -2623,6 +2651,9 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
                 if (!node.is_object()) continue;
                 renderer::ModelAsset asset;
                 asset.id = refs.models->size() + 1;
+                if (const auto* savedId = FindMember(node,"id"); savedId && savedId->is_number_unsigned() && savedId->get<uint64_t>() > 0)
+                    asset.id = savedId->get<uint64_t>();
+                while (std::any_of(refs.models->begin(),refs.models->end(),[&](const auto& existing){ return existing.id==asset.id; })) ++asset.id;
                 asset.name = ReadString(node, "name");
                 asset.path = baseDir / FromUtf8(ReadString(node, "path"));
                 if (!renderer::LoadModel(asset.path, asset)) {

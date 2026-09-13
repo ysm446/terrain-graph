@@ -93,7 +93,7 @@ void Mesh::Release(rhi::Device& device) {
     m_vertexCount = 0;
 }
 
-void Mesh::Draw(ID3D12GraphicsCommandList* commandList, bool asPatches) const {
+void Mesh::Draw(ID3D12GraphicsCommandList* commandList, bool asPatches, uint32_t instanceCount) const {
     if (m_indexCount == 0) {
         return;
     }
@@ -102,7 +102,7 @@ void Mesh::Draw(ID3D12GraphicsCommandList* commandList, bool asPatches) const {
                                             : D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     commandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
     commandList->IASetIndexBuffer(&m_indexBufferView);
-    commandList->DrawIndexedInstanced(m_indexCount, 1, 0, 0, 0);
+    commandList->DrawIndexedInstanced(m_indexCount, instanceCount, 0, 0, 0);
 }
 
 MeshData MakePlane(float size, uint32_t subdivisions) {

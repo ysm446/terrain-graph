@@ -13,6 +13,7 @@
 #include "rhi/PipelineCache.h"
 
 #include <DirectXMath.h>
+#include <functional>
 
 namespace tg::renderer {
 
@@ -217,6 +218,12 @@ public:
     // 表示先のサイズに合わせてレンダーターゲットを作り直す。
     bool Resize(rhi::Device& device, uint32_t width, uint32_t height);
 
+    const SceneShadowData& InstanceShadows() const { return m_instanceShadows; }
+    void RecordInstanceDraw(uint32_t indices, uint32_t count) {
+        ++m_stats.drawCalls; m_stats.vertices += uint64_t(indices)*count;
+        m_stats.triangles += uint64_t(indices/3)*count;
+    }
+    std::function<void(ID3D12GraphicsCommandList*, const DirectX::XMFLOAT4X4&, bool)> drawInstances;
     void Render(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                 ID3D12GraphicsCommandList* commandList, const compositor::MaterialStack& stack,
                 const compositor::TextureLibrary& textures,
@@ -361,6 +368,7 @@ private:
     bool m_shadowEnabled = kPreviewDefaults.shadowEnabled;
     bool m_cascadedShadows = kPreviewDefaults.cascadedShadows;
     DofSettings m_dof;
+    SceneShadowData m_instanceShadows;
     RenderStats m_stats;
     bool m_tessellationEnabled = kPreviewDefaults.tessellationEnabled;
     float m_tessellationFactor = kPreviewDefaults.tessellationFactor;

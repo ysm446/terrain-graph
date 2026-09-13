@@ -6,6 +6,16 @@
 namespace tg::renderer {
 inline constexpr uint32_t kShadowCascadeCount = 4;
 inline constexpr float kShadowCascadeBlend = 0.1f;
+// モデル描画と地形描画で共有する影の参照（GPU定数と同じ配置）。
+struct SceneShadowData {
+    DirectX::XMFLOAT4X4 view{};
+    DirectX::XMFLOAT4X4 matrices[4]{};
+    uint32_t indices[4] = {0xffffffffu,0xffffffffu,0xffffffffu,0xffffffffu};
+    float splits[4]{}, biases[4]{};
+    float nearDistance = 0, texel = 1.0f/2048, blend = 0.1f;
+    uint32_t count = 0;
+};
+static_assert(sizeof(SceneShadowData) == 384);
 struct ShadowCascadeData {
     std::array<DirectX::XMFLOAT4X4, kShadowCascadeCount> matrices;
     std::array<float, kShadowCascadeCount> splits;

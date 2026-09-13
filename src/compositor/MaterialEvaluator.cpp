@@ -347,6 +347,7 @@ uint64_t HashHeightState(uint64_t seed, const MaterialLayer& layer) {
     hash = HashBytes(hash, &layer.multiScaleErosion.breachingRadius, sizeof(layer.multiScaleErosion.breachingRadius));
     hash = HashBytes(hash, &layer.scatter, sizeof(layer.scatter));
     hash = HashBytes(hash, &layer.maskOnly, sizeof(layer.maskOnly));
+    hash = HashBytes(hash, &layer.emitPoints, sizeof(layer.emitPoints));
     // マスクは「どこに載せるか」を決めるので Height にも効く。
     hash = HashBytes(hash, &layer.mask.source, sizeof(layer.mask.source));
     hash = HashBytes(hash, &layer.mask.constant, sizeof(layer.mask.constant));
@@ -685,6 +686,8 @@ void MaterialEvaluator::Destroy(rhi::Device& device) {
     device.DeferRelease(m_maskHeightRange);
     ReleaseSedimentResources(device);
     ReleaseCrumblingResources(device);
+    device.DeferRelease(m_crumblingPoints);
+    m_crumblingPointCount = 0;
     ReleaseSnowResources(device);
     for (auto* texture : {&m_snowCover.state[0], &m_snowCover.state[1], &m_snowCover.output, &m_snowCover.weather, &m_snowCover.particles, &m_snowCover.sums}) device.DeferRelease(*texture);
     m_snowCover.allocation = 0;
@@ -4169,6 +4172,26 @@ bool MaterialEvaluator::ApplyCrumbling(rhi::Device& device, rhi::PipelineCache& 
     constants.params1[2] = texelMeters;
     constants.params1[3] = heightMeters;
     constants.params2[0] = amount;
+    if (m_captureCrumblingPoints && layer.emitPoints) {
+        m_crumblingPointCount = amount > 0 ? static_cast<uint32_t>(attempts) : 0;
+        if (m_crumblingPointCount > 0) {
+            const uint32_t rows = (m_crumblingPointCount + 1023) / 1024;
+            if (!m_crumblingPoints.IsValid() || m_crumblingPoints.height != rows * 2) {
+                device.DeferRelease(m_crumblingPoints);
+                rhi::TextureDesc desc;
+                desc.width = 1024; desc.height = rows * 2;
+                desc.format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+                desc.allowUnorderedAccess = true;
+                desc.initialState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+                desc.debugName = L"CrumblingPoints";
+                if (!device.Allocator().CreateTexture2D(desc, m_crumblingPoints)) return false;
+            }
+            TransitionIfNeeded(commandList, m_crumblingPoints, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            constants.indices2[2] = rows;
+            constants.indices2[3] = m_crumblingPoints.UavIndex();
+        }
+    }
+
 
     const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(CrumblingConstants));
     if (!cb.IsValid()) {
@@ -4215,6 +4238,8 @@ bool MaterialEvaluator::ApplyCrumbling(rhi::Device& device, rhi::PipelineCache& 
     if (normalPass != nullptr && !layer.maskOnly) {
         RebuildNormalsFromHeight(device, normalPass, commandList, stack);
     }
+    if (m_captureCrumblingPoints && layer.emitPoints && m_crumblingPoints.IsValid())
+        TransitionIfNeeded(commandList, m_crumblingPoints, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     return true;
 }
 

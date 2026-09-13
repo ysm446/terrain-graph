@@ -44,6 +44,8 @@ enum class ValueType : uint32_t {
     Volume = 3,
     // 4 は廃止した Cloud Line。番号は再利用しない。
     CloudShape = 5,
+    Points = 6,
+    Instances = 7,
 };
 
 enum class NodeKind : uint32_t {
@@ -119,6 +121,8 @@ enum class NodeKind : uint32_t {
     CloudWeatherLayer = 44,
     // 読み込んだファイルにあるが、この版では扱えない種類。ピンを持たず、エラー表示だけする。
     Missing = 45,
+    ModelScatter = 46,
+    ModelOutput = 47,
 };
 
 struct PinDefinition {
@@ -352,6 +356,20 @@ struct CompiledCloud {
 };
 
 // 出力。ここに繋いだチェーンがプレビューのマテリアルになる。
+struct ModelChoice { uint64_t model = 0; float weight = 1.0f; };
+struct ModelScatterSettings {
+    std::vector<ModelChoice> models;
+    int seed = 1;
+    float scaleMin = 0.8f, scaleMax = 1.2f;
+    float alignToNormal = 1.0f;
+    float offset = 0.0f;
+    bool usePointSize = true;
+    int lod = 0;
+};
+struct CompiledModelScatter {
+    GraphId node = 0, source = 0;
+    ModelScatterSettings settings;
+};
 struct OutputNodeSettings {};
 
 // 読み込み時に定義が見つからなかった種類。保存名をそのまま持ち、保存時にも同じ名前で書き戻す。
@@ -359,7 +377,7 @@ struct MissingNodeSettings { std::string kindName; };
 
 using NodeSettings =
     std::variant<LayerNodeSettings, MaskNodeSettings, OutputNodeSettings, PathNodeSettings, CloudNodeSettings,
-                 CloudMergeSettings, CloudNoiseSettings, CloudTransformSettings, CloudMapSettings, CloudAnimationSettings, CloudShapeGenerateSettings, CloudWeatherSettings, MissingNodeSettings>;
+                 CloudMergeSettings, CloudNoiseSettings, CloudTransformSettings, CloudMapSettings, CloudAnimationSettings, CloudShapeGenerateSettings, CloudWeatherSettings, MissingNodeSettings, ModelScatterSettings>;
 
 struct Node {
     GraphId id = 0;
@@ -413,6 +431,7 @@ public:
     // チェーンが空なら下地 1 枚（MaterialStack::MakeBaseLayer と同じもの）を返す。
     CompiledGraph CompileLayers() const;
     CompiledCloud CompileCloud() const;
+    std::vector<CompiledModelScatter> CompileModelScatters() const;
     CompiledCloud CompileCloudShapes(GraphId shapeId) const;
     // 指定したノード**まで**。ノードを選んでプレビューするときに使う。
     // outputPin は**どの出力を見ているか**。0 なら最初の出力（レイヤーなら Result）。

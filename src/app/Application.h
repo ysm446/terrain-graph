@@ -136,6 +136,8 @@ private:
     void DrawModelLibraryPanel();
     void DrawModelPreviewWindow();
     void ProcessModelWork();
+    void PrepareModelScatters();
+    void DrawModelScatters(ID3D12GraphicsCommandList* commandList, const DirectX::XMFLOAT4X4& viewProjection, bool shadow);
     void RenderModelPreviews(ID3D12GraphicsCommandList* commandList);
 
     // 一覧の右クリックメニュー（追加 / 複製 / 削除 / 読み込み / 書き出し）。
@@ -325,6 +327,14 @@ private:
             return Ready() ? evaluator.Textures().baseColor.SrvIndex() : UINT32_MAX-1;
         }
     };
+    struct ModelPointSlot {
+        compositor::MaterialStack stack;
+        compositor::MaterialEvaluator evaluator;
+        uint64_t graphRevision = 0, documentRevision = 0, paintRevision = 0;
+    };
+    std::unordered_map<graph::GraphId, std::unique_ptr<ModelPointSlot>> m_modelPoints;
+    std::vector<graph::CompiledModelScatter> m_modelScatters;
+    std::unordered_map<std::string, std::unique_ptr<renderer::ModelPreview>> m_instanceMeshes;
     CloudMaskSlot m_cloudMasks[2]; // 0: 分布／雲量、1: 雲種。
     // マスクの再コンパイルと評価器の作成。作成に失敗したら偽。
     bool PrepareCloudMask(CloudMaskSlot& slot, graph::GraphId maskNode, graph::GraphId maskPin);

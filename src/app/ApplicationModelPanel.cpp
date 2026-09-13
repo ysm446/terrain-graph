@@ -10,7 +10,99 @@
 #include "ui/UiStyle.h"
 
 namespace tg {
+void Application::PrepareModelScatters() {
+    m_modelScatters = m_graph.CompileModelScatters();
+    std::vector<graph::GraphId> sources;
+    std::vector<std::string> meshKeys;
+    for (const auto& scatter : m_modelScatters) {
+        for (const auto& choice : scatter.settings.models) {
+            const auto model = std::find_if(m_models.begin(),m_models.end(),[&](const auto& m) { return m.id == choice.model; });
+            if (model == m_models.end() || !model->geometry || choice.weight <= 0) continue;
+            const auto key = std::to_string(choice.model)+":"+std::to_string(scatter.settings.lod);
+            meshKeys.push_back(key);
+            auto& mesh = m_instanceMeshes[key];
+            if (!mesh) mesh = std::make_unique<renderer::ModelPreview>();
+            mesh->Prepare(m_device,*model,scatter.settings.lod);
+        }
+        if (std::find(sources.begin(),sources.end(),scatter.source) != sources.end()) continue;
+        sources.push_back(scatter.source);
+        auto& slot = m_modelPoints[scatter.source];
+        if (!slot) slot = std::make_unique<ModelPointSlot>();
+        const uint32_t resolution = m_renderer.MaterialResolution();
+        if (slot->evaluator.Resolution() == 0) slot->evaluator.Create(m_device,resolution);
+        else if (slot->evaluator.Resolution() != resolution) slot->evaluator.Resize(m_device,resolution);
+        const auto* scale = m_graph.FindChainScale(scatter.source);
+        slot->stack.SetTerrainScale(scale ? scale->sizeMeters : m_renderer.PlaneSize(),
+                                   scale ? scale->heightMeters : m_renderer.DisplacementScale());
+        if (slot->graphRevision != m_graph.TerrainRevision() ||
+            slot->documentRevision != m_graphStack.Revision() || slot->paintRevision != m_paintMasks.Revision()) {
+            auto compiled = m_graph.CompileLayersTo(scatter.source);
+            for (size_t i=0;i<compiled.layerSources.size();++i)
+                if (compiled.layerSources[i] == scatter.source) {
+                    compiled.layers[i].maskOnly = true; compiled.layers[i].emitPoints = true;
+                }
+            slot->stack.Layers() = std::move(compiled.layers);
+            slot->stack.MaskOps() = std::move(compiled.maskOps);
+            slot->stack.MarkDirty();
+            slot->evaluator.Invalidate();
+            slot->graphRevision = m_graph.TerrainRevision();
+            slot->documentRevision = m_graphStack.Revision();
+            slot->paintRevision = m_paintMasks.Revision();
+        }
+        slot->evaluator.CaptureCrumblingPoints(true);
+    }
+    for (auto it=m_modelPoints.begin();it!=m_modelPoints.end();) {
+        if (std::find(sources.begin(),sources.end(),it->first)==sources.end()) {
+            it->second->evaluator.Destroy(m_device); it=m_modelPoints.erase(it);
+        } else ++it;
+    }
+    for (auto it=m_instanceMeshes.begin();it!=m_instanceMeshes.end();) {
+        if (std::find(meshKeys.begin(),meshKeys.end(),it->first)==meshKeys.end()) {
+            it->second->Destroy(m_device); it=m_instanceMeshes.erase(it);
+        } else ++it;
+    }
+    m_renderer.drawInstances = [this](auto* list,const auto& matrix,bool shadow) { DrawModelScatters(list,matrix,shadow); };
+}
+void Application::DrawModelScatters(ID3D12GraphicsCommandList* commandList,
+                                   const DirectX::XMFLOAT4X4& viewProjection, bool shadow) {
+    for (const auto& scatter : m_modelScatters) {
+        const auto pointSlot = m_modelPoints.find(scatter.source);
+        if (pointSlot == m_modelPoints.end()) continue;
+        const auto& evaluator = pointSlot->second->evaluator;
+        if (!evaluator.CrumblingPoints().IsValid() || !evaluator.CrumblingPointCount() || evaluator.HasPendingPostprocess()) continue;
+        float total = 0;
+        for (const auto& choice : scatter.settings.models)
+            if (std::any_of(m_models.begin(),m_models.end(),[&](const auto& m){return m.id==choice.model && m.geometry;})) total += std::max(choice.weight,0.0f);
+        if (total <= 0) continue;
+        float cumulative = 0;
+        for (const auto& choice : scatter.settings.models) {
+            const auto model=std::find_if(m_models.begin(),m_models.end(),[&](const auto& m){return m.id==choice.model;});
+            if (model==m_models.end() || !model->geometry || choice.weight<=0) continue;
+            const auto key=std::to_string(choice.model)+":"+std::to_string(scatter.settings.lod);
+            const auto mesh=m_instanceMeshes.find(key);
+            if (mesh==m_instanceMeshes.end()) continue;
+            renderer::ModelInstanceDraw draw;
+            draw.points=evaluator.CrumblingPoints().SrvIndex();
+            draw.rows=evaluator.CrumblingPoints().height/2; draw.count=evaluator.CrumblingPointCount();
+            draw.seed=static_cast<uint32_t>(scatter.settings.seed);
+            draw.weightStart=cumulative/total; cumulative+=choice.weight; draw.weightEnd=cumulative/total;
+            draw.scaleMin=scatter.settings.scaleMin; draw.scaleMax=std::max(draw.scaleMin,scatter.settings.scaleMax);
+            draw.align=scatter.settings.alignToNormal; draw.offset=scatter.settings.offset;
+            draw.usePointSize=scatter.settings.usePointSize; draw.shadow=shadow;
+            draw.viewProjection=viewProjection; draw.cameraPosition=m_renderer.GetCamera().Position();
+            if (!shadow) draw.shadows=m_renderer.InstanceShadows();
+            const auto& lod=model->geometry->lods[std::min(scatter.settings.lod,static_cast<int>(model->geometry->lods.size())-1)];
+            for (const auto& part : lod.parts)
+                m_renderer.RecordInstanceDraw(static_cast<uint32_t>(part.mesh.indices.size()),draw.count);
+            mesh->second->Render(m_device,m_pipelineCache,commandList,*model,m_materialLibrary,m_textureLibrary,
+                m_renderer.GetEnvironment(),m_renderer.EnvironmentIntensity(),m_renderer.EffectiveLight(),
+                m_renderer.Exposure().Exposure(),m_renderer.Tonemap(),&draw);
+        }
+    }
+}
+
 void Application::ProcessModelWork() {
+    for (const auto& asset : m_models) m_nextModelId = std::max(m_nextModelId, asset.id + 1);
     for (const auto& path : m_pendingModels) {
         renderer::ModelAsset asset;
         asset.id = m_nextModelId++;

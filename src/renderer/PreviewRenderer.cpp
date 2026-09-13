@@ -867,6 +867,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
             commandList->SetGraphicsRootConstantBufferView(1, shadowCb.gpuAddress);
             mesh.Draw(commandList, m_tessellationEnabled);
             CountMeshDraw(m_stats, mesh, m_tessellationEnabled);
+            if (drawInstances) drawInstances(commandList, matrix, true);
 
             TransitionIfNeeded(commandList, target,
                                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE |
@@ -943,6 +944,28 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     // メッシュのあとに描く。深度は書かず、まだ何も描かれていない画素だけを埋める。
     // UV バッファには書かないので、シーンカラーだけを束ね直す。
     commandList->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+    m_instanceShadows = {};
+    XMStoreFloat4x4(&m_instanceShadows.view, view);
+    m_instanceShadows.count = constants.shadowCascadeCount;
+    m_instanceShadows.nearDistance = constants.cascadeNear;
+    for (uint32_t i=0;i<4;++i) {
+        m_instanceShadows.matrices[i] = constants.cascadeViewProjections[i];
+        m_instanceShadows.indices[i] = constants.cascadeShadowIndices[i];
+        m_instanceShadows.splits[i] = constants.cascadeSplits[i];
+        m_instanceShadows.biases[i] = constants.cascadeBiases[i];
+    }
+    if (!constants.shadowCascadeCount && constants.shadowIndex != kNoShadowIndex) {
+        m_instanceShadows.count = 1;
+        m_instanceShadows.matrices[0] = constants.lightViewProjection;
+        m_instanceShadows.indices[0] = constants.shadowIndex;
+        m_instanceShadows.biases[0] = constants.shadowBias;
+    }
+    if (drawInstances && IsShadedView(m_debugView)) {
+        XMFLOAT4X4 instanceViewProjection;
+        XMStoreFloat4x4(&instanceViewProjection, viewProjection);
+        drawInstances(commandList, instanceViewProjection, false);
+    }
+
 
     // チャンネルを覗く表示のときは背景を描かない。値だけを見たいため。
     if (!m_atmosphericMode && m_showSkybox && m_environment.IsReady() && IsShadedView(m_debugView)) {

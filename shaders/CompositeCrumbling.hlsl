@@ -99,6 +99,13 @@ void CsScatter(uint3 dispatchThreadId : SV_DispatchThreadID)
     const uint particle = dispatchThreadId.x;
     if (particle >= g_crumbling.indices1.y) { return; }
 
+    // 棄却された試行もゼロを書き、前の配置を残さない。
+    if (g_crumbling.indices2.z != 0) {
+        RWTexture2D<float4> points = ResourceDescriptorHeap[g_crumbling.indices2.w];
+        const uint2 address = uint2(particle % 1024, particle / 1024);
+        points[address] = 0;
+        points[address + uint2(0,g_crumbling.indices2.z)] = float4(0,1,0,0);
+    }
     const uint resolution = CrumblingResolution();
     const float limit = float(resolution - 1u);
     uint state = (particle * 747796405u + 2891336453u) ^ asuint(g_crumbling.params1.y);
@@ -208,6 +215,20 @@ void CsScatter(uint3 dispatchThreadId : SV_DispatchThreadID)
     const float aspectBoost = shard ? 1.2f : (polygonal ? 0.45f : 0.15f);
     const float aspect = pow(2.0f, aspectBoost * Hash01(state));
     const float unique = Hash01(state);
+
+    if (g_crumbling.indices2.z != 0) {
+        RWTexture2D<float4> points = ResourceDescriptorHeap[g_crumbling.indices2.w];
+        const uint2 address = uint2(particle % 1024, particle / 1024);
+        const float texelMeters = g_crumbling.params1.z;
+        const float elevation = g_crumbling.params1.w;
+        const float2 horizontal = (float2(x,z) + 0.5 - float(resolution) * 0.5) * texelMeters;
+        const float3 normal = normalize(float3(
+            -(SampleCrumblingHeight(float2(x+1,z))-SampleCrumblingHeight(float2(x-1,z))) * elevation,
+            2*texelMeters,
+            -(SampleCrumblingHeight(float2(x,z+1))-SampleCrumblingHeight(float2(x,z-1))) * elevation));
+        points[address] = float4(horizontal.x,(SampleCrumblingHeight(float2(x,z))-0.5)*elevation,horizontal.y,sizeMeters);
+        points[address + uint2(0,g_crumbling.indices2.z)] = float4(normal,rotation);
+    }
 
     // 正規化ハイトへ。さらに「岩片の最大の高さ」で割って 0〜1 に載せる。
     const float heightNormalized = heightMeters / max(g_crumbling.params1.w, 1e-6f);
