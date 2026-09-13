@@ -1,7 +1,11 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-09-13 13:30
+更新日時: 2026-09-13 13:57
+
+## カスケードシャドウ設定
+
+`preview.cascadedShadows`（bool）で4分割CSMを選ぶ。新規プロジェクトの既定値はtrue。キーがない既存ファイルはfalseとして読み、従来の影を維持する。`preview.shadow`は影全体の有効・無効であり、falseならCSMも描画しない。
 
 実装は [src/io/ProjectIo.cpp](../../src/io/ProjectIo.cpp)。**形式を変えたらこの文書も直す。**
 

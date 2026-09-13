@@ -268,7 +268,7 @@ void Application::DrawLightingPanel() {
         renderer::LightSettings& light = m_renderer.Light();
 
         ui::SectionHeader("ライト");
-        if (ui::BeginPropertyTable("lightRows")) {
+        if (ui::BeginPropertyTable("lightRows", "カスケードシャドウ")) {
             float azimuthDeg = RadiansToDegrees(light.azimuth);
             if (ui::PropertyFloat("方位角", &azimuthDeg, -180.0f, 180.0f,
                                   RadiansToDegrees(kDefaultLight.azimuth),
@@ -291,6 +291,11 @@ void Application::DrawLightingPanel() {
                              renderer::kPreviewDefaults.shadowEnabled,
                              "ディレクショナルライトの影を落とす。"
                              "ディスプレイスメントで押し出した形にも落ちる。大気散乱スカイでは雲影も切り替える");
+            ImGui::BeginDisabled(!m_renderer.ShadowEnabled());
+            ui::PropertyBool("カスケードシャドウ", &m_renderer.CascadedShadows(),
+                             renderer::kPreviewDefaults.cascadedShadows,
+                             "オンは4分割で近景の影を細かく描く。オフは従来の1枚方式。影の描画負荷とメモリが増える");
+            ImGui::EndDisabled();
             ui::EndPropertyTable();
         }
 

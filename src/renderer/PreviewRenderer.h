@@ -1,4 +1,5 @@
 #pragma once
+#include "renderer/ShadowCascades.h"
 
 #include "compositor/MaterialEvaluator.h"
 #include "compositor/PaintMask.h"
@@ -167,6 +168,7 @@ struct PreviewDefaults {
     bool showSkybox = true;
     bool skyboxBlur = false;
     bool shadowEnabled = true;
+    bool cascadedShadows = true;
     // マスクのプレビューで、0 か 1 に張り付いた所へ斜線を引くか。
     bool maskSaturationHatch = false;
 };
@@ -251,6 +253,7 @@ public:
     bool& SkyboxBlur() { return m_skyboxBlur; }
     // ディレクショナルライトの影を落とすか。落とさないとシャドウパスも走らない。
     bool& ShadowEnabled() { return m_shadowEnabled; }
+    bool& CascadedShadows() { return m_cascadedShadows; }
     DofSettings& Dof() { return m_dof; }
     const DofSettings& Dof() const { return m_dof; }
     // 実際にピント面として使う距離。注視点に合わせる設定ならカメラの距離。
@@ -322,7 +325,8 @@ private:
     rhi::GpuTexture m_depth;
     rhi::GpuTexture m_output;  // トーンマップ後の表示用
     // ディレクショナルライトから見た深度。ビューポートの大きさとは無関係に固定。
-    rhi::GpuTexture m_shadowMap;
+    rhi::GpuTexture m_shadowMap; // 従来方式と、視錐台の外も読むゴッドレイ用。
+    std::array<rhi::GpuTexture, kShadowCascadeCount> m_shadowCascades;
 
     Camera m_camera;
     ExposureSettings m_exposure;
@@ -355,6 +359,7 @@ private:
     bool m_showSkybox = kPreviewDefaults.showSkybox;
     bool m_skyboxBlur = kPreviewDefaults.skyboxBlur;
     bool m_shadowEnabled = kPreviewDefaults.shadowEnabled;
+    bool m_cascadedShadows = kPreviewDefaults.cascadedShadows;
     DofSettings m_dof;
     RenderStats m_stats;
     bool m_tessellationEnabled = kPreviewDefaults.tessellationEnabled;

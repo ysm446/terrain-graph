@@ -1938,6 +1938,7 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     node["showSkybox"] = renderer.ShowSkybox();
     node["skyboxBlur"] = renderer.SkyboxBlur();
     node["shadow"] = renderer.ShadowEnabled();
+    node["cascadedShadows"] = renderer.CascadedShadows();
     node["lightingMode"] = renderer.AtmosphericMode() ? "atmospheric" : "ibl";
     const auto& atmosphere = renderer.AtmosphericSettings();
     const auto& sun = renderer.AtmosphericLight();
@@ -2108,6 +2109,8 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
     renderer.ShowSkybox() = ReadBool(node, "showSkybox", previewDefaults.showSkybox);
     renderer.SkyboxBlur() = ReadBool(node, "skyboxBlur", previewDefaults.skyboxBlur);
     renderer.ShadowEnabled() = ReadBool(node, "shadow", previewDefaults.shadowEnabled);
+    // 項目のない既存プロジェクトは従来の1枚方式を維持する。
+    renderer.CascadedShadows() = ReadBool(node, "cascadedShadows", false);
 
     // 節が丸ごと欠けていても既定値で埋める。file-format.md の「欠けているキーは
     // 既定値で埋める」に合わせる（節ごと飛ばすと前のプロジェクトの値が残る）。

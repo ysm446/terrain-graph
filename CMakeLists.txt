@@ -160,6 +160,7 @@ set(tg_sources
     src/rhi/ShaderCompiler.h
     src/rhi/UploadRing.cpp
     src/rhi/UploadRing.h
+    src/renderer/ShadowCascades.cpp
     src/renderer/Camera.cpp
     src/renderer/Camera.h
     src/renderer/Environment.cpp
@@ -281,6 +282,9 @@ add_executable(terrain_graph_tests
     tests/MultiScaleBreachingTests.cpp
     tests/UiInteractionTests.cpp
     tests/UndoHistoryTests.cpp
+    tests/ShadowCascadeTests.cpp
+    src/renderer/ShadowCascades.cpp
+    src/renderer/Camera.cpp
     src/app/UndoHistory.cpp
     src/app/UndoHistory.h
     src/core/FrameLimiter.cpp

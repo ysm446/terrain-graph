@@ -61,6 +61,22 @@ constexpr float kShadowBias = 0.0018f;
 // シェーダの「影を落とさない」印。
 constexpr uint32_t kNoShadowIndex = 0xFFFFFFFFu;
 
+// 深度とSRVで共有する影テクスチャ。
+bool CreateShadowTexture(rhi::Device& device, rhi::GpuTexture& texture, const wchar_t* name) {
+    rhi::TextureDesc shadowDesc;
+    shadowDesc.width = kShadowMapSize;
+    shadowDesc.height = kShadowMapSize;
+    shadowDesc.format = DXGI_FORMAT_R32_TYPELESS;
+    shadowDesc.dsvFormat = kShadowDsvFormat;
+    shadowDesc.srvFormat = DXGI_FORMAT_R32_FLOAT;
+    shadowDesc.allowDepthStencil = true;
+    shadowDesc.createSrv = true;
+    shadowDesc.clearDepth = 1.0f;
+    shadowDesc.initialState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+    shadowDesc.debugName = name;
+    return device.Allocator().CreateTexture2D(shadowDesc, texture);
+}
+
 // GPU 側の MeshConstants と一致させること。
 struct MeshConstants {
     XMFLOAT4X4 viewProjection;
@@ -108,6 +124,15 @@ struct MeshConstants {
     float shadowTexelSize;
     float shadowBias;
     float pad5;
+
+    XMFLOAT4X4 cascadeViewProjections[kShadowCascadeCount];
+    uint32_t cascadeShadowIndices[kShadowCascadeCount];
+    float cascadeSplits[kShadowCascadeCount];
+    float cascadeBiases[kShadowCascadeCount];
+    float cascadeBlend;
+    float cascadeNear;
+    uint32_t shadowCascadeCount;
+    float cascadePadding;
 
     XMFLOAT4X4 tessellationViewProjection;
     float viewportSize[2];
@@ -240,21 +265,7 @@ bool PreviewRenderer::Initialize(rhi::Device& device, rhi::PipelineCache& pipeli
         return false;
     }
 
-    // シャドウマップ。深度として書き、SRV としても読むので TYPELESS で作る。
-    rhi::TextureDesc shadowDesc;
-    shadowDesc.width = kShadowMapSize;
-    shadowDesc.height = kShadowMapSize;
-    shadowDesc.format = DXGI_FORMAT_R32_TYPELESS;
-    shadowDesc.dsvFormat = kShadowDsvFormat;
-    shadowDesc.srvFormat = DXGI_FORMAT_R32_FLOAT;
-    shadowDesc.allowDepthStencil = true;
-    shadowDesc.createSrv = true;
-    shadowDesc.clearDepth = 1.0f;
-    shadowDesc.initialState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
-    shadowDesc.debugName = L"ShadowMap";
-    if (!device.Allocator().CreateTexture2D(shadowDesc, m_shadowMap)) {
-        return false;
-    }
+    if (!CreateShadowTexture(device, m_shadowMap, L"ShadowMap")) return false;
     return true;
 }
 
@@ -281,6 +292,7 @@ XMMATRIX PreviewRenderer::LightViewProjection() const {
 
 void PreviewRenderer::Shutdown(rhi::Device& device) {
     device.DeferRelease(m_shadowMap);
+    for (auto& cascade : m_shadowCascades) device.DeferRelease(cascade);
     m_evaluator.Destroy(device);
     m_environment.Shutdown(device);
     m_atmosphere.Shutdown(device);
@@ -290,6 +302,25 @@ void PreviewRenderer::Shutdown(rhi::Device& device) {
 
 void PreviewRenderer::ProcessPendingWork(rhi::Device& device,
                                         rhi::PipelineCache& pipelineCache, const AtmosphereSettings* cloudOverride) {
+    // UIで切り替えた資源の作り直しはフレームの外へ集める。
+    if (m_shadowEnabled && m_cascadedShadows) {
+        if (!m_shadowCascades[0].IsValid()) {
+            std::array<rhi::GpuTexture, kShadowCascadeCount> replacements;
+            bool ready = true;
+            for (auto& texture : replacements) {
+                if (!CreateShadowTexture(device, texture, L"ShadowCascade")) { ready = false; break; }
+            }
+            if (ready) m_shadowCascades = std::move(replacements);
+            else {
+                for (auto& texture : replacements) device.DeferRelease(texture);
+                m_cascadedShadows = false;
+                TG_LOG_WARN("CSMのテクスチャを確保できません。従来の影へ戻します");
+            }
+        }
+    } else {
+        for (auto& texture : m_shadowCascades) device.DeferRelease(texture);
+    }
+
     if (m_atmosphericMode) {
         m_atmosphereSettings.azimuth = m_atmosphericLight.azimuth;
         m_atmosphereSettings.elevation = m_atmosphericLight.elevation;
@@ -393,6 +424,7 @@ void PreviewRenderer::ResetSettings() {
     m_showSkybox = defaults.showSkybox;
     m_skyboxBlur = defaults.skyboxBlur;
     m_shadowEnabled = defaults.shadowEnabled;
+    m_cascadedShadows = defaults.cascadedShadows;
     m_maskSaturationHatch = defaults.maskSaturationHatch;
     // 解像度の作り直しは GPU 待機を伴うので、要求だけ積む。
     RequestMaterialResolution(defaults.materialResolution);
@@ -786,11 +818,9 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     constants.shadowIndex = kNoShadowIndex;
     constants.shadowTexelSize = 1.0f / static_cast<float>(kShadowMapSize);
     constants.shadowBias = kShadowBias;
-
+    std::fill_n(constants.cascadeShadowIndices, kShadowCascadeCount, kNoShadowIndex);
+    const bool useCascades = m_cascadedShadows && m_shadowCascades[0].IsValid();
     if (m_shadowEnabled && m_shadowMap.IsValid()) {
-        const XMMATRIX lightViewProjection = LightViewProjection();
-        XMStoreFloat4x4(&constants.lightViewProjection, lightViewProjection);
-
         rhi::GraphicsPipelineDesc shadowPipelineDesc;
         shadowPipelineDesc.shaderPath = L"MeshPbr.hlsl";
         shadowPipelineDesc.vertexEntry = L"VsMain";
@@ -807,19 +837,19 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
         }
 
         ID3D12PipelineState* shadowPipeline = pipelineCache.GetGraphics(shadowPipelineDesc);
-        const rhi::UploadAllocation shadowCb =
-            device.Upload().Allocate(sizeof(MeshConstants), 256);
 
-        if (shadowPipeline != nullptr && shadowCb.IsValid()) {
-            // ライトから見た行列で描く。ほかの値は本描画と同じ。
+        const auto drawShadow = [&](rhi::GpuTexture& target, const XMFLOAT4X4& matrix,
+                                    uint32_t cascadeIndex) -> uint32_t {
+            const auto shadowCb = device.Upload().Allocate(sizeof(MeshConstants), 256);
+            if (!shadowPipeline || !shadowCb.IsValid()) return kNoShadowIndex;
             MeshConstants shadowConstants = constants;
-            XMStoreFloat4x4(&shadowConstants.viewProjection, lightViewProjection);
+            shadowConstants.viewProjection = matrix;
+            // tessellationViewProjectionは本描画と共通。分割による自己遮蔽のずれを防ぐ。
             std::memcpy(shadowCb.cpu, &shadowConstants, sizeof(shadowConstants));
+            PIXBeginEvent(commandList, PIX_COLOR(220, 200, 120), "PreviewShadow %u", cascadeIndex);
+            TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_DEPTH_WRITE);
 
-            PIXBeginEvent(commandList, PIX_COLOR(220, 200, 120), "PreviewShadow");
-            TransitionIfNeeded(commandList, m_shadowMap, D3D12_RESOURCE_STATE_DEPTH_WRITE);
-
-            const D3D12_CPU_DESCRIPTOR_HANDLE shadowDsv = m_shadowMap.dsv.cpu;
+            const D3D12_CPU_DESCRIPTOR_HANDLE shadowDsv = target.dsv.cpu;
             commandList->OMSetRenderTargets(0, nullptr, FALSE, &shadowDsv);
             commandList->ClearDepthStencilView(shadowDsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0,
                                                nullptr);
@@ -838,12 +868,31 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
             mesh.Draw(commandList, m_tessellationEnabled);
             CountMeshDraw(m_stats, mesh, m_tessellationEnabled);
 
-            TransitionIfNeeded(commandList, m_shadowMap,
+            TransitionIfNeeded(commandList, target,
                                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE |
                                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             PIXEndEvent(commandList);
 
-            constants.shadowIndex = m_shadowMap.SrvIndex();
+
+            return target.SrvIndex();
+        };
+        if (useCascades) {
+            const auto cascades = BuildShadowCascades(m_camera, EffectiveLight().Direction(),
+                BoundingRadius(), float(m_width) / float(std::max(m_height, 1u)), kShadowMapSize);
+            constants.shadowCascadeCount = kShadowCascadeCount;
+            constants.cascadeBlend = kShadowCascadeBlend;
+            constants.cascadeNear = cascades.nearDistance;
+            for (uint32_t i = 0; i < kShadowCascadeCount; ++i) {
+                constants.cascadeViewProjections[i] = cascades.matrices[i];
+                constants.cascadeSplits[i] = cascades.splits[i];
+                constants.cascadeBiases[i] = cascades.biases[i];
+                constants.cascadeShadowIndices[i] = drawShadow(m_shadowCascades[i], cascades.matrices[i], i);
+            }
+        }
+        // ゴッドレイは地形の視錐台外もサンプルするため、シーン全域の影を維持する。
+        if (!useCascades || (m_atmosphericMode && GodRays().enabled && IsShadedView(m_debugView))) {
+            XMStoreFloat4x4(&constants.lightViewProjection, LightViewProjection());
+            constants.shadowIndex = drawShadow(m_shadowMap, constants.lightViewProjection, kShadowCascadeCount);
         }
     }
 

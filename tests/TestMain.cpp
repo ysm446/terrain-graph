@@ -13,12 +13,14 @@ void RunNodeGraphTests();
 void RunMultiScaleBreachingTests();
 void RunUiInteractionTests();
 void RunUndoHistoryTests();
+void RunShadowCascadeTests();
 
 int main() {
     RunAtmosphereIntegrationTests();
     RunCloudScatteringTests();
     RunUiInteractionTests();
     RunUndoHistoryTests();
+    RunShadowCascadeTests();
     RunFrameLimiterTests();
     RunNodeGraphTests();
     RunMultiScaleBreachingTests();
