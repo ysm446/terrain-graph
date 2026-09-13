@@ -108,12 +108,13 @@ constexpr std::array<PinDefinition, 5> kDropletPins = {{
 
 // 散布のピン。散布範囲を絞る Mask（省略可）を受け、地形に加えて
 // **分布**と**個体ごとの乱数**を出す。崩落と同じ形。
-constexpr std::array<PinDefinition, 5> kScatterPins = {{
+constexpr std::array<PinDefinition, 6> kScatterPins = {{
     {PinKind::Input, ValueType::Material, "Base"},
     {PinKind::Input, ValueType::Mask, "Mask"},
     {PinKind::Output, ValueType::Material, "Result"},
     {PinKind::Output, ValueType::Mask, "Mask"},
     {PinKind::Output, ValueType::Mask, "Unique"},
+    {PinKind::Output, ValueType::Points, "Points"},
 }};
 
 // マスクを 1 枚受けて 1 枚返す加工のピン。
@@ -596,7 +597,7 @@ std::vector<CompiledModelScatter> NodeGraph::CompileModelScatters() const {
         if (!scatter || scatter->kind != NodeKind::ModelScatter || scatter->inputs.empty()) continue;
         const auto* source = FindUpstreamNodeForPin(scatter->inputs[0].id);
         const auto* settings = std::get_if<ModelScatterSettings>(&scatter->settings);
-        if (!source || source->kind != NodeKind::Crumbling || !settings) continue;
+        if (!source || (source->kind != NodeKind::Crumbling && source->kind != NodeKind::Scatter) || !settings) continue;
         if (std::none_of(result.begin(), result.end(), [&](const auto& x) { return x.node == scatter->id; }))
             result.push_back({scatter->id, source->id, *settings});
     }

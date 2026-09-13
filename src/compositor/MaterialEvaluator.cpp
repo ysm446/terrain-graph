@@ -97,6 +97,7 @@ struct ScatterConstants {
     float params1[4];      // 高さ（正規化）, 高さのばらつき, 向きのばらつき, 細長さのばらつき
     float params2[4];      // 届く範囲（散布セル）, シード, テクセル（m）, 標高差（m）
     float params3[4];      // なめらかさ, 未使用 x3
+    uint32_t points[4];   // Points UAV, 行数, セル一辺の数, 先頭セル
 };
 
 struct SedimentConstants {
@@ -4179,7 +4180,7 @@ bool MaterialEvaluator::FilterCrumblingPoints(rhi::Device& device, rhi::Pipeline
     return true;
 }
 
-void MaterialEvaluator::CollectCrumblingPointCount() {
+void MaterialEvaluator::CollectPlacementPointCount() {
     if (!m_crumblingCountFence || m_crumblingCountFence->GetCompletedValue() < m_crumblingCountFenceValue) return;
     m_crumblingCountFence = nullptr;
     void* mapped = nullptr;
@@ -4434,6 +4435,55 @@ bool MaterialEvaluator::ApplyScatter(rhi::Device& device, rhi::PipelineCache& pi
     constants.params2[2] = texelMeters;
     constants.params2[3] = heightMeters;
     constants.params3[0] = std::clamp(params.smoothness, 0.0f, 1.0f);
+
+    // Pointsの枝ではHeight用の形状ラスタライズを省き、セルごとに1点を作る。
+    if (m_captureCrumblingPoints && layer.emitPoints) {
+        m_crumblingPointCount = 0;
+        m_crumblingActivePointCount = 0;
+        m_crumblingPointCountReady = false;
+        const double halfCells = std::ceil(double(sizeMeters) * 0.5 / density);
+        // 後段の64スレッドDispatchとテクスチャのハードウェア上限を超えない。
+        if (!std::isfinite(halfCells) || halfCells > 1023) {
+            TG_LOG_ERROR("Scatter Points: GPUの配置上限を超えています。間隔を広げるか地形範囲を狭めてください。");
+            return false;
+        }
+        const uint32_t side = static_cast<uint32_t>(halfCells) * 2;
+        const uint32_t count = side * side;
+        if (params.coverage <= 0 || count == 0) {
+            m_crumblingPointCountReady = true;
+            return true;
+        }
+        auto* pointsPass = pipeline(L"CsPoints");
+        if (!pointsPass) return false;
+        const uint32_t rows = (count + 1023) / 1024;
+        if (!m_crumblingCandidates.IsValid() || m_crumblingCandidates.height != rows * 2) {
+            device.DeferRelease(m_crumblingCandidates);
+            rhi::TextureDesc desc;
+            desc.width = 1024; desc.height = rows * 2;
+            desc.format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+            desc.allowUnorderedAccess = true;
+            desc.initialState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+            desc.debugName = L"ScatterPoints";
+            if (!device.Allocator().CreateTexture2D(desc, m_crumblingCandidates)) return false;
+        }
+        constants.points[0] = m_crumblingCandidates.UavIndex();
+        constants.points[1] = rows;
+        constants.points[2] = side;
+        constants.points[3] = static_cast<uint32_t>(-static_cast<int32_t>(halfCells));
+        const auto pointsCb = AllocateConstants(device, sizeof(constants));
+        if (!pointsCb.IsValid()) return false;
+        std::memcpy(pointsCb.cpu, &constants, sizeof(constants));
+        PIXBeginEvent(commandList, PIX_COLOR(120, 170, 110), "ScatterPoints");
+        TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        TransitionIfNeeded(commandList, m_crumblingCandidates, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        commandList->SetComputeRootConstantBufferView(1, pointsCb.gpuAddress);
+        commandList->SetPipelineState(pointsPass);
+        commandList->Dispatch((count + 63) / 64, 1, 1);
+        TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        PIXEndEvent(commandList);
+        m_crumblingPointCount = count;
+        return FilterCrumblingPoints(device, pipelineCache, commandList, maxMeters, false);
+    }
 
     const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(ScatterConstants));
     if (!cb.IsValid()) {
@@ -5253,7 +5303,7 @@ void MaterialEvaluator::Update(rhi::Device& device, rhi::PipelineCache& pipeline
     // CPU 側のハイトの読み戻しは、評価の回収とは別に毎フレーム見る
     // （同期評価のときはフレームのフェンスで終わるため）。
     CollectHeightfieldReadback();
-    CollectCrumblingPointCount();
+    CollectPlacementPointCount();
 
     // --- 回収 -----------------------------------------------------------------
     if (m_asyncInFlight && !m_compute.IsBusy()) {

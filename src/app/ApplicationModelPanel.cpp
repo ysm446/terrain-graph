@@ -49,7 +49,7 @@ void Application::PrepareModelScatters() {
             slot->documentRevision = m_graphStack.Revision();
             slot->paintRevision = m_paintMasks.Revision();
         }
-        slot->evaluator.CaptureCrumblingPoints(true);
+        slot->evaluator.CapturePlacementPoints(true);
     }
     for (auto it=m_modelPoints.begin();it!=m_modelPoints.end();) {
         if (std::find(sources.begin(),sources.end(),it->first)==sources.end()) {
@@ -70,7 +70,7 @@ void Application::DrawModelScatters(ID3D12GraphicsCommandList* commandList,
         if (pointSlot == m_modelPoints.end()) continue;
         const auto& evaluator = pointSlot->second->evaluator;
         if (evaluator.EvaluatedRevision() != pointSlot->second->stack.Revision()) continue;
-        if (!evaluator.CrumblingPoints().IsValid() || !evaluator.CrumblingPointCount() || evaluator.HasPendingPostprocess()) continue;
+        if (!evaluator.PlacementPoints().IsValid() || !evaluator.PlacementPointCount() || evaluator.HasPendingPostprocess()) continue;
         float total = 0;
         for (const auto& choice : scatter.settings.models)
             if (std::any_of(m_models.begin(),m_models.end(),[&](const auto& m){return m.id==choice.model && m.geometry;})) total += std::max(choice.weight,0.0f);
@@ -83,8 +83,8 @@ void Application::DrawModelScatters(ID3D12GraphicsCommandList* commandList,
             const auto mesh=m_instanceMeshes.find(key);
             if (mesh==m_instanceMeshes.end()) continue;
             renderer::ModelInstanceDraw draw;
-            draw.points=evaluator.CrumblingPoints().SrvIndex();
-            draw.rows=evaluator.CrumblingPoints().height/2; draw.count=evaluator.CrumblingPointCount();
+            draw.points=evaluator.PlacementPoints().SrvIndex();
+            draw.rows=evaluator.PlacementPoints().height/2; draw.count=evaluator.PlacementPointCount();
             draw.seed=static_cast<uint32_t>(scatter.settings.seed);
             draw.weightStart=cumulative/total; cumulative+=choice.weight; draw.weightEnd=cumulative/total;
             draw.scaleMin=scatter.settings.scaleMin; draw.scaleMax=std::max(draw.scaleMin,scatter.settings.scaleMax);

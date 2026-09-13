@@ -239,11 +239,11 @@ public:
 
     uint32_t TileSize() const { return m_tileSize; }
 
-    void CaptureCrumblingPoints(bool enabled) { m_captureCrumblingPoints = enabled; }
-    const rhi::GpuTexture& CrumblingPoints() const { return m_crumblingPoints; }
-    uint32_t CrumblingPointCount() const { return m_crumblingPointCount; }
-    uint32_t CrumblingActivePointCount() const { return m_crumblingActivePointCount; }
-    bool CrumblingPointCountReady() const { return m_crumblingPointCountReady; }
+    void CapturePlacementPoints(bool enabled) { m_captureCrumblingPoints = enabled; }
+    const rhi::GpuTexture& PlacementPoints() const { return m_crumblingPoints; }
+    uint32_t PlacementPointCount() const { return m_crumblingPointCount; }
+    uint32_t PlacementActivePointCount() const { return m_crumblingActivePointCount; }
+    bool PlacementPointCountReady() const { return m_crumblingPointCountReady; }
     void SetTileSize(uint32_t tileSize) { m_tileSize = (tileSize > 0) ? tileSize : 1; }
     uint32_t EvaluatedTileCount() const { return m_evaluatedTileCount; }
 
@@ -434,7 +434,7 @@ private:
     CrumblingResources m_crumbling;
     bool FilterCrumblingPoints(rhi::Device& device, rhi::PipelineCache& cache,
         ID3D12GraphicsCommandList* list, float maxDiameter, bool avoidOverlap);
-    void CollectCrumblingPointCount();
+    void CollectPlacementPointCount();
     rhi::GpuTexture m_crumblingPoints, m_crumblingCandidates, m_crumblingPointGrid;
     rhi::GpuBuffer m_crumblingCountReadback;
     ID3D12Fence* m_crumblingCountFence = nullptr;

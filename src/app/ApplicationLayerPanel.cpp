@@ -467,6 +467,13 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
         const compositor::MaterialLayer::ScatterSettings scatterDefaults;
         ui::SectionHeader("基本");
         if (ui::BeginPropertyTable("scatterBasicRows")) {
+            const auto slot = m_modelPoints.find(m_selectedGraphNode);
+            if (!layer.enabled) ui::PropertyValue("ポイント数", "%u", 0u);
+            else if (slot == m_modelPoints.end()) ui::PropertyValue("ポイント数", "%s", "未評価");
+            else if (slot->second->graphRevision != m_graph.TerrainRevision() ||
+                     !slot->second->evaluator.PlacementPointCountReady())
+                ui::PropertyValue("ポイント数", "%s", "計算中");
+            else ui::PropertyValue("ポイント数", "%u", slot->second->evaluator.PlacementActivePointCount());
             char scatterName[128] = {};
             std::snprintf(scatterName, sizeof(scatterName), "%s", layer.name.c_str());
             if (ui::PropertyTextInput("名前", scatterName, sizeof(scatterName))) {
@@ -809,9 +816,9 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
             if (!layer.enabled) ui::PropertyValue("ポイント数", "%u", 0u);
             else if (slot == m_modelPoints.end()) ui::PropertyValue("ポイント数", "%s", "未評価");
             else if (slot->second->graphRevision != m_graph.TerrainRevision() ||
-                     !slot->second->evaluator.CrumblingPointCountReady())
+                     !slot->second->evaluator.PlacementPointCountReady())
                 ui::PropertyValue("ポイント数", "%s", "計算中");
-            else ui::PropertyValue("ポイント数", "%u", slot->second->evaluator.CrumblingActivePointCount());
+            else ui::PropertyValue("ポイント数", "%u", slot->second->evaluator.PlacementActivePointCount());
             changed |= ui::PropertyBool("重なり回避", &layer.crumbling.avoidPointOverlap,
                 crumblingDefaults.avoidPointOverlap,
                 "Points出力の停止位置を直径に応じて間引きます。ResultやMaskには影響しません。後段のサイズ倍率は含みません。");

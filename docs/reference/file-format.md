@@ -1,7 +1,7 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-09-13 19:06
+更新日時: 2026-09-13 19:50
 
 ## インスタンスのカリングとプレビュー表示
 
@@ -14,7 +14,7 @@
 
 ## モデル配置の保存
 
-ノード種類modelScatterはmodelScatter節へmodels（model: モデルID、weight: 出現比率）の配列とseed、scaleMin、scaleMax、alignToNormal、offset、usePointSize、lodを保存する。modelOutputはInstances入力を持つ独立した出力ノード。Points/Instancesの型番号は6/7、ノード種類の内部番号は46/47。CrumblingのPointsは既存3出力の末尾へ追加し、旧ファイルのピンID・リンクを維持する。
+ノード種類modelScatterはmodelScatter節へmodels（model: モデルID、weight: 出現比率）の配列とseed、scaleMin、scaleMax、alignToNormal、offset、usePointSize、lodを保存する。modelOutputはInstances入力を持つ独立した出力ノード。Points/Instancesの型番号は6/7、ノード種類の内部番号は46/47。CrumblingおよびScatterのPointsは既存3出力の末尾へ追加し、旧ファイルのピンID・リンクを維持する。
 
 models[]へidを追加。配置ノードはこのIDを参照する。旧ファイルでidを持たないモデルは従来どおり配列順に1から採番する。ポイントのGPUデータ自体は保存せず、グラフから再生成する。
 

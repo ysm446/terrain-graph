@@ -59,6 +59,8 @@ struct ScatterConstants
     float4 params2;
     // x: なめらかさ（0 で max のまま）、yzw: 未使用
     float4 params3;
+    // x: Points UAV、y: 行数、z: セルの一辺の数、w: 先頭セル（符号付き）
+    uint4 points;
 };
 
 ConstantBuffer<ScatterConstants> g_scatter : register(b1);
@@ -332,4 +334,47 @@ void CsMask(uint3 dispatchThreadId : SV_DispatchThreadID)
     // 0 = 形（そこに何かある）、1 = 個体ごとの乱数（色や材質のばらつき用）。
     const uint stored = (g_scatter.indices2.z == 0u) ? (value >> 16u) : (value & 0xFFFFu);
     mask[texel] = float(stored) / TG_SCATTER_PACK_SCALE;
+}
+
+// Heightと同じセル・乱数から散布中心を出力する。地形の外に中心がある個体は除外。
+[numthreads(64, 1, 1)]
+void CsPoints(uint3 id : SV_DispatchThreadID)
+{
+    const uint side = g_scatter.points.z;
+    if (id.x >= side * side) return;
+    RWTexture2D<float4> points = ResourceDescriptorHeap[g_scatter.points.x];
+    const uint2 address = uint2(id.x % 1024, id.x / 1024);
+    const uint2 normalAddress = address + uint2(0, g_scatter.points.y);
+    points[address] = 0;
+    points[normalAddress] = float4(0, 1, 0, 0);
+    const int gx = int(id.x % side) + asint(g_scatter.points.w);
+    const int gz = int(id.x / side) + asint(g_scatter.points.w);
+    const int seed = int(g_scatter.params2.y);
+    const float2 center = float2(gx, gz) + 0.5 +
+        float2(ScatterHash01(gx, gz, seed), ScatterHash01(gx, gz, seed + 73)) * 0.9 - 0.45;
+    const float density = g_scatter.params0.x;
+    const float sizeMeters = g_scatter.params2.z * ScatterResolution();
+    const float2 horizontal = center * density;
+    if (any(horizontal < -sizeMeters * 0.5) || any(horizontal >= sizeMeters * 0.5)) return;
+    const float probability = g_scatter.params0.y * SamplePlacementMask(center.x, center.y);
+    if (probability <= 0 || ScatterHash01(gx, gz, seed + 17) > probability) return;
+    Texture2D<float> heightIn = ResourceDescriptorHeap[g_scatter.indices0.x];
+    // 描画と同じテクセル中心の線形補間で地表へ接地する。
+    const float2 samplePosition = (horizontal + sizeMeters * 0.5) / g_scatter.params2.z - 0.5;
+    const int2 lower = int2(floor(samplePosition));
+    const int last = int(ScatterResolution()) - 1;
+    const float2 f = frac(samplePosition);
+    const float h = lerp(
+        lerp(heightIn.Load(int3(clamp(lower, 0, last), 0)),
+             heightIn.Load(int3(clamp(lower + int2(1,0), 0, last), 0)), f.x),
+        lerp(heightIn.Load(int3(clamp(lower + int2(0,1), 0, last), 0)),
+             heightIn.Load(int3(clamp(lower + 1, 0, last), 0)), f.x), f.y);
+    const float2 gradient = SampleGroundGradient(ScatterCellToTexel(center));
+    const float3 normal = normalize(float3(-gradient.x, 1, -gradient.y));
+    const float diameter = density * lerp(g_scatter.params0.z, g_scatter.params0.w,
+        ScatterHash01(gx, gz, seed * 1583 + 22441));
+    const float yaw = (ScatterHash01(gx, gz, seed * 4519 + 91173) - 0.5) *
+        6.28318530718 * g_scatter.params1.z;
+    points[address] = float4(horizontal.x, (h - 0.5) * g_scatter.params2.w, horizontal.y, diameter);
+    points[normalAddress] = float4(normal, yaw);
 }

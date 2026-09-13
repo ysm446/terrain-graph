@@ -68,6 +68,15 @@ void RunNodeGraphTests() {
         Check(graph.CompileLayers().layers.size()==original,"配置の接続でハイトチェーンは変わらない");
         graph.DeleteNode(crumble);
         Check(graph.CompileModelScatters().empty(),"点群ソース削除で配置も消える");
+        const auto source = graph.CreateNode(NodeKind::Scatter);
+        const auto* node = graph.FindNode(source);
+        Check(node->outputs.size()==4 && node->outputs.back().valueType==tg::graph::ValueType::Points,
+              "Scatterの既存3出力を保ちPointsを追加");
+        Check(graph.CreateLink(node->outputs.back().id,input)!=0,"ScatterのPointsを配置へ接続");
+        const auto scatterCompiled=graph.CompileModelScatters();
+        Check(scatterCompiled.size()==1 && scatterCompiled[0].source==source,"Scatterの点群ソースを解決");
+        Check(graph.CompileLayers().layers.size()==original,"ScatterのPointsもハイト出力から独立");
+
     }
 
     {
