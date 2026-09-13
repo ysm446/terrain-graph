@@ -131,9 +131,11 @@ public:
 
     // DEFAULT ヒープ上のバッファ。頂点・インデックス・構造化バッファ用。
     bool CreateDefaultBuffer(uint64_t sizeInBytes, D3D12_RESOURCE_STATES initialState,
-                             const wchar_t* debugName, GpuBuffer& outBuffer);
+                             const wchar_t* debugName, GpuBuffer& outBuffer,
+                             bool allowUnorderedAccess = false);
 
-    bool CreateStructuredBuffer(uint32_t count, uint32_t stride, const wchar_t* debugName, GpuBuffer& outBuffer);
+    bool CreateStructuredBuffer(uint32_t count, uint32_t stride, const wchar_t* debugName, GpuBuffer& outBuffer,
+                                bool allowUnorderedAccess = false);
 
     // READBACK ヒープ上のバッファ。GPU の結果を CPU 側へ持ってくる用途に使う。
     bool CreateReadbackBuffer(uint64_t sizeInBytes, const wchar_t* debugName,

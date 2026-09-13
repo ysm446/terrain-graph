@@ -1578,6 +1578,8 @@ void Application::DrawGraphPanel() {
         ui::HintText("Crumbling の Points を接続し、Instances をModel Outputへ接続します");
         if (ui::BeginPropertyTable("modelScatterSettings")) {
             changed |= ui::PropertyInt("シード",&scatter->seed,0,1000000,1);
+            changed |= ui::PropertyFloat("描画距離", &scatter->maxDistance, 0, 100000, 0,
+                "この距離より遠いモデルを描画対象から外します。0は距離制限なし。影にも適用します", "%.0f m");
             changed |= ui::PropertyBool("ポイントの大きさ",&scatter->usePointSize,true,"モデルの最大寸法を岩片の直径に合わせます");
             changed |= ui::PropertyFloat("最小スケール",&scatter->scaleMin,0.001f,1000.0f,0.8f);
             changed |= ui::PropertyFloat("最大スケール",&scatter->scaleMax,0.001f,1000.0f,1.2f);

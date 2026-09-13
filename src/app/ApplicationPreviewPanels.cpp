@@ -169,6 +169,8 @@ void Application::DrawMaterialPanel() {
 
         ui::SectionHeader("ボリューム雲");
         if (ui::BeginPropertyTable("volumeCloudQuality", "レイマーチ品質")) {
+            ui::PropertyBool("雲を描画", &m_renderer.ShowClouds(), renderer::kPreviewDefaults.showClouds,
+                "雲と雲影をまとめて表示・非表示にします。ノードと天球の雲設定は保持します");
             auto& sky = m_renderer.AtmosphericSettings();
             const char* resolutions[] = {"半解像度", "全解像度"};
             int resolution = m_renderer.FullResolutionClouds() ? 1 : 0;
@@ -294,7 +296,11 @@ void Application::DrawLightingPanel() {
             ImGui::BeginDisabled(!m_renderer.ShadowEnabled());
             ui::PropertyBool("カスケードシャドウ", &m_renderer.CascadedShadows(),
                              renderer::kPreviewDefaults.cascadedShadows,
-                             "オンは4分割で近景の影を細かく描く。オフは従来の1枚方式。影の描画負荷とメモリが増える");
+                             "視距離を分割して近景の影を細かく描く。オフは従来の1枚方式");
+            if (m_renderer.CascadedShadows())
+                ui::PropertyInt("カスケード数", &m_renderer.ShadowCascadeCount(), 1, 4,
+                    renderer::kPreviewDefaults.shadowCascadeCount,
+                    "影を描くカメラの数。増やすと近景の解像度が上がり、描画負荷とメモリも増えます");
             ImGui::EndDisabled();
             ui::EndPropertyTable();
         }

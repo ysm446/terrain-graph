@@ -8,6 +8,7 @@ struct ModelInstanceDraw {
     float weightStart = 0, weightEnd = 1;
     float scaleMin = 1, scaleMax = 1, align = 1, offset = 0;
     bool usePointSize = true, shadow = false;
+    float maxDistance = 0;
     SceneShadowData shadows;
     DirectX::XMFLOAT4X4 viewProjection;
     DirectX::XMFLOAT3 cameraPosition;
@@ -30,6 +31,10 @@ class ModelPreview {
     void FrameView();
 
    private:
+    bool CullInstances(rhi::Device& device, rhi::PipelineCache& cache,
+        ID3D12GraphicsCommandList* list, const ModelInstanceDraw& draw);
+    rhi::GpuBuffer m_visibleInstances, m_indirectArguments;
+    Microsoft::WRL::ComPtr<ID3D12CommandSignature> m_drawSignature;
     std::shared_ptr<const ModelGeometry> m_geometry;
     int m_lod = -1;
     std::vector<Mesh> m_meshes;

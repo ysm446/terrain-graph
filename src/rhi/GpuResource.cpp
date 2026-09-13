@@ -255,7 +255,7 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
 
 bool ResourceAllocator::CreateDefaultBuffer(uint64_t sizeInBytes,
                                             D3D12_RESOURCE_STATES initialState,
-                                            const wchar_t* debugName, GpuBuffer& outBuffer) {
+                                            const wchar_t* debugName, GpuBuffer& outBuffer, bool allowUnorderedAccess) {
     if (!m_allocator || sizeInBytes == 0) {
         return false;
     }
@@ -269,7 +269,7 @@ bool ResourceAllocator::CreateDefaultBuffer(uint64_t sizeInBytes,
     resourceDesc.Format = DXGI_FORMAT_UNKNOWN;
     resourceDesc.SampleDesc.Count = 1;
     resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-    resourceDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+    resourceDesc.Flags = allowUnorderedAccess ? D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS : D3D12_RESOURCE_FLAG_NONE;
 
     D3D12MA::ALLOCATION_DESC allocDesc = {};
     allocDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
@@ -332,9 +332,9 @@ bool ResourceAllocator::CreateUploadBuffer(uint64_t sizeInBytes, const wchar_t* 
 }
 
 bool ResourceAllocator::CreateStructuredBuffer(uint32_t count, uint32_t stride,
-                                                const wchar_t* debugName, GpuBuffer& outBuffer) {
+                                                const wchar_t* debugName, GpuBuffer& outBuffer, bool allowUnorderedAccess) {
     if (!count || !stride || !m_srvHeap) return false;
-    if (!CreateDefaultBuffer(uint64_t(count)*stride, D3D12_RESOURCE_STATE_COPY_DEST, debugName, outBuffer)) return false;
+    if (!CreateDefaultBuffer(uint64_t(count)*stride, allowUnorderedAccess ? D3D12_RESOURCE_STATE_COMMON : D3D12_RESOURCE_STATE_COPY_DEST, debugName, outBuffer, allowUnorderedAccess)) return false;
     outBuffer.srv=m_srvHeap->Allocate();
     if (!outBuffer.srv.IsValid()) { outBuffer={}; return false; }
     D3D12_SHADER_RESOURCE_VIEW_DESC desc{};
@@ -344,6 +344,15 @@ bool ResourceAllocator::CreateStructuredBuffer(uint32_t count, uint32_t stride,
     desc.Buffer.NumElements=count;
     desc.Buffer.StructureByteStride=stride;
     m_device->CreateShaderResourceView(outBuffer.resource.Get(),&desc,outBuffer.srv.cpu);
+    if (allowUnorderedAccess) {
+        outBuffer.uav = m_srvHeap->Allocate();
+        if (!outBuffer.uav.IsValid()) { m_srvHeap->Free(outBuffer.srv); outBuffer = {}; return false; }
+        D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
+        uav.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+        uav.Buffer.NumElements = count;
+        uav.Buffer.StructureByteStride = stride;
+        m_device->CreateUnorderedAccessView(outBuffer.resource.Get(), nullptr, &uav, outBuffer.uav.cpu);
+    }
     return true;
 }
 

@@ -1458,7 +1458,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
                 {"evolveNoise",weather->evolveNoise},{"noiseSpeedRatio",weather->noiseSpeedRatio}};
         } else if (const auto* scatter = std::get_if<graph::ModelScatterSettings>(&node.settings)) {
             auto& values = item["modelScatter"];
-            values = {{"seed",scatter->seed},{"scaleMin",scatter->scaleMin},{"scaleMax",scatter->scaleMax},
+            values = {{"maxDistance",scatter->maxDistance},{"seed",scatter->seed},{"scaleMin",scatter->scaleMin},{"scaleMax",scatter->scaleMax},
                       {"alignToNormal",scatter->alignToNormal},{"offset",scatter->offset},
                       {"usePointSize",scatter->usePointSize},{"lod",scatter->lod}};
             values["models"] = json::array();
@@ -1643,6 +1643,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.seed = ReadInt(*values,"seed",1);
                     settings.scaleMin = std::clamp(ReadFloat(*values,"scaleMin",0.8f),0.001f,1000.0f);
                     settings.scaleMax = std::clamp(ReadFloat(*values,"scaleMax",1.2f),settings.scaleMin,1000.0f);
+                    settings.maxDistance = std::clamp(ReadFloat(*values,"maxDistance",0),0.0f,100000.0f);
                     settings.alignToNormal = std::clamp(ReadFloat(*values,"alignToNormal",1),0.0f,1.0f);
                     settings.offset = std::clamp(ReadFloat(*values,"offset",0),-10000.0f,10000.0f);
                     settings.usePointSize = ReadBool(*values,"usePointSize",true);
@@ -1969,6 +1970,7 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     node["skyboxBlur"] = renderer.SkyboxBlur();
     node["shadow"] = renderer.ShadowEnabled();
     node["cascadedShadows"] = renderer.CascadedShadows();
+    node["shadowCascadeCount"] = renderer.ShadowCascadeCount();
     node["lightingMode"] = renderer.AtmosphericMode() ? "atmospheric" : "ibl";
     const auto& atmosphere = renderer.AtmosphericSettings();
     const auto& sun = renderer.AtmosphericLight();
@@ -2007,6 +2009,7 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     atmosphereNode["fullResolutionClouds"] = renderer.FullResolutionClouds();
     atmosphereNode["temporalClouds"] = renderer.TemporalClouds();
     atmosphereNode["cloudLightingCache"] = renderer.CloudLightingCache();
+    atmosphereNode["showClouds"] = renderer.ShowClouds();
     atmosphereNode["cloudCurvature"] = renderer.CloudCurvature();
     atmosphereNode["cloudFarPass"] = renderer.CloudFarPass();
     node["atmosphere"] = std::move(atmosphereNode);
@@ -2111,6 +2114,7 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
         renderer.FullResolutionClouds() = ReadBool(source, "fullResolutionClouds", false);
         renderer.TemporalClouds() = ReadBool(source, "temporalClouds", true);
         renderer.CloudLightingCache() = ReadBool(source, "cloudLightingCache", true);
+        renderer.ShowClouds() = ReadBool(source, "showClouds", renderer::kPreviewDefaults.showClouds);
         renderer.CloudCurvature() = ReadBool(source, "cloudCurvature", true);
         renderer.CloudFarPass() = ReadBool(source, "cloudFarPass", true);
         const auto samples = ReadUInt(source, "samples", defaults.samples);
@@ -2141,6 +2145,7 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
     renderer.ShadowEnabled() = ReadBool(node, "shadow", previewDefaults.shadowEnabled);
     // 項目のない既存プロジェクトは従来の1枚方式を維持する。
     renderer.CascadedShadows() = ReadBool(node, "cascadedShadows", false);
+    renderer.ShadowCascadeCount() = std::clamp(ReadInt(node, "shadowCascadeCount", 4), 1, 4);
 
     // 節が丸ごと欠けていても既定値で埋める。file-format.md の「欠けているキーは
     // 既定値で埋める」に合わせる（節ごと飛ばすと前のプロジェクトの値が残る）。

@@ -364,6 +364,7 @@ struct ModelScatterSettings {
     float alignToNormal = 1.0f;
     float offset = 0.0f;
     bool usePointSize = true;
+    float maxDistance = 0; // m。0は距離制限なし
     int lod = 0;
 };
 struct CompiledModelScatter {

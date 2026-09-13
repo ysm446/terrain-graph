@@ -140,7 +140,7 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
         lines.emplace_back(text);
         std::snprintf(text, sizeof(text), "ドローコール %u", stats.drawCalls);
         lines.emplace_back(text);
-        std::snprintf(text, sizeof(text), "頂点 %s", GroupDigits(stats.vertices).c_str());
+        std::snprintf(text, sizeof(text), "頂点%s %s", stats.instanceUpperBounds ? "（上限）" : "", GroupDigits(stats.vertices).c_str());
         lines.emplace_back(text);
         // テセレーション中は、三角形はドメインシェーダが決めるので CPU では分からない。
         // **数えられないものを数えたふりをしない。** 投入したパッチ数と上限を出す。
@@ -148,7 +148,7 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
             std::snprintf(text, sizeof(text), "パッチ %s (x%.0f まで)",
                           GroupDigits(stats.patches).c_str(), stats.tessellationFactor);
         } else {
-            std::snprintf(text, sizeof(text), "三角形 %s", GroupDigits(stats.triangles).c_str());
+            std::snprintf(text, sizeof(text), "三角形%s %s", stats.instanceUpperBounds ? "（上限）" : "", GroupDigits(stats.triangles).c_str());
         }
         lines.emplace_back(text);
         // VRAM はプロセス全体の使用量とバジェット。合成の解像度を上げたときに

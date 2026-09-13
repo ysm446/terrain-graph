@@ -93,6 +93,15 @@ void Mesh::Release(rhi::Device& device) {
     m_vertexCount = 0;
 }
 
+void Mesh::DrawIndirect(ID3D12GraphicsCommandList* list, ID3D12CommandSignature* signature,
+                        ID3D12Resource* arguments, uint64_t offset) const {
+    if (!m_indexCount) return;
+    list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    list->IASetVertexBuffers(0,1,&m_vertexBufferView);
+    list->IASetIndexBuffer(&m_indexBufferView);
+    list->ExecuteIndirect(signature,1,arguments,offset,nullptr,0);
+}
+
 void Mesh::Draw(ID3D12GraphicsCommandList* commandList, bool asPatches, uint32_t instanceCount) const {
     if (m_indexCount == 0) {
         return;

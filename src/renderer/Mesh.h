@@ -18,6 +18,9 @@ public:
     // asPatches が真なら 3 制御点のパッチとして描く（テセレーション用）。
     void Draw(ID3D12GraphicsCommandList* commandList, bool asPatches = false, uint32_t instanceCount = 1) const;
 
+    void DrawIndirect(ID3D12GraphicsCommandList* list, ID3D12CommandSignature* signature,
+                      ID3D12Resource* arguments, uint64_t offset) const;
+
     bool IsValid() const { return m_indexCount > 0; }
     uint32_t IndexCount() const { return m_indexCount; }
     uint32_t VertexCount() const { return m_vertexCount; }

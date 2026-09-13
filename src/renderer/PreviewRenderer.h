@@ -81,6 +81,7 @@ struct LightSettings {
 // **投入した量（IA が読む量）を数える。** テセレーションを入れると実際に
 // 出る三角形はこれより多いが、CPU 側では分からないのでパッチ数と上限を添える。
 struct RenderStats {
+    bool instanceUpperBounds = false;
     uint32_t drawCalls = 0;
     // 投入した頂点とインデックス。インデックス付き描画では
     // 「頂点 = インデックス数」（IA がその回数だけ頂点を読む）。
@@ -170,6 +171,8 @@ struct PreviewDefaults {
     bool skyboxBlur = false;
     bool shadowEnabled = true;
     bool cascadedShadows = true;
+    int shadowCascadeCount = 4;
+    bool showClouds = true;
     // マスクのプレビューで、0 か 1 に張り付いた所へ斜線を引くか。
     bool maskSaturationHatch = false;
 };
@@ -197,6 +200,7 @@ public:
     void SetCloudTypeMask(uint32_t index, uint64_t revision) { m_atmosphere.SetTypeMask(index, revision); }
     GodRaySettings& GodRays() { return m_atmosphere.GodRays(); }
     bool& CloudLightingCache() { return m_cloudLightingCache; }
+    bool& ShowClouds() { return m_showClouds; }
     bool& CloudCurvature() { return m_cloudCurvature; } // 天候層を球殻状に曲げる。
     bool& CloudFarPass() { return m_cloudFarPass; } // 遠景を 1/4 解像度の別パスで描く。
     bool& FullResolutionClouds() { return m_atmosphere.FullResolutionClouds(); }
@@ -220,6 +224,7 @@ public:
 
     const SceneShadowData& InstanceShadows() const { return m_instanceShadows; }
     void RecordInstanceDraw(uint32_t indices, uint32_t count) {
+        m_stats.instanceUpperBounds = true;
         ++m_stats.drawCalls; m_stats.vertices += uint64_t(indices)*count;
         m_stats.triangles += uint64_t(indices/3)*count;
     }
@@ -261,6 +266,7 @@ public:
     // ディレクショナルライトの影を落とすか。落とさないとシャドウパスも走らない。
     bool& ShadowEnabled() { return m_shadowEnabled; }
     bool& CascadedShadows() { return m_cascadedShadows; }
+    int& ShadowCascadeCount() { return m_shadowCascadeCount; }
     DofSettings& Dof() { return m_dof; }
     const DofSettings& Dof() const { return m_dof; }
     // 実際にピント面として使う距離。注視点に合わせる設定ならカメラの距離。
@@ -342,6 +348,7 @@ private:
     Environment m_environment;
     Atmosphere m_atmosphere;
     bool m_cloudLightingCache = true;
+    bool m_showClouds = kPreviewDefaults.showClouds;
     bool m_cloudCurvature = true;
     bool m_cloudFarPass = true;
     AtmosphereSettings m_atmosphereSettings;
@@ -367,6 +374,7 @@ private:
     bool m_skyboxBlur = kPreviewDefaults.skyboxBlur;
     bool m_shadowEnabled = kPreviewDefaults.shadowEnabled;
     bool m_cascadedShadows = kPreviewDefaults.cascadedShadows;
+    int m_shadowCascadeCount = kPreviewDefaults.shadowCascadeCount;
     DofSettings m_dof;
     SceneShadowData m_instanceShadows;
     RenderStats m_stats;

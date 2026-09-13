@@ -22,7 +22,7 @@ struct ModelConstants
     float3 lightDirection; float lightIlluminance;
     float3 lightColor; float iblIntensity;
     float4x4 viewProjection;
-    uint points, rows, instanceCount, seed;
+    uint points, rows, visibleIndices, seed;
     float weightStart, weightEnd, scaleMin, scaleMax;
     float3 pivot; float modelSize;
     float align, offset; uint usePointSize, sceneMode;
@@ -49,14 +49,15 @@ float ModelVisibility(float3 position, float nDotL) {
     if (g_model.shadows.count==0) return 1;
     if (g_model.shadows.count==1) return ModelShadow(position,nDotL,0);
     float distance=-mul(g_model.shadows.view,float4(position,1)).z;
-    if(distance>g_model.shadows.splits.w) return 1;
-    uint cascade=0; while(cascade<3 && distance>g_model.shadows.splits[cascade]) ++cascade;
+    const uint lastCascade=g_model.shadows.count-1;
+    if(distance>g_model.shadows.splits[lastCascade]) return 1;
+    uint cascade=0; while(cascade<lastCascade && distance>g_model.shadows.splits[cascade]) ++cascade;
     float visibility=ModelShadow(position,nDotL,cascade);
     float start=cascade==0?g_model.shadows.nearDistance:g_model.shadows.splits[cascade-1];
     float end=g_model.shadows.splits[cascade];
     float blendStart=end-(end-start)*g_model.shadows.blend;
     if(distance<=blendStart) return visibility;
-    float next=cascade<3?ModelShadow(position,nDotL,min(cascade+1,3u)):1;
+    float next=cascade<lastCascade?ModelShadow(position,nDotL,min(cascade+1,lastCascade)):1;
     return lerp(visibility,next,smoothstep(blendStart,end,distance));
 }
 
@@ -91,14 +92,12 @@ uint InstanceHash(uint x) { x ^= x >> 16; x *= 0x7feb352d; x ^= x >> 15; x *= 0x
 float InstanceRandom(uint x) { return float(InstanceHash(x) >> 8) / 16777216.0; }
 PixelInput VsMain(VertexInput input, uint instance : SV_InstanceID) {
     if (g_model.sceneMode != 0) {
+        StructuredBuffer<uint> visible = ResourceDescriptorHeap[g_model.visibleIndices];
+        instance = visible[instance];
         Texture2D<float4> points = ResourceDescriptorHeap[g_model.points];
         const uint2 address = uint2(instance%1024,instance/1024);
         const float4 placement = points.Load(int3(address,0));
         const float4 orientation = points.Load(int3(address+uint2(0,g_model.rows),0));
-        const float choice = InstanceRandom(instance ^ g_model.seed);
-        if (placement.w <= 0 || choice < g_model.weightStart || choice >= g_model.weightEnd) {
-            PixelInput rejected = (PixelInput)0; rejected.clip = float4(0,0,-1,1); return rejected;
-        }
         float3 up = normalize(lerp(float3(0,1,0),orientation.xyz,g_model.align));
         float3 right = normalize(cross(abs(up.z)<0.99 ? float3(0,0,1) : float3(1,0,0),up));
         float3 forward = cross(right,up);

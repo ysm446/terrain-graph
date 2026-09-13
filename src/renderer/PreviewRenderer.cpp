@@ -303,22 +303,15 @@ void PreviewRenderer::Shutdown(rhi::Device& device) {
 void PreviewRenderer::ProcessPendingWork(rhi::Device& device,
                                         rhi::PipelineCache& pipelineCache, const AtmosphereSettings* cloudOverride) {
     // UIで切り替えた資源の作り直しはフレームの外へ集める。
-    if (m_shadowEnabled && m_cascadedShadows) {
-        if (!m_shadowCascades[0].IsValid()) {
-            std::array<rhi::GpuTexture, kShadowCascadeCount> replacements;
-            bool ready = true;
-            for (auto& texture : replacements) {
-                if (!CreateShadowTexture(device, texture, L"ShadowCascade")) { ready = false; break; }
-            }
-            if (ready) m_shadowCascades = std::move(replacements);
-            else {
-                for (auto& texture : replacements) device.DeferRelease(texture);
+    m_shadowCascadeCount = std::clamp(m_shadowCascadeCount, 1, int(kShadowCascadeCount));
+    for (uint32_t i = 0; i < kShadowCascadeCount; ++i) {
+        auto& texture = m_shadowCascades[i];
+        if (m_shadowEnabled && m_cascadedShadows && i < uint32_t(m_shadowCascadeCount)) {
+            if (!texture.IsValid() && !CreateShadowTexture(device, texture, L"ShadowCascade")) {
                 m_cascadedShadows = false;
                 TG_LOG_WARN("CSMのテクスチャを確保できません。従来の影へ戻します");
             }
-        }
-    } else {
-        for (auto& texture : m_shadowCascades) device.DeferRelease(texture);
+        } else device.DeferRelease(texture);
     }
 
     if (m_atmosphericMode) {
@@ -331,6 +324,7 @@ void PreviewRenderer::ProcessPendingWork(rhi::Device& device,
         effective.illuminance = m_atmosphericLight.illuminance;
         effective.cloudSkylightIntensity = m_atmosphericEnvironmentIntensity;
         // 曲率と遠景パスはプレビュー品質の設定。ノードの遠景の開始距離は残し、オフのときだけ 0 にする。
+        if (!m_showClouds) effective.clouds = 0;
         effective.weatherCurvature = m_cloudCurvature ? 1.0f : 0.0f;
         if (!m_cloudFarPass) effective.weatherFar = 0.0f;
         m_atmosphere.Update(device, pipelineCache, effective);
@@ -411,6 +405,7 @@ void PreviewRenderer::ResetSettings() {
     FullResolutionClouds() = false;
     TemporalClouds() = true;
     m_cloudLightingCache = true;
+    m_showClouds = kPreviewDefaults.showClouds;
     m_cloudCurvature = true;
     m_cloudFarPass = true;
     m_atmosphericLight = {0.9f, 0.9f, 120000.0f, {1.0f, 1.0f, 1.0f}};
@@ -425,6 +420,7 @@ void PreviewRenderer::ResetSettings() {
     m_skyboxBlur = defaults.skyboxBlur;
     m_shadowEnabled = defaults.shadowEnabled;
     m_cascadedShadows = defaults.cascadedShadows;
+    m_shadowCascadeCount = defaults.shadowCascadeCount;
     m_maskSaturationHatch = defaults.maskSaturationHatch;
     // 解像度の作り直しは GPU 待機を伴うので、要求だけ積む。
     RequestMaterialResolution(defaults.materialResolution);
@@ -819,7 +815,12 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     constants.shadowTexelSize = 1.0f / static_cast<float>(kShadowMapSize);
     constants.shadowBias = kShadowBias;
     std::fill_n(constants.cascadeShadowIndices, kShadowCascadeCount, kNoShadowIndex);
-    const bool useCascades = m_cascadedShadows && m_shadowCascades[0].IsValid();
+    uint32_t activeCascadeCount = 0;
+    const uint32_t requestedCascadeCount = uint32_t(std::clamp(m_shadowCascadeCount,1,int(kShadowCascadeCount)));
+    while (activeCascadeCount < requestedCascadeCount && m_shadowCascades[activeCascadeCount].IsValid())
+        ++activeCascadeCount;
+    // UIで増やした直後は、次のフレームで資源が揃うまで既存の枚数で描く。
+    const bool useCascades = m_cascadedShadows && activeCascadeCount > 0;
     if (m_shadowEnabled && m_shadowMap.IsValid()) {
         rhi::GraphicsPipelineDesc shadowPipelineDesc;
         shadowPipelineDesc.shaderPath = L"MeshPbr.hlsl";
@@ -879,11 +880,11 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
         };
         if (useCascades) {
             const auto cascades = BuildShadowCascades(m_camera, EffectiveLight().Direction(),
-                BoundingRadius(), float(m_width) / float(std::max(m_height, 1u)), kShadowMapSize);
-            constants.shadowCascadeCount = kShadowCascadeCount;
+                BoundingRadius(), float(m_width) / float(std::max(m_height, 1u)), kShadowMapSize, activeCascadeCount);
+            constants.shadowCascadeCount = activeCascadeCount;
             constants.cascadeBlend = kShadowCascadeBlend;
             constants.cascadeNear = cascades.nearDistance;
-            for (uint32_t i = 0; i < kShadowCascadeCount; ++i) {
+            for (uint32_t i = 0; i < constants.shadowCascadeCount; ++i) {
                 constants.cascadeViewProjections[i] = cascades.matrices[i];
                 constants.cascadeSplits[i] = cascades.splits[i];
                 constants.cascadeBiases[i] = cascades.biases[i];

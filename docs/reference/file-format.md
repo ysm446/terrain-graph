@@ -1,7 +1,12 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-09-13 18:23
+更新日時: 2026-09-13 19:06
+
+## インスタンスのカリングとプレビュー表示
+
+`modelScatter.maxDistance`はm単位の描画距離（0〜100,000、既定0）。0は制限なし。カリング後のIDや間接描画引数は保存しない。
+`preview.shadowCascadeCount`は1〜4（既定4、読み込み時に範囲へ丸める）。`preview.atmosphere.showClouds`は雲と雲影の表示（bool、既定true）。天球の`clouds`やノードの有効状態は変更せず、レンダラへ渡す設定にのみ反映する。キーのない既存ファイルは従来の描画距離無制限・4カスケード・雲表示を維持する。
 
 ## Crumblingのポイント間引き
 
@@ -15,7 +20,7 @@ models[]へidを追加。配置ノードはこのIDを参照する。旧ファ�
 
 ## カスケードシャドウ設定
 
-`preview.cascadedShadows`（bool）で4分割CSMを選ぶ。新規プロジェクトの既定値はtrue。キーがない既存ファイルはfalseとして読み、従来の影を維持する。`preview.shadow`は影全体の有効・無効であり、falseならCSMも描画しない。
+`preview.cascadedShadows`（bool）でCSMを選ぶ。新規プロジェクトの既定値はtrue。キーがない既存ファイルはfalseとして読み、従来の影を維持する。`preview.shadow`は影全体の有効・無効であり、falseならCSMも描画しない。
 
 実装は [src/io/ProjectIo.cpp](../../src/io/ProjectIo.cpp)。**形式を変えたらこの文書も直す。**
 

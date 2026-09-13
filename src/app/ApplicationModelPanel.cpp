@@ -89,6 +89,7 @@ void Application::DrawModelScatters(ID3D12GraphicsCommandList* commandList,
             draw.weightStart=cumulative/total; cumulative+=choice.weight; draw.weightEnd=cumulative/total;
             draw.scaleMin=scatter.settings.scaleMin; draw.scaleMax=std::max(draw.scaleMin,scatter.settings.scaleMax);
             draw.align=scatter.settings.alignToNormal; draw.offset=scatter.settings.offset;
+            draw.maxDistance=scatter.settings.maxDistance;
             draw.usePointSize=scatter.settings.usePointSize; draw.shadow=shadow;
             draw.viewProjection=viewProjection; draw.cameraPosition=m_renderer.GetCamera().Position();
             if (!shadow) draw.shadows=m_renderer.InstanceShadows();

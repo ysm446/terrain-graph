@@ -9,6 +9,7 @@ ShadowCascadeData BuildShadowCascades(const Camera& camera, const DirectX::XMFLO
                                       uint32_t count) {
     using namespace DirectX;
     ShadowCascadeData result{};
+    count = std::clamp(count, 1u, kShadowCascadeCount);
     const float radius = std::max(sceneRadius, 0.1f) * 1.05f;
     const auto view = camera.ViewMatrix();
     const auto inverseView = XMMatrixInverse(nullptr, view);
@@ -18,12 +19,12 @@ ShadowCascadeData BuildShadowCascades(const Camera& camera, const DirectX::XMFLO
         std::max(nearDistance + 0.01f, std::min(camera.FarZ(), sceneDepth + radius));
     result.nearDistance = nearDistance;
     // 対数分割を主体にし、遠景側にも一定の密度を残す。
-    for (uint32_t i = 0; i < kShadowCascadeCount; ++i) {
-        const float t = float(i + 1) / float(kShadowCascadeCount);
+    for (uint32_t i = 0; i < count; ++i) {
+        const float t = float(i + 1) / float(count);
         result.splits[i] = std::lerp(std::lerp(nearDistance, farDistance, t),
                                      nearDistance * std::pow(farDistance / nearDistance, t), 0.7f);
     }
-    result.splits.back() = farDistance;
+    result.splits[count-1] = farDistance;
     const auto direction = XMVector3Normalize(XMLoadFloat3(&lightDirection));
     const auto up = std::abs(XMVectorGetY(direction)) > 0.99f ? XMVectorSet(0, 0, 1, 0)
                                                               : XMVectorSet(0, 1, 0, 0);
@@ -40,7 +41,7 @@ ShadowCascadeData BuildShadowCascades(const Camera& camera, const DirectX::XMFLO
     }
     const float tanY = std::tan(camera.FovY() * 0.5f);
     const float tanX = tanY * std::max(aspect, 0.01f);
-    for (uint32_t cascade = 0; cascade < kShadowCascadeCount; ++cascade) {
+    for (uint32_t cascade = 0; cascade < count; ++cascade) {
         float start = cascade == 0 ? nearDistance : result.splits[cascade - 1];
         if (cascade > 0) {
             const float previous = cascade == 1 ? nearDistance : result.splits[cascade - 2];

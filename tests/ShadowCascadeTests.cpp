@@ -4,6 +4,7 @@
 
 #include "TestSupport.h"
 #include "renderer/ShadowCascades.h"
+#include "renderer/InstanceCulling.h"
 
 void RunShadowCascadeTests() {
     using namespace tg;
@@ -15,13 +16,14 @@ void RunShadowCascadeTests() {
     state.distance = 8;
     state.pitch = 0.2f;
     camera.SetState(state);
+    for (const uint32_t count : {2u,3u,4u})
     for (const float aspect : {0.5f, 2.0f})
         for (const XMFLOAT3 light :
              {XMFLOAT3{0.4f, 0.8f, 0.3f}, XMFLOAT3{0, 1, 0}, XMFLOAT3{0, -1, 0}}) {
-            const auto data = renderer::BuildShadowCascades(camera, light, 25, aspect, 2048);
+            const auto data = renderer::BuildShadowCascades(camera, light, 25, aspect, 2048, count);
             const auto inverseView = XMMatrixInverse(nullptr, camera.ViewMatrix());
             float previous = data.nearDistance;
-            for (uint32_t i = 0; i < renderer::kShadowCascadeCount; ++i) {
+            for (uint32_t i = 0; i < count; ++i) {
                 tests::Check(data.splits[i] > previous && std::isfinite(data.biases[i]) &&
                                  data.biases[i] > 0,
                              "分割距離が単調増加し、深度バイアスが有限である");
@@ -54,10 +56,32 @@ void RunShadowCascadeTests() {
                 }
                 previous = data.splits[i];
             }
-            const auto fine = renderer::BuildShadowCascades(camera, light, 25, aspect, 4096);
+            const auto fine = renderer::BuildShadowCascades(camera, light, 25, aspect, 4096, count);
             tests::Check(fine.splits == data.splits && fine.biases[0] < data.biases[0],
                          "解像度で分割位置は変えず、バイアスをテクセルの大きさへ合わせる");
         }
+    tests::Section("インスタンスの視錐台 — 透視・平行投影と境界");
+    for (auto projection : {XMMatrixPerspectiveFovRH(1.0f,1.5f,1.0f,100.0f),
+                            XMMatrixOrthographicRH(20,10,1,100)}) {
+        const auto view = XMMatrixLookAtRH(XMVectorSet(10,5,20,1),XMVectorSet(0,0,0,1),XMVectorSet(0,1,0,0));
+        const auto matrix = view*projection;
+        XMFLOAT4X4 stored; XMStoreFloat4x4(&stored,matrix);
+        const auto planes = renderer::InstanceFrustumPlanes(stored);
+        const auto inverse = XMMatrixInverse(nullptr,matrix);
+        for (auto clip : {XMVectorSet(0,0,0.5f,1),XMVectorSet(1.2f,0,0.5f,1),
+                          XMVectorSet(0,-1.2f,0.5f,1),XMVectorSet(0,0,-0.1f,1),XMVectorSet(0,0,1.1f,1)}) {
+            const auto world = XMVector3TransformCoord(clip,inverse);
+            bool inside = true;
+            for (const auto& plane : planes) inside &= XMVectorGetX(XMPlaneDotCoord(XMLoadFloat4(&plane),world)) >= 0;
+            const bool expected = std::abs(XMVectorGetX(clip))<=1 && std::abs(XMVectorGetY(clip))<=1 &&
+                                  XMVectorGetZ(clip)>=0 && XMVectorGetZ(clip)<=1;
+            tests::Check(inside==expected,"CPUの抽出平面がDirectXクリップ範囲と一致する");
+        }
+        for (const auto& plane : planes) {
+            const float length = std::sqrt(plane.x*plane.x+plane.y*plane.y+plane.z*plane.z);
+            tests::Check(std::abs(length-1)<0.0001f,"包囲球の半径をm単位で比較できる正規化平面");
+        }
+    }
     const XMFLOAT3 light{0.4f, 0.8f, 0.3f};
     const auto before = renderer::BuildShadowCascades(camera, light, 25, 2, 2048);
     auto moved = camera.State();
