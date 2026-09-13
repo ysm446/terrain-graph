@@ -2,6 +2,7 @@
 #include "renderer/ShadowCascades.h"
 #include "renderer/MaterialSphere.h"
 #include "renderer/ModelAsset.h"
+#include <utility>
 namespace tg::renderer {
 struct ModelInstanceDraw {
     uint32_t points = 0, rows = 0, count = 0, seed = 1;
@@ -26,6 +27,7 @@ class ModelPreview {
     Camera& GetCamera() { return m_camera; }
     bool HasOutput() const { return m_output.IsValid(); }
     D3D12_GPU_DESCRIPTOR_HANDLE OutputHandle() const { return m_output.srv.gpu; }
+    rhi::GpuTexture TakeOutput() { return std::exchange(m_output, {}); }
     void ResetView();
     void FocusView();
     void FrameView();

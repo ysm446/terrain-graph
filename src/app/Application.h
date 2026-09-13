@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "io/ProjectWorkspace.h"
+#include "app/AssetThumbnailCache.h"
 
 #include "compositor/MaterialLibrary.h"
 #include "compositor/MaterialStack.h"
@@ -209,6 +210,7 @@ private:
     void DrawRecentMenu();
     // saveAs が偽でも、まだ保存先が決まっていなければダイアログを出す。
     void RequestSaveProject(bool saveAs);
+    void SaveSceneThumbnail(const std::filesystem::path& path);
     // 画面下端のステータスバー。操作モード・評価中の状態と直近の通知を出す。
     // ドックスペースより前に呼ぶこと（作業領域をバーのぶん狭める）。
     void DrawStatusBar();
@@ -549,6 +551,7 @@ private:
     // ダイアログはフレームの中で出すが、読み書きは GPU 待機を伴うので、
     // 選ばれたパスをここへ積んでおき、次のフレームの頭で処理する。
     io::ProjectWorkspace m_workspace;
+    AssetThumbnailCache m_assetThumbnails;
     std::filesystem::path m_assetDirectory;
     std::vector<std::filesystem::directory_entry> m_assetEntries;
     std::filesystem::path m_selectedAssetPath;

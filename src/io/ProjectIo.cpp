@@ -2902,10 +2902,15 @@ bool SaveSharedAssets(ProjectWorkspace& workspace, const ProjectRefs& refs) {
 bool LoadSharedAsset(ProjectWorkspace& workspace, const fs::path& path,
                      rhi::Device& device, rhi::PipelineCache& pipelineCache, const ProjectRefs& refs) {
     if (!workspace.Scan()) return false;
-    const auto ref = workspace.Reference(path);
-    if (ref.is_null()) return false;
+    // 読み込み・サムネイル表示でアセットの原本を書き換えない。
+    json header;
+    if (!workspace.Contains(path) || !ProjectWorkspace::ReadJson(path, header)) return false;
+    const auto assetUid = ReadString(header, "uid");
+    if (assetUid.empty()) return false;
+    const json ref = {{"uid", assetUid}, {"path", RelativePathString(path, workspace.Root())}};
     const auto ext = path.extension();
-    const char* key = ext == L".tgmat" ? "materials" : ext == L".tgmodel" ? "models" : "skies";
+    const char* key = _wcsicmp(ext.c_str(), L".tgmat") == 0 ? "materials" :
+                      _wcsicmp(ext.c_str(), L".tgmodel") == 0 ? "models" : "skies";
     json document;
     document[key] = json::array({{{"id", 1}, {"asset", ref}}});
     if (!workspace.Expand(document)) return false;

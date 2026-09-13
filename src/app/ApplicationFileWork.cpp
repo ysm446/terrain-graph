@@ -53,6 +53,18 @@ void Application::RequestSaveProject(bool saveAs) {
     }
 }
 
+// 保存ボタンを押した時点で画面に表示していたビューポートを残す。
+// フレーム外で完了させ、保存後に別シーンへ切り替わっても混ざらないようにする。
+void Application::SaveSceneThumbnail(const std::filesystem::path& path) {
+    if (path.extension() != L".tgscene" || !m_renderer.HasOutput()) return;
+    const auto thumbnail = io::SceneThumbnailPath(path);
+    std::error_code error;
+    std::filesystem::create_directories(thumbnail.parent_path(), error);
+    if (error || !m_renderer.SaveOutputToPng(m_device, thumbnail, 256))
+        TG_LOG_WARN("シーンは保存しましたが、サムネイルを保存できませんでした");
+    m_assetThumbnails.Invalidate();
+}
+
 // キーボードショートカット。メニューと同じ入口（Request*）を通す。
 //
 // テキスト入力中でも効かせる（Ctrl + S は入力欄が食う操作ではない）。
@@ -101,11 +113,36 @@ void Application::HandleShortcuts() {
     }
 }
 
-// 最近使ったプロジェクト。名前を項目に、置き場所を右の列に出す。
-// 同じ名前のプロジェクトが別の場所にあっても見分けられるようにするため。
+// 最近使ったシーン。名前を項目に、置き場所を右の列に出す。
+// 同じ名前のシーンが別の場所にあっても見分けられるようにするため。
 void Application::DrawRecentMenu() {
-    const std::vector<std::filesystem::path>& entries = m_recentProjects.Entries();
-    if (!ImGui::BeginMenu("最近使ったプロジェクト", !entries.empty())) {
+    const auto& roots = m_recentProjects.Roots();
+    if (ImGui::BeginMenu("最近使ったルートフォルダ", !roots.empty())) {
+        for (size_t i = 0; i < roots.size(); ++i) {
+            const auto& root = roots[i];
+            ImGui::PushID(static_cast<int>(i));
+            if (ImGui::BeginMenu(ToUtf8Display(root.path).c_str())) {
+                if (ImGui::MenuItem("このルートを開く")) m_pendingRoot = root.path;
+                ImGui::Separator();
+                if (root.scenes.empty()) ImGui::MenuItem("最近使ったシーンはありません", nullptr, false, false);
+                for (const auto& scene : root.scenes) {
+                    ImGui::PushID(ToUtf8Portable(scene).c_str());
+                    if (ImGui::MenuItem(ToUtf8Display(scene.filename()).c_str(), ToUtf8Display(scene.parent_path()).c_str())) {
+                        m_pendingRoot = root.path;
+                        m_pendingProjectOpen = scene;
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::EndMenu();
+            }
+            ImGui::PopID();
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("ルートとシーンの履歴を消す")) m_recentProjects.ClearRoots();
+        ImGui::EndMenu();
+    }
+    const std::vector<std::filesystem::path>& entries = m_recentProjects.Entries(m_workspace.Root());
+    if (!ImGui::BeginMenu("最近使ったシーン", !entries.empty())) {
         return;
     }
 
@@ -127,7 +164,7 @@ void Application::DrawRecentMenu() {
 
     ImGui::Separator();
     if (ImGui::MenuItem("履歴を消す")) {
-        m_recentProjects.Clear();
+        m_recentProjects.Clear(m_workspace.Root());
     }
     ImGui::EndMenu();
 }
@@ -327,7 +364,7 @@ void Application::ProcessPendingFileWork() {
             if (m_options.referenceCloudLighting) m_renderer.CloudLightingCache() = false;
             if (m_options.fullResolutionClouds) m_renderer.FullResolutionClouds() = true;
             if (m_options.disableTemporalClouds) m_renderer.TemporalClouds() = false;
-            m_recentProjects.Add(path);
+            m_recentProjects.Add(m_workspace.Root(), path);
             m_projectPath = path;
             m_assetRefresh = true;
             m_selectedGraphNode = m_graph.FindNode(m_options.selectNode) ? m_options.selectNode : 0;
@@ -353,7 +390,7 @@ void Application::ProcessPendingFileWork() {
             UpdateWindowTitle();
         } else {
             // 消えた / 壊れたプロジェクトを履歴に残しても、選べるだけで意味がない。
-            m_recentProjects.Remove(path);
+            m_recentProjects.Remove(m_workspace.Root(), path);
         }
     }
 
@@ -364,8 +401,9 @@ void Application::ProcessPendingFileWork() {
         io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
                              m_skyLibrary,     m_renderer,       m_graph, &m_models};
         if (io::SaveProject(path, m_device, refs, &m_workspace)) {
+            SaveSceneThumbnail(path);
             m_assetRefresh = true;
-            m_recentProjects.Add(path);
+            m_recentProjects.Add(m_workspace.Root(), path);
             m_projectPath = path;
             UpdateWindowTitle();
             if (m_saveThenSwitch) { m_saveThenSwitch = false; ResumeSceneSwitch(); }

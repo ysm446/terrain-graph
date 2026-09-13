@@ -1,140 +1,119 @@
 #include "io/RecentFiles.h"
-
 #include "core/PathUtf8.h"
-
 #include "core/Log.h"
 #include "io/AppSettings.h"
-
 #include <nlohmann/json.hpp>
-
 #include <Windows.h>
-
+#include <algorithm>
 #include <fstream>
-#include <string>
-#include <system_error>
 
 namespace tg::io {
-namespace {
-
 namespace fs = std::filesystem;
 using nlohmann::json;
-
-constexpr const char* kFormat = "terrain-graph.recent";
-constexpr int kVersion = 1;
-
-// 履歴の置き場所。設定と同じフォルダへ置く。
-fs::path HistoryPath() {
-    return AppDataDirectory() / L"recent.json";
+namespace {
+fs::path Normalize(const fs::path& path) {
+    std::error_code error;
+    auto normalized = fs::weakly_canonical(path, error);
+    return error ? path.lexically_normal() : normalized;
 }
-
-// 同じファイルを別の書き方で指していても 1 つに寄せる。
 bool SamePath(const fs::path& a, const fs::path& b) {
-    std::error_code errorA;
-    std::error_code errorB;
-    const fs::path normalizedA = fs::weakly_canonical(a, errorA);
-    const fs::path normalizedB = fs::weakly_canonical(b, errorB);
-    const fs::path& keyA = errorA ? a : normalizedA;
-    const fs::path& keyB = errorB ? b : normalizedB;
-    return _wcsicmp(keyA.c_str(), keyB.c_str()) == 0;
+    return _wcsicmp(Normalize(a).c_str(), Normalize(b).c_str()) == 0;
 }
-
-}  // namespace
-
-void RecentFiles::Load() {
-    m_entries.clear();
-
-    std::ifstream stream(HistoryPath(), std::ios::binary);
-    if (!stream.is_open()) {
-        return;  // まだ履歴が無いだけ。エラーにしない。
-    }
-
-    // 例外は使わない方針なので、パース失敗は discarded で受ける。
-    const json document = json::parse(stream, nullptr, false);
-    if (document.is_discarded() || !document.is_object()) {
-        TG_LOG_WARN("最近使ったプロジェクトの履歴を読めませんでした");
-        return;
-    }
-    const auto format = document.find("format");
-    if (format == document.end() || !format->is_string() ||
-        format->get<std::string>() != kFormat) {
-        return;
-    }
-
-    const auto projects = document.find("projects");
-    if (projects == document.end() || !projects->is_array()) {
-        return;
-    }
-    for (const json& entry : *projects) {
-        if (!entry.is_string()) {
-            continue;
-        }
-        const fs::path path = FromUtf8(entry.get<std::string>());
-        if (path.empty() || m_entries.size() >= kMaxEntries) {
-            continue;
-        }
-        m_entries.push_back(path);
+void Insert(std::vector<fs::path>& paths, const fs::path& path) {
+    std::erase_if(paths, [&](const auto& existing) { return SamePath(existing, path); });
+    paths.insert(paths.begin(), Normalize(path));
+    if (paths.size() > RecentFiles::kMaxEntries) paths.resize(RecentFiles::kMaxEntries);
+}
+void ReadPaths(const json& values, std::vector<fs::path>& paths) {
+    if (!values.is_array()) return;
+    for (auto it = values.rbegin(); it != values.rend(); ++it)
+        if (it->is_string() && !it->get_ref<const std::string&>().empty()) Insert(paths, FromUtf8(it->get<std::string>()));
+}
+json WritePaths(const std::vector<fs::path>& paths) {
+    auto values = json::array();
+    for (const auto& path : paths) values.push_back(ToUtf8Portable(path));
+    return values;
+}
+}
+void RecentFiles::Load(const fs::path& storage) {
+    m_storage = storage.empty() ? AppDataDirectory() / L"recent.json" : storage;
+    m_roots.clear(); m_legacy.clear();
+    std::ifstream stream(m_storage, std::ios::binary);
+    if (!stream) return;
+    const auto document = json::parse(stream, nullptr, false);
+    if (!document.is_object() || document.value("format", json()) != "terrain-graph.recent") return;
+    ReadPaths(document.value("projects", json()), m_legacy);
+    const auto roots = document.value("roots", json());
+    if (!roots.is_array()) return;
+    for (const auto& entry : roots) {
+        if (!entry.is_object() || !entry.value("path", json()).is_string()) continue;
+        const auto path = FromUtf8(entry["path"].get<std::string>());
+        if (path.empty() || m_roots.size() >= kMaxEntries ||
+            std::any_of(m_roots.begin(), m_roots.end(), [&](const auto& r) { return SamePath(r.path, path); })) continue;
+        RootEntry root{Normalize(path), {}};
+        ReadPaths(entry.value("scenes", json()), root.scenes);
+        m_roots.push_back(std::move(root));
     }
 }
-
-void RecentFiles::Add(const fs::path& path) {
-    if (path.empty()) {
-        return;
+void RecentFiles::AddRoot(const fs::path& root) {
+    if (root.empty()) return;
+    RootEntry entry{Normalize(root), {}};
+    const auto found = std::find_if(m_roots.begin(), m_roots.end(), [&](const auto& r) { return SamePath(r.path, root); });
+    if (found != m_roots.end()) { entry = *found; m_roots.erase(found); }
+    // 旧形式の履歴は所属ルートを開いたときに移行する。
+    for (auto it = m_legacy.rbegin(); it != m_legacy.rend(); ++it) {
+        auto parent = it->parent_path();
+        while (!parent.empty()) {
+            if (SamePath(parent, root)) { Insert(entry.scenes, *it); break; }
+            // 入れ子の別プロジェクトに属する履歴を、親ルートへ取り込まない。
+            std::ifstream marker(parent / L"project.tgproj", std::ios::binary);
+            if (marker) {
+                const auto project = json::parse(marker, nullptr, false);
+                if (project.is_object() && project.value("format", json()) == "terrain-graph.workspace") break;
+            }
+            const auto next = parent.parent_path();
+            if (next == parent) break;
+            parent = next;
+        }
     }
-
-    // 絶対パスで持つ。作業ディレクトリが変わっても指し先が変わらないようにする。
-    std::error_code error;
-    const fs::path absolute = fs::absolute(path, error);
-    const fs::path entry = error ? path : absolute;
-
-    std::erase_if(m_entries, [&entry](const fs::path& existing) {
-        return SamePath(existing, entry);
+    std::erase_if(m_legacy, [&](const auto& scene) {
+        return std::any_of(entry.scenes.begin(), entry.scenes.end(), [&](const auto& p) { return SamePath(p, scene); });
     });
-    m_entries.insert(m_entries.begin(), entry);
-    if (m_entries.size() > kMaxEntries) {
-        m_entries.resize(kMaxEntries);
-    }
+    m_roots.insert(m_roots.begin(), std::move(entry));
+    if (m_roots.size() > kMaxEntries) m_roots.resize(kMaxEntries);
     Save();
 }
-
-void RecentFiles::Remove(const fs::path& path) {
-    const size_t before = m_entries.size();
-    std::erase_if(m_entries, [&path](const fs::path& existing) {
-        return SamePath(existing, path);
-    });
-    if (m_entries.size() != before) {
-        Save();
-    }
+void RecentFiles::Add(const fs::path& root, const fs::path& scene) {
+    if (root.empty() || scene.empty()) return;
+    AddRoot(root); Insert(m_roots.front().scenes, scene); Save();
 }
-
-void RecentFiles::Clear() {
-    m_entries.clear();
+const std::vector<fs::path>& RecentFiles::Entries(const fs::path& root) const {
+    static const std::vector<fs::path> empty;
+    for (const auto& entry : m_roots) if (SamePath(entry.path, root)) return entry.scenes;
+    return empty;
+}
+void RecentFiles::Remove(const fs::path& root, const fs::path& scene) {
+    for (auto& entry : m_roots) if (SamePath(entry.path, root))
+        std::erase_if(entry.scenes, [&](const auto& p) { return SamePath(p, scene); });
     Save();
 }
-
-bool RecentFiles::Save() const {
-    const fs::path path = HistoryPath();
+void RecentFiles::Clear(const fs::path& root) {
+    for (auto& entry : m_roots) if (SamePath(entry.path, root)) entry.scenes.clear();
+    Save();
+}
+void RecentFiles::ClearRoots() { m_roots.clear(); m_legacy.clear(); Save(); }
+void RecentFiles::Save() const {
+    if (m_storage.empty()) return;
     std::error_code error;
-    if (const fs::path parent = path.parent_path(); !parent.empty()) {
-        fs::create_directories(parent, error);
-    }
-
-    json document;
-    document["format"] = kFormat;
-    document["version"] = kVersion;
-    json projects = json::array();
-    for (const fs::path& entry : m_entries) {
-        projects.push_back(ToUtf8Portable(entry));
-    }
-    document["projects"] = std::move(projects);
-
-    std::ofstream stream(path, std::ios::binary | std::ios::trunc);
-    if (!stream.is_open()) {
-        TG_LOG_WARN("最近使ったプロジェクトの履歴を保存できませんでした");
-        return false;
-    }
-    // 壊れた文字列が混ざっていても例外を出さない（不正な UTF-8 は置換文字にする）。
+    fs::create_directories(m_storage.parent_path(), error);
+    json roots = json::array();
+    for (const auto& entry : m_roots) roots.push_back({{"path", ToUtf8Portable(entry.path)}, {"scenes", WritePaths(entry.scenes)}});
+    const json document = {{"format", "terrain-graph.recent"}, {"version", 2}, {"roots", roots}, {"projects", WritePaths(m_legacy)}};
+    const fs::path temporary = m_storage.wstring() + L".tmp";
+    std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
     stream << document.dump(2, ' ', false, json::error_handler_t::replace) << '\n';
-    return stream.good();
+    stream.close();
+    if (!stream || !MoveFileExW(temporary.c_str(), m_storage.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        TG_LOG_WARN("最近使ったルート・シーンの履歴を保存できませんでした");
 }
-
 }  // namespace tg::io

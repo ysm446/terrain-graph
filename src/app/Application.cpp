@@ -156,16 +156,15 @@ bool Application::Initialize(const StartupOptions& options) {
     // 読み込みは GPU 待機を伴うので、ここでは要求だけ積む。
     if (!m_options.importModel.empty()) HandleDroppedFiles({m_options.importModel});
 
-    // 最初のフレームの前に ProcessPendingFileWork が処理する。
+    // 通常起動は新規シーン。明示されたシーンだけ最初のフレームの前に読み込む。
     if (!options.projectPath.empty()) {
         m_pendingProjectOpen = options.projectPath;
-    } else {
-        m_pendingProjectOpen = m_workspace.StartupScene();
     }
     UpdateWindowTitle();
 
     m_settings.Load();
     m_recentProjects.Load();
+    if (!Headless()) m_recentProjects.AddRoot(m_workspace.Root());
     // 表示設定は写し取らない。使うところで m_settings.Display() を直接読む。
     // 設定に拡大率が残っていれば、ウィンドウの大きさもそれに合わせる。
     ApplyUiScale();
@@ -186,6 +185,7 @@ void Application::Shutdown() {
 
     m_device.WaitForGpu();
     // ImGui のコンテキストより先に破棄する（エディタが ImGui に依存している）。
+    m_assetThumbnails.Destroy(m_device);
     DestroyGraphEditor();
     for (auto& slot : m_cloudMasks) if (slot.evaluator.Resolution() != 0) slot.evaluator.Destroy(m_device);
     m_paintMasks.Destroy(m_device);
@@ -326,11 +326,13 @@ int Application::Run() {
 
         // 開発用: 数フレーム描いてからプロジェクトを保存して終了する。
         // 対話せずに保存と読み込みを確かめるために使う。
-        if (!m_options.saveProjectPath.empty() && m_frameCounter >= m_options.screenshotFrame) {
+        if (!m_options.saveProjectPath.empty() && m_frameCounter >= m_options.screenshotFrame &&
+            (m_options.saveProjectPath.extension() != L".tgscene" || m_frameCounter > 0)) {
             const io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
                                        m_skyLibrary,     m_renderer,       m_graph, &m_models};
             if (!io::SaveProject(m_options.saveProjectPath, m_device, refs,
                 m_options.saveProjectPath.extension() == L".tgscene" ? &m_workspace : nullptr)) return 1;
+            SaveSceneThumbnail(m_options.saveProjectPath);
             break;
         }
 
@@ -500,6 +502,7 @@ int Application::Run() {
                           m_textureLibrary, m_materialLibrary, m_paintMasks);
 
         RenderModelPreviews(commandList);
+        m_assetThumbnails.Render(m_device, m_pipelineCache, commandList, m_renderer);
 
         // マテリアルプレビューの球。**窓を開いている間だけ描く。**
         // ImGui はこのフレームで描いた中身をそのまま読む（submit 済みの
@@ -531,7 +534,8 @@ int Application::Run() {
         const bool evaluationIdle = !m_renderer.Evaluator().IsEvaluating() &&
             m_cloudMasks[0].Idle() && m_cloudMasks[1].Idle();
         const bool captureUi = !m_options.uiScreenshotPath.empty() &&
-                               (m_frameCounter + 1) >= m_options.screenshotFrame && evaluationIdle;
+                               (m_frameCounter + 1) >= m_options.screenshotFrame && evaluationIdle &&
+                               !m_assetThumbnails.HasPendingWork();
         if (captureUi) {
             m_device.RequestBackBufferCapture(m_options.uiScreenshotPath);
         } else if (m_screenshotPending) {
@@ -682,6 +686,7 @@ void Application::DrawUi() {
     DrawGraphPanel();
     // アセットの帯は畳める。出さなければドックノードが空になり、中央（ビューポート）が
     // その高さをもらう。ウィンドウはドック先を覚えているので、戻せば同じ所へ入る。
+    m_assetThumbnails.BeginRequests();
     if (m_settings.Display().showAssetBand) {
         DrawAssetBrowser();
     }

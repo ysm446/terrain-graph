@@ -1,37 +1,28 @@
 #pragma once
-
 #include <filesystem>
 #include <vector>
 
 namespace tg::io {
-
-// 最近開いたプロジェクトの履歴。
-//
-// プロジェクトの中身ではなくアプリ側の状態なので、`.tgproj` には入れず、
-// **`%LOCALAPPDATA%/terrain-graph/recent.json`** に置く。
-// 作業ディレクトリに置くと、exe の場所を変えるたびに履歴が分かれてしまう。
+// アプリ側に保存するルート履歴と、ルートごとのシーン履歴。
 class RecentFiles {
 public:
-    // 保持する件数。多すぎるとメニューが縦に伸びて選びにくい。
     static constexpr size_t kMaxEntries = 10;
-
-    // 起動時に 1 回読む。ファイルが無ければ空のまま。
-    void Load();
-
-    // 先頭へ入れる。すでにあれば先頭へ引き上げる（重複は作らない）。
-    // 追加のたびに書き出すので、異常終了しても履歴は残る。
-    void Add(const std::filesystem::path& path);
-    // 開けなくなったものを外す。
-    void Remove(const std::filesystem::path& path);
-    void Clear();
-
-    // 新しい順。
-    const std::vector<std::filesystem::path>& Entries() const { return m_entries; }
-
+    struct RootEntry {
+        std::filesystem::path path;
+        std::vector<std::filesystem::path> scenes;
+    };
+    void Load(const std::filesystem::path& storage = {});
+    void AddRoot(const std::filesystem::path& root);
+    void Add(const std::filesystem::path& root, const std::filesystem::path& scene);
+    void Remove(const std::filesystem::path& root, const std::filesystem::path& scene);
+    void Clear(const std::filesystem::path& root);
+    void ClearRoots();
+    const std::vector<RootEntry>& Roots() const { return m_roots; }
+    const std::vector<std::filesystem::path>& Entries(const std::filesystem::path& root) const;
 private:
-    bool Save() const;
-
-    std::vector<std::filesystem::path> m_entries;
+    void Save() const;
+    std::filesystem::path m_storage;
+    std::vector<RootEntry> m_roots;
+    std::vector<std::filesystem::path> m_legacy;
 };
-
 }  // namespace tg::io

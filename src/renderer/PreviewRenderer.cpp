@@ -1,3 +1,4 @@
+#include "rhi/TextureReadback.h"
 #include "../../shaders/AtmosphereIntegration.hlsli"
 #include "renderer/PreviewRenderer.h"
 
@@ -501,56 +502,8 @@ void PreviewRenderer::ReleaseTargets(rhi::Device& device) {
     m_height = 0;
 }
 
-bool PreviewRenderer::SaveOutputToPng(rhi::Device& device, const std::filesystem::path& path) {
-    if (!m_output.IsValid()) {
-        return false;
-    }
-
-    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
-    UINT rowCount = 0;
-    UINT64 rowSizeInBytes = 0;
-    UINT64 totalBytes = 0;
-    const D3D12_RESOURCE_DESC resourceDesc = m_output.resource->GetDesc();
-    device.GetDevice()->GetCopyableFootprints(&resourceDesc, 0, 1, 0, &footprint, &rowCount,
-                                              &rowSizeInBytes, &totalBytes);
-
-    rhi::GpuBuffer readback;
-    if (!device.Allocator().CreateReadbackBuffer(totalBytes, L"PreviewReadback", readback)) {
-        return false;
-    }
-
-    const D3D12_RESOURCE_STATES previousState = m_output.state;
-    const bool executed = device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {
-        TransitionIfNeeded(commandList, m_output, D3D12_RESOURCE_STATE_COPY_SOURCE);
-
-        const CD3DX12_TEXTURE_COPY_LOCATION destination(readback.resource.Get(), footprint);
-        const CD3DX12_TEXTURE_COPY_LOCATION source(m_output.resource.Get(), 0);
-        commandList->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
-
-        TransitionIfNeeded(commandList, m_output, previousState);
-    });
-    if (!executed) {
-        device.DeferRelease(readback);
-        return false;
-    }
-
-    void* mapped = nullptr;
-    const D3D12_RANGE readRange = {0, static_cast<SIZE_T>(totalBytes)};
-    if (!TG_CHECK_HR(readback.resource->Map(0, &readRange, &mapped))) {
-        device.DeferRelease(readback);
-        return false;
-    }
-
-    const bool saved =
-        SaveRgba8Png(path, m_width, m_height, footprint.Footprint.RowPitch,
-                     static_cast<const uint8_t*>(mapped) + footprint.Offset);
-
-    const D3D12_RANGE writtenRange = {0, 0};
-    readback.resource->Unmap(0, &writtenRange);
-
-    device.Defer(readback.resource);
-    device.Defer(readback.allocation);
-    return saved;
+bool PreviewRenderer::SaveOutputToPng(rhi::Device& device, const std::filesystem::path& path, uint32_t maxSize) {
+    return rhi::SaveTextureToPng(device, m_output, path, maxSize);
 }
 
 bool PreviewRenderer::Resize(rhi::Device& device, uint32_t width, uint32_t height) {

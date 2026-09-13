@@ -307,7 +307,7 @@ public:
     }
 
     // 表示用テクスチャを PNG に書き出す。フレームの外で呼ぶこと。
-    bool SaveOutputToPng(rhi::Device& device, const std::filesystem::path& path);
+    bool SaveOutputToPng(rhi::Device& device, const std::filesystem::path& path, uint32_t maxSize = 0);
 
     bool HasOutput() const { return m_output.IsValid(); }
     D3D12_GPU_DESCRIPTOR_HANDLE OutputHandle() const { return m_output.srv.gpu; }

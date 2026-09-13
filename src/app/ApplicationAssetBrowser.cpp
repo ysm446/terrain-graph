@@ -90,17 +90,22 @@ void Application::ProcessAssetWork() {
         const auto root = m_pendingRoot; m_pendingRoot.clear();
         io::ProjectWorkspace next;
         if (next.Open(root)) {
-            nlohmann::json validation;
-            if (!next.StartupScene().empty() && !next.ReadScene(next.StartupScene(), validation)) {
-                TG_LOG_ERROR("開始シーンを読み込めません。現在のプロジェクトを保持します");
-                return;
+            // ルートの選択とシーンの選択を分ける。履歴から指定されたシーンだけ開く。
+            if (!m_pendingProjectOpen.empty() && m_pendingProjectOpen.extension() == L".tgscene") {
+                nlohmann::json validation;
+                if (!next.ReadScene(m_pendingProjectOpen, validation)) {
+                    TG_LOG_ERROR("シーンを読み込めません。現在のプロジェクトを保持します");
+                    m_pendingProjectOpen.clear();
+                    return;
+                }
             }
             m_workspace = std::move(next);
             m_assetDirectory = m_workspace.Root();
             m_assetRefresh = true;
-            const auto scene = m_workspace.StartupScene();
-            if (!scene.empty()) m_pendingProjectOpen = scene;
-            else { ResetProject(); m_projectPath.clear(); UpdateWindowTitle(); }
+            if (!Headless()) m_recentProjects.AddRoot(m_workspace.Root());
+            ResetProject(); m_projectPath.clear(); UpdateWindowTitle();
+        } else {
+            m_pendingProjectOpen.clear();
         }
     }
     io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
@@ -110,6 +115,7 @@ void Application::ProcessAssetWork() {
         CommitMaterialEdit();
         if (!io::SaveSharedAssets(m_workspace, refs)) TG_LOG_ERROR("共有アセットを保存できませんでした");
         m_assetRefresh = true;
+        m_assetThumbnails.Invalidate();
     }
     if (!m_pendingAssetOpen.empty()) {
         const auto path = m_pendingAssetOpen; m_pendingAssetOpen.clear();
@@ -144,13 +150,14 @@ void Application::ProcessAssetWork() {
         m_assetRefresh = true;
     }
     if (m_assetRefresh) RefreshAssetBrowser();
+    m_assetThumbnails.Process(m_device, m_pipelineCache, m_workspace, m_assetDirectory, m_renderer);
 }
 
 void Application::DrawAssetBrowser() {
     if (!ImGui::Begin("アセット")) { ImGui::End(); return; }
     if (ImGui::Button("ルートを開く…")) RequestOpenProject();
     ImGui::SameLine();
-    if (ImGui::Button("更新")) { m_assetRefresh = true; m_workspace.Scan(); }
+    if (ImGui::Button("更新")) { m_assetRefresh = true; m_workspace.Scan(); m_assetThumbnails.Invalidate(); }
     ImGui::SameLine();
     if (ImGui::Button("アセットを保存")) m_pendingAssetsSave = true;
     ImGui::SameLine();
@@ -212,6 +219,8 @@ void Application::DrawAssetBrowser() {
                     handle = static_cast<ImTextureID>(found->second->OutputHandle().ptr);
                 break;
             }
+            if (!handle && !folder && ImGui::IsRectVisible(ImVec2(size, size)))
+                handle = static_cast<ImTextureID>(m_assetThumbnails.Request(path).ptr);
             ImGui::PushID(ToUtf8Portable(path).c_str()); ImGui::BeginGroup();
             const auto thumb = ui::ThumbnailButton("##asset", handle, size, m_selectedAssetPath == path);
             if (!handle) {
@@ -222,6 +231,8 @@ void Application::DrawAssetBrowser() {
                 ImGui::GetWindowDrawList()->AddText(ImVec2((min.x + max.x - text.x) * 0.5f, (min.y + max.y - text.y) * 0.5f),
                                                     ImGui::GetColorU32(ImGuiCol_TextDisabled), type);
             }
+            if (!handle && m_assetThumbnails.Failed(path))
+                ui::MissingBadge(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
             if (thumb.clicked) m_selectedAssetPath = path;
             if (thumb.doubleClicked || (thumb.clicked && (ext == ".tgmodel" || ext == ".fbx"))) {
                 if (folder) { m_assetDirectory = path; m_assetRefresh = true; }
