@@ -141,7 +141,9 @@ bool Application::Initialize(const StartupOptions& options) {
     });
 
     if (!m_workspace.Open(options.projectRoot.empty() ? ResolveScreenshotDirectory().parent_path() : options.projectRoot)) return false;
+    io::MigrateSceneThumbnails(m_workspace);
     m_assetDirectory = m_workspace.Root();
+    m_pendingAssetDeleteInspect = options.inspectAssetDelete;
     m_pendingTexturePaths = options.texturePaths;
 
     // 天球は必ず 1 つある状態にする。--hdri が来ていれば、その既定の天球へ入れる。
@@ -698,6 +700,7 @@ void Application::DrawUi() {
     DrawTexturePreviewWindow();
     DrawSkyPreviewWindow();
     DrawSceneSwitchDialog();
+    DrawAssetDeleteDialog();
     DrawInfoWindow();
     DrawSettingsWindow();
     DrawExportWindow();

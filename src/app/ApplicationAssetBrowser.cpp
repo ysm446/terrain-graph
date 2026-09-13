@@ -22,7 +22,88 @@ bool IsImage(const std::string& ext) {
     return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".exr" ||
            ext == ".tga" || ext == ".bmp";
 }
+// サムネイル枠の中央へ、タブ付きフォルダの輪郭だけを描く。
+void DrawFolderIcon(const ImVec2& min, const ImVec2& max) {
+    const float size = std::min(max.x - min.x, max.y - min.y);
+    const float left = (min.x + max.x) * 0.5f - size * 0.34f;
+    const float top = (min.y + max.y) * 0.5f - size * 0.23f;
+    const auto point = [&](float x, float y) { return ImVec2(left + size * x, top + size * y); };
+    auto* draw = ImGui::GetWindowDrawList();
+    // 閉じる位置は上辺の途中に置き、終点と始点の重複による線の歪みを避ける。
+    draw->PathLineTo(point(0.12f, 0.0f));
+    draw->PathLineTo(point(0.23f, 0.0f));
+    draw->PathLineTo(point(0.31f, 0.08f));
+    draw->PathLineTo(point(0.64f, 0.08f));
+    draw->PathBezierCubicCurveTo(point(0.67f, 0.08f), point(0.68f, 0.09f), point(0.68f, 0.12f));
+    draw->PathLineTo(point(0.68f, 0.44f));
+    draw->PathBezierCubicCurveTo(point(0.68f, 0.47f), point(0.67f, 0.48f), point(0.64f, 0.48f));
+    draw->PathLineTo(point(0.04f, 0.48f));
+    draw->PathBezierCubicCurveTo(point(0.01f, 0.48f), point(0.0f, 0.47f), point(0.0f, 0.44f));
+    draw->PathLineTo(point(0.0f, 0.04f));
+    draw->PathBezierCubicCurveTo(point(0.0f, 0.01f), point(0.01f, 0.0f), point(0.04f, 0.0f));
+    const auto color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    const float thickness = size / 42.0f;
+    draw->PathStroke(color, ImDrawFlags_Closed, thickness);
+    draw->AddLine(point(0.0f, 0.15f), point(0.68f, 0.15f), color, thickness);
 }
+}
+bool Application::IsAssetLoaded(const fs::path& path) const {
+    const auto matches = [&](const fs::path& candidate) {
+        if (candidate.empty()) return false;
+        std::error_code ea, eb;
+        const auto a = fs::weakly_canonical(candidate, ea), b = fs::weakly_canonical(path, eb);
+        return !ea && !eb && _wcsicmp(a.c_str(), b.c_str()) == 0;
+    };
+    if (matches(m_projectPath)) return true;
+    if (!m_projectPath.empty()) {
+        const auto paintDirectory = m_projectPath.parent_path() / (m_projectPath.stem().wstring() + L".assets");
+        for (auto parent = path.parent_path(); !parent.empty();) {
+            std::error_code error;
+            if (fs::equivalent(parent, paintDirectory, error)) return true;
+            const auto next = parent.parent_path();
+            if (next == parent) break;
+            parent = next;
+        }
+    }
+    for (const auto& a : m_textureLibrary.Entries()) if (matches(a.path)) return true;
+    for (const auto& a : m_materialLibrary.Entries()) if (matches(a.assetPath)) return true;
+    for (const auto& a : m_skyLibrary.Entries()) if (matches(a.assetPath) || matches(a.sky.hdriPath)) return true;
+    for (const auto& a : m_models) if (matches(a.assetPath) || matches(a.path)) return true;
+    return false;
+}
+void Application::DrawAssetDeleteDialog() {
+    if (m_assetDeleteDialog && !ImGui::IsPopupOpen("アセットファイルの削除")) ImGui::OpenPopup("アセットファイルの削除");
+    if (!ImGui::BeginPopupModal("アセットファイルの削除", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    const auto& report = m_assetDeleteRelations;
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ui::Scaled(520));
+    ImGui::TextUnformatted(ToUtf8Display(report.target).c_str());
+    ImGui::PopTextWrapPos();
+    ui::HintText("元ファイルと付随する.metaを、ルート内の退避フォルダへ移します。");
+    const auto list = [&](const char* title, const std::vector<fs::path>& paths) {
+        if (paths.empty()) return;
+        ImGui::Separator(); ImGui::TextUnformatted(title);
+        if (ImGui::BeginChild(title, ImVec2(ui::Scaled(520), std::min(float(paths.size()), 5.0f) * ImGui::GetTextLineHeightWithSpacing() + ui::Scaled(12)), ImGuiChildFlags_Borders))
+            for (const auto& path : paths) ImGui::TextUnformatted(ToUtf8Display(path.lexically_relative(m_workspace.Root())).c_str());
+        ImGui::EndChild();
+    };
+    list("一緒に退避するファイル", report.companions);
+    list("直接の参照元（削除すると参照切れになります）", report.referencers);
+    list("関連ファイル（削除せず残します）", report.related);
+    const bool loaded = IsAssetLoaded(report.target);
+    if (!report.complete) ui::HintText("参照関係をすべて確認できませんでした。読めないファイルやリンクを確認してください。");
+    if (loaded) ui::HintText("現在のシーンに読み込まれています。新規シーンなどへ切り替えてから削除してください。");
+    ImGui::Separator();
+    ImGui::BeginDisabled(!report.complete || loaded);
+    if (ImGui::Button("削除する")) {
+        m_pendingAssetDelete = true; m_assetDeleteDialog = false; ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndDisabled(); ImGui::SameLine();
+    if (ImGui::Button("キャンセル") || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+        m_assetDeleteDialog = false; ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
 void Application::ResumeSceneSwitch() {
     m_pendingRoot = std::move(m_deferredRoot); m_deferredRoot.clear();
     m_pendingProjectOpen = std::move(m_deferredScene); m_deferredScene.clear();
@@ -74,6 +155,21 @@ void Application::RefreshAssetBrowser() {
 }
 
 void Application::ProcessAssetWork() {
+    if (m_pendingAssetDelete) {
+        m_pendingAssetDelete = false;
+        const auto path = m_assetDeleteRelations.target;
+        if (!IsAssetLoaded(path) && io::RetireAsset(m_workspace, m_assetDeleteRelations)) {
+            m_recentProjects.Remove(m_workspace.Root(), path);
+            m_selectedAssetPath.clear(); m_assetRefresh = true; m_assetThumbnails.Invalidate();
+        } else {
+            TG_LOG_WARN("削除できませんでした。対象と参照関係を再確認してください");
+            m_pendingAssetDeleteInspect = path;
+        }
+    }
+    if (!m_pendingAssetDeleteInspect.empty()) {
+        m_assetDeleteRelations = io::InspectAssetRelations(m_workspace, m_pendingAssetDeleteInspect);
+        m_pendingAssetDeleteInspect.clear(); m_assetDeleteDialog = true;
+    }
     // --projectには従来のシーンだけでなくルートと管理ファイルも渡せる。
     if (!m_pendingProjectOpen.empty()) {
         std::error_code error;
@@ -100,6 +196,7 @@ void Application::ProcessAssetWork() {
                 }
             }
             m_workspace = std::move(next);
+            io::MigrateSceneThumbnails(m_workspace);
             m_assetDirectory = m_workspace.Root();
             m_assetRefresh = true;
             if (!Headless()) m_recentProjects.AddRoot(m_workspace.Root());
@@ -163,7 +260,12 @@ void Application::DrawAssetBrowser() {
     ImGui::SameLine();
     ImGui::TextDisabled("%s", ToUtf8Display(m_assetDirectory).c_str());
 
-    if (ImGui::BeginChild("folders", ImVec2(ui::Scaled(190), 0), ImGuiChildFlags_Borders)) {
+    const auto available = ImGui::GetContentRegionAvail();
+    const float margin = ui::Scaled(ui::kSplitterMargin);
+    const float usable = std::max(2.0f, available.x - margin * 2.0f - ui::Scaled(ui::kSplitterGrabWidth));
+    const float minimum = std::min(ui::Scaled(120.0f), usable * 0.5f);
+    float folderWidth = std::clamp(ui::Scaled(m_settings.Ui().assetFolderWidth), minimum, usable - minimum);
+    if (ImGui::BeginChild("folders", ImVec2(folderWidth, 0), ImGuiChildFlags_Borders)) {
         const auto tree = [&](auto&& self, const fs::path& directory, int depth) -> void {
             if (depth > 32) return;
             const auto label = ToUtf8Display(directory.filename());
@@ -187,7 +289,12 @@ void Application::DrawAssetBrowser() {
         };
         tree(tree, m_workspace.Root(), 0);
     }
-    ImGui::EndChild(); ImGui::SameLine();
+    ImGui::EndChild(); ImGui::SameLine(0.0f, margin);
+    const float previousWidth = folderWidth;
+    const bool released = ui::VerticalSplitter("assetFolderSplitter", &folderWidth, minimum, usable - minimum, available.y);
+    if (folderWidth != previousWidth) m_settings.Ui().assetFolderWidth = folderWidth / ui::Scaled(1.0f);
+    if (released) m_settings.Save();
+    ImGui::SameLine(0.0f, margin);
     if (ImGui::BeginChild("contents", ImVec2(0, 0), ImGuiChildFlags_Borders)) {
         if (m_assetDirectory != m_workspace.Root() && ImGui::Button("上のフォルダ")) {
             m_assetDirectory = m_assetDirectory.parent_path(); m_assetRefresh = true;
@@ -223,8 +330,10 @@ void Application::DrawAssetBrowser() {
                 handle = static_cast<ImTextureID>(m_assetThumbnails.Request(path).ptr);
             ImGui::PushID(ToUtf8Portable(path).c_str()); ImGui::BeginGroup();
             const auto thumb = ui::ThumbnailButton("##asset", handle, size, m_selectedAssetPath == path);
-            if (!handle) {
-                const char* type = folder ? "フォルダ" : ext == ".tgscene" ? "シーン" : ext == ".tgmat" ? "マテリアル" :
+            if (folder) {
+                DrawFolderIcon(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+            } else if (!handle) {
+                const char* type = ext == ".tgscene" ? "シーン" : ext == ".tgmat" ? "マテリアル" :
                     ext == ".tgsky" ? "天球" : ext == ".tgmodel" || ext == ".fbx" ? "モデル" : IsImage(ext) ? "画像" : "ファイル";
                 const auto min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
                 const auto text = ImGui::CalcTextSize(type);
@@ -250,6 +359,8 @@ void Application::DrawAssetBrowser() {
                     else m_pendingAssetOpen = path;
                 }
                 if (ImGui::MenuItem("エクスプローラで表示")) RevealFileInExplorer(path);
+                if (!folder && path.filename() != L"project.tgproj" && ImGui::MenuItem("削除…"))
+                    m_pendingAssetDeleteInspect = path;
                 ImGui::EndPopup();
             }
             ui::GridCaption(ToUtf8Display(path.filename()).c_str(), size);

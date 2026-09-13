@@ -197,6 +197,25 @@ SplitterResult RunSplitterDrag(float startHeight, float dragToY, float minHeight
     return result;
 }
 
+SplitterResult RunVerticalSplitterDrag(float deltaX) {
+    SplitterResult result{190.0f, 0}; // heightフィールドを幅として使う。
+    const float grabX = kSourcePos.x + result.height + tg::ui::kSplitterMargin + tg::ui::kSplitterGrabWidth * 0.5f;
+    for (int step = 0; step < 5; ++step) {
+        Frame(grabX + (step >= 2 ? deltaX : 0.0f), kSourcePos.y + 100.0f, step > 0 && step < 4);
+        BeginPanel();
+        ImGui::SetCursorScreenPos(kSourcePos);
+        ImGui::BeginChild("folders", ImVec2(result.height, 200.0f));
+        ImGui::EndChild();
+        ImGui::SameLine(0.0f, tg::ui::kSplitterMargin);
+        if (tg::ui::VerticalSplitter("verticalSplit", &result.height, 120.0f, 350.0f, 200.0f)) ++result.releasedCount;
+        ImGui::SameLine(0.0f, tg::ui::kSplitterMargin);
+        ImGui::BeginChild("assets", ImVec2(0.0f, 200.0f));
+        ImGui::EndChild();
+        ImGui::End(); ImGui::Render();
+    }
+    return result;
+}
+
 // --- 数値の直接入力（Enter で確定） -----------------------------------------
 //
 // Ctrl + クリックで入る直接入力は、打っている途中で値を書き戻さないこと。
@@ -330,6 +349,13 @@ void RunUiInteractionTests() {
     // 下限も同じ。上へ引き切っても一覧が消えない。
     const SplitterResult shrunk = RunSplitterDrag(200.0f, kSourcePos.y - 400.0f, 150.0f, 400.0f);
     Check(shrunk.height >= 150.0f, "下限を割って縮まない");
+
+    Section("階層とアセットの境界（左右ドラッグ）");
+    const auto wider = RunVerticalSplitterDrag(80.0f);
+    Check(wider.height == 270.0f, "右へドラッグすると階層の幅が広がる");
+    Check(wider.releasedCount == 1, "ドラッグ終了時に一度だけ保存を通知する");
+    Check(RunVerticalSplitterDrag(-500.0f).height == 120.0f, "階層側の最小幅を守る");
+    Check(RunVerticalSplitterDrag(500.0f).height == 350.0f, "アセット側の幅を残す");
 
     ImGui::DestroyContext();
 }

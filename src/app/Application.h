@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "io/ProjectWorkspace.h"
 #include "app/AssetThumbnailCache.h"
+#include "io/AssetRelations.h"
 
 #include "compositor/MaterialLibrary.h"
 #include "compositor/MaterialStack.h"
@@ -51,6 +52,8 @@ struct StartupOptions {
     // 起動時に開くプロジェクト (.tgproj)。空なら既定のスタックで始める。
     std::filesystem::path projectPath;
     std::filesystem::path projectRoot;
+    // 削除確認画面のスクリーンショット検証用。削除そのものは実行しない。
+    std::filesystem::path inspectAssetDelete;
     // 指定すると、数フレーム描いてから合成結果を画像へ書き出して終了する。
     // 対話せずに書き出しを確かめるための開発用オプション。
     std::filesystem::path exportDirectory;
@@ -166,6 +169,8 @@ private:
     void RefreshAssetBrowser();
     void ProcessAssetWork();
     void DrawSceneSwitchDialog();
+    void DrawAssetDeleteDialog();
+    bool IsAssetLoaded(const std::filesystem::path& path) const;
     void ResumeSceneSwitch();
     // テクスチャ一覧の右クリックメニュー（読み込む / 削除）。
     // target が kNoTexture なら、対象の要る項目は出さない。
@@ -555,6 +560,10 @@ private:
     std::filesystem::path m_assetDirectory;
     std::vector<std::filesystem::directory_entry> m_assetEntries;
     std::filesystem::path m_selectedAssetPath;
+    std::filesystem::path m_pendingAssetDeleteInspect;
+    io::AssetRelations m_assetDeleteRelations;
+    bool m_assetDeleteDialog = false;
+    bool m_pendingAssetDelete = false;
     std::filesystem::path m_pendingRoot;
     std::filesystem::path m_pendingAssetOpen;
     bool m_pendingAssetsSave = false;

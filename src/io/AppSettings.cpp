@@ -76,6 +76,10 @@ void AppSettings::Load() {
             // ImGuiLayer 側でも切るが、UI のスライダーに載る値にしておく。
             m_ui.fontSize = std::clamp(fontSize->get<int>(), 11, 28);
         }
+        if (const auto folderWidth = ui->find("assetFolderWidth");
+            folderWidth != ui->end() && folderWidth->is_number()) {
+            m_ui.assetFolderWidth = std::clamp(folderWidth->get<float>(), 60.0f, 4000.0f);
+        }
         if (const auto listHeight = ui->find("layerListHeight");
             listHeight != ui->end() && listHeight->is_number()) {
             m_ui.layerListHeight = std::clamp(listHeight->get<float>(), 100.0f, 800.0f);
@@ -141,6 +145,7 @@ bool AppSettings::Save() const {
     ui["manualScale"] = m_ui.manualScale;
     ui["fontSize"] = m_ui.fontSize;
     ui["layerListHeight"] = m_ui.layerListHeight;
+    ui["assetFolderWidth"] = m_ui.assetFolderWidth;
 
     json display;
     display["vsync"] = m_display.vsync;

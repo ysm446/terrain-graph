@@ -57,7 +57,8 @@ void Application::RequestSaveProject(bool saveAs) {
 // フレーム外で完了させ、保存後に別シーンへ切り替わっても混ざらないようにする。
 void Application::SaveSceneThumbnail(const std::filesystem::path& path) {
     if (path.extension() != L".tgscene" || !m_renderer.HasOutput()) return;
-    const auto thumbnail = io::SceneThumbnailPath(path);
+    const auto thumbnail = io::SceneThumbnailPath(m_workspace, path);
+    if (thumbnail.empty()) { TG_LOG_WARN("シーンサムネイルの保存先がルート外です"); return; }
     std::error_code error;
     std::filesystem::create_directories(thumbnail.parent_path(), error);
     if (error || !m_renderer.SaveOutputToPng(m_device, thumbnail, 256))

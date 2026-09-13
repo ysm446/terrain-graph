@@ -81,6 +81,7 @@ find_package(unofficial-imgui-node-editor CONFIG REQUIRED)
 
 set(tg_sources
     src/rhi/TextureReadback.cpp
+    src/io/AssetRelations.cpp
     src/io/ThumbnailStore.cpp
     src/app/Main.cpp
     src/app/TerrainGraph.rc
@@ -330,7 +331,7 @@ target_link_libraries(project_workspace_tests PRIVATE nlohmann_json::nlohmann_js
 add_test(NAME project-workspace COMMAND project_workspace_tests)
 
 add_executable(history_thumbnail_tests tests/HistoryThumbnailTests.cpp
-    src/io/RecentFiles.cpp src/io/ThumbnailStore.cpp src/io/ProjectWorkspace.cpp src/core/Log.cpp)
+    src/io/RecentFiles.cpp src/io/ThumbnailStore.cpp src/io/AssetRelations.cpp src/io/ProjectWorkspace.cpp src/core/Log.cpp)
 target_include_directories(history_thumbnail_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_options(history_thumbnail_tests PRIVATE /W4 /permissive- /utf-8)
 target_link_libraries(history_thumbnail_tests PRIVATE nlohmann_json::nlohmann_json ole32)

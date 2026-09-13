@@ -291,6 +291,11 @@ bool ProjectWorkspace::SaveScene(const fs::path& path, json& document) {
         }
         if (!save(entry, "sky-asset", "Skies", ".tgsky")) return false;
     }
+    // 同じ保存先のIDは維持し、名前を付けて保存では別のIDにする。
+    json existing;
+    const auto sceneUid = ReadJson(path, existing) ? String(existing, "sceneUid") : "";
+    document["sceneUid"] = sceneUid.empty() ? NewUid() : sceneUid;
+    if (String(document, "sceneUid").empty()) return false;
     document["format"] = "terrain-graph.scene";
     document["version"] = 1;
     if (!WriteJson(path, document)) return false;

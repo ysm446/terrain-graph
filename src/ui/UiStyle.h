@@ -183,6 +183,9 @@ ImU32 ErrorColor();
 // 補助テキスト。操作の説明や単位の目安を 1 行で添えるときに使う。
 void HintText(const char* format, ...);
 
+// 左右の区画の境界。呼び出し側で左右の余白とSameLineを配置する。
+bool VerticalSplitter(const char* id, float* width, float minWidth, float maxWidth, float height);
+
 // 上下に積んだ 2 つの区画の境界。ドラッグで上の区画の高さを変える。
 //
 // height は**実ピクセル**（`Scaled()` を通した後の値）で受け渡しする。

@@ -166,7 +166,7 @@ void AssetThumbnailCache::Process(rhi::Device& device, rhi::PipelineCache& pipel
     rhi::GpuTexture thumbnail;
     m_diskRecord = {};
     if (extension == ".tgscene") {
-        const auto preview = io::SceneThumbnailPath(path);
+        const auto preview = io::SceneThumbnailPath(workspace, path);
         std::error_code error;
         if (fs::is_regular_file(preview, error)) BuildImage(device, preview, thumbnail);
         Store(device, path, std::move(thumbnail), false);

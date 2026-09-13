@@ -873,6 +873,22 @@ std::array<std::string, 2> SplitCaptionLines(const char* text, float width) {
 
 }  // namespace
 
+bool VerticalSplitter(const char* id, float* width, float minWidth, float maxWidth, float height) {
+    if (width == nullptr || height <= 0.0f) return false;
+    ImGui::InvisibleButton(id, ImVec2(Scaled(kSplitterGrabWidth), height));
+    const bool hovered = ImGui::IsItemHovered();
+    const bool active = ImGui::IsItemActive();
+    const bool released = ImGui::IsItemDeactivated();
+    if (hovered || active) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    if (active) *width = std::clamp(*width + ImGui::GetIO().MouseDelta.x, minWidth, maxWidth);
+    const auto min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+    const float center = (min.x + max.x) * 0.5f;
+    const auto color = ImGui::GetColorU32(active ? ImGuiCol_SeparatorActive :
+                                        hovered ? ImGuiCol_SeparatorHovered : ImGuiCol_Separator);
+    ImGui::GetWindowDrawList()->AddLine(ImVec2(center, min.y), ImVec2(center, max.y), color, Scaled(1.0f));
+    return released;
+}
+
 bool HorizontalSplitter(const char* id, float* height, float minHeight, float maxHeight,
                         float width) {
     if (height == nullptr || width <= 0.0f) {

@@ -1,5 +1,6 @@
 #include "io/ThumbnailStore.h"
 #include "core/PathUtf8.h"
+#include "core/Log.h"
 #include <unordered_set>
 #include <functional>
 namespace tg::io {
@@ -10,8 +11,44 @@ uint64_t Hash(std::string_view text, uint64_t hash = 14695981039346656037ull) {
     return hash;
 }
 }
-fs::path SceneThumbnailPath(const fs::path& scene) {
-    return scene.parent_path() / (scene.stem().wstring() + L".assets") / L"thumbnail.png";
+fs::path SceneThumbnailPath(const ProjectWorkspace& workspace, const fs::path& scene) {
+    if (!workspace.Contains(scene)) return {};
+    nlohmann::json document;
+    const auto uid = ProjectWorkspace::ReadJson(scene, document) ? ProjectWorkspace::String(document, "sceneUid") : "";
+    const auto key = uid.empty() ? "legacy-" + std::to_string(Hash(ToUtf8Portable(scene.lexically_relative(workspace.Root())))) :
+                                  "scene-" + std::to_string(Hash(uid));
+    const auto target = workspace.Root() / L".terrain-graph" / L"scene-thumbnails" / FromUtf8(key + ".png");
+    return workspace.Contains(target) ? target : fs::path{};
+}
+void MigrateSceneThumbnails(const ProjectWorkspace& workspace) {
+    std::error_code error;
+    fs::recursive_directory_iterator it(workspace.Root(), fs::directory_options::skip_permission_denied, error), end;
+    std::vector<fs::path> scenes;
+    for (; it != end && !error; it.increment(error)) {
+        if (it->is_symlink(error)) { it.disable_recursion_pending(); continue; }
+        if (it->is_directory(error)) {
+            nlohmann::json nested;
+            if (it->path().filename().wstring().starts_with(L".") ||
+                (ProjectWorkspace::ReadJson(it->path() / L"project.tgproj", nested) &&
+                 ProjectWorkspace::String(nested, "format") == "terrain-graph.workspace"))
+                it.disable_recursion_pending();
+            continue;
+        }
+        if (it->path().extension() == L".tgscene") scenes.push_back(it->path());
+    }
+    for (const auto& scene : scenes) {
+        const auto target = SceneThumbnailPath(workspace, scene);
+        if (target.empty()) continue;
+        const auto old = scene.parent_path() / (scene.stem().wstring() + L".assets") / L"thumbnail.png";
+        if (!workspace.Contains(old) || !workspace.Contains(target) || !fs::is_regular_file(old, error) || fs::exists(target, error)) continue;
+        fs::create_directories(target.parent_path(), error);
+        if (!error) fs::rename(old, target, error);
+        if (error) TG_LOG_WARN("シーンサムネイルを移行できません: %s", ToUtf8Display(old).c_str());
+        else {
+            // ペイント等が残るフォルダは消さない。
+            if (fs::is_empty(old.parent_path(), error)) fs::remove(old.parent_path(), error);
+        }
+    }
 }
 ThumbnailRecord AssetThumbnailRecord(ProjectWorkspace& workspace, const fs::path& path) {
     const auto relative = ToUtf8Portable(path.lexically_relative(workspace.Root()));

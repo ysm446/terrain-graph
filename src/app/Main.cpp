@@ -37,6 +37,8 @@ tg::StartupOptions ParseCommandLine() {
         const std::wstring argument = argv[i];
         if (argument == L"--root" && i + 1 < argc) {
             options.projectRoot = argv[++i];
+        } else if (argument == L"--inspect-asset-delete" && i + 1 < argc) {
+            options.inspectAssetDelete = argv[++i];
         } else if (argument == L"--project" && (i + 1) < argc) {
             options.projectPath = argv[i + 1];
             ++i;

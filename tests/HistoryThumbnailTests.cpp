@@ -1,5 +1,6 @@
 #include "io/RecentFiles.h"
 #include "io/ThumbnailStore.h"
+#include "io/AssetRelations.h"
 #include "core/PathUtf8.h"
 #include <chrono>
 #include <fstream>
@@ -56,7 +57,55 @@ int main() {
     check(original.image == changed.image && !tg::io::ThumbnailIsCurrent(changed), "dependency change invalidates same cache slot");
     fs::remove(image, error);
     check(changed.stamp != tg::io::AssetThumbnailRecord(workspace, material).stamp, "missing dependency invalidates");
-    check(tg::io::SceneThumbnailPath(a / "scene.tgscene") == a / "scene.assets" / "thumbnail.png", "scene sidecar");
+    const auto scene = a / "scene.tgscene";
+    nlohmann::json sceneDocument = {{"textures", nlohmann::json::array()}, {"materials", nlohmann::json::array()},
+        {"models", nlohmann::json::array()}, {"skies", nlohmann::json::array()}};
+    check(workspace.SaveScene(scene, sceneDocument), "scene save with ID");
+    const auto uid = sceneDocument["sceneUid"];
+    const auto thumbnail = tg::io::SceneThumbnailPath(workspace, scene);
+    check(thumbnail.parent_path() == a / ".terrain-graph" / "scene-thumbnails", "central scene thumbnail");
+    fs::create_directories(a / "scene.assets", error);
+    std::ofstream(a / "scene.assets/thumbnail.png").put('p');
+    std::ofstream(a / "scene.assets/paint.png").put('m');
+    tg::io::MigrateSceneThumbnails(workspace);
+    check(fs::exists(thumbnail) && !fs::exists(a / "scene.assets/thumbnail.png") && fs::exists(a / "scene.assets/paint.png"), "migration preserves paint");
+    check(workspace.SaveScene(scene, sceneDocument) && sceneDocument["sceneUid"] == uid, "overwrite preserves scene ID");
+    const auto renamedScene = a / "renamed.tgscene";
+    fs::rename(scene, renamedScene, error);
+    check(tg::io::SceneThumbnailPath(workspace, renamedScene) == thumbnail, "rename preserves thumbnail");
+    const auto otherScene = a / "copy.tgscene";
+    check(workspace.SaveScene(otherScene, sceneDocument) && sceneDocument["sceneUid"] != uid, "save as gets separate scene ID");
+    // 削除検査は別ルートで行い、上の欠落ファイルのテストと分離する。
+    tg::io::ProjectWorkspace deletion;
+    const auto deleteRoot = directory / "delete-root";
+    check(deletion.Open(deleteRoot), "deletion root");
+    const auto texture = deleteRoot / "image.png";
+    std::ofstream(texture).put('t');
+    const auto textureRef = deletion.Reference(texture);
+    auto materialFile = deleteRoot / "shared.tgmat";
+    nlohmann::json dependency = {{"maps", {{"baseColor", textureRef}}}};
+    check(deletion.SaveAsset(materialFile, "material-asset", dependency), "deletion material");
+    auto report = tg::io::InspectAssetRelations(deletion, texture);
+    check(report.complete && report.referencers.size() == 1 && report.referencers[0] == materialFile && report.companions.size() == 1, "reference and metadata warning");
+    std::ofstream(texture.wstring() + L".meta", std::ios::app).put(' ');
+    check(!tg::io::RetireAsset(deletion, report) && fs::exists(texture), "changed metadata requires reconfirmation");
+    report = tg::io::InspectAssetRelations(deletion, texture);
+    const auto materialReport = tg::io::InspectAssetRelations(deletion, materialFile);
+    check(materialReport.related.size() == 1 && materialReport.related[0] == texture, "outgoing dependency warning");
+    auto secondMaterial = deleteRoot / "second.tgmat";
+    dependency.erase("uid");
+    check(deletion.SaveAsset(secondMaterial, "material-asset", dependency), "new reference after confirmation");
+    check(!tg::io::RetireAsset(deletion, report) && fs::exists(texture), "changed references require reconfirmation");
+    const auto updated = tg::io::InspectAssetRelations(deletion, texture);
+    check(tg::io::RetireAsset(deletion, updated), "confirmed asset is retired");
+    check(!fs::exists(texture) && !fs::exists(texture.wstring() + L".meta") && fs::exists(materialFile), "no cascading deletion");
+    bool recoverable = false;
+    for (const auto& entry : fs::recursive_directory_iterator(deleteRoot / ".terrain-graph/trash"))
+        if (entry.path().filename() == "image.png") recoverable = true;
+    check(recoverable, "retired source remains recoverable");
+    std::ofstream(deleteRoot / "broken.tgmat") << "{broken";
+    check(!tg::io::InspectAssetRelations(deletion, materialFile).complete, "incomplete scan blocks deletion");
+    check(!tg::io::InspectAssetRelations(deletion, deleteRoot / "project.tgproj").complete, "workspace file protected");
     std::cout << failures << " failures\n";
     return failures ? 1 : 0;
 }
