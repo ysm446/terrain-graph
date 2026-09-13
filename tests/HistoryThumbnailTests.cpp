@@ -92,6 +92,13 @@ int main() {
     report = tg::io::InspectAssetRelations(deletion, texture);
     const auto materialReport = tg::io::InspectAssetRelations(deletion, materialFile);
     check(materialReport.related.size() == 1 && materialReport.related[0] == texture, "outgoing dependency warning");
+    // 同じ確認データを再利用し、.meta付き／なしを往復しても安全に置き換えられる。
+    for (int i = 0; i < 3; ++i) {
+        report = tg::io::InspectAssetRelations(deletion, materialFile);
+        check(report.complete && report.companionVersions.empty(), "repeat inspection without metadata");
+        report = tg::io::InspectAssetRelations(deletion, texture);
+        check(report.complete && report.companionVersions.size() == 1, "repeat inspection with metadata");
+    }
     auto secondMaterial = deleteRoot / "second.tgmat";
     dependency.erase("uid");
     check(deletion.SaveAsset(secondMaterial, "material-asset", dependency), "new reference after confirmation");
