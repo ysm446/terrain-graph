@@ -125,6 +125,24 @@ void Application::DrawAssetDeleteDialog() {
     };
     list("一緒に退避するファイル", report.companions);
     list("直接の参照元（削除すると参照切れになります）", report.referencers);
+    if (!report.referencers.empty() && io::KindOfAsset(report.target) != io::AssetKind::Other) {
+        // 参照切れにしない道。同じ種類のアセットを選ぶと、参照元を書き換えてから退避する。
+        ImGui::TextUnformatted("代わりに割り当てる");
+        if (m_assetReplacement.empty()) {
+            ImGui::TextDisabled("割り当てない（参照切れのまま）");
+        } else {
+            row(m_assetReplacement, ui::Scaled(36), false);
+        }
+        if (ui::Button("選ぶ…")) {
+            m_assetPickerOpen = true; m_assetPickerRefresh = true;
+            m_assetPickerSelection = m_assetReplacement; m_assetPickerFilter[0] = '\0';
+        }
+        if (!m_assetReplacement.empty()) {
+            ImGui::SameLine();
+            if (ui::Button("解除")) m_assetReplacement.clear();
+        }
+        DrawAssetPicker();
+    }
     list("関連ファイル（削除せず残します）", report.related);
     const bool loaded = IsAssetLoaded(report.target);
     if (!report.complete) ui::HintText("参照関係をすべて確認できませんでした。読めないファイルやリンクを確認してください。");
@@ -138,10 +156,12 @@ void Application::DrawAssetDeleteDialog() {
     }
     ImGui::EndDisabled(); ImGui::SameLine();
     const char* skipLabel = m_assetDeleteQueue.empty() ? "キャンセル" : "スキップ";
-    if (ImGui::Button(skipLabel) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+    // ピッカーを重ねている間の Esc はピッカーが受ける。
+    const bool escape = !m_assetPickerOpen && ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+    if (ImGui::Button(skipLabel) || escape) {
         m_assetDeleteDialog = false; ImGui::CloseCurrentPopup();
         // Esc はまとめて止める。「スキップ」はこの 1 件を飛ばして次へ進む。
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || m_assetDeleteQueue.empty()) m_assetDeleteQueue.clear();
+        if (escape || m_assetDeleteQueue.empty()) m_assetDeleteQueue.clear();
         else { m_pendingAssetDeleteInspect = m_assetDeleteQueue.front(); m_assetDeleteQueue.erase(m_assetDeleteQueue.begin()); }
     }
     ImGui::EndPopup();
@@ -175,6 +195,94 @@ void Application::DrawAssetRenameDialog() {
     ImGui::EndDisabled(); ImGui::SameLine();
     if (ImGui::Button("キャンセル") || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
         m_assetRenameDialog = false; ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
+void Application::CollectAssetPickerCandidates() {
+    m_assetPickerCandidates.clear();
+    const auto& target = m_assetDeleteRelations.target;
+    const auto kind = io::KindOfAsset(target);
+    std::error_code error;
+    const auto consider = [&](const fs::path& path) {
+        if (io::KindOfAsset(path) != kind || path.lexically_normal() == target.lexically_normal()) return;
+        if (path.filename().wstring().starts_with(L".")) return;
+        m_assetPickerCandidates.push_back(path);
+    };
+    if (m_assetPickerSameFolder) {
+        fs::directory_iterator it(target.parent_path(), fs::directory_options::skip_permission_denied, error), end;
+        for (; it != end && !error; it.increment(error))
+            if (it->is_regular_file(error) && !it->is_symlink(error)) consider(it->path());
+    } else {
+        fs::recursive_directory_iterator it(m_workspace.Root(), fs::directory_options::skip_permission_denied, error), end;
+        for (; it != end && !error; it.increment(error)) {
+            if (it->is_symlink(error)) { it.disable_recursion_pending(); continue; }
+            if (it->is_directory(error)) {
+                if (it->path().filename().wstring().starts_with(L".")) it.disable_recursion_pending();
+                continue;
+            }
+            if (it->is_regular_file(error)) consider(it->path());
+        }
+    }
+    std::sort(m_assetPickerCandidates.begin(), m_assetPickerCandidates.end(), [](const auto& a, const auto& b) {
+        const int byName = _wcsicmp(a.filename().c_str(), b.filename().c_str());
+        return byName != 0 ? byName < 0 : a < b;
+    });
+    m_assetPickerRefresh = false;
+}
+
+void Application::DrawAssetPicker() {
+    if (m_assetPickerOpen && !ImGui::IsPopupOpen("代わりのアセットを選ぶ")) ImGui::OpenPopup("代わりのアセットを選ぶ");
+    if (!ImGui::BeginPopupModal("代わりのアセットを選ぶ", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    if (m_assetPickerRefresh) CollectAssetPickerCandidates();
+    if (ui::BeginPropertyTable("assetPickerRows")) {
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        ui::PropertyTextInput("名前で絞る", m_assetPickerFilter, sizeof(m_assetPickerFilter), "部分一致。大文字と小文字は区別しません");
+        if (ui::PropertyBool("同じフォルダだけ", &m_assetPickerSameFolder, true, "外すとルート全体から探します")) m_assetPickerRefresh = true;
+        ui::EndPropertyTable();
+    }
+    // 絞り込みは小文字にして部分一致。
+    std::string filter = m_assetPickerFilter;
+    std::transform(filter.begin(), filter.end(), filter.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+    std::vector<const fs::path*> shown;
+    for (const auto& path : m_assetPickerCandidates) {
+        std::string name = ToUtf8Display(path.filename());
+        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+        if (filter.empty() || name.find(filter) != std::string::npos) shown.push_back(&path);
+    }
+    const float size = ui::Scaled(84);
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const int columns = 6;
+    const float width = columns * (size + spacing) + ui::Scaled(16);
+    bool chosen = false;
+    if (ImGui::BeginChild("candidates", ImVec2(width, ui::Scaled(3.0f) * (size + ImGui::GetTextLineHeightWithSpacing() * 2.0f)), ImGuiChildFlags_Borders)) {
+        if (shown.empty()) ui::HintText(m_assetPickerCandidates.empty() ? "同じ種類のアセットがありません" : "一致するものがありません");
+        int index = 0;
+        for (const auto* pathPtr : shown) {
+            const auto& path = *pathPtr;
+            ImGui::PushID(ToUtf8Portable(path).c_str()); ImGui::BeginGroup();
+            const ImTextureID handle = ImGui::IsRectVisible(ImVec2(size, size)) ? AssetThumbnailHandle(path) : ImTextureID{};
+            const auto thumb = ui::ThumbnailButton("##candidate", handle, size, m_assetPickerSelection == path);
+            if (!handle && m_assetThumbnails.Failed(path)) ui::MissingBadge(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+            if (thumb.clicked) m_assetPickerSelection = path;
+            if (thumb.doubleClicked) { m_assetPickerSelection = path; chosen = true; }
+            if (thumb.hovered) ImGui::SetTooltip("%s", ToUtf8Display(path.lexically_relative(m_workspace.Root())).c_str());
+            ui::GridCaption(ToUtf8Display(path.filename()).c_str(), size);
+            ImGui::EndGroup(); ImGui::PopID();
+            if (++index % columns && index < int(shown.size())) ImGui::SameLine();
+        }
+    }
+    ImGui::EndChild();
+    ImGui::TextDisabled("%zu 件", shown.size());
+    ImGui::Separator();
+    ImGui::BeginDisabled(m_assetPickerSelection.empty());
+    if (ui::Button("決定") || chosen) {
+        m_assetReplacement = m_assetPickerSelection;
+        m_assetPickerOpen = false; ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndDisabled(); ImGui::SameLine();
+    if (ui::Button("キャンセル") || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+        m_assetPickerOpen = false; ImGui::CloseCurrentPopup();
     }
     ImGui::EndPopup();
 }
@@ -311,7 +419,14 @@ void Application::ProcessAssetWork() {
     if (m_pendingAssetDelete) {
         m_pendingAssetDelete = false;
         const auto path = m_assetDeleteRelations.target;
-        if (!IsAssetLoaded(path) && io::RetireAsset(m_workspace, m_assetDeleteRelations)) {
+        bool ready = !IsAssetLoaded(path);
+        // 代わりを選んでいれば、先に参照元を書き換える。参照関係が変わるので確認データを取り直す。
+        if (ready && !m_assetReplacement.empty()) {
+            ready = io::ReplaceAssetReferences(m_workspace, m_assetDeleteRelations, m_assetReplacement);
+            if (ready) m_assetDeleteRelations = io::InspectAssetRelations(m_workspace, path);
+            m_assetReplacement.clear();
+        }
+        if (ready && io::RetireAsset(m_workspace, m_assetDeleteRelations)) {
             m_recentProjects.Remove(m_workspace.Root(), path);
             std::erase(m_selectedAssets, path);
             m_assetRefresh = true; m_assetThumbnails.Invalidate();
@@ -327,6 +442,7 @@ void Application::ProcessAssetWork() {
     if (!m_pendingAssetDeleteInspect.empty()) {
         m_assetDeleteRelations = io::InspectAssetRelations(m_workspace, m_pendingAssetDeleteInspect);
         m_pendingAssetDeleteInspect.clear(); m_assetDeleteDialog = true;
+        m_assetReplacement.clear();
     }
     if (!m_pendingAssetMoves.empty()) {
         const auto sources = std::move(m_pendingAssetMoves); m_pendingAssetMoves.clear();

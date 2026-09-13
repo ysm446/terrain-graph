@@ -153,6 +153,29 @@ int main() {
     const auto renamedFolder = tg::io::RenameAsset(moving, moveRoot / "Textures", "Images");
     check(renamedFolder == moveRoot / "Images" && moving.Resolve(movedRef) == moveRoot / "Images" / "ground.png", "folder rename keeps references");
     check(tg::io::RenameAsset(moving, moveRoot, "Other").empty() && fs::exists(moveRoot / "project.tgproj"), "root cannot be renamed");
+    // 削除前の付け替え。参照元の文書が代わりのIDへ書き換わり、以後は参照元が無くなる。
+    tg::io::ProjectWorkspace replacing;
+    const auto replaceRoot = directory / "replace-root";
+    check(replacing.Open(replaceRoot), "replace root");
+    const auto oldImage = replaceRoot / "old.png", newImage = replaceRoot / "new.png";
+    auto other = replaceRoot / "other.tgmat";
+    std::ofstream(oldImage).put('o'); std::ofstream(newImage).put('n');
+    const auto oldRef = replacing.Reference(oldImage);
+    auto user = replaceRoot / "user.tgmat";
+    nlohmann::json userBody = {{"maps", {{"baseColor", oldRef}, {"normal", nlohmann::json()}}}};
+    check(replacing.SaveAsset(user, "material-asset", userBody), "referencing material");
+    auto userReport = tg::io::InspectAssetRelations(replacing, oldImage);
+    check(userReport.complete && userReport.referencers.size() == 1 && !userReport.uid.empty(), "replacement report");
+    nlohmann::json otherBody = {{"maps", nlohmann::json::object()}};
+    check(replacing.SaveAsset(other, "material-asset", otherBody), "other kind");
+    check(!tg::io::ReplaceAssetReferences(replacing, userReport, other), "different kind refused");
+    check(!tg::io::ReplaceAssetReferences(replacing, userReport, oldImage), "self refused");
+    check(tg::io::ReplaceAssetReferences(replacing, userReport, newImage), "references replaced");
+    nlohmann::json rewritten;
+    check(tg::io::ProjectWorkspace::ReadJson(user, rewritten) && replacing.Resolve(rewritten["maps"]["baseColor"]) == newImage, "document points to replacement");
+    const auto afterReplace = tg::io::InspectAssetRelations(replacing, oldImage);
+    check(afterReplace.complete && afterReplace.referencers.empty(), "no referencers after replacement");
+    check(!tg::io::RetireAsset(replacing, userReport) && tg::io::RetireAsset(replacing, afterReplace) && !fs::exists(oldImage), "retire after re-inspection");
     std::cout << failures << " failures\n";
     return failures ? 1 : 0;
 }

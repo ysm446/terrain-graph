@@ -3,6 +3,7 @@
 #include "core/PathUtf8.h"
 #include "core/Log.h"
 #include <algorithm>
+#include <cwctype>
 #include <fstream>
 #include <functional>
 namespace tg::io {
@@ -23,6 +24,22 @@ void Unique(std::vector<fs::path>& paths) {
     std::sort(paths.begin(), paths.end());
     paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
 }
+// 確認したときの状態から変わっていないか。退避も参照の付け替えも、これが通るときだけ行う。
+bool Unchanged(const AssetRelations& approved, const AssetRelations& current) {
+    return approved.complete && current.complete && current.modified == approved.modified && current.size == approved.size &&
+           current.referencers == approved.referencers && current.related == approved.related &&
+           current.companions == approved.companions && current.companionVersions == approved.companionVersions;
+}
+}
+AssetKind KindOfAsset(const fs::path& path) {
+    auto ext = path.extension().wstring();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
+    if (ext == L".png" || ext == L".jpg" || ext == L".jpeg" || ext == L".tga" || ext == L".bmp" || ext == L".exr" || ext == L".hdr")
+        return AssetKind::Image;
+    if (ext == L".tgmat") return AssetKind::Material;
+    if (ext == L".tgsky") return AssetKind::Sky;
+    if (ext == L".tgmodel" || ext == L".fbx") return AssetKind::Model;
+    return AssetKind::Other;
 }
 AssetRelations InspectAssetRelations(ProjectWorkspace& workspace, const fs::path& target) {
     AssetRelations result;
@@ -81,6 +98,7 @@ AssetRelations InspectAssetRelations(ProjectWorkspace& workspace, const fs::path
         visit(visit, document);
         return hit;
     };
+    result.uid = uid;
     if (header.is_object()) references(header, target, true);
     if (target.extension() == L".tgscene") {
         const auto thumbnail = SceneThumbnailPath(workspace, target);
@@ -109,8 +127,7 @@ AssetRelations InspectAssetRelations(ProjectWorkspace& workspace, const fs::path
 }
 bool RetireAsset(ProjectWorkspace& workspace, const AssetRelations& approved) {
     const auto current = InspectAssetRelations(workspace, approved.target);
-    if (!approved.complete || !current.complete || current.modified != approved.modified || current.size != approved.size ||
-        current.referencers != approved.referencers || current.related != approved.related || current.companions != approved.companions || current.companionVersions != approved.companionVersions) {
+    if (!Unchanged(approved, current)) {
         TG_LOG_WARN("削除対象または参照関係が変わりました。もう一度確認してください");
         return false;
     }
@@ -144,6 +161,65 @@ bool RetireAsset(ProjectWorkspace& workspace, const AssetRelations& approved) {
     }
     workspace.Scan();
     TG_LOG_INFO("ファイルを退避しました: %s", ToUtf8Display(directory).c_str());
+    return true;
+}
+bool ReplaceAssetReferences(ProjectWorkspace& workspace, const AssetRelations& approved, const fs::path& replacement) {
+    const auto current = InspectAssetRelations(workspace, approved.target);
+    if (!Unchanged(approved, current)) {
+        TG_LOG_WARN("削除対象または参照関係が変わりました。もう一度確認してください");
+        return false;
+    }
+    std::error_code error;
+    if (!workspace.Contains(replacement) || !fs::is_regular_file(replacement, error) ||
+        SamePath(replacement, approved.target) || KindOfAsset(replacement) != KindOfAsset(approved.target)) {
+        TG_LOG_WARN("代わりに割り当てるアセットが不正です: %s", ToUtf8Display(replacement).c_str());
+        return false;
+    }
+    if (current.referencers.empty()) return true;
+    // 置き換え先の参照（IDと相対パス）。.meta が無ければここで作られる。
+    const nlohmann::json reference = workspace.Reference(replacement);
+    if (reference.is_null()) {
+        TG_LOG_ERROR("代わりのアセットのIDを用意できません: %s", ToUtf8Display(replacement).c_str());
+        return false;
+    }
+    // 先に全部読んで書き換え、それから書く。読めない文書があれば何も変えない。
+    std::vector<std::pair<fs::path, nlohmann::json>> documents;
+    for (const auto& owner : current.referencers) {
+        nlohmann::json document;
+        if (!ProjectWorkspace::ReadJson(owner, document)) {
+            TG_LOG_ERROR("参照元を読めません: %s", ToUtf8Display(owner).c_str());
+            return false;
+        }
+        const auto visit = [&](auto&& self, nlohmann::json& value) -> void {
+            if (value.is_object() && value.contains("uid") && value.contains("path")) {
+                const auto resolved = workspace.Resolve(value);
+                if ((!current.uid.empty() && ProjectWorkspace::String(value, "uid") == current.uid) ||
+                    (!resolved.empty() && SamePath(resolved, current.target))) value = reference;
+                return;
+            }
+            if (value.is_structured()) { for (auto& child : value) self(self, child); }
+            else if (value.is_string()) {
+                // 旧形式の素のパス。参照元から見た相対、またはルートからの相対で対象を指していれば差し替える。
+                const auto text = value.get<std::string>();
+                if (text.empty()) return;
+                const auto path = FromUtf8(text);
+                if (SamePath(owner.parent_path() / path, current.target))
+                    value = ToUtf8Portable(replacement.lexically_relative(owner.parent_path()));
+                else if (SamePath(workspace.Root() / path, current.target))
+                    value = ToUtf8Portable(replacement.lexically_relative(workspace.Root()));
+            }
+        };
+        visit(visit, document);
+        documents.emplace_back(owner, std::move(document));
+    }
+    for (const auto& [owner, document] : documents) {
+        if (!ProjectWorkspace::WriteJson(owner, document)) {
+            TG_LOG_ERROR("参照元を書き換えられません: %s", ToUtf8Display(owner).c_str());
+            return false;
+        }
+    }
+    workspace.Scan();
+    TG_LOG_INFO("%zu 件の参照を %s へ付け替えました", documents.size(), ToUtf8Display(replacement.filename()).c_str());
     return true;
 }
 namespace {

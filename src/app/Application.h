@@ -174,6 +174,9 @@ private:
     // 一覧のサムネイルを受け取るドロップ先。フォルダ階層と一覧のフォルダに置く。
     void AssetFolderDropTarget(const std::filesystem::path& directory);
     void DrawAssetRenameDialog();
+    // 削除確認の中から開く、同じ種類のアセットを選ぶピッカー。
+    void DrawAssetPicker();
+    void CollectAssetPickerCandidates();
     // 一覧と確認ダイアログで使うサムネイル。読み込み済みならその絵、無ければ一覧用の生成物。
     ImTextureID AssetThumbnailHandle(const std::filesystem::path& path);
     bool IsAssetSelected(const std::filesystem::path& path) const;
@@ -587,6 +590,15 @@ private:
     io::AssetRelations m_assetDeleteRelations;
     bool m_assetDeleteDialog = false;
     bool m_pendingAssetDelete = false;
+    // 削除対象の代わりに参照元へ割り当てるアセット。空なら参照切れのまま削除する。
+    std::filesystem::path m_assetReplacement;
+    // 代わりを選ぶピッカー。候補は開いたときに集め、絞り込みの条件が変わったら集め直す。
+    bool m_assetPickerOpen = false;
+    bool m_assetPickerSameFolder = true;
+    bool m_assetPickerRefresh = false;
+    char m_assetPickerFilter[128] = {};
+    std::vector<std::filesystem::path> m_assetPickerCandidates;
+    std::filesystem::path m_assetPickerSelection;
     // ドラッグ＆ドロップで要求されたアセットの移動（移動元と移動先フォルダ）。
     // 読み込み済みアセットのパス差し替えを伴うのでフレームの外で処理する。
     std::vector<std::filesystem::path> m_pendingAssetMoves;
