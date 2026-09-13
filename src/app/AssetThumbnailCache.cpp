@@ -147,9 +147,12 @@ bool AssetThumbnailCache::BuildImage(rhi::Device& device, const fs::path& path, 
 void AssetThumbnailCache::Process(rhi::Device& device, rhi::PipelineCache& pipelines,
                                  io::ProjectWorkspace& workspace, const fs::path& directory,
                                  renderer::PreviewRenderer& renderer) {
-    if (m_invalidate || m_root != workspace.Root() || m_directory != directory) {
-        Destroy(device); m_root = workspace.Root(); m_directory = directory;
+    // 項目はフルパスで持つので、フォルダを移っても捨てない（戻ったときに作り直さない）。
+    // 捨てるのはルートが変わったときと、保存・移動・削除で中身が変わったときだけ。
+    if (m_invalidate || m_root != workspace.Root()) {
+        Destroy(device); m_root = workspace.Root();
     }
+    m_directory = directory;
     if (!m_pendingModel.empty()) {
         if (m_modelRendered) {
             Store(device, m_pendingModel, m_modelPreview.TakeOutput());

@@ -9,6 +9,7 @@
 #include <imgui.h>
 #include <algorithm>
 #include <functional>
+#include <unordered_map>
 
 namespace tg {
 namespace fs = std::filesystem;
@@ -639,6 +640,28 @@ void Application::DrawAssetBrowser() {
         }
         const float size = ui::Scaled(84);
         const int columns = std::max(1, int(ImGui::GetContentRegionAvail().x / (size + ImGui::GetStyle().ItemSpacing.x)));
+        // 読み込み済みのものはパスで引く。項目ごとにライブラリを総なめすると
+        // （項目数 × 登録数）のパス比較が毎フレーム走るので、先に表を作る。
+        struct LoadedAsset {
+            ImTextureID handle{};
+            compositor::TextureId texture = 0;
+            compositor::MaterialAssetId material = 0;
+        };
+        std::unordered_map<std::wstring, LoadedAsset> loaded;
+        const auto key = [](const fs::path& path) { return path.lexically_normal().wstring(); };
+        for (const auto& a : m_textureLibrary.Entries())
+            loaded[key(a.path)] = {static_cast<ImTextureID>(a.PreviewHandle().ptr), a.id, 0};
+        for (const auto& a : m_materialLibrary.Entries())
+            loaded[key(a.assetPath)] = {static_cast<ImTextureID>(a.thumbnail.srv.gpu.ptr), 0, a.id};
+        for (const auto& a : m_skyLibrary.Entries())
+            loaded[key(a.assetPath)] = {static_cast<ImTextureID>(a.thumbnail.srv.gpu.ptr), 0, 0};
+        for (const auto& a : m_models) {
+            const auto found = m_modelPreviews.find(a.id);
+            const ImTextureID handle = found != m_modelPreviews.end() && found->second->HasOutput()
+                                           ? static_cast<ImTextureID>(found->second->OutputHandle().ptr) : ImTextureID{};
+            if (!a.assetPath.empty()) loaded[key(a.assetPath)] = {handle, 0, 0};
+            if (!a.path.empty()) loaded[key(a.path)] = {handle, 0, 0};
+        }
         int index = 0;
         for (const auto& entry : m_assetEntries) {
             const auto path = entry.path();
@@ -647,10 +670,15 @@ void Application::DrawAssetBrowser() {
             const bool folder = entry.is_directory(error);
             compositor::TextureId textureId = 0;
             compositor::MaterialAssetId materialId = 0;
-            for (const auto& a : m_textureLibrary.Entries()) if (a.path.lexically_normal() == path.lexically_normal()) { textureId = a.id; break; }
-            for (const auto& a : m_materialLibrary.Entries()) if (a.assetPath == path) { materialId = a.id; break; }
+            ImTextureID handle{};
+            bool isLoaded = false;
+            if (const auto found = loaded.find(key(path)); found != loaded.end()) {
+                handle = found->second.handle; textureId = found->second.texture; materialId = found->second.material;
+                isLoaded = true;
+            }
             // 画面外の分は要求しない（生成は 1 フレームに 1 枚なので、見えているものを優先する）。
-            const ImTextureID handle = (!folder && ImGui::IsRectVisible(ImVec2(size, size))) ? AssetThumbnailHandle(path) : ImTextureID{};
+            if (!isLoaded && !folder && ImGui::IsRectVisible(ImVec2(size, size)))
+                handle = static_cast<ImTextureID>(m_assetThumbnails.Request(path).ptr);
             ImGui::PushID(ToUtf8Portable(path).c_str()); ImGui::BeginGroup();
             const auto thumb = ui::ThumbnailButton("##asset", handle, size, IsAssetSelected(path));
             if (folder) {
@@ -666,7 +694,8 @@ void Application::DrawAssetBrowser() {
             if (!handle && m_assetThumbnails.Failed(path))
                 ui::MissingBadge(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
             if (thumb.clicked) SelectAsset(path, ImGui::GetIO().KeyCtrl, ImGui::GetIO().KeyShift);
-            if (thumb.doubleClicked || (thumb.clicked && (ext == ".tgmodel" || ext == ".fbx"))) {
+            // どの種類もダブルクリックで開く（モデルも同じ。シングルクリックは選ぶだけ）。
+            if (thumb.doubleClicked) {
                 if (folder) { m_assetDirectory = path; m_assetRefresh = true; }
                 else m_pendingAssetOpen = path;
             }
