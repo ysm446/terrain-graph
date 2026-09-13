@@ -103,6 +103,9 @@ bool PropertyColorLinear(const char* label, float* linearRgb, const float* defau
 // items は要素数 itemCount の配列。ImGui の "A\0B\0" 形式ではなく配列で受ける。
 bool PropertyCombo(const char* label, int* value, const char* const items[], int itemCount,
                    int defaultValue, const char* tooltip = nullptr);
+// **編集を終えたとき（Enter か欄外のクリック）だけ true を返す。** 1 文字ごとに true を
+// 返すと、呼び出し側がそのたびに保存や再評価を走らせて入力が引っ掛かる。
+// 終えた時点で buffer には確定した文字列が入っている（ImGui が書き戻す）。
 bool PropertyTextInput(const char* label, char* buffer, size_t bufferSize,
                        const char* tooltip = nullptr);
 // 表示専用の値。

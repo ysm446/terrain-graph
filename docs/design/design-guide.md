@@ -1,7 +1,7 @@
 # design-guide — UI の設計ガイド
 
 作成日時: 2026-08-31 14:36
-更新日時: 2026-09-14 03:20
+更新日時: 2026-09-14 08:05
 
 ## 最近使ったルートとシーン
 
@@ -475,7 +475,7 @@ if (ui::BeginPropertyTable("layerBasicRows")) {
 | `PropertyColor` | RGB カラー。**表示色（sRGB）をそのまま持つ値**に使う（背景色など） |
 | `PropertyColorLinear` | RGB カラー。**リニアで持つ色**に使う（アルベド、ライト、空）。下の「色空間」を参照 |
 | `PropertyCombo` | 列挙。ラベルは配列で渡す |
-| `PropertyTextInput` | 文字列入力（名前、パス） |
+| `PropertyTextInput` | 文字列入力（名前、パス）。Enter か欄外クリックで編集を終えたときだけ true。1 文字ごとに保存・再評価を走らせない |
 | `PropertyValue` | 表示専用の値 |
 | `PropertyLabel` + `PropertyEnd` | 既製の行で表せないウィジェットを自分で置く |
 | `PropertyLabelEmpty` + `PropertyEnd` | 値列にボタンだけを置く |

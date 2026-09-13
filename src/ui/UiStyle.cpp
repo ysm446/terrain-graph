@@ -795,9 +795,12 @@ bool PropertyTextInput(const char* label, char* buffer, size_t bufferSize, const
     PropertyLabel(label, tooltip);
     ImGui::SetNextItemWidth(
         std::min(TextScaled(kTextInputWidth), ImGui::GetContentRegionAvail().x));
-    const bool changed = ImGui::InputText("##value", buffer, bufferSize);
+    // 入力中は ImGui が内部バッファで表示し、終えたときに buffer へ書き戻す。
+    // 呼び出し側が毎フレーム buffer を作り直していても、終えたフレームには確定した文字列が入る。
+    ImGui::InputText("##value", buffer, bufferSize);
+    const bool committed = ImGui::IsItemDeactivatedAfterEdit();
     PropertyEnd();
-    return changed;
+    return committed;
 }
 
 void PropertyValue(const char* label, const char* format, ...) {
