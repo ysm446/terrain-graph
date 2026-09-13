@@ -127,6 +127,7 @@ private:
     // outputPin は**どの出力を見るか**。0 なら最初の出力（レイヤーなら Result）。
     void SetPreviewGraphNode(graph::GraphId nodeId, graph::GraphId outputPin = 0);
     void DrawMaterialLibraryPanel();
+    void DrawModelLibraryPanel();
     // 一覧の右クリックメニュー（追加 / 複製 / 削除 / 読み込み / 書き出し）。
     // target が kNoMaterialAsset なら、対象の要る項目は出さない。
     void DrawMaterialContextMenu(compositor::MaterialAssetId target);

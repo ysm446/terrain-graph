@@ -635,7 +635,7 @@ void Application::DrawUi() {
     // ドックスペースの ID には版を付ける。**パネルを増減したら版を上げること。**
     // ID が変われば ini に配置が無い状態になり、既定レイアウトが組み直される。
     // 上げないと、新しいパネルがどこにも入らず浮いたままになる。
-    const ImGuiID dockspaceId = ImGui::GetID("TerrainGraphDockSpace_v17");
+    const ImGuiID dockspaceId = ImGui::GetID("TerrainGraphDockSpace_v18");
 
     // ステータスバーもメニューバーと同じく、先に作って作業領域を狭めておく。
     DrawStatusBar();
@@ -663,6 +663,7 @@ void Application::DrawUi() {
     if (m_settings.Display().showAssetBand) {
         DrawTextureLibraryPanel();
         DrawMaterialLibraryPanel();
+        DrawModelLibraryPanel();
         DrawSkyLibraryPanel();
     }
     DrawMaterialPanel();
@@ -741,9 +742,10 @@ void Application::BuildDefaultLayout(ImGuiID dockspaceId) {
     ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.28f, &bottom, &center);
 
     ImGui::DockBuilderDockWindow("ビューポート", center);
-    // アセットは帯全体を共有し、テクスチャ・マテリアル・天球をタブで切り替える。
+    // アセットは帯全体を共有し、テクスチャ・マテリアル・モデル・天球をタブで切り替える。
     ImGui::DockBuilderDockWindow("テクスチャ", bottom);
     ImGui::DockBuilderDockWindow("マテリアル", bottom);
+    ImGui::DockBuilderDockWindow("モデル", bottom);
     ImGui::DockBuilderDockWindow("天球", bottom);
     // 右カラムへタブで重ねる。縦に積むと 1 枚あたりが短くなり、
     // どれもスクロールしないと全体が見えなくなる。

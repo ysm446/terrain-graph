@@ -1,9 +1,12 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-12 18:50
+更新日時: 2026-09-13 12:56
 
 ## 現在の状況
+
+**モデルアセットのエリア（2026-09-13 12:56）。** 下部アセット帯に「モデル」タブを追加。テクスチャ・マテリアル・モデル・天球の順で並べ、帯の表示切替に連動する。空の一覧と読み込み未対応の案内を表示。今回はエリアのみで、メッシュ読み込み・スロット割り当て・配置・自動LODは後続。ドック配置をv18へ更新するため旧版から初回は既定配置へ戻る。Debug / Releaseビルド、既存テスト成功。ReleaseのUI画像でタブの順序・下部への配置を確認（`data/model-area-qa/initial-ui.png`）。タブの直接クリック操作は未確認。
+
 
 **実験ノードの整理（2026-09-12 18:50）。** Cloud Line / Cloud Spheres / Cloud Ellipsoid / Cloud Replicate を廃止（Cloud Shape Generate / Map Generate と二次形状で置き換わったため）。Cloud Transform / Cloud Merge / Cloud Map Generate は残す。`ValueType::CloudLine`（4）と `NodeKind` 34〜36・39 の番号は再利用しない。読み込み時に定義が見つからない `kind` は捨てずに `NodeKind::Missing`（ピンなし、`MissingNodeSettings` に保存名を保持）として残し、ノードカードはエラー色の枠と保存名、プロパティは説明文を出す。保存時は元の `kind` 名で書き戻すので、対応する版で開けば復元できる。繋がっていたリンクはピンが無いので消える。テストは楕円体を使っていた箇所を Cloud Shape Generate に置き換え、球数は生成結果から導く形にした（複製のテスト 3 節は削除）。Debug / Release ビルド、テスト成功。Release で `data/procedural-cloud-qa/tower.tgproj`（廃止ノード 3 個を含む）の保存往復で種類名が保たれること、`--screenshot-ui --select-node 105` でエラー表示とプロパティの説明を確認（`data/cloud-temporal-qa/missing-ui.png`）。手元の `data/` には廃止ノードを含むプロジェクトが 28〜39 件あり、それらの雲は表示されなくなる。
 
