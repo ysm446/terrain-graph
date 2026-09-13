@@ -600,6 +600,12 @@ private:
     bool m_pendingExport = false;
     std::filesystem::path m_pendingProjectSave;
     std::filesystem::path m_pendingProjectOpen;
+    // シーン読み込みは同期で、その間は画面が止まる。読み込む前に 1 フレームだけ描いて
+    // ステータスバーに「読み込み中」を見せるための印。読み終えたら経過時間を通知する。
+    bool m_sceneLoadAnnounced = false;
+    // 直近のシーン読み込みに掛かった秒数。負なら未読み込み。通知は後続のログで
+    // 流れて消えるので、ステータスバーには別枠で残す。
+    float m_sceneLoadSeconds = -1.0f;
     std::filesystem::path m_pendingMaterialExport;
     std::filesystem::path m_pendingMaterialImport;
     compositor::MaterialAssetId m_pendingExportMaterial = compositor::kNoMaterialAsset;

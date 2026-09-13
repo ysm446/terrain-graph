@@ -16,6 +16,7 @@
 #include <DirectXMath.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -320,7 +321,16 @@ void Application::ProcessPendingFileWork() {
         m_deferredNew = m_pendingProjectNew; m_pendingProjectNew = false;
         m_sceneSwitchDialog = true;
     }
+    // 読み込みは同期で、その間は画面が止まる。読む前に 1 フレームだけ描いて
+    // 「読み込み中」を見せてから、次のフレームの頭で実際に読む。
+    if ((!m_pendingRoot.empty() || !m_pendingProjectOpen.empty()) && !m_sceneLoadAnnounced &&
+        !Headless()) {
+        m_sceneLoadAnnounced = true;
+        m_allowSceneSwitch = true;  // 次のフレームで保存の確認を出し直さない
+        return;
+    }
     m_allowSceneSwitch = false;
+    const auto loadStart = std::chrono::steady_clock::now();
     ProcessAssetWork();
     // どれもリソースの生成・破棄と GPU 待機を伴う。フレームの外で処理すること。
 
@@ -348,6 +358,7 @@ void Application::ProcessPendingFileWork() {
         m_pendingProjectNew = false;
         ResetProject();
         m_projectPath.clear();
+        m_sceneLoadSeconds = -1.0f;
         UpdateWindowTitle();
     }
 
@@ -389,11 +400,17 @@ void Application::ProcessPendingFileWork() {
             m_pendingHistoryStep = 0;
             m_committed = CaptureDocument();
             UpdateWindowTitle();
+            // ルートの切り替えも含めた、このフレームで読み込みに掛かった時間。
+            m_sceneLoadSeconds =
+                std::chrono::duration<float>(std::chrono::steady_clock::now() - loadStart).count();
+            TG_LOG_INFO("シーンを読み込みました: %s（%.2f 秒）",
+                        ToUtf8Display(path.filename()).c_str(), m_sceneLoadSeconds);
         } else {
             // 消えた / 壊れたプロジェクトを履歴に残しても、選べるだけで意味がない。
             m_recentProjects.Remove(m_workspace.Root(), path);
         }
     }
+    m_sceneLoadAnnounced = false;
 
     if (!m_pendingProjectSave.empty()) {
         const std::filesystem::path path = m_pendingProjectSave;

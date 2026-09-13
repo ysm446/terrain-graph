@@ -831,6 +831,19 @@ void Application::DrawStatusBar() {
                 ImGui::PopStyleColor();
                 ImGui::TextDisabled("|");
             }
+            // シーンの読み込みは次のフレームの頭で同期的に行う。その間は画面が止まるので、
+            // 直前のフレームで理由を見せておく。
+            if (m_sceneLoadAnnounced) {
+                ImGui::TextDisabled("シーンを読み込み中…");
+                ImGui::TextDisabled("|");
+            } else if (m_sceneLoadSeconds >= 0.0f) {
+                // 読み込み後の通知は後続のログで流れるので、時間はここに残す。
+                ImGui::TextDisabled("読み込み %.2f 秒", m_sceneLoadSeconds);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("直近のシーン読み込みに掛かった時間");
+                }
+                ImGui::TextDisabled("|");
+            }
             // 合成の評価はコンピュートキューで走る。見えている絵が古い間はここで分かる。
             if (m_renderer.Evaluator().IsEvaluating()) {
                 ImGui::TextDisabled("合成を評価中…");
