@@ -37,6 +37,7 @@ void CopyMaterialValues(const compositor::MaterialAsset& source, compositor::Mat
     target.baseColorTint = source.baseColorTint;
     target.hueShiftDegrees = source.hueShiftDegrees;
     target.saturation = source.saturation;
+    target.brightness = source.brightness;
     target.roughnessValue = source.roughnessValue;
     target.metallicValue = source.metallicValue;
     target.ambientOcclusionValue = source.ambientOcclusionValue;
@@ -255,6 +256,9 @@ bool Application::DrawMaterialProperties(compositor::MaterialAsset& asset) {
         changed |= ui::PropertyFloat("彩度", &asset.saturation, 0.0f, 2.0f,
                                      kDefaultAsset.saturation,
                                      "ベースカラーの鮮やかさ。0 で白黒、1 でそのまま", "%.2f");
+        changed |= ui::PropertyFloat("明度", &asset.brightness, 0.0f, 2.0f,
+                                     kDefaultAsset.brightness,
+                                     "ベースカラーの明るさ（倍率）。1 でそのまま、0 で黒。結果は 0〜1 に収める", "%.2f");
         changed |= ui::PropertyFloat("ラフネス", &asset.roughnessValue, 0.0f, 1.0f,
                                      kDefaultAsset.roughnessValue, "マップが無いときの値",
                                      "%.2f");

@@ -18,6 +18,7 @@ struct ModelConstants
     uint prefilteredIndex, brdfLutIndex, prefilteredMipCount, tonemapMode;
     float3 baseColorTint; float roughnessValue;
     float metallicValue, aoValue; float2 colorAdjust;
+    float brightness; float3 pad0;
     float3 cameraPosition; float exposure;
     float3 lightDirection; float lightIlluminance;
     float3 lightColor; float iblIntensity;
@@ -128,7 +129,8 @@ float4 PsMain(PixelInput input):SV_TARGET {
                                MapLod(g_model.baseColorIndex, deltaX, deltaY))
                          .rgb;
     }
-    baseColor = AdjustBaseColor(baseColor, g_model.colorAdjust.x, g_model.colorAdjust.y);
+    baseColor = AdjustBaseColor(baseColor, g_model.colorAdjust.x, g_model.colorAdjust.y,
+                                g_model.brightness);
 
     float roughness = g_model.roughnessValue;
     if (g_model.roughnessIndex != kInvalidTextureIndex)

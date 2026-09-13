@@ -19,6 +19,7 @@ struct ModelConstants {
     float baseColorTint[3];
     float roughnessValue;
     float metallicValue, aoValue, colorAdjust[2];
+    float brightness, pad0[3];
     float cameraPosition[3];
     float exposure;
     float lightDirection[3];
@@ -32,7 +33,7 @@ struct ModelConstants {
     float align, offset; uint32_t usePointSize, sceneMode;
     SceneShadowData shadows;
 };
-static_assert(sizeof(ModelConstants) == 640);
+static_assert(sizeof(ModelConstants) == 656);
 
 }  // namespace
 void ModelPreview::Destroy(rhi::Device& device) {
@@ -248,6 +249,7 @@ void ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache
         constants.aoValue = asset.ambientOcclusionValue;
         constants.colorAdjust[0] = asset.hueShiftDegrees * (kPi / 180.0f);
         constants.colorAdjust[1] = asset.saturation;
+        constants.brightness = asset.brightness;
         constants.flipNormalGreen = asset.flipNormalGreen ? 1u : 0u;
 
         const auto position = m_camera.Position();

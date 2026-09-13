@@ -35,7 +35,8 @@ struct ThumbnailConstants
 
     // ベースカラーの調整（ティントを掛けたあとに効く）。合成と同じ値を渡すこと。
     float2 colorAdjust;  // 色相（ラジアン）, 彩度
-    float2 pad0;
+    float brightness;    // 明度（倍率）
+    float pad0;
 };
 
 ConstantBuffer<ThumbnailConstants> g_thumbnail : register(b0);
@@ -97,7 +98,8 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     {
         baseColor *= SampleMap(g_thumbnail.baseColorIndex, uv).rgb;
     }
-    baseColor = AdjustBaseColor(baseColor, g_thumbnail.colorAdjust.x, g_thumbnail.colorAdjust.y);
+    baseColor = AdjustBaseColor(baseColor, g_thumbnail.colorAdjust.x, g_thumbnail.colorAdjust.y,
+                                g_thumbnail.brightness);
 
     float roughness = g_thumbnail.roughnessValue;
     if (g_thumbnail.roughnessIndex != kInvalidTextureIndex)

@@ -157,7 +157,7 @@ float DownsampleHeight(Texture2D<float> source, uint2 cell, uint gridResolution)
     return sum / float(max(extent.x * extent.y, 1));
 }
 
-// ベースカラーの色相と彩度を調整する。**合成もサムネイルも球のプレビューも
+// ベースカラーの色相・彩度・明度を調整する。**合成もサムネイルも球のプレビューも
 // 必ずこの関数を通すこと。** 別々に書くと、プレビューと本番で色が違うという
 // 一番たちの悪い壊れ方をする。
 //
@@ -165,9 +165,10 @@ float DownsampleHeight(Texture2D<float> source, uint2 cell, uint gridResolution)
 // 暗部の色が壊れる（このアプリの合成はリニアで回している）。
 //   色相: 灰色の軸（1,1,1）まわりの回転。灰色は灰色のまま残る
 //   彩度: 輝度（Rec.709）へ寄せる / 離す。1 でそのまま、0 で無彩色
+//   明度: リニアの倍率。1 でそのまま、0 で黒。彩度のあとに掛ける
 //
-// 回転はわずかに負の成分を作ることがあるので、最後に 0 で止める。
-float3 AdjustBaseColor(float3 color, float hueRadians, float saturation)
+// 回転はわずかに負の成分を作ることがあり、明度で 1 を超えることもあるので、最後に 0〜1 に収める。
+float3 AdjustBaseColor(float3 color, float hueRadians, float saturation, float brightness)
 {
     if (hueRadians != 0.0f)
     {
@@ -183,7 +184,9 @@ float3 AdjustBaseColor(float3 color, float hueRadians, float saturation)
         const float luma = dot(color, float3(0.2126f, 0.7152f, 0.0722f));
         color = lerp(float3(luma, luma, luma), color, saturation);
     }
-    return max(color, 0.0f);
+    // 明度で 1 を超えることがあるので 0〜1 に収める（アルベドが 1 を超えると非物理になる）。
+    color *= brightness;
+    return saturate(color);
 }
 
 #endif  // TG_COMPOSITE_COMMON_HLSLI

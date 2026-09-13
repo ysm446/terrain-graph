@@ -78,7 +78,8 @@ struct SphereConstants {
 
     // ベースカラーの調整。合成と同じ値を渡すこと。
     float colorAdjust[2];  // 色相（ラジアン）, 彩度
-    float pad0[2];
+    float brightness;      // 明度（倍率）
+    float pad0;
 };
 
 }  // namespace
@@ -150,6 +151,7 @@ void MaterialSphere::Render(rhi::Device& device, rhi::PipelineCache& pipelineCac
     constants.uvScale = m_uvScale;
     constants.colorAdjust[0] = asset.hueShiftDegrees * (kPi / 180.0f);
     constants.colorAdjust[1] = asset.saturation;
+    constants.brightness = asset.brightness;
     constants.flipNormalGreen = asset.flipNormalGreen ? 1u : 0u;
 
     // 軌道カメラ。球は原点にあり半径 1。

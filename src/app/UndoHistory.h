@@ -36,6 +36,7 @@ struct MaterialSnapshot {
     DirectX::XMFLOAT3 baseColorTint{0.5f, 0.5f, 0.5f};
     float hueShiftDegrees = 0.0f;
     float saturation = 1.0f;
+    float brightness = 1.0f;
     bool flipNormalGreen = true;
     float roughnessValue = 0.5f;
     float metallicValue = 0.0f;

@@ -52,7 +52,7 @@ struct LayerConstants
     // スカラーのマップのチャンネル指定。4bit ずつ TG_CHANNEL_SLOT_* の順で詰めてある。
     uint4 mapChannels;  // x にすべて入る。yzw は未使用
     // ベースカラーの調整。マテリアルが持つ（ティントを掛けた**あと**に効く）。
-    float4 colorAdjust;  // 色相（ラジアン）, 彩度, 未使用 x2
+    float4 colorAdjust;  // 色相（ラジアン）, 彩度, 明度, 未使用
 };
 
 ConstantBuffer<LayerConstants> g_layer : register(b1);
@@ -274,7 +274,8 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     // 色相 / 彩度は**ティントを掛けたあと**に効かせる。順序を変えると、
     // 同じ設定でもティントの色に引きずられて結果が変わる。
     layerBaseColor =
-        AdjustBaseColor(layerBaseColor, g_layer.colorAdjust.x, g_layer.colorAdjust.y);
+        AdjustBaseColor(layerBaseColor, g_layer.colorAdjust.x, g_layer.colorAdjust.y,
+                        g_layer.colorAdjust.z);
     if (g_layer.textureIndices0.z != kInvalidTextureIndex)
     {
         layerRoughness = SampleLayerScalar(g_layer.textureIndices0.z,

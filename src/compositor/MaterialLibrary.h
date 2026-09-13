@@ -49,6 +49,7 @@ struct MaterialAsset {
     // 彩度は輝度へ寄せる / 離す。法線やラフネスには掛けない（意味を持たないため）。
     float hueShiftDegrees = 0.0f;  // -180〜180
     float saturation = 1.0f;       // 0 で無彩色、1 でそのまま
+    float brightness = 1.0f;       // ベースカラーに掛ける倍率。1 でそのまま
 
     float roughnessValue = 0.5f;
     float metallicValue = 0.0f;
