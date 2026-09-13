@@ -69,6 +69,7 @@ void Application::DrawModelScatters(ID3D12GraphicsCommandList* commandList,
         const auto pointSlot = m_modelPoints.find(scatter.source);
         if (pointSlot == m_modelPoints.end()) continue;
         const auto& evaluator = pointSlot->second->evaluator;
+        if (evaluator.EvaluatedRevision() != pointSlot->second->stack.Revision()) continue;
         if (!evaluator.CrumblingPoints().IsValid() || !evaluator.CrumblingPointCount() || evaluator.HasPendingPostprocess()) continue;
         float total = 0;
         for (const auto& choice : scatter.settings.models)

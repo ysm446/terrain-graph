@@ -821,6 +821,7 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
 
     // 崩落（崩落レイヤーだけが使う）。
     json crumbling;
+    crumbling["avoidPointOverlap"] = layer.crumbling.avoidPointOverlap;
     crumbling["physicsCount"] = layer.crumbling.physicsCount;
     crumbling["amount"] = layer.crumbling.amount;
     crumbling["sizeMin"] = layer.crumbling.sizeMinMeters;
@@ -1223,6 +1224,7 @@ compositor::MaterialLayer ReadLayer(
 
     if (const json* crumbling = FindMember(node, "crumbling");
         crumbling != nullptr && crumbling->is_object()) {
+        layer.crumbling.avoidPointOverlap = ReadBool(*crumbling, "avoidPointOverlap", false);
         layer.crumbling.physicsCount =
             ReadInt(*crumbling, "physicsCount", defaults.crumbling.physicsCount);
         layer.crumbling.amount = ReadFloat(*crumbling, "amount", defaults.crumbling.amount);

@@ -341,6 +341,7 @@ struct MaterialLayer {
         float gravity = 0.75f;         // 低い方へ流れる強さ。高いほど直線的に下る
         float spread = 0.35f;          // 進行方向から横へ逸れる強さ
         int seed = 0;
+        bool avoidPointOverlap = true; // Pointsの直径に応じて重なる候補を除外
     };
     CrumblingSettings crumbling;
 

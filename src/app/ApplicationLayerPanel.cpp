@@ -805,6 +805,16 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
         }
         ui::SectionHeader("崩落");
         if (ui::BeginPropertyTable("crumblingRows")) {
+            const auto slot = m_modelPoints.find(m_selectedGraphNode);
+            if (!layer.enabled) ui::PropertyValue("ポイント数", "%u", 0u);
+            else if (slot == m_modelPoints.end()) ui::PropertyValue("ポイント数", "%s", "未評価");
+            else if (slot->second->graphRevision != m_graph.TerrainRevision() ||
+                     !slot->second->evaluator.CrumblingPointCountReady())
+                ui::PropertyValue("ポイント数", "%s", "計算中");
+            else ui::PropertyValue("ポイント数", "%u", slot->second->evaluator.CrumblingActivePointCount());
+            changed |= ui::PropertyBool("重なり回避", &layer.crumbling.avoidPointOverlap,
+                crumblingDefaults.avoidPointOverlap,
+                "Points出力の停止位置を直径に応じて間引きます。ResultやMaskには影響しません。後段のサイズ倍率は含みません。");
             changed |= ui::PropertyFloat(
                 "岩屑の量", &layer.crumbling.amount, 0.0f, 1.0f, crumblingDefaults.amount,
                 "生む岩片の数と、盛り上がりの強さに効く", "%.2f");

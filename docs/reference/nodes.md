@@ -1,9 +1,11 @@
 # nodes — ノードのリファレンス
 
 作成日時: 2026-09-03 17:30
-更新日時: 2026-09-13 17:56
+更新日時: 2026-09-13 18:37
 
 ## Crumbling Points / Model Scatter / Model Output
+
+Crumblingの「重なり回避」はPointsにだけ適用する。停止位置のXZ距離が半径の和より小さい点を間引く。新規はオン、設定のない旧プロジェクトはオフ。Result・Mask・Uniqueは従来どおり。後段のモデル倍率・法線追従・メッシュの輪郭を使った衝突判定は含まない。プロパティ欄のポイント数は間引き後の実数で、Model Outputに接続して評価したときに表示する。未接続は未評価、再計算中は計算中と表示する。
 
 Crumblingの既存Result・Mask・UniqueにPointsを追加。PointsはBaseとEmissionから計算した岩片の停止位置を表す。Model ScatterのPointsへ接続し、InstancesをModel Outputへ接続すると配置を表示する。地形は別のOutputへ接続する。これにより岩形状をハイトへ焼かずモデルだけを置ける。
 
@@ -52,7 +54,7 @@ Cloud Shape Generate（`cloudShapeGenerate`）または Cloud Map Generate（`cl
 | **Liquid** | `liquid` | Base, Mask | Result | 水位より低い所に水を張る |
 | **Heightmap Blur** | `heightmapBlur` | Base, Mask | Result | ハイトをぼかしてならす |
 | **Sediment** | `sediment` | Base, Emission | Result, **Mask** | 土砂を重力で再分配する。Emission で供給する場所を絞れる |
-| **Crumbling** | `crumbling` | Base, Emission | Result, **Mask**, **Unique** | 岩屑を斜面下へ流して積む |
+| **Crumbling** | `crumbling` | Base, Emission | Result, **Mask**, **Unique**, **Points** | 岩屑を斜面下へ流して積む |
 | **Snow** | `snow` | Base, Mask | Result, **Mask** | 雪を降らせ、急な雪面から落として積もらせる。Mask で降らせる場所を絞れる |
 | **River** | `river` | Base, Seed | Result, **Water**, **Bank**, **Depth** | 川筋から河床を掘り、下流へ下がる水面を張る |
 | **Droplet Erosion** | `droplet` | Base | Result, **Flow**, **Deposit** | 水滴を流して谷を刻み、土砂を運んで積む |

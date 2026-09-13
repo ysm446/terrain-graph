@@ -687,6 +687,11 @@ void MaterialEvaluator::Destroy(rhi::Device& device) {
     ReleaseSedimentResources(device);
     ReleaseCrumblingResources(device);
     device.DeferRelease(m_crumblingPoints);
+    device.DeferRelease(m_crumblingCandidates);
+    device.DeferRelease(m_crumblingPointGrid);
+    device.DeferRelease(m_crumblingCountReadback);
+    m_crumblingCountFence = nullptr;
+    m_crumblingPointCountReady = false;
     m_crumblingPointCount = 0;
     ReleaseSnowResources(device);
     for (auto* texture : {&m_snowCover.state[0], &m_snowCover.state[1], &m_snowCover.output, &m_snowCover.weather, &m_snowCover.particles, &m_snowCover.sums}) device.DeferRelease(*texture);
@@ -4112,6 +4117,80 @@ bool MaterialEvaluator::ApplyDropletMask(rhi::Device& device, rhi::PipelineCache
     return true;
 }
 
+bool MaterialEvaluator::FilterCrumblingPoints(rhi::Device& device, rhi::PipelineCache& cache,
+    ID3D12GraphicsCommandList* list, float maxDiameter, bool avoidOverlap) {
+    auto* clear = cache.GetCompute(L"CrumblingPoints.hlsl", L"CsClear");
+    auto* build = cache.GetCompute(L"CrumblingPoints.hlsl", L"CsBuild");
+    auto* filter = cache.GetCompute(L"CrumblingPoints.hlsl", L"CsFilter");
+    if (!clear || !build || !filter) return false;
+    const uint32_t rows = m_crumblingCandidates.height / 2;
+    const auto ensure = [&](rhi::GpuTexture& texture, uint32_t height, DXGI_FORMAT format,
+                            const wchar_t* name) {
+        if (texture.IsValid() && texture.height == height) return true;
+        device.DeferRelease(texture);
+        rhi::TextureDesc desc;
+        desc.width = 1024; desc.height = height; desc.format = format;
+        desc.allowUnorderedAccess = true;
+        desc.initialState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+        desc.debugName = name;
+        return device.Allocator().CreateTexture2D(desc, texture);
+    };
+    if (!ensure(m_crumblingPoints, rows*2, DXGI_FORMAT_R32G32B32A32_FLOAT, L"CrumblingPoints") ||
+        !ensure(m_crumblingPointGrid, 256+rows+1, DXGI_FORMAT_R32_UINT, L"CrumblingPointGrid")) return false;
+    // 再編集で前回のコピーがまだ実行中でも、その読み戻しバッファを上書きしない。
+    device.DeferRelease(m_crumblingCountReadback);
+    m_crumblingCountFence = nullptr;
+    if (!device.Allocator().CreateReadbackBuffer(256, L"CrumblingPointCount", m_crumblingCountReadback)) return false;
+    struct Constants {
+        uint32_t source, output, grid, count, rows, avoidOverlap;
+        float cellSize; uint32_t padding;
+    } constants{m_crumblingCandidates.SrvIndex(), m_crumblingPoints.UavIndex(),
+        m_crumblingPointGrid.UavIndex(), m_crumblingPointCount, rows, avoidOverlap ? 1u : 0u,
+        std::max(maxDiameter, 0.001f), 0};
+    const auto cb = AllocateConstants(device, sizeof(constants));
+    if (!cb.IsValid()) return false;
+    std::memcpy(cb.cpu, &constants, sizeof(constants));
+    PIXBeginEvent(list, PIX_COLOR(150,130,110), "CrumblingPoints");
+    TransitionIfNeeded(list, m_crumblingCandidates, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(list, m_crumblingPoints, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(list, m_crumblingPointGrid, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    list->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+    const auto barrier = [&]() {
+        const auto uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+        list->ResourceBarrier(1, &uav);
+    };
+    list->SetPipelineState(clear); list->Dispatch(262144/64,1,1); barrier();
+    if (avoidOverlap) {
+        list->SetPipelineState(build); list->Dispatch((m_crumblingPointCount+63)/64,1,1); barrier();
+    }
+    list->SetPipelineState(filter); list->Dispatch((m_crumblingPointCount+63)/64,1,1); barrier();
+    TransitionIfNeeded(list, m_crumblingPoints, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(list, m_crumblingPointGrid, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+    footprint.Footprint = {DXGI_FORMAT_R32_UINT,1,1,1,256};
+    const CD3DX12_TEXTURE_COPY_LOCATION destination(m_crumblingCountReadback.resource.Get(), footprint);
+    const CD3DX12_TEXTURE_COPY_LOCATION source(m_crumblingPointGrid.resource.Get(),0);
+    const D3D12_BOX box{0,256+rows,0,1,257+rows,1};
+    list->CopyTextureRegion(&destination,0,0,0,&source,&box);
+    m_crumblingCountFence = m_recordingAsync ? m_compute.Fence() : device.FrameFence();
+    m_crumblingCountFenceValue = m_recordingAsync ? m_compute.SubmittedValue()+1 : device.NextFenceValue();
+    m_crumblingPointCountReady = false;
+    PIXEndEvent(list);
+    return true;
+}
+
+void MaterialEvaluator::CollectCrumblingPointCount() {
+    if (!m_crumblingCountFence || m_crumblingCountFence->GetCompletedValue() < m_crumblingCountFenceValue) return;
+    m_crumblingCountFence = nullptr;
+    void* mapped = nullptr;
+    const D3D12_RANGE range{0,sizeof(uint32_t)};
+    if (!TG_CHECK_HR(m_crumblingCountReadback.resource->Map(0,&range,&mapped))) return;
+    std::memcpy(&m_crumblingActivePointCount,mapped,sizeof(uint32_t));
+    const D3D12_RANGE written{0,0};
+    m_crumblingCountReadback.resource->Unmap(0,&written);
+    m_crumblingPointCountReady = true;
+}
+
 bool MaterialEvaluator::ApplyCrumbling(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                                        ID3D12GraphicsCommandList* commandList,
                                        const MaterialLayer& layer, const MaterialStack& stack,
@@ -4174,21 +4253,23 @@ bool MaterialEvaluator::ApplyCrumbling(rhi::Device& device, rhi::PipelineCache& 
     constants.params2[0] = amount;
     if (m_captureCrumblingPoints && layer.emitPoints) {
         m_crumblingPointCount = amount > 0 ? static_cast<uint32_t>(attempts) : 0;
+        m_crumblingActivePointCount = 0;
+        m_crumblingPointCountReady = m_crumblingPointCount == 0;
         if (m_crumblingPointCount > 0) {
             const uint32_t rows = (m_crumblingPointCount + 1023) / 1024;
-            if (!m_crumblingPoints.IsValid() || m_crumblingPoints.height != rows * 2) {
-                device.DeferRelease(m_crumblingPoints);
+            if (!m_crumblingCandidates.IsValid() || m_crumblingCandidates.height != rows * 2) {
+                device.DeferRelease(m_crumblingCandidates);
                 rhi::TextureDesc desc;
                 desc.width = 1024; desc.height = rows * 2;
                 desc.format = DXGI_FORMAT_R32G32B32A32_FLOAT;
                 desc.allowUnorderedAccess = true;
                 desc.initialState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
                 desc.debugName = L"CrumblingPoints";
-                if (!device.Allocator().CreateTexture2D(desc, m_crumblingPoints)) return false;
+                if (!device.Allocator().CreateTexture2D(desc, m_crumblingCandidates)) return false;
             }
-            TransitionIfNeeded(commandList, m_crumblingPoints, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            TransitionIfNeeded(commandList, m_crumblingCandidates, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             constants.indices2[2] = rows;
-            constants.indices2[3] = m_crumblingPoints.UavIndex();
+            constants.indices2[3] = m_crumblingCandidates.UavIndex();
         }
     }
 
@@ -4238,8 +4319,9 @@ bool MaterialEvaluator::ApplyCrumbling(rhi::Device& device, rhi::PipelineCache& 
     if (normalPass != nullptr && !layer.maskOnly) {
         RebuildNormalsFromHeight(device, normalPass, commandList, stack);
     }
-    if (m_captureCrumblingPoints && layer.emitPoints && m_crumblingPoints.IsValid())
-        TransitionIfNeeded(commandList, m_crumblingPoints, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    if (m_captureCrumblingPoints && layer.emitPoints && m_crumblingPointCount > 0)
+        return FilterCrumblingPoints(device, pipelineCache, commandList,
+            maxTexels * texelMeters, params.avoidPointOverlap);
     return true;
 }
 
@@ -5171,6 +5253,7 @@ void MaterialEvaluator::Update(rhi::Device& device, rhi::PipelineCache& pipeline
     // CPU 側のハイトの読み戻しは、評価の回収とは別に毎フレーム見る
     // （同期評価のときはフレームのフェンスで終わるため）。
     CollectHeightfieldReadback();
+    CollectCrumblingPointCount();
 
     // --- 回収 -----------------------------------------------------------------
     if (m_asyncInFlight && !m_compute.IsBusy()) {
@@ -5208,6 +5291,10 @@ void MaterialEvaluator::Update(rhi::Device& device, rhi::PipelineCache& pipeline
         if (Evaluate(device, pipelineCache, commandList, stack, textures, materials, paintMasks,
                      tiles)) {
             m_evaluatedRevision = m_postprocessPending ? 0 : stack.Revision();
+            if (m_captureCrumblingPoints && !m_crumblingPointCount && !m_postprocessPending) {
+                m_crumblingActivePointCount = 0;
+                m_crumblingPointCountReady = true;
+            }
             if (m_frontTextures.IsValid()) {
                 std::swap(m_textures, m_frontTextures);
                 std::swap(m_maskOpThumbnails, m_frontMaskOpThumbnails);

@@ -242,6 +242,8 @@ public:
     void CaptureCrumblingPoints(bool enabled) { m_captureCrumblingPoints = enabled; }
     const rhi::GpuTexture& CrumblingPoints() const { return m_crumblingPoints; }
     uint32_t CrumblingPointCount() const { return m_crumblingPointCount; }
+    uint32_t CrumblingActivePointCount() const { return m_crumblingActivePointCount; }
+    bool CrumblingPointCountReady() const { return m_crumblingPointCountReady; }
     void SetTileSize(uint32_t tileSize) { m_tileSize = (tileSize > 0) ? tileSize : 1; }
     uint32_t EvaluatedTileCount() const { return m_evaluatedTileCount; }
 
@@ -279,7 +281,13 @@ public:
     uint64_t EvaluatedRevision() const { return m_evaluatedRevision; }
 
     // 変更を検知していなくても次回に評価し直す。
-    void Invalidate() { m_crumblingPointCount = 0; m_evaluatedRevision = 0; m_postprocessRevision = 0; }
+    void Invalidate() {
+        m_crumblingPointCountReady = false;
+        m_crumblingCountFence = nullptr;
+        m_crumblingPointCount = 0;
+        m_evaluatedRevision = 0;
+        m_postprocessRevision = 0;
+    }
 
 private:
     // ブラーレイヤー 1 枚ぶん。Height を分離型ガウスでならし、
@@ -424,7 +432,15 @@ private:
     rhi::GpuTexture m_maskHeightRange;
     SedimentResources m_sediment;
     CrumblingResources m_crumbling;
-    rhi::GpuTexture m_crumblingPoints;
+    bool FilterCrumblingPoints(rhi::Device& device, rhi::PipelineCache& cache,
+        ID3D12GraphicsCommandList* list, float maxDiameter, bool avoidOverlap);
+    void CollectCrumblingPointCount();
+    rhi::GpuTexture m_crumblingPoints, m_crumblingCandidates, m_crumblingPointGrid;
+    rhi::GpuBuffer m_crumblingCountReadback;
+    ID3D12Fence* m_crumblingCountFence = nullptr;
+    uint64_t m_crumblingCountFenceValue = 0;
+    uint32_t m_crumblingActivePointCount = 0;
+    bool m_crumblingPointCountReady = false;
     uint32_t m_crumblingPointCount = 0;
     bool m_captureCrumblingPoints = false;
     SnowResources m_snow;
