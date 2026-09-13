@@ -720,8 +720,10 @@ void RunNodeGraphTests() {
         Check(cloud.maskNode==coverageMask && cloud.typeMaskNode==typeMask && cloud.maskPin!=cloud.typeMaskPin, "雲量と雲種のマスク元を区別して保持する");
         auto& settings = std::get<tg::graph::CloudWeatherSettings>(graph.FindMutableNode(layer)->settings);
         settings.cloudType = 1.0f; settings.maxThickness = 8000; settings.bottomHeight = 1000;
+        settings.loopPosition = 0.75f; settings.loopDuration = 120.0f;
         graph.MarkCloudDirty();
         cloud = graph.CompileCloud();
+        Check(cloud.weatherLoopPosition==0.75f && cloud.weatherLoopDuration==120.0f, "ループ位置と時間を描画設定へ渡す");
         Check(cloud.cloudType==1.0f && cloud.weatherThickness==8000.0f && cloud.weatherBottom==1000.0f, "雲種と厚さの変更を反映する");
         Check(cloud.cloud.noiseSpeedRatio==1.0f, "模様を変化がオフなら模様の速度比は1");
         settings.evolveNoise=true; settings.noiseSpeedRatio=0.25f;
@@ -729,6 +731,24 @@ void RunNodeGraphTests() {
         Check(graph.CompileCloud().cloud.noiseSpeedRatio==0.25f, "模様を変化がオンなら速度比を描画へ渡す");
         const auto compiled = graph.CompileLayersTo(cloud.typeMaskNode, cloud.typeMaskPin);
         Check(!compiled.layers.empty(), "雲種マスクをレイヤー列へコンパイルできる");
+    }
+
+    Section("天候層のループ再生位置");
+    {
+        tg::renderer::CloudLoopPlayback playback;
+        playback.Seek(0.25f);
+        playback.Advance(15.0, true, 60.0);
+        Check(playback.position == 0.5, "再生中は秒数に合わせてスライダー位置が進む");
+        playback.Advance(20.0, false, 60.0);
+        Check(playback.position == 0.5, "停止中は位置を保持する");
+        playback.Seek(0.75f);
+        Check(playback.Advance(30.0, true, 60.0) && playback.position == 0.25,
+              "シーク先から再生して終端で折り返す");
+        playback.Seek(1.0f);
+        playback.Advance(1.0, false, 60.0);
+        Check(playback.position == 1.0, "停止中は終端の表示を保持する");
+        Check(playback.Advance(15.0, true, 60.0) && playback.position == 0.25,
+              "終端からの再生は先頭から進む");
     }
 
     Section("雲層の分布入力");

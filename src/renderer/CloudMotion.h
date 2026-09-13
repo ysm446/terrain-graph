@@ -1,7 +1,19 @@
 #pragma once
 #include <cmath>
+#include <algorithm>
 
 namespace tg::renderer {
+// 0〜1の再生位置。停止中は終端の1を保持し、再生時は先頭へ折り返す。
+struct CloudLoopPlayback {
+    double position = 0.0;
+    void Seek(float value) { position = std::clamp(double(value), 0.0, 1.0); }
+    bool Advance(double seconds, bool playing, double duration) {
+        if (!playing || seconds <= 0.0 || duration <= 0.0) return false;
+        const double next = position + seconds / duration;
+        position = next - std::floor(next);
+        return next >= 1.0;
+    }
+};
 // 保存値を変えず、再生中の移動量だけを保持する。方向はラジアン。
 struct CloudMotion {
     double x = 0.0, z = 0.0;

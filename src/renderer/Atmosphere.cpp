@@ -83,6 +83,8 @@ bool Atmosphere::UploadCloudGeometry(rhi::Device& device) {
 }
 void Atmosphere::ResetCloudMotion() {
     m_motion.Reset();
+    m_weatherPlayback.Seek(m_weatherPositionRequest);
+    m_weatherSeek = true;
     m_lastTick = {};
     m_lastCloudEdit = std::chrono::steady_clock::now();
     m_cloudEnvironmentDirty = true;
@@ -128,8 +130,23 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
     if (requested.localCloud != m_requested.localCloud ||
         requested.cloudSource != m_requested.cloudSource ||
         requested.cloudMotionMode != m_requested.cloudMotionMode) m_motion.Reset();
-    const bool playing = requested.clouds && requested.animateClouds && requested.windSpeed > 0;
-    m_motion.Advance(delta, playing, requested.windSpeed, requested.windDirection, requested.noiseSpeedRatio);
+    const bool playing = requested.clouds && requested.animateClouds && (requested.windSpeed > 0 || requested.localCloud == 4);
+    const bool weatherEdited = requested.localCloud == 4 && m_weatherSeek;
+    if (requested.localCloud == 4) {
+        const bool seek = !m_ready || requested.localCloud != m_requested.localCloud ||
+            requested.cloudSource != m_requested.cloudSource;
+        if (seek) m_weatherPlayback.Seek(m_weatherPositionRequest);
+        if (seek || m_weatherSeek) m_historyValid = false;
+        else if (m_weatherPlayback.Advance(delta, playing, m_weatherDuration)) m_historyValid = false;
+        m_weatherSeek = false;
+        // 同じ再生位置は再生・停止・スクラブにかかわらず同じ風移動量になる。
+        m_motion.Reset();
+        const double phase = m_weatherPlayback.position == 1.0 ? 0.0 : m_weatherPlayback.position;
+        m_motion.Advance(phase * m_weatherDuration, true,
+                        requested.windSpeed, requested.windDirection, requested.noiseSpeedRatio);
+    } else {
+        m_motion.Advance(delta, playing, requested.windSpeed, requested.windDirection, requested.noiseSpeedRatio);
+    }
     if (playing) m_cloudTime += delta;
     AtmosphereSettings settings = requested;
     settings.shapeCacheIndex = UINT32_MAX;
@@ -162,7 +179,7 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
             settings.windOffsetZ = static_cast<float>(std::fmod(m_motion.z-m_motion.driftZ, period));
         }
     }
-    const bool changed = !m_ready || std::memcmp(&requested, &m_requested, sizeof(requested)) != 0;
+    const bool changed = weatherEdited || !m_ready || std::memcmp(&requested, &m_requested, sizeof(requested)) != 0;
     const auto& baked = m_environmentSettings;
     const bool skyChanged = !m_ready || settings.azimuth != baked.azimuth || settings.elevation != baked.elevation ||
         settings.illuminance != baked.illuminance || settings.density != baked.density || settings.mie != baked.mie ||

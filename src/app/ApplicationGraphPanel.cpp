@@ -1278,6 +1278,28 @@ void Application::DrawGraphPanel() {
         const graph::CloudWeatherSettings defaults;
         bool changed=false;
         ui::HintText("雲量と雲種のマップで広域の雲層を作ります。Coverage / Type にマスクを接続すると場所ごとに変わり、未接続はスライダーの値を全域に使います。Volume を Cloud Output へ接続。");
+        ui::SectionHeader("動き");
+        if (ui::BeginPropertyTable("CloudWeatherMotionRows", "積乱雲の広がり")) {
+            float position = m_renderer.WeatherLoopPosition(static_cast<uint32_t>(selected->id), weather->loopPosition);
+            if (ui::PropertyBool("再生", &weather->animate, defaults.animate, "指定した区間を繰り返し再生します。")) {
+                weather->loopPosition = position;
+                changed = true;
+            }
+            if (ui::PropertyFloat("ループ位置", &position, 0.0f, 1.0f, defaults.loopPosition,
+                                  "0が開始、1が終端（開始と同じ状態）。再生中も操作でき、指定位置から続けます。", "%.3f")) {
+                weather->loopPosition = position;
+                m_renderer.SeekWeatherLoop(static_cast<uint32_t>(selected->id), position);
+                changed = true;
+            }
+            changed |= ui::PropertyFloat("ループ時間", &weather->loopDuration, 0.1f, 3600.0f, defaults.loopDuration,
+                                         "1周の秒数。終端で先頭へ戻ります。風向や模様の速度比によって継ぎ目が生じます。", "%.1f s");
+            changed |= ui::PropertyFloat("風速", &weather->windSpeed, 0.0f, 1000.0f, defaults.windSpeed, nullptr, "%.1f m/s");
+            changed |= ui::PropertyFloat("風向", &weather->windDirection, 0.0f, 360.0f, defaults.windDirection, "0 は +Z、90 は +X。", "%.0f °");
+            changed |= ui::PropertyBool("模様を変化", &weather->evolveNoise, defaults.evolveNoise, "オフでは現在の形を保ったまま移動します。オンでは雲量の分布は移動し、形状と細部の模様が別の速度で流れて形が変わります。");
+            if (weather->evolveNoise)
+                changed |= ui::PropertyFloat("模様の速度比", &weather->noiseSpeedRatio, 0.0f, 1.0f, defaults.noiseSpeedRatio, "1 で雲と同じ速度（形を維持）、0 で模様を空間に固定。小さいほど移動に伴う形の変化が速くなります。", "%.2f");
+            ui::EndPropertyTable();
+        }
         ui::SectionHeader("雲種");
         if (ui::BeginPropertyTable("CloudWeatherTypeRows", "積乱雲の広がり")) {
             changed |= ui::PropertyFloat("雲量", &weather->coverage, 0.0f, 1.0f, defaults.coverage, "雲の占有率。Coverage マスクの値を掛けます。", "%.2f");
@@ -1312,16 +1334,6 @@ void Application::DrawGraphPanel() {
             changed |= ui::PropertyFloat("Indirect Light", &weather->indirectLight, 0.0f, 5.0f, defaults.indirectLight, nullptr, "%.2f");
             changed |= ui::PropertyFloat("Ambient Light", &weather->ambientLight, 0.0f, 5.0f, defaults.ambientLight, nullptr, "%.2f");
             changed |= ui::PropertyInt("シード", &weather->seed, 0, 10000, defaults.seed);
-            ui::EndPropertyTable();
-        }
-        ui::SectionHeader("動き");
-        if (ui::BeginPropertyTable("CloudWeatherMotionRows", "積乱雲の広がり")) {
-            changed |= ui::PropertyBool("再生", &weather->animate, defaults.animate, "風で模様を流します。");
-            changed |= ui::PropertyFloat("風速", &weather->windSpeed, 0.0f, 1000.0f, defaults.windSpeed, nullptr, "%.1f m/s");
-            changed |= ui::PropertyFloat("風向", &weather->windDirection, 0.0f, 360.0f, defaults.windDirection, "0 は +Z、90 は +X。", "%.0f °");
-            changed |= ui::PropertyBool("模様を変化", &weather->evolveNoise, defaults.evolveNoise, "オフでは現在の形を保ったまま移動します。オンでは雲量の分布は移動し、形状と細部の模様が別の速度で流れて形が変わります。");
-            if (weather->evolveNoise)
-                changed |= ui::PropertyFloat("模様の速度比", &weather->noiseSpeedRatio, 0.0f, 1.0f, defaults.noiseSpeedRatio, "1 で雲と同じ速度（形を維持）、0 で模様を空間に固定。小さいほど移動に伴う形の変化が速くなります。", "%.2f");
             ui::EndPropertyTable();
         }
         if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }

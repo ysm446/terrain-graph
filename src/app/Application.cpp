@@ -358,6 +358,7 @@ int Application::Run() {
             cloudSettings.weatherType = compiledCloud.cloudType;
             cloudSettings.weatherAnvil = compiledCloud.anvil;
             cloudSettings.weatherWisp = compiledCloud.wisp;
+            m_renderer.SetWeatherLoop(compiledCloud.weatherLoopPosition, compiledCloud.weatherLoopDuration);
             cloudSettings.weatherStreets = compiledCloud.streets;
             cloudSettings.weatherVariation = compiledCloud.variation;
             cloudSettings.weatherDetailScale = compiledCloud.detailScale;

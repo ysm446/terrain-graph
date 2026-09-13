@@ -207,6 +207,12 @@ public:
     bool& TemporalClouds() { return m_atmosphere.TemporalClouds(); }
     void SetCloudPrimitives(std::span<const AtmosphereSettings::Primitive> primitives) { m_atmosphere.SetCloudPrimitives(primitives); }
     void InvalidateCloudLighting() { m_atmosphere.InvalidateFrameLighting(); }
+    float WeatherLoopPosition(uint32_t source, float fallback) const { return m_atmosphere.WeatherLoopPosition(source, fallback); }
+    void SetWeatherLoop(float position, float duration) { m_atmosphere.SetWeatherLoop(position, duration); }
+    void SeekWeatherLoop(uint32_t source, float position) {
+        if (m_atmosphere.AppliedSettings().localCloud == 4 && m_atmosphere.AppliedSettings().cloudSource == source)
+            m_atmosphere.SeekWeatherLoop(position);
+    }
     void ResetCloudMotion() { m_atmosphere.ResetCloudMotion(); }
     void ResetAtmosphereAnimation() { m_atmosphere.ResetAnimation(); }
 

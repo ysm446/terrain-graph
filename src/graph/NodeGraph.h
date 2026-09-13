@@ -292,6 +292,7 @@ struct CloudWeatherSettings {
     float indirectLight=1, ambientLight=1;
     int seed=1;
     bool animate=false;
+    float loopPosition=0.0f, loopDuration=60.0f; // 再生位置0〜1と1周の秒数。
     float windSpeed=20, windDirection=90;
     bool evolveNoise=false; // 移動に伴い模様を変化させる。
     float noiseSpeedRatio=0.75f; // 雲の移動速度に対する模様の速度。
@@ -347,6 +348,7 @@ struct CompiledCloud {
     GraphId sourceId = 0;
     bool layer = false;
     GraphId maskNode = 0, maskPin = 0;
+    float weatherLoopPosition=0.0f, weatherLoopDuration=60.0f;
     bool weather = false; // 天候層。layer も真で照明キャッシュを使う。
     GraphId typeMaskNode = 0, typeMaskPin = 0;
     float cloudType = 0.3f, anvil = 0.5f, wisp = 0.5f, streets = 0.5f, variation = 0.5f;

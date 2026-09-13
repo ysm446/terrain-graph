@@ -653,6 +653,8 @@ CompiledCloud NodeGraph::CompileCloud() const {
             result.connected = true;
             result.layer = true;
             result.weather = true;
+            result.weatherLoopPosition = std::clamp(weather.loopPosition, 0.0f, 1.0f);
+            result.weatherLoopDuration = std::clamp(weather.loopDuration, 0.1f, 3600.0f);
             result.sourceId = source->id;
             result.cloudType = std::clamp(weather.cloudType, 0.0f, 1.0f);
             result.anvil = std::clamp(weather.anvil, 0.0f, 1.0f);

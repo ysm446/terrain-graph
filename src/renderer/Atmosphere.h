@@ -115,6 +115,16 @@ public:
     // 半解像度の雲を前フレームから再投影して蓄積する。全解像度では使わない。
     bool& TemporalClouds() { return m_temporalClouds; }
     void ResetCloudHistory() { m_historyValid = false; }
+    float WeatherLoopPosition(uint32_t source, float fallback) const {
+        return m_ready && m_requested.localCloud == 4 && m_requested.cloudSource == source
+            ? static_cast<float>(m_weatherPlayback.position) : fallback;
+    }
+    void SetWeatherLoop(float position, float duration) {
+        if (position != m_weatherPositionRequest) SeekWeatherLoop(position);
+        if (duration != m_weatherDuration) m_weatherSeek = true;
+        m_weatherPositionRequest = position; m_weatherDuration = duration;
+    }
+    void SeekWeatherLoop(float position) { m_weatherPlayback.Seek(position); m_weatherSeek = true; m_historyValid = false; }
     void ResetAnimation();
     void ResetCloudMotion();
     bool Update(rhi::Device& device, rhi::PipelineCache& pipelines, const AtmosphereSettings& settings);
@@ -165,6 +175,9 @@ private:
     AtmosphereSettings m_requested;
     AtmosphereSettings m_environmentSettings;
     CloudMotion m_motion;
+    CloudLoopPlayback m_weatherPlayback;
+    bool m_weatherSeek = false;
+    float m_weatherPositionRequest = 0.0f, m_weatherDuration = 60.0f;
     std::chrono::steady_clock::time_point m_lastCloudEdit{};
     bool m_cloudEnvironmentDirty = false;
     std::chrono::steady_clock::time_point m_lastTick{};

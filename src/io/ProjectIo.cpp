@@ -1456,6 +1456,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
                 {"noiseScale",weather->noiseScale},{"detailScale",weather->detailScale},{"distanceLod",weather->distanceLod},{"farDistance",weather->farDistance},{"noiseType",EnumName(kCloudNoiseNames,static_cast<uint32_t>(weather->noiseType))},
                 {"detailStrength",weather->detailStrength},{"edgeSoftness",weather->edgeSoftness},
                 {"extinction",weather->extinction},{"indirectLight",weather->indirectLight},{"ambientLight",weather->ambientLight},
+                {"loopPosition",weather->loopPosition},{"loopDuration",weather->loopDuration},
                 {"seed",weather->seed},{"animate",weather->animate},{"windSpeed",weather->windSpeed},{"windDirection",weather->windDirection},
                 {"evolveNoise",weather->evolveNoise},{"noiseSpeedRatio",weather->noiseSpeedRatio}};
         } else if (const auto* scatter = std::get_if<graph::ModelScatterSettings>(&node.settings)) {
@@ -1753,6 +1754,8 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.ambientLight=std::clamp(ReadFloat(*value,"ambientLight",settings.ambientLight),0.0f,5.0f);
                     settings.seed=std::clamp(ReadInt(*value,"seed",settings.seed),0,10000);
                     settings.animate=ReadBool(*value,"animate",settings.animate);
+                    settings.loopPosition=std::clamp(ReadFloat(*value,"loopPosition",settings.loopPosition),0.0f,1.0f);
+                    settings.loopDuration=std::clamp(ReadFloat(*value,"loopDuration",settings.loopDuration),0.1f,3600.0f);
                     settings.windSpeed=std::clamp(ReadFloat(*value,"windSpeed",settings.windSpeed),0.0f,1000.0f);
                     settings.windDirection=std::clamp(ReadFloat(*value,"windDirection",settings.windDirection),0.0f,360.0f);
                     settings.evolveNoise=ReadBool(*value,"evolveNoise",settings.evolveNoise);
