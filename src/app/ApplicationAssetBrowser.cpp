@@ -435,8 +435,6 @@ void Application::DrawAssetBrowser() {
     ImGui::SameLine();
     if (ImGui::Button("更新")) { m_assetRefresh = true; m_workspace.Scan(); m_assetThumbnails.Invalidate(); }
     ImGui::SameLine();
-    if (ImGui::Button("アセットを保存")) m_pendingAssetsSave = true;
-    ImGui::SameLine();
     ImGui::TextDisabled("%s", ToUtf8Display(m_assetDirectory).c_str());
 
     const auto available = ImGui::GetContentRegionAvail();
