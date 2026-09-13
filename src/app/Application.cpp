@@ -701,6 +701,7 @@ void Application::DrawUi() {
     DrawSkyPreviewWindow();
     DrawSceneSwitchDialog();
     DrawAssetDeleteDialog();
+    DrawAssetRenameDialog();
     DrawInfoWindow();
     DrawSettingsWindow();
     DrawExportWindow();

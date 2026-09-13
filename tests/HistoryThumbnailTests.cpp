@@ -134,6 +134,18 @@ int main() {
           !fs::exists(moveRoot / "scene.assets"), "paint data moves with scene");
     check(tg::io::MoveAsset(moving, moveRoot / "project.tgproj", moveRoot / "Scenes").empty(), "workspace file cannot move");
     check(tg::io::MoveAsset(moving, sceneDestination, directory).empty() && fs::exists(sceneDestination), "outside root refused");
+    // 改名も同じ仕組み。付随物は新しい名前に揃い、フォルダはそのまま改名できる。
+    const auto renamedImage = tg::io::RenameAsset(moving, imageDestination, "ground.png");
+    check(renamedImage == moveRoot / "Textures" / "ground.png" && fs::exists(renamedImage) &&
+          fs::exists(renamedImage.wstring() + L".meta") && !fs::exists(imageDestination.wstring() + L".meta"), "rename keeps metadata");
+    check(moving.Resolve(movedRef) == renamedImage, "reference follows renamed asset");
+    check(tg::io::RenameAsset(moving, renamedImage, "bad/name.png").empty() && tg::io::RenameAsset(moving, renamedImage, "").empty(), "invalid names refused");
+    const auto mainScene = tg::io::RenameAsset(moving, sceneDestination, "main.tgscene");
+    check(mainScene == moveRoot / "Scenes" / "main.tgscene" && fs::exists(moveRoot / "Scenes/main.assets/paint.png") &&
+          !fs::exists(moveRoot / "Scenes/scene.assets"), "paint data follows renamed scene");
+    const auto renamedFolder = tg::io::RenameAsset(moving, moveRoot / "Textures", "Images");
+    check(renamedFolder == moveRoot / "Images" && moving.Resolve(movedRef) == moveRoot / "Images" / "ground.png", "folder rename keeps references");
+    check(tg::io::RenameAsset(moving, moveRoot, "Other").empty() && fs::exists(moveRoot / "project.tgproj"), "root cannot be renamed");
     std::cout << failures << " failures\n";
     return failures ? 1 : 0;
 }

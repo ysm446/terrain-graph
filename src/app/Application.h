@@ -173,6 +173,15 @@ private:
     bool IsAssetLoaded(const std::filesystem::path& path) const;
     // 一覧のサムネイルを受け取るドロップ先。フォルダ階層と一覧のフォルダに置く。
     void AssetFolderDropTarget(const std::filesystem::path& directory);
+    void DrawAssetRenameDialog();
+    bool IsAssetSelected(const std::filesystem::path& path) const;
+    // クリックで選ぶ。Ctrl で追加 / 除外、Shift で起点からの範囲。
+    void SelectAsset(const std::filesystem::path& path, bool toggle, bool range);
+    // 選択中のファイルを順に削除確認へ回す。
+    void QueueAssetDelete();
+    void OpenAssetRename(const std::filesystem::path& path);
+    // 移動・改名したアセットの、読み込み済みの絶対パスを付け替える（フォルダなら配下も）。
+    void RelinkAssetPaths(const std::filesystem::path& from, const std::filesystem::path& to);
     void ResumeSceneSwitch();
     // テクスチャ一覧の右クリックメニュー（読み込む / 削除）。
     // target が kNoTexture なら、対象の要る項目は出さない。
@@ -561,14 +570,24 @@ private:
     AssetThumbnailCache m_assetThumbnails;
     std::filesystem::path m_assetDirectory;
     std::vector<std::filesystem::directory_entry> m_assetEntries;
-    std::filesystem::path m_selectedAssetPath;
+    // 一覧で選んでいるもの（複数）。Shift の範囲選択は m_assetSelectionAnchor を起点にする。
+    std::vector<std::filesystem::path> m_selectedAssets;
+    std::filesystem::path m_assetSelectionAnchor;
+    // DEL で複数を削除するときの残り。確認ダイアログを 1 件ずつ出す。
+    std::vector<std::filesystem::path> m_assetDeleteQueue;
+    // 名前の変更。ダイアログで入力し、確定分をフレームの外で処理する。
+    bool m_assetRenameDialog = false;
+    std::filesystem::path m_assetRenameTarget;
+    char m_assetRenameBuffer[256] = {};
+    std::filesystem::path m_pendingAssetRename;
+    std::string m_pendingAssetRenameName;
     std::filesystem::path m_pendingAssetDeleteInspect;
     io::AssetRelations m_assetDeleteRelations;
     bool m_assetDeleteDialog = false;
     bool m_pendingAssetDelete = false;
     // ドラッグ＆ドロップで要求されたアセットの移動（移動元と移動先フォルダ）。
     // 読み込み済みアセットのパス差し替えを伴うのでフレームの外で処理する。
-    std::filesystem::path m_pendingAssetMove;
+    std::vector<std::filesystem::path> m_pendingAssetMoves;
     std::filesystem::path m_pendingAssetMoveTarget;
     std::filesystem::path m_pendingRoot;
     std::filesystem::path m_pendingAssetOpen;
