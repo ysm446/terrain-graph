@@ -13,6 +13,7 @@
 #include "io/MaterialExport.h"
 #include "io/RecentFiles.h"
 #include "renderer/MaterialSphere.h"
+#include "renderer/ModelPreview.h"
 #include "renderer/PreviewRenderer.h"
 #include "renderer/SkyLibrary.h"
 #include "renderer/SkySphere.h"
@@ -28,6 +29,8 @@
 #include <chrono>
 #include <filesystem>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 // imgui-node-editor のコンテキスト。ヘッダを丸ごと引き込まないための前方宣言。
@@ -64,6 +67,9 @@ struct StartupOptions {
     uint32_t screenshotFrame = 8;
     uint32_t screenshotCount = 1; // ビューポート連番の枚数。
     uint32_t screenshotInterval = 1;
+    int previewModel = -1;
+    int previewModelLod = 0;
+    std::filesystem::path importModel; // 開発用。読み込みとプレビューの確認。
     graph::GraphId selectNode = 0; // 開発用。読み込んだグラフのプロパティを画像で確認する。
 };
 
@@ -128,6 +134,10 @@ private:
     void SetPreviewGraphNode(graph::GraphId nodeId, graph::GraphId outputPin = 0);
     void DrawMaterialLibraryPanel();
     void DrawModelLibraryPanel();
+    void DrawModelPreviewWindow();
+    void ProcessModelWork();
+    void RenderModelPreviews(ID3D12GraphicsCommandList* commandList);
+
     // 一覧の右クリックメニュー（追加 / 複製 / 削除 / 読み込み / 書き出し）。
     // target が kNoMaterialAsset なら、対象の要る項目は出さない。
     void DrawMaterialContextMenu(compositor::MaterialAssetId target);
@@ -383,6 +393,17 @@ private:
     ImVec2 m_graphCanvasSize = ImVec2(0.0f, 0.0f);
     compositor::TextureLibrary m_textureLibrary;
     compositor::MaterialLibrary m_materialLibrary;
+    // モデルの編集データと、履歴に含めないGPUプレビュー。
+    std::vector<renderer::ModelAsset> m_models;
+    uint64_t m_nextModelId = 1;
+    uint64_t m_selectedModel = 0;
+    int m_modelLod = 0;
+    bool m_showModelPreview = false;
+    bool m_modelPreviewVisible = false;
+    bool m_focusModelLibrary = false;
+    std::vector<std::filesystem::path> m_pendingModels;
+    std::unordered_map<uint64_t, std::unique_ptr<renderer::ModelPreview>> m_modelPreviews;
+    std::unordered_set<uint64_t> m_renderedModelThumbnails;
     // 天球アセット。マテリアルと並ぶアセットだが、**アンドゥの対象には入れない。**
     // 環境は作っているマテリアルそのものではなく、見え方の設定に近い
     // （プレビュー設定を履歴に載せないのと同じ理由）。

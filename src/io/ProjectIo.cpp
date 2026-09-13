@@ -2432,6 +2432,21 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
         materials.push_back(std::move(node));
     }
     document["materials"] = std::move(materials);
+    // FBXは参照パスを保存し、マテリアルIDは文書内の番号へ変換する。
+    if (refs.models != nullptr) {
+        json models = json::array();
+        for (const auto& asset : *refs.models) {
+            json slots = json::array();
+            for (const auto id : asset.materials) {
+                const auto found = materialIndex.find(id);
+                slots.push_back(found == materialIndex.end() ? json() : json(found->second));
+            }
+            models.push_back({{"name", asset.name},
+                              {"path", RelativePathString(asset.path, baseDir)},
+                              {"materials", slots}});
+        }
+        document["models"] = std::move(models);
+    }
 
     // --- ペイントマスク（PNG でサイドカーへ） -----------------------------
     // 手続きで再現できないので画像として持ち出す。
@@ -2593,6 +2608,32 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
             }
             if (index > 0) {
                 materialIds[index] = id;
+            }
+        }
+    }
+
+    // 欠けたFBXも参照を残す。別の場所へ保存し直しても割り当てを失わない。
+    if (refs.models != nullptr) {
+        refs.models->clear();
+        if (const json* models = FindMember(document, "models"); models && models->is_array()) {
+            for (const auto& node : *models) {
+                if (!node.is_object()) continue;
+                renderer::ModelAsset asset;
+                asset.id = refs.models->size() + 1;
+                asset.name = ReadString(node, "name");
+                asset.path = baseDir / FromUtf8(ReadString(node, "path"));
+                if (!renderer::LoadModel(asset.path, asset)) {
+                    TG_LOG_WARN("モデルの読み込みに失敗: %s", asset.error.c_str());
+                }
+                if (const json* slots = FindMember(node, "materials"); slots && slots->is_array()) {
+                    asset.materials.resize(std::max(asset.materials.size(), slots->size()));
+                    for (size_t i = 0; i < slots->size(); ++i) {
+                        if (!(*slots)[i].is_number_integer()) continue;
+                        const auto found = materialIds.find((*slots)[i].get<int>());
+                        if (found != materialIds.end()) asset.materials[i] = found->second;
+                    }
+                }
+                refs.models->push_back(std::move(asset));
             }
         }
     }

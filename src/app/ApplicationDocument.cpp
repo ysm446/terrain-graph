@@ -29,6 +29,7 @@ compositor::TextureId Application::ValidTexture(compositor::TextureId id) const 
 
 DocumentSnapshot Application::CaptureDocument() const {
     DocumentSnapshot snapshot;
+    snapshot.models = m_models;
     snapshot.graphNodes = m_graph.Nodes();
     snapshot.graphLinks = m_graph.Links();
     snapshot.selectedGraphNode = m_selectedGraphNode;
@@ -60,6 +61,8 @@ DocumentSnapshot Application::CaptureDocument() const {
 // 履歴の対象外なので、写し取った後に消えていることがある。
 // 宙に浮いた ID を残すと、次に同じ番号が払い出されたとき別の画像が現れる。
 void Application::ApplyDocument(const DocumentSnapshot& snapshot) {
+    m_models = snapshot.models;
+    m_renderedModelThumbnails.clear();
     // --- マテリアル ---------------------------------------------------------
     // 写し取った時点に無かったものを消す。破棄は GPU 待機を伴う。
     std::vector<compositor::MaterialAssetId> removed;
@@ -127,6 +130,7 @@ void Application::ApplyDocument(const DocumentSnapshot& snapshot) {
 
 void Application::MarkDocumentChanged(bool terrainChanged) {
     m_documentDirty = true;
+    m_renderedModelThumbnails.clear();
     // マテリアルの編集はグラフの改版に映らないので、スタック側を直接叩いて
     // 再評価させる（グラフ自体の編集は Revision の変化で再コンパイルされる）。
     if (terrainChanged) m_graphStack.MarkDirty();

@@ -73,6 +73,7 @@ find_package(winpixevent CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 find_package(D3D12MemoryAllocator CONFIG REQUIRED)
 find_package(directx-dxc CONFIG REQUIRED)
+find_package(ufbx CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(tinyexr CONFIG REQUIRED)
@@ -90,6 +91,8 @@ set(tg_sources
     src/app/ApplicationLayerPanel.cpp
     src/app/ApplicationMaterialPanel.cpp
     src/app/ApplicationModelPanel.cpp
+    src/renderer/ModelAsset.cpp
+    src/renderer/ModelPreview.cpp
     src/app/ApplicationPathEdit.cpp
     src/app/ApplicationPreviewPanels.cpp
     src/app/ApplicationSkyPanel.cpp
@@ -215,6 +218,7 @@ target_compile_definitions(terrain_graph PRIVATE
 target_compile_options(terrain_graph PRIVATE /W4 /permissive- /utf-8 /Zc:preprocessor)
 
 target_link_libraries(terrain_graph PRIVATE
+    ufbx::ufbx
     Microsoft::DirectX-Headers
     Microsoft::DirectX-Guids
     Microsoft::DirectX12-Agility
@@ -303,3 +307,9 @@ set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT
 set_target_properties(terrain_graph PROPERTIES
     VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:terrain_graph>"
 )
+
+add_executable(model_import_tests tests/ModelImportTests.cpp src/renderer/ModelAsset.cpp)
+target_include_directories(model_import_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_compile_options(model_import_tests PRIVATE /W4 /permissive- /utf-8)
+target_link_libraries(model_import_tests PRIVATE ufbx::ufbx)
+add_test(NAME model-import COMMAND model_import_tests)

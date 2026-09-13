@@ -1,25 +1,13 @@
 #pragma once
 
 #include "rhi/Device.h"
+#include "renderer/MeshData.h"
 
 #include <DirectXMath.h>
 
 #include <vector>
 
 namespace tg::renderer {
-
-// PipelineCache の VertexLayout::MeshStandard と対応する頂点。
-struct MeshVertex {
-    DirectX::XMFLOAT3 position;
-    DirectX::XMFLOAT3 normal;
-    DirectX::XMFLOAT4 tangent;  // w は従法線の向き
-    DirectX::XMFLOAT2 uv;
-};
-
-struct MeshData {
-    std::vector<MeshVertex> vertices;
-    std::vector<uint32_t> indices;
-};
 
 // GPU 上のメッシュ。頂点・インデックスとも DEFAULT ヒープに置く。
 class Mesh {

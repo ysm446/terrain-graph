@@ -38,6 +38,12 @@ tg::StartupOptions ParseCommandLine() {
         if (argument == L"--project" && (i + 1) < argc) {
             options.projectPath = argv[i + 1];
             ++i;
+        } else if (argument == L"--preview-model" && i + 1 < argc) {
+            options.previewModel = ::_wtoi(argv[++i]);
+        } else if (argument == L"--preview-model-lod" && i + 1 < argc) {
+            options.previewModelLod = ::_wtoi(argv[++i]);
+        } else if (argument == L"--import-model" && i + 1 < argc) {
+            options.importModel = argv[++i];
         } else if (argument == L"--save-project" && (i + 1) < argc) {
             options.saveProjectPath = argv[i + 1];
             ++i;

@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.20)
+project(ufbx LANGUAGES C)
+add_library(ufbx STATIC ufbx.c)
+target_include_directories(ufbx PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}> $<INSTALL_INTERFACE:include>)
+install(TARGETS ufbx EXPORT ufbxTargets ARCHIVE DESTINATION lib)
+install(FILES ufbx.h DESTINATION include)
+install(EXPORT ufbxTargets NAMESPACE ufbx:: FILE ufbx-config.cmake DESTINATION lib/cmake/ufbx)

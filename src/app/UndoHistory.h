@@ -5,6 +5,7 @@
 // NodeGraph.h も STL と compositor のデータ構造にしか依存しない。
 #include "compositor/MaterialLayer.h"
 #include "graph/NodeGraph.h"
+#include "renderer/ModelAsset.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -52,6 +53,7 @@ struct DocumentSnapshot {
     std::vector<graph::Node> graphNodes;
     std::vector<graph::Link> graphLinks;
     std::vector<MaterialSnapshot> materials;
+    std::vector<renderer::ModelAsset> models;
     graph::GraphId selectedGraphNode = 0;
     int selectedMaterial = 0;
 };

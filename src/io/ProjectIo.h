@@ -6,6 +6,7 @@
 #include "graph/NodeGraph.h"
 #include "renderer/PreviewRenderer.h"
 #include "renderer/SkyLibrary.h"
+#include "renderer/ModelAsset.h"
 #include "rhi/Device.h"
 #include "rhi/PipelineCache.h"
 
@@ -25,6 +26,7 @@ struct ProjectRefs {
     renderer::SkyLibrary& skies;
     renderer::PreviewRenderer& renderer;
     graph::NodeGraph& graph;
+    std::vector<renderer::ModelAsset>* models = nullptr;
 };
 
 // --- プロジェクト (.tgproj) -----------------------------------------------

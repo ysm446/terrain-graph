@@ -5,6 +5,7 @@
   "description": "ハイトマップとマスクをノードグラフで合成するマテリアル / 地形オーサリングツール",
   "builtin-baseline": "b5d1a94fb7f88fd835e360fd23a45a09ceedbf48",
   "dependencies": [
+    "ufbx",
     "directx-headers",
     "directx12-agility",
     "winpixevent",

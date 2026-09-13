@@ -152,6 +152,8 @@ bool Application::Initialize(const StartupOptions& options) {
         }
     }
     // 読み込みは GPU 待機を伴うので、ここでは要求だけ積む。
+    if (!m_options.importModel.empty()) m_pendingModels.push_back(m_options.importModel);
+
     // 最初のフレームの前に ProcessPendingFileWork が処理する。
     if (!options.projectPath.empty()) {
         m_pendingProjectOpen = options.projectPath;
@@ -183,6 +185,8 @@ void Application::Shutdown() {
     DestroyGraphEditor();
     for (auto& slot : m_cloudMasks) if (slot.evaluator.Resolution() != 0) slot.evaluator.Destroy(m_device);
     m_paintMasks.Destroy(m_device);
+    for (auto& [id, preview] : m_modelPreviews) preview->Destroy(m_device);
+    m_modelPreviews.clear();
     m_materialSphere.Destroy(m_device);
     m_skySphere.Destroy(m_device);
     m_materialLibrary.Destroy(m_device);
@@ -297,6 +301,7 @@ int Application::Run() {
         // プロジェクトとマテリアルの読み書きも GPU 待機を伴うため、フレームの外で。
         // 他の保留処理より先に行う（読み込みが中身を丸ごと入れ替えるため）。
         ProcessPendingFileWork();
+        ProcessModelWork();
         // 経路探索用の地形（Path ノードの Base）の焼き直しも GPU 待機を伴うため、フレームの外で。
         ProcessPendingPathRoutes();
 
@@ -315,7 +320,7 @@ int Application::Run() {
         // 対話せずに保存と読み込みを確かめるために使う。
         if (!m_options.saveProjectPath.empty() && m_frameCounter >= m_options.screenshotFrame) {
             const io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
-                                       m_skyLibrary,     m_renderer,       m_graph};
+                                       m_skyLibrary,     m_renderer,       m_graph, &m_models};
             io::SaveProject(m_options.saveProjectPath, m_device, refs);
             break;
         }
@@ -480,6 +485,8 @@ int Application::Run() {
         m_renderer.Render(m_device, m_pipelineCache, commandList, m_graphStack,
                           m_textureLibrary, m_materialLibrary, m_paintMasks);
 
+        RenderModelPreviews(commandList);
+
         // マテリアルプレビューの球。**窓を開いている間だけ描く。**
         // ImGui はこのフレームで描いた中身をそのまま読む（submit 済みの
         // 描画命令が指すのは SRV なので、ここで書き換えてよい）。
@@ -621,6 +628,7 @@ void Application::DrawUi() {
             }
             ImGui::Separator();
             ImGui::MenuItem("マテリアルプレビュー", nullptr, &m_showMaterialSphere);
+            ImGui::MenuItem("モデルプレビュー", nullptr, &m_showModelPreview);
             ImGui::MenuItem("テクスチャプレビュー", nullptr, &m_showTexturePreview);
             ImGui::MenuItem("天球プレビュー", nullptr, &m_showSkyPreview);
             ImGui::MenuItem("情報", nullptr, &m_showInfo);
@@ -670,6 +678,7 @@ void Application::DrawUi() {
     DrawLightingPanel();
 
     DrawMaterialSphereWindow();
+    DrawModelPreviewWindow();
     DrawTexturePreviewWindow();
     DrawSkyPreviewWindow();
     DrawInfoWindow();

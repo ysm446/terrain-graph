@@ -207,6 +207,10 @@ void Application::HandleDroppedFiles(const std::vector<std::filesystem::path>& p
 void Application::ResetProject() {
     // どれも GPU 待機を伴う。フレームの外から呼ぶこと。
     m_paintMasks.Clear(m_device);
+    m_models.clear();
+    m_selectedModel = 0;
+    m_modelLod = 0;
+    m_renderedModelThumbnails.clear();
     m_materialLibrary.Clear(m_device);
     m_skyLibrary.Clear(m_device);
     m_skyLibrary.EnsureDefault();
@@ -285,7 +289,7 @@ void Application::ProcessPendingFileWork() {
         m_pendingProjectOpen.clear();
 
         io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
-                             m_skyLibrary,     m_renderer,       m_graph};
+                             m_skyLibrary,     m_renderer,       m_graph, &m_models};
         if (io::LoadProject(path, m_device, m_pipelineCache, refs)) {
             // 比較用の起動引数は保存された品質設定より優先する。
             if (m_options.referenceCloudLighting) m_renderer.CloudLightingCache() = false;
@@ -300,6 +304,9 @@ void Application::ProcessPendingFileWork() {
             for (auto& slot : m_cloudMasks) slot.graphRevision = 0;
             m_graphStack.MarkDirty();
             RequestGraphNodePlacement();
+            m_selectedModel = m_models.empty() ? 0 : m_models.front().id;
+            m_modelLod = 0;
+            m_renderedModelThumbnails.clear();
             m_selectedMaterial = 0;
             m_selectedTexture = 0;
             m_ordTexture = compositor::kNoTexture;
@@ -322,7 +329,7 @@ void Application::ProcessPendingFileWork() {
         m_pendingProjectSave.clear();
 
         io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
-                             m_skyLibrary,     m_renderer,       m_graph};
+                             m_skyLibrary,     m_renderer,       m_graph, &m_models};
         if (io::SaveProject(path, m_device, refs)) {
             m_recentProjects.Add(path);
             m_projectPath = path;
