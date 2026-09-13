@@ -170,6 +170,40 @@ void Application::ProcessAssetWork() {
         m_assetDeleteRelations = io::InspectAssetRelations(m_workspace, m_pendingAssetDeleteInspect);
         m_pendingAssetDeleteInspect.clear(); m_assetDeleteDialog = true;
     }
+    if (!m_pendingAssetMove.empty()) {
+        const auto source = m_pendingAssetMove, directory = m_pendingAssetMoveTarget;
+        m_pendingAssetMove.clear(); m_pendingAssetMoveTarget.clear();
+        const auto moved = io::MoveAsset(m_workspace, source, directory);
+        if (!moved.empty() && moved != source) {
+            // 読み込み済みのアセットは絶対パスを持つので、移動先へ付け替える。
+            const auto same = [&](const fs::path& candidate) {
+                return !candidate.empty() && candidate.lexically_normal() == source.lexically_normal();
+            };
+            for (const auto& a : m_textureLibrary.Entries())
+                if (same(a.path)) m_textureLibrary.FindMutable(a.id)->path = moved;
+            for (const auto& a : m_materialLibrary.Entries())
+                if (same(a.assetPath)) m_materialLibrary.FindMutable(a.id)->assetPath = moved;
+            for (const auto& a : m_skyLibrary.Entries()) {
+                if (same(a.assetPath)) m_skyLibrary.FindMutable(a.id)->assetPath = moved;
+                if (same(a.sky.hdriPath)) m_skyLibrary.FindMutable(a.id)->sky.hdriPath = moved;
+            }
+            for (auto& a : m_models) {
+                if (same(a.assetPath)) a.assetPath = moved;
+                if (same(a.path)) a.path = moved;
+            }
+            if (same(m_projectPath)) {
+                m_projectPath = moved;
+                m_recentProjects.Add(m_workspace.Root(), moved);
+                UpdateWindowTitle();
+            }
+            m_recentProjects.Remove(m_workspace.Root(), source);
+            if (same(m_selectedAssetPath)) m_selectedAssetPath = moved;
+            m_assetThumbnails.Invalidate();
+            TG_LOG_INFO("移動しました: %s → %s", ToUtf8Display(source.filename()).c_str(),
+                        ToUtf8Display(directory.lexically_relative(m_workspace.Root())).c_str());
+        }
+        m_assetRefresh = true;
+    }
     // --projectには従来のシーンだけでなくルートと管理ファイルも渡せる。
     if (!m_pendingProjectOpen.empty()) {
         std::error_code error;
@@ -250,6 +284,31 @@ void Application::ProcessAssetWork() {
     m_assetThumbnails.Process(m_device, m_pipelineCache, m_workspace, m_assetDirectory, m_renderer);
 }
 
+void Application::AssetFolderDropTarget(const fs::path& directory) {
+    if (!ImGui::BeginDragDropTarget()) return;
+    // 読み込み済みのテクスチャ / マテリアルは ID で運ばれてくるので、パスへ引き直す。
+    fs::path source;
+    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kAssetPathDragDropType);
+        payload != nullptr && payload->DataSize > 0) {
+        source = FromUtf8(std::string(static_cast<const char*>(payload->Data),
+                                      static_cast<size_t>(payload->DataSize)));
+    } else if (const ImGuiPayload* texture = ImGui::AcceptDragDropPayload(kTextureDragDropType);
+               texture != nullptr && texture->DataSize == sizeof(compositor::TextureId)) {
+        if (const auto* entry = m_textureLibrary.Find(*static_cast<const compositor::TextureId*>(texture->Data)))
+            source = entry->path;
+    } else if (const ImGuiPayload* material = ImGui::AcceptDragDropPayload(kMaterialDragDropType);
+               material != nullptr && material->DataSize == sizeof(compositor::MaterialAssetId)) {
+        if (const auto* asset = m_materialLibrary.Find(*static_cast<const compositor::MaterialAssetId*>(material->Data)))
+            source = asset->assetPath;
+    }
+    std::error_code error;
+    if (!source.empty() && m_workspace.Contains(source) &&
+        !fs::equivalent(source.parent_path(), directory, error)) {
+        m_pendingAssetMove = source; m_pendingAssetMoveTarget = directory;
+    }
+    ImGui::EndDragDropTarget();
+}
+
 void Application::DrawAssetBrowser() {
     if (!ImGui::Begin("アセット")) { ImGui::End(); return; }
     if (ImGui::Button("ルートを開く…")) RequestOpenProject();
@@ -277,6 +336,7 @@ void Application::DrawAssetBrowser() {
             if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
                 m_assetDirectory = directory; m_assetRefresh = true;
             }
+            AssetFolderDropTarget(directory);
             if (open) {
                 std::error_code error;
                 fs::directory_iterator it(directory, fs::directory_options::skip_permission_denied, error), end;
@@ -347,11 +407,19 @@ void Application::DrawAssetBrowser() {
                 if (folder) { m_assetDirectory = path; m_assetRefresh = true; }
                 else m_pendingAssetOpen = path;
             }
-            if ((textureId || materialId) && ImGui::BeginDragDropSource()) {
+            // ImGui のペイロードは 1 つしか持てない。ノードやマップ欄へ割り当てられるものは
+            // 従来どおり ID を積み、それ以外のファイルはパスを積んでフォルダへ移せるようにする。
+            const bool movable = !folder && path.filename() != L"project.tgproj";
+            if ((textureId || materialId || movable) && ImGui::BeginDragDropSource()) {
                 if (materialId) ImGui::SetDragDropPayload(kMaterialDragDropType, &materialId, sizeof(materialId));
-                else ImGui::SetDragDropPayload(kTextureDragDropType, &textureId, sizeof(textureId));
+                else if (textureId) ImGui::SetDragDropPayload(kTextureDragDropType, &textureId, sizeof(textureId));
+                else {
+                    const auto utf8 = ToUtf8Portable(path);
+                    ImGui::SetDragDropPayload(kAssetPathDragDropType, utf8.data(), utf8.size());
+                }
                 ImGui::TextUnformatted(ToUtf8Display(path.filename()).c_str()); ImGui::EndDragDropSource();
             }
+            if (folder) AssetFolderDropTarget(path);
             if (thumb.hovered) ImGui::SetTooltip("%s\nダブルクリックで開く", ToUtf8Display(path).c_str());
             if (ImGui::BeginPopupContextItem("assetMenu")) {
                 if (ImGui::MenuItem("開く")) {

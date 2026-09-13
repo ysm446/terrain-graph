@@ -106,6 +106,34 @@ int main() {
     std::ofstream(deleteRoot / "broken.tgmat") << "{broken";
     check(!tg::io::InspectAssetRelations(deletion, materialFile).complete, "incomplete scan blocks deletion");
     check(!tg::io::InspectAssetRelations(deletion, deleteRoot / "project.tgproj").complete, "workspace file protected");
+    // 移動はIDで参照を保つ。付随する.metaとシーンのペイントデータも一緒に動く。
+    tg::io::ProjectWorkspace moving;
+    const auto moveRoot = directory / "move-root";
+    check(moving.Open(moveRoot), "move root");
+    const auto movedImage = moveRoot / "image.png";
+    std::ofstream(movedImage).put('t');
+    const auto movedRef = moving.Reference(movedImage);
+    fs::create_directories(moveRoot / "Textures", error);
+    const auto imageDestination = tg::io::MoveAsset(moving, movedImage, moveRoot / "Textures");
+    check(imageDestination == moveRoot / "Textures" / "image.png" && fs::exists(imageDestination), "asset moved");
+    check(!fs::exists(movedImage) && !fs::exists(movedImage.wstring() + L".meta") &&
+          fs::exists(imageDestination.wstring() + L".meta"), "metadata moved with asset");
+    check(moving.Resolve(movedRef) == imageDestination, "reference follows moved asset");
+    check(tg::io::MoveAsset(moving, imageDestination, moveRoot / "Textures") == imageDestination, "same folder is a no-op");
+    std::ofstream(moveRoot / "image.png").put('x');
+    check(tg::io::MoveAsset(moving, imageDestination, moveRoot).empty() && fs::exists(imageDestination), "name clash refused");
+    const auto movedScene = moveRoot / "scene.tgscene";
+    nlohmann::json movedDocument = {{"textures", nlohmann::json::array()}, {"materials", nlohmann::json::array()},
+        {"models", nlohmann::json::array()}, {"skies", nlohmann::json::array()}};
+    check(moving.SaveScene(movedScene, movedDocument), "scene for move");
+    fs::create_directories(moveRoot / "scene.assets", error);
+    std::ofstream(moveRoot / "scene.assets/paint.png").put('m');
+    fs::create_directories(moveRoot / "Scenes", error);
+    const auto sceneDestination = tg::io::MoveAsset(moving, movedScene, moveRoot / "Scenes");
+    check(sceneDestination == moveRoot / "Scenes" / "scene.tgscene" && fs::exists(moveRoot / "Scenes/scene.assets/paint.png") &&
+          !fs::exists(moveRoot / "scene.assets"), "paint data moves with scene");
+    check(tg::io::MoveAsset(moving, moveRoot / "project.tgproj", moveRoot / "Scenes").empty(), "workspace file cannot move");
+    check(tg::io::MoveAsset(moving, sceneDestination, directory).empty() && fs::exists(sceneDestination), "outside root refused");
     std::cout << failures << " failures\n";
     return failures ? 1 : 0;
 }

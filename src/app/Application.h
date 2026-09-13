@@ -171,6 +171,8 @@ private:
     void DrawSceneSwitchDialog();
     void DrawAssetDeleteDialog();
     bool IsAssetLoaded(const std::filesystem::path& path) const;
+    // 一覧のサムネイルを受け取るドロップ先。フォルダ階層と一覧のフォルダに置く。
+    void AssetFolderDropTarget(const std::filesystem::path& directory);
     void ResumeSceneSwitch();
     // テクスチャ一覧の右クリックメニュー（読み込む / 削除）。
     // target が kNoTexture なら、対象の要る項目は出さない。
@@ -564,6 +566,10 @@ private:
     io::AssetRelations m_assetDeleteRelations;
     bool m_assetDeleteDialog = false;
     bool m_pendingAssetDelete = false;
+    // ドラッグ＆ドロップで要求されたアセットの移動（移動元と移動先フォルダ）。
+    // 読み込み済みアセットのパス差し替えを伴うのでフレームの外で処理する。
+    std::filesystem::path m_pendingAssetMove;
+    std::filesystem::path m_pendingAssetMoveTarget;
     std::filesystem::path m_pendingRoot;
     std::filesystem::path m_pendingAssetOpen;
     bool m_pendingAssetsSave = false;

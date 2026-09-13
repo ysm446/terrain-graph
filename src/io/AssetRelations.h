@@ -14,4 +14,9 @@ struct AssetRelations {
 AssetRelations InspectAssetRelations(ProjectWorkspace& workspace, const std::filesystem::path& target);
 // 確認時から変わっていない場合だけ、元ファイルと.metaをルート内へ退避する。
 bool RetireAsset(ProjectWorkspace& workspace, const AssetRelations& approved);
+// ファイルと付随物（.meta、シーンなら <名前>.assets）をルート内の別フォルダへ移す。
+// 参照はIDで解決されるので、移動後に再スキャンすれば切れない。
+// 成功したら移動先のパスを返し、失敗したら空を返す（途中で失敗した分は戻す）。
+std::filesystem::path MoveAsset(ProjectWorkspace& workspace, const std::filesystem::path& target,
+                                const std::filesystem::path& directory);
 }

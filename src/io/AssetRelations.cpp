@@ -146,4 +146,49 @@ bool RetireAsset(ProjectWorkspace& workspace, const AssetRelations& approved) {
     TG_LOG_INFO("ファイルを退避しました: %s", ToUtf8Display(directory).c_str());
     return true;
 }
+fs::path MoveAsset(ProjectWorkspace& workspace, const fs::path& target, const fs::path& directory) {
+    std::error_code error;
+    if (!workspace.Contains(target) || !workspace.Contains(directory) ||
+        SamePath(target, workspace.Root() / L"project.tgproj") ||
+        target.lexically_relative(workspace.Root()).wstring().starts_with(L".") ||
+        directory.lexically_relative(workspace.Root()).wstring().starts_with(L".") ||
+        fs::is_symlink(target, error) || !fs::is_regular_file(target, error) ||
+        !fs::is_directory(directory, error)) {
+        TG_LOG_WARN("移動できないファイルまたは移動先です");
+        return {};
+    }
+    if (SamePath(target.parent_path(), directory)) return target;
+    // 移動するもの: 本体、.meta、シーンのペイントデータ。移動先に同名があれば止める。
+    std::vector<fs::path> files{target};
+    const fs::path meta = target.wstring() + L".meta";
+    if (fs::exists(meta, error)) files.push_back(meta);
+    if (target.extension() == L".tgscene") {
+        const auto paint = target.parent_path() / (target.stem().wstring() + L".assets");
+        if (fs::is_directory(paint, error)) files.push_back(paint);
+    }
+    for (const auto& file : files) {
+        const auto destination = directory / file.filename();
+        if (fs::exists(destination, error) || !workspace.Contains(destination)) {
+            TG_LOG_WARN("移動先に同じ名前のファイルがあります: %s", ToUtf8Display(destination).c_str());
+            return {};
+        }
+    }
+    size_t moved = 0;
+    for (; moved < files.size(); ++moved) {
+        fs::rename(files[moved], directory / files[moved].filename(), error);
+        if (error) break;
+    }
+    if (error) {
+        TG_LOG_ERROR("移動できませんでした: %s", ToUtf8Display(files[moved]).c_str());
+        while (moved > 0) {
+            --moved;
+            std::error_code rollback;
+            fs::rename(directory / files[moved].filename(), files[moved], rollback);
+            if (rollback) TG_LOG_ERROR("移動したファイルを元に戻せません: %s", ToUtf8Display(files[moved]).c_str());
+        }
+        return {};
+    }
+    workspace.Scan();
+    return directory / target.filename();
+}
 }

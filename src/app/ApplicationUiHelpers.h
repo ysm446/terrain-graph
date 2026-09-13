@@ -319,6 +319,9 @@ inline constexpr const char* kTextureDragDropType = "TG_TEXTURE";
 // マテリアル一覧から Surface のマテリアル欄（プロパティの行 / ノードのサムネイル）へ
 // ドラッグ＆ドロップで割り当てるときのペイロードの種別。中身は MaterialAssetId。
 inline constexpr const char* kMaterialDragDropType = "TG_MATERIAL";
+// アセット一覧のサムネイルをフォルダ階層へドラッグ＆ドロップして移動するときの
+// ペイロードの種別。中身は UTF-8 のパス文字列（終端なし）。
+inline constexpr const char* kAssetPathDragDropType = "TG_ASSET_PATH";
 inline constexpr const char* kTextureRemoveModalTitle = "テクスチャを削除";
 
 // テクスチャの一覧に出すフォーマット名。DXGI の名前は長いので短く言い換える。
