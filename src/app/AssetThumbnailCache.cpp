@@ -157,9 +157,13 @@ void AssetThumbnailCache::Process(rhi::Device& device, rhi::PipelineCache& pipel
         } else if (m_pendingModel.parent_path() != directory) ClearScratch(device);
         return;
     }
-    const auto request = std::find_if(m_requests.begin(), m_requests.end(), [&](const auto& path) {
+    // 表示中のフォルダを先に、他のフォルダ（削除確認に並ぶ関連ファイルなど）を後に作る。
+    auto request = std::find_if(m_requests.begin(), m_requests.end(), [&](const auto& path) {
         return path.parent_path() == directory && !m_entries.contains(path);
     });
+    if (request == m_requests.end())
+        request = std::find_if(m_requests.begin(), m_requests.end(),
+                               [&](const auto& path) { return !m_entries.contains(path); });
     if (request == m_requests.end()) return;
     const auto path = *request;
     const auto extension = Extension(path);

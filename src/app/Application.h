@@ -174,6 +174,8 @@ private:
     // 一覧のサムネイルを受け取るドロップ先。フォルダ階層と一覧のフォルダに置く。
     void AssetFolderDropTarget(const std::filesystem::path& directory);
     void DrawAssetRenameDialog();
+    // 一覧と確認ダイアログで使うサムネイル。読み込み済みならその絵、無ければ一覧用の生成物。
+    ImTextureID AssetThumbnailHandle(const std::filesystem::path& path);
     bool IsAssetSelected(const std::filesystem::path& path) const;
     // クリックで選ぶ。Ctrl で追加 / 除外、Shift で起点からの範囲。
     void SelectAsset(const std::filesystem::path& path, bool toggle, bool range);

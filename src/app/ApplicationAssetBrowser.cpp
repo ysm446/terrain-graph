@@ -71,19 +71,56 @@ bool Application::IsAssetLoaded(const fs::path& path) const {
     for (const auto& a : m_models) if (matches(a.assetPath) || matches(a.path)) return true;
     return false;
 }
+ImTextureID Application::AssetThumbnailHandle(const fs::path& path) {
+    for (const auto& a : m_textureLibrary.Entries())
+        if (a.path.lexically_normal() == path.lexically_normal()) return static_cast<ImTextureID>(a.PreviewHandle().ptr);
+    for (const auto& a : m_materialLibrary.Entries())
+        if (a.assetPath == path) return static_cast<ImTextureID>(a.thumbnail.srv.gpu.ptr);
+    for (const auto& a : m_skyLibrary.Entries())
+        if (a.assetPath == path) return static_cast<ImTextureID>(a.thumbnail.srv.gpu.ptr);
+    for (const auto& a : m_models)
+        if (a.assetPath == path || a.path == path) {
+            const auto found = m_modelPreviews.find(a.id);
+            return found != m_modelPreviews.end() && found->second->HasOutput()
+                       ? static_cast<ImTextureID>(found->second->OutputHandle().ptr) : ImTextureID{};
+        }
+    return static_cast<ImTextureID>(m_assetThumbnails.Request(path).ptr);
+}
+
 void Application::DrawAssetDeleteDialog() {
     if (m_assetDeleteDialog && !ImGui::IsPopupOpen("アセットファイルの削除")) ImGui::OpenPopup("アセットファイルの削除");
     if (!ImGui::BeginPopupModal("アセットファイルの削除", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
     const auto& report = m_assetDeleteRelations;
-    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ui::Scaled(520));
-    ImGui::TextUnformatted(ToUtf8Display(report.target).c_str());
-    ImGui::PopTextWrapPos();
+    // 名前だけでは見分けにくいので、対象と関連ファイルにはサムネイルを添える。
+    // 絵の無いもの（.meta やフォルダ）も枠だけ出して行の高さを揃える。
+    const auto row = [&](const fs::path& path, float size, bool fullPath) {
+        ui::ThumbnailImage(AssetThumbnailHandle(path), size);
+        if (!AssetThumbnailCache::Supports(path) || m_assetThumbnails.Failed(path)) {
+            const auto min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+            std::error_code error;
+            const char* type = fs::is_directory(path, error) ? "フォルダ" : path.extension() == L".meta" ? "meta" : "ファイル";
+            const auto text = ImGui::CalcTextSize(type);
+            if (text.x < size - ui::Scaled(4))
+                ImGui::GetWindowDrawList()->AddText(ImVec2((min.x + max.x - text.x) * 0.5f, (min.y + max.y - text.y) * 0.5f),
+                                                    ImGui::GetColorU32(ImGuiCol_TextDisabled), type);
+        }
+        ImGui::SameLine();
+        const auto label = ToUtf8Display(fullPath ? path : path.lexically_relative(m_workspace.Root()));
+        // 文字は箱の上下中央へ。
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (size - ImGui::GetTextLineHeight()) * 0.5f);
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ui::Scaled(520) - size);
+        ImGui::TextUnformatted(label.c_str());
+        ImGui::PopTextWrapPos();
+    };
+    row(report.target, ui::Scaled(64), true);
     ui::HintText("元ファイルと付随する.metaを、ルート内の退避フォルダへ移します。");
     const auto list = [&](const char* title, const std::vector<fs::path>& paths) {
         if (paths.empty()) return;
         ImGui::Separator(); ImGui::TextUnformatted(title);
-        if (ImGui::BeginChild(title, ImVec2(ui::Scaled(520), std::min(float(paths.size()), 5.0f) * ImGui::GetTextLineHeightWithSpacing() + ui::Scaled(12)), ImGuiChildFlags_Borders))
-            for (const auto& path : paths) ImGui::TextUnformatted(ToUtf8Display(path.lexically_relative(m_workspace.Root())).c_str());
+        const float thumb = ui::Scaled(36);
+        const float rowHeight = thumb + ImGui::GetStyle().ItemSpacing.y;
+        if (ImGui::BeginChild(title, ImVec2(ui::Scaled(560), std::min(float(paths.size()), 4.0f) * rowHeight + ui::Scaled(12)), ImGuiChildFlags_Borders))
+            for (const auto& path : paths) row(path, thumb, false);
         ImGui::EndChild();
     };
     list("一緒に退避するファイル", report.companions);
@@ -492,26 +529,12 @@ void Application::DrawAssetBrowser() {
             const auto ext = Extension(path);
             std::error_code error;
             const bool folder = entry.is_directory(error);
-            ImTextureID handle = 0;
             compositor::TextureId textureId = 0;
             compositor::MaterialAssetId materialId = 0;
-            for (const auto& a : m_textureLibrary.Entries()) if (a.path.lexically_normal() == path.lexically_normal()) {
-                handle = static_cast<ImTextureID>(a.PreviewHandle().ptr); textureId = a.id; break;
-            }
-            for (const auto& a : m_materialLibrary.Entries()) if (a.assetPath == path) {
-                handle = static_cast<ImTextureID>(a.thumbnail.srv.gpu.ptr); materialId = a.id; break;
-            }
-            for (const auto& a : m_skyLibrary.Entries()) if (a.assetPath == path) {
-                handle = static_cast<ImTextureID>(a.thumbnail.srv.gpu.ptr); break;
-            }
-            for (const auto& a : m_models) if (a.assetPath == path || a.path == path) {
-                const auto found = m_modelPreviews.find(a.id);
-                if (found != m_modelPreviews.end() && found->second->HasOutput())
-                    handle = static_cast<ImTextureID>(found->second->OutputHandle().ptr);
-                break;
-            }
-            if (!handle && !folder && ImGui::IsRectVisible(ImVec2(size, size)))
-                handle = static_cast<ImTextureID>(m_assetThumbnails.Request(path).ptr);
+            for (const auto& a : m_textureLibrary.Entries()) if (a.path.lexically_normal() == path.lexically_normal()) { textureId = a.id; break; }
+            for (const auto& a : m_materialLibrary.Entries()) if (a.assetPath == path) { materialId = a.id; break; }
+            // 画面外の分は要求しない（生成は 1 フレームに 1 枚なので、見えているものを優先する）。
+            const ImTextureID handle = (!folder && ImGui::IsRectVisible(ImVec2(size, size))) ? AssetThumbnailHandle(path) : ImTextureID{};
             ImGui::PushID(ToUtf8Portable(path).c_str()); ImGui::BeginGroup();
             const auto thumb = ui::ThumbnailButton("##asset", handle, size, IsAssetSelected(path));
             if (folder) {
