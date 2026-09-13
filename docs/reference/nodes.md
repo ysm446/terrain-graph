@@ -1,7 +1,11 @@
 # nodes — ノードのリファレンス
 
 作成日時: 2026-09-03 17:30
-更新日時: 2026-09-13 19:50
+更新日時: 2026-09-13 19:57
+
+## Model Merge
+
+複数のInstancesを1つにまとめる。Scatter → Model ScatterとCrumbling → Model Scatterなどを入力し、Model Outputへ接続する。接続すると末尾へ空き入力が1つ増え、切断すると余分な空きを整理する。メッシュの結合は行わず、各配置のマテリアル・サイズ・描画距離を保持する。入れ子にも対応。同じModel Scatterへ複数経路で到達しても一度だけ描く。空のマージは配置を出さない。
 
 ## Crumbling Points / Model Scatter / Model Output
 

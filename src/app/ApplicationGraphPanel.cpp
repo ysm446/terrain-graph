@@ -458,11 +458,11 @@ void Application::PasteGraphNodes(const ImVec2& viewCenter) {
         }
         const GraphClipboardNode& entry = m_graphClipboard[i];
         for (size_t pinIndex = 0; pinIndex < entry.inputs.size(); ++pinIndex) {
-            if (node->kind!=graph::NodeKind::CloudMerge && pinIndex >= node->inputs.size()) {
+            if (node->kind!=graph::NodeKind::CloudMerge && node->kind!=graph::NodeKind::ModelMerge && pinIndex >= node->inputs.size()) {
                 break;
             }
             const GraphClipboardNode::Source& source = entry.inputs[pinIndex];
-            const graph::GraphId endPin = node->kind==graph::NodeKind::CloudMerge ? node->inputs.back().id : node->inputs[pinIndex].id;
+            const graph::GraphId endPin = (node->kind==graph::NodeKind::CloudMerge || node->kind==graph::NodeKind::ModelMerge) ? node->inputs.back().id : node->inputs[pinIndex].id;
             if (source.copiedIndex >= 0 &&
                 static_cast<size_t>(source.copiedIndex) < created.size()) {
                 const graph::Node* upstream = m_graph.FindNode(created[source.copiedIndex]);
@@ -921,6 +921,7 @@ void Application::DrawGraphEditor() {
         addNodeMenuItem(graph::NodeKind::CloudOutput, "Cloud Output — Volume を繋いで雲を表示する");
         ImGui::Separator();
         addNodeMenuItem(graph::NodeKind::ModelScatter, "Model Scatter — Points にモデルをランダム配置する");
+        addNodeMenuItem(graph::NodeKind::ModelMerge, "Model Merge — 複数のモデル配置をまとめる");
         addNodeMenuItem(graph::NodeKind::ModelOutput, "Model Output — モデル配置をビューポートへ出す");
         addNodeMenuItem(graph::NodeKind::Output, "Output — ここに繋いだ結果をプレビューする");
         ImGui::EndPopup();
@@ -1611,8 +1612,10 @@ void Application::DrawGraphPanel() {
             scatter->models.push_back({m_models.empty()?0:m_models.front().id,1}); changed=true;
         }
         if(changed) { m_graph.MarkDirty(); MarkDocumentChanged(false); }
+    } else if (selected->kind == graph::NodeKind::ModelMerge) {
+        ui::HintText("複数のInstancesをまとめます。接続すると入力が増え、各Model Scatterの設定を保持します");
     } else if (selected->kind == graph::NodeKind::ModelOutput) {
-        ui::HintText("Model Scatter のInstancesを接続します。ハイトマップとは独立してモデルを描画します");
+        ui::HintText("Model Scatter / Model Merge のInstancesを接続します。ハイトマップとは独立してモデルを描画します");
     } else if (selected->kind == graph::NodeKind::CloudOutput) {
         ui::HintText("Cloud Noise の Volume を接続して表示します。Cloud Animation を挟むと移動できます。未接続なら雲は表示しません");
         ui::HintText("保存済みの Cloud / Cloud Layer (Legacy) も引き続き表示できます");

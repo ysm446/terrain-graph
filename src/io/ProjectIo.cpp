@@ -1625,12 +1625,13 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                 }
             }
 
-            // Cloud Merge の可変入力をすべて復元してからリンクを解決する。
+            // Cloud Merge / Model Merge の可変入力をすべて復元してからリンクを解決する。
             // 旧形式の固定A/Bピンも同じIDで引き継ぐ。
-            if (created.kind==graph::NodeKind::CloudMerge && inputIds && inputIds->is_array()) {
+            if ((created.kind==graph::NodeKind::CloudMerge || created.kind==graph::NodeKind::ModelMerge) && inputIds && inputIds->is_array()) {
                 for (size_t i=created.inputs.size();i<inputIds->size();++i) {
                     graph::Pin pin;
-                    pin.nodeId=created.id; pin.kind=graph::PinKind::Input; pin.valueType=graph::ValueType::CloudShape;
+                    pin.nodeId=created.id; pin.kind=graph::PinKind::Input;
+                    pin.valueType=created.kind==graph::NodeKind::ModelMerge ? graph::ValueType::Instances : graph::ValueType::CloudShape;
                     if ((*inputIds)[i].is_number_integer()) pin.id=(*inputIds)[i].get<int>();
                     maxId=std::max(maxId,pin.id);
                     created.inputs.push_back(std::move(pin));

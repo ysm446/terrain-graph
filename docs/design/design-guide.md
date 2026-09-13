@@ -1,7 +1,11 @@
 # design-guide — UI の設計ガイド
 
 作成日時: 2026-08-31 14:36
-更新日時: 2026-09-13 19:50
+更新日時: 2026-09-13 19:57
+
+## Model Merge
+
+追加メニューのModel ScatterとModel Outputの間へModel Mergeを置く。入力名はInstances 1、Instances 2…とし、接続済み入力に加えて末尾に空きを1つ表示する。出力名はInstances。プロパティには統合と個別設定の保持を説明するHintTextを置く。
 
 ## Scatterのポイント表示
 

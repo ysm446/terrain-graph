@@ -49,6 +49,41 @@ bool StartsWithNeutralPlane(const tg::graph::CompiledGraph& compiled) {
 
 void RunNodeGraphTests() {
     {
+        Section("Model Mergeの可変入力と配置の統合");
+        NodeGraph graph;
+        const auto merge=graph.CreateNode(NodeKind::ModelMerge);
+        const auto output=graph.CreateNode(NodeKind::ModelOutput);
+        graph.CreateLink(graph.FindNode(merge)->outputs[0].id,graph.FindNode(output)->inputs[0].id);
+        Check(graph.FindNode(merge)->inputs.size()==1 && graph.CompileModelScatters().empty(),"空マージは空き1入力・配置なし");
+        std::array<tg::graph::GraphId,3> scatters{},pins{},links{};
+        for (size_t i=0;i<3;++i) {
+            const auto source=graph.CreateNode(i==0 ? NodeKind::Crumbling : NodeKind::Scatter);
+            scatters[i]=graph.CreateNode(NodeKind::ModelScatter);
+            std::get<tg::graph::ModelScatterSettings>(graph.FindMutableNode(scatters[i])->settings).maxDistance=float(i+1)*100;
+            graph.CreateLink(graph.FindNode(source)->outputs.back().id,graph.FindNode(scatters[i])->inputs[0].id);
+            pins[i]=graph.FindNode(merge)->inputs.back().id;
+            Check(graph.CreateLink(graph.FindNode(scatters[i])->outputs[0].id,pins[i]),"配置をマージへ接続");
+            links[i]=graph.Links().back().id;
+            Check(links[i]!=0 && graph.FindNode(merge)->inputs.size()==i+2,"接続すると空き入力が増える");
+        }
+        auto compiled=graph.CompileModelScatters();
+        Check(compiled.size()==3 && compiled[2].settings.maxDistance==300,"3配置と個別の描画距離を保持");
+        const auto nested=graph.CreateNode(NodeKind::ModelMerge);
+        graph.CreateLink(graph.FindNode(merge)->outputs[0].id,graph.FindNode(nested)->inputs.back().id);
+        graph.CreateLink(graph.FindNode(scatters[0])->outputs[0].id,graph.FindNode(nested)->inputs.back().id);
+        graph.CreateLink(graph.FindNode(nested)->outputs[0].id,graph.FindNode(output)->inputs[0].id);
+        Check(graph.CompileModelScatters().size()==3,"入れ子と重複経路でも各配置を一度だけ描く");
+        Check(!graph.CreateLink(graph.FindNode(nested)->outputs[0].id,graph.FindNode(merge)->inputs.back().id),"マージ間の循環を拒否");
+        Check(graph.DeleteLink(links[1]) && graph.FindNode(merge)->inputs.size()==3 && graph.FindPin(pins[2]),"切断で空きを整理し後続ピンを維持");
+        Check(graph.CompileModelScatters().size()==2,"切断した配置だけ除外");
+        NodeGraph restored; restored.Replace(graph.Nodes(),graph.Links());
+        Check(restored.FindNode(merge)->inputs.size()==3 && restored.CompileModelScatters().size()==2,"復元で可変ピンと全経路を保持");
+        Check(restored.CreateLink(restored.FindNode(scatters[1])->outputs[0].id,restored.FindNode(merge)->inputs.back().id)!=0 && restored.CompileModelScatters().size()==3,"復元後も追加接続できる");
+        graph.DeleteNode(scatters[2]);
+        Check(graph.CompileModelScatters().size()==1,"配置ノード削除で描画から除外");
+    }
+
+    {
         Section("モデル配置はハイト出力から独立する");
         auto graph = NodeGraph::CreateDefault();
         const auto original = graph.CompileLayers().layers.size();

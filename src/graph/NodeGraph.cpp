@@ -227,10 +227,14 @@ constexpr std::array<PinDefinition, 2> kModelScatterPins = {{
     {PinKind::Input, ValueType::Points, "Points"},
     {PinKind::Output, ValueType::Instances, "Instances"},
 }};
+constexpr std::array<PinDefinition, 2> kModelMergePins = {{
+    {PinKind::Input, ValueType::Instances, "Instances 1"},
+    {PinKind::Output, ValueType::Instances, "Instances"},
+}};
 constexpr std::array<PinDefinition, 1> kModelOutputPins = {{
     {PinKind::Input, ValueType::Instances, "Instances"},
 }};
-constexpr std::array<NodeDefinition, 47> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 48> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -273,6 +277,7 @@ constexpr std::array<NodeDefinition, 47> kNodeDefinitions = {{
     {NodeKind::CloudOutput, "cloudOutput", "Cloud Output", kCloudOutputPins},
     {NodeKind::ModelScatter, "modelScatter", "Model Scatter", kModelScatterPins},
     {NodeKind::ModelOutput, "modelOutput", "Model Output", kModelOutputPins},
+    {NodeKind::ModelMerge, "modelMerge", "Model Merge", kModelMergePins},
     {NodeKind::Output, "output", "Output", kOutputNodePins},
     // 追加メニューには出さない。読み込みで定義が見つからなかったノードの受け皿。
     {NodeKind::Missing, "missing", "Missing", {}},
@@ -515,7 +520,7 @@ bool NodeGraph::CreateLink(GraphId startPin, GraphId endPin) {
     // 入力ピンは 1 本だけ。既にある接続は置き換える。
     std::erase_if(m_links, [endPin](const Link& link) { return link.endPin == endPin; });
     m_links.push_back({AllocateGraphId(), startPin, endPin});
-    NormalizeCloudMergeInputs();
+    NormalizeMergeInputs();
     MarkDirty();
     return true;
 }
@@ -526,7 +531,7 @@ bool NodeGraph::DeleteLink(GraphId linkId) {
     if (m_links.size() == oldSize) {
         return false;
     }
-    NormalizeCloudMergeInputs();
+    NormalizeMergeInputs();
     MarkDirty();
     return true;
 }
@@ -591,15 +596,26 @@ CompiledCloud NodeGraph::CompileCloudShapes(GraphId shapeId) const {
 
 std::vector<CompiledModelScatter> NodeGraph::CompileModelScatters() const {
     std::vector<CompiledModelScatter> result;
+    std::unordered_set<GraphId> visited;
     for (const auto& output : m_nodes) {
         if (output.kind != NodeKind::ModelOutput || output.inputs.empty()) continue;
-        const auto* scatter = FindUpstreamNodeForPin(output.inputs[0].id);
-        if (!scatter || scatter->kind != NodeKind::ModelScatter || scatter->inputs.empty()) continue;
-        const auto* source = FindUpstreamNodeForPin(scatter->inputs[0].id);
-        const auto* settings = std::get_if<ModelScatterSettings>(&scatter->settings);
-        if (!source || (source->kind != NodeKind::Crumbling && source->kind != NodeKind::Scatter) || !settings) continue;
-        if (std::none_of(result.begin(), result.end(), [&](const auto& x) { return x.node == scatter->id; }))
-            result.push_back({scatter->id, source->id, *settings});
+        std::vector<const Node*> pending{FindUpstreamNodeForPin(output.inputs[0].id)};
+        while (!pending.empty()) {
+            const auto* node = pending.back();
+            pending.pop_back();
+            if (!node || !visited.insert(node->id).second) continue;
+            if (node->kind == NodeKind::ModelMerge) {
+                // 入力順に辿り、同じ配置へ複数経路があっても一度だけ描く。
+                for (auto it = node->inputs.rbegin(); it != node->inputs.rend(); ++it)
+                    pending.push_back(FindUpstreamNodeForPin(it->id));
+                continue;
+            }
+            if (node->kind != NodeKind::ModelScatter || node->inputs.empty()) continue;
+            const auto* source = FindUpstreamNodeForPin(node->inputs[0].id);
+            const auto* settings = std::get_if<ModelScatterSettings>(&node->settings);
+            if (!source || (source->kind != NodeKind::Crumbling && source->kind != NodeKind::Scatter) || !settings) continue;
+            result.push_back({node->id, source->id, *settings});
+        }
     }
     return result;
 }
@@ -813,7 +829,7 @@ bool NodeGraph::DeleteNode(GraphId nodeId) {
     m_cloudMapCache.erase(nodeId);
     m_cloudShapeGenerateCache.erase(nodeId);
     std::erase_if(m_nodes, [nodeId](const Node& candidate) { return candidate.id == nodeId; });
-    NormalizeCloudMergeInputs();
+    NormalizeMergeInputs();
     MarkDirty();
     return true;
 }
@@ -831,15 +847,17 @@ void NodeGraph::Replace(std::vector<Node> nodes, std::vector<Link> links) {
                end->kind != PinKind::Input || start->valueType != end->valueType;
     });
     RebuildNextGraphId();
-    NormalizeCloudMergeInputs();
+    NormalizeMergeInputs();
     MarkDirty();
 }
 
-void NodeGraph::NormalizeCloudMergeInputs() {
+void NodeGraph::NormalizeMergeInputs() {
     std::unordered_set<GraphId> connected;
     for (const auto& link:m_links) connected.insert(link.endPin);
     for (auto& node:m_nodes) {
-        if (node.kind!=NodeKind::CloudMerge) continue;
+        if (node.kind!=NodeKind::CloudMerge && node.kind!=NodeKind::ModelMerge) continue;
+        const auto type = node.kind==NodeKind::ModelMerge ? ValueType::Instances : ValueType::CloudShape;
+        const char* label = node.kind==NodeKind::ModelMerge ? "Instances " : "Shape ";
         // 接続済みピンのIDと順序を保ち、空きは末尾の1個にまとめる。
         std::vector<Pin> inputs;
         GraphId spare=0;
@@ -848,8 +866,8 @@ void NodeGraph::NormalizeCloudMergeInputs() {
             else if (!spare) spare=pin.id;
         }
         if (!spare) spare=AllocateGraphId();
-        inputs.push_back({spare,node.id,PinKind::Input,ValueType::CloudShape,{}});
-        for (size_t i=0;i<inputs.size();++i) inputs[i].label="Shape "+std::to_string(i+1);
+        inputs.push_back({spare,node.id,PinKind::Input,type,{}});
+        for (size_t i=0;i<inputs.size();++i) inputs[i].label=label+std::to_string(i+1);
         node.inputs=std::move(inputs);
     }
 }

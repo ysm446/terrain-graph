@@ -123,6 +123,7 @@ enum class NodeKind : uint32_t {
     Missing = 45,
     ModelScatter = 46,
     ModelOutput = 47,
+    ModelMerge = 48,
 };
 
 struct PinDefinition {
@@ -472,7 +473,7 @@ public:
 private:
     GraphId AllocateGraphId() { return m_nextGraphId++; }
     void RebuildNextGraphId();
-    void NormalizeCloudMergeInputs();
+    void NormalizeMergeInputs();
     // top から「下地」チェーンを遡る（上から下の順）。
     std::vector<const Node*> ChainFrom(const Node* top) const;
     // CompileChainFrom の途中経過。マスクのプレビューで、チェーンと同じ
