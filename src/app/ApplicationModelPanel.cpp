@@ -150,15 +150,26 @@ void Application::DrawModelPreviewWindow() {
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
                          std::max(0.0f, (ImGui::GetContentRegionAvail().x - side) * 0.5f));
     const auto pos = ImGui::GetCursorScreenPos();
-    ImGui::InvisibleButton("##mesh", ImVec2(side, side));
+    ImGui::InvisibleButton("##mesh", ImVec2(side, side),
+                           ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonMiddle);
     if (preview) {
         if (ImGui::IsItemActive()) {
             const auto d = ImGui::GetIO().MouseDelta;
             // Camera::Orbit はラジアン。ビューポートと同じ感度でピクセルから変換する。
             constexpr float kOrbitRadiansPerPixel = 0.006f;
-            preview->GetCamera().Orbit(d.x * kOrbitRadiansPerPixel, d.y * kOrbitRadiansPerPixel);
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Middle) || ImGui::GetIO().KeyShift)
+                preview->GetCamera().Pan(d.x, d.y);
+            else
+                preview->GetCamera().Orbit(d.x * kOrbitRadiansPerPixel, d.y * kOrbitRadiansPerPixel);
         }
-        if (ImGui::IsItemHovered()) preview->GetCamera().Zoom(ImGui::GetIO().MouseWheel);
+        if (ImGui::IsItemHovered()) {
+            const auto& io = ImGui::GetIO();
+            preview->GetCamera().Zoom(io.MouseWheel);
+            if (!io.WantTextInput && !io.KeyCtrl && !io.KeyShift && !io.KeyAlt) {
+                if (ImGui::IsKeyPressed(ImGuiKey_F, false)) preview->FocusView();
+                else if (ImGui::IsKeyPressed(ImGuiKey_A, false)) preview->FrameView();
+            }
+        }
         if (preview->HasOutput())
             ImGui::GetWindowDrawList()->AddImage(
                 static_cast<ImTextureID>(preview->OutputHandle().ptr), pos,
@@ -167,7 +178,8 @@ void Application::DrawModelPreviewWindow() {
     ImGui::EndChild();
     ImGui::Separator();
     ImGui::BeginChild("modelProperties", ImVec2(0, 0));
-    ui::HintText("ドラッグで回す / ホイールで寄る。寸法の単位はm");
+    ui::HintText("左ドラッグ: 回転 / 中・Shift+左ドラッグ: パン / ホイール: ズーム");
+    ui::HintText("プレビュー上で F: 中央へフォーカス / A: 全体表示。寸法の単位はm");
     if (preview && ui::Button("視点を戻す", ui::kWideButtonWidth)) preview->ResetView();
     bool changed = false;
     if (ui::BeginPropertyTable("modelBasic")) {

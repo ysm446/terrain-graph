@@ -16,6 +16,8 @@ class ModelPreview {
     bool HasOutput() const { return m_output.IsValid(); }
     D3D12_GPU_DESCRIPTOR_HANDLE OutputHandle() const { return m_output.srv.gpu; }
     void ResetView();
+    void FocusView();
+    void FrameView();
 
    private:
     std::shared_ptr<const ModelGeometry> m_geometry;

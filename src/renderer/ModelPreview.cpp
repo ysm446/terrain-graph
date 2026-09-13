@@ -37,6 +37,18 @@ void ModelPreview::Destroy(rhi::Device& device) {
     device.DeferRelease(m_depth);
 }
 void ModelPreview::ResetView() {
+    m_camera.Reset();
+    FrameView();
+}
+void ModelPreview::FocusView() {
+    if (!m_geometry) return;
+    using namespace DirectX;
+    XMFLOAT3 center;
+    XMStoreFloat3(&center, XMVectorScale(XMVectorAdd(XMLoadFloat3(&m_geometry->minimum),
+                                                   XMLoadFloat3(&m_geometry->maximum)), 0.5f));
+    m_camera.Focus(center);
+}
+void ModelPreview::FrameView() {
     if (!m_geometry) return;
     using namespace DirectX;
     auto lo = XMLoadFloat3(&m_geometry->minimum), hi = XMLoadFloat3(&m_geometry->maximum);
@@ -44,7 +56,6 @@ void ModelPreview::ResetView() {
     XMStoreFloat3(&center, XMVectorScale(XMVectorAdd(lo, hi), 0.5f));
     const float radius =
         std::max(0.0001f, XMVectorGetX(XMVector3Length(XMVectorSubtract(hi, lo))) * 0.5f);
-    m_camera.Reset();
     m_camera.SetViewportSize(kOutputSize, kOutputSize);
     m_camera.SetSceneRadius(radius);
     m_camera.Frame(center, radius);
