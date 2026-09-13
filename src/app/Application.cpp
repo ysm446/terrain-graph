@@ -152,7 +152,7 @@ bool Application::Initialize(const StartupOptions& options) {
         }
     }
     // 読み込みは GPU 待機を伴うので、ここでは要求だけ積む。
-    if (!m_options.importModel.empty()) m_pendingModels.push_back(m_options.importModel);
+    if (!m_options.importModel.empty()) HandleDroppedFiles({m_options.importModel});
 
     // 最初のフレームの前に ProcessPendingFileWork が処理する。
     if (!options.projectPath.empty()) {
@@ -688,6 +688,9 @@ void Application::DrawUi() {
     if (m_focusDefaultTabs > 0) {
         --m_focusDefaultTabs;
     }
+
+    // 入力・ドラッグ中は作業用コピーだけを更新。フォーカスが外れたら一度反映する。
+    if (!ImGui::IsAnyItemActive()) CommitMaterialEdit();
 
     // --- アンドゥの段を畳む -------------------------------------------------
     // パネルは変更を見つけると m_documentDirty を立てるだけにしておき、

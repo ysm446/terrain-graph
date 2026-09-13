@@ -47,6 +47,9 @@ DocumentSnapshot Application::CaptureDocument() const {
         material.ambientOcclusion = asset.ambientOcclusion;
         material.height = asset.height;
         material.baseColorTint = asset.baseColorTint;
+        material.hueShiftDegrees = asset.hueShiftDegrees;
+        material.saturation = asset.saturation;
+        material.flipNormalGreen = asset.flipNormalGreen;
         material.roughnessValue = asset.roughnessValue;
         material.metallicValue = asset.metallicValue;
         material.ambientOcclusionValue = asset.ambientOcclusionValue;
@@ -61,6 +64,8 @@ DocumentSnapshot Application::CaptureDocument() const {
 // 履歴の対象外なので、写し取った後に消えていることがある。
 // 宙に浮いた ID を残すと、次に同じ番号が払い出されたとき別の画像が現れる。
 void Application::ApplyDocument(const DocumentSnapshot& snapshot) {
+    m_materialEditPending = false;
+    m_materialEditAppearanceChanged = false;
     m_models = snapshot.models;
     m_renderedModelThumbnails.clear();
     // --- マテリアル ---------------------------------------------------------
@@ -94,6 +99,9 @@ void Application::ApplyDocument(const DocumentSnapshot& snapshot) {
         asset.ambientOcclusion.texture = ValidTexture(asset.ambientOcclusion.texture);
         asset.height.texture = ValidTexture(asset.height.texture);
         asset.baseColorTint = material.baseColorTint;
+        asset.hueShiftDegrees = material.hueShiftDegrees;
+        asset.saturation = material.saturation;
+        asset.flipNormalGreen = material.flipNormalGreen;
         asset.roughnessValue = material.roughnessValue;
         asset.metallicValue = material.metallicValue;
         asset.ambientOcclusionValue = material.ambientOcclusionValue;

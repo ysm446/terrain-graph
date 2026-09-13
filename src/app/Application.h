@@ -144,6 +144,7 @@ private:
     // マテリアル 1 つのプロパティ（基本 + マップ）。変更があれば真を返す。
     // **置き場所はプレビューの窓だけ**（一覧はサムネイルだけを出す）。
     bool DrawMaterialProperties(compositor::MaterialAsset& asset);
+    void CommitMaterialEdit();
     // マテリアルプレビューの窓（回せる球 + プロパティ）。
     // 一覧のサムネイルをダブルクリックするか、ウィンドウメニューから開く。
     void DrawMaterialSphereWindow();
@@ -410,6 +411,9 @@ private:
     renderer::SkyLibrary m_skyLibrary;
     compositor::PaintMaskStore m_paintMasks;
     int m_selectedMaterial = 0;
+    compositor::MaterialAsset m_materialEditDraft;
+    bool m_materialEditPending = false;
+    bool m_materialEditAppearanceChanged = false;
     // ORD をまとめて割り当てるときに選ぶテクスチャ（UI の一時状態）。
     compositor::TextureId m_ordTexture = compositor::kNoTexture;
     compositor::BrushSettings m_brush;

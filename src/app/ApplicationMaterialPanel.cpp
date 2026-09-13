@@ -23,6 +23,43 @@
 
 namespace tg {
 
+namespace {
+// GPU資源を共有せず、編集可能な値だけを作業用コピーへ移す。
+void CopyMaterialValues(const compositor::MaterialAsset& source, compositor::MaterialAsset& target) {
+    target.id = source.id;
+    target.name = source.name;
+    target.baseColor = source.baseColor;
+    target.normal = source.normal;
+    target.roughness = source.roughness;
+    target.metallic = source.metallic;
+    target.ambientOcclusion = source.ambientOcclusion;
+    target.height = source.height;
+    target.baseColorTint = source.baseColorTint;
+    target.hueShiftDegrees = source.hueShiftDegrees;
+    target.saturation = source.saturation;
+    target.roughnessValue = source.roughnessValue;
+    target.metallicValue = source.metallicValue;
+    target.ambientOcclusionValue = source.ambientOcclusionValue;
+    target.flipNormalGreen = source.flipNormalGreen;
+}
+}  // namespace
+
+void Application::CommitMaterialEdit() {
+    if (!m_materialEditPending) return;
+    if (auto* asset = m_materialLibrary.FindMutable(m_materialEditDraft.id)) {
+        CopyMaterialValues(m_materialEditDraft, *asset);
+        if (m_materialEditAppearanceChanged) {
+            m_materialLibrary.MarkThumbnailDirty(asset->id);
+            MarkDocumentChanged();
+        } else {
+            // 改名は保存・履歴だけを更新し、描画キャッシュには触れない。
+            m_documentDirty = true;
+        }
+    }
+    m_materialEditPending = false;
+    m_materialEditAppearanceChanged = false;
+}
+
 void Application::DrawMaterialLibraryPanel() {
     if (!ImGui::Begin("マテリアル")) {
         ImGui::End();
@@ -200,8 +237,8 @@ bool Application::DrawMaterialProperties(compositor::MaterialAsset& asset) {
         std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", asset.name.c_str());
         if (ui::PropertyTextInput("名前", nameBuffer, sizeof(nameBuffer))) {
             asset.name = nameBuffer;
-            // 名前もアンドゥの対象。落とすと、次のアンドゥで改名まで巻き戻る。
-            changed = true;
+            // 名前も編集終了時に保存・アンドゥへ反映する。
+            m_materialEditPending = true;
         }
 
         static const compositor::MaterialAsset kDefaultAsset;
@@ -257,7 +294,9 @@ bool Application::DrawMaterialProperties(compositor::MaterialAsset& asset) {
         ImGui::SameLine(0.0f, ordSpacing);
         ImGui::BeginDisabled(m_ordTexture == compositor::kNoTexture);
         if (ui::Button("割り当て")) {
-            m_materialLibrary.AssignOrdTexture(asset.id, m_ordTexture);
+            asset.ambientOcclusion = {m_ordTexture, compositor::TextureChannel::R};
+            asset.roughness = {m_ordTexture, compositor::TextureChannel::G};
+            asset.height = {m_ordTexture, compositor::TextureChannel::B};
             changed = true;
         }
         ImGui::EndDisabled();
@@ -366,9 +405,11 @@ void Application::DrawMaterialSphereWindow() {
 
     ImGui::Separator();
 
-    if (DrawMaterialProperties(asset)) {
-        m_materialLibrary.MarkThumbnailDirty(asset.id);
-        MarkDocumentChanged();
+    if (m_materialEditDraft.id != asset.id) CommitMaterialEdit();
+    if (!m_materialEditPending) CopyMaterialValues(asset, m_materialEditDraft);
+    if (DrawMaterialProperties(m_materialEditDraft)) {
+        m_materialEditPending = true;
+        m_materialEditAppearanceChanged = true;
     }
     ImGui::EndChild();
 

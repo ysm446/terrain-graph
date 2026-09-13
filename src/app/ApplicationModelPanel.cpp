@@ -78,7 +78,7 @@ void Application::DrawModelLibraryPanel() {
     uint64_t remove = 0;
     const float size = ui::Scaled(84);
     if (ImGui::BeginChild("modelGrid", ImVec2(0, 0), ImGuiChildFlags_Borders)) {
-        if (m_models.empty()) ui::HintText("右クリックの「読み込み」からFBXモデルを追加できます");
+        if (m_models.empty()) ui::HintText("FBXファイルをドロップ、または右クリックの「読み込み」から追加できます");
         const int columns = std::max(
             1, int(ImGui::GetContentRegionAvail().x / (size + ImGui::GetStyle().ItemSpacing.x)));
         int index = 0;

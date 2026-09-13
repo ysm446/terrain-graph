@@ -36,6 +36,7 @@ void Application::RequestOpenProject() {
 
 // saveAs が偽でも、まだ一度も保存していなければ保存先を聞く。
 void Application::RequestSaveProject(bool saveAs) {
+    CommitMaterialEdit();
     if (!saveAs && !m_projectPath.empty()) {
         m_pendingProjectSave = m_projectPath;
         return;
@@ -181,6 +182,8 @@ void Application::HandleDroppedFiles(const std::vector<std::filesystem::path>& p
             m_pendingProjectOpen = path;
         } else if (extension == ".tgmat" || extension == ".mmmat") {
             m_pendingMaterialImport = path;
+        } else if (extension == ".fbx") {
+            m_pendingModels.push_back(path);
         } else if (extension == ".hdr") {
             // 選択中の天球へ入れる。天球は必ず 1 つあるので、行き先は常に決まる。
             m_skyLibrary.EnsureDefault();
@@ -205,6 +208,8 @@ void Application::HandleDroppedFiles(const std::vector<std::filesystem::path>& p
 }
 
 void Application::ResetProject() {
+    m_materialEditPending = false;
+    m_materialEditAppearanceChanged = false;
     // どれも GPU 待機を伴う。フレームの外から呼ぶこと。
     m_paintMasks.Clear(m_device);
     m_models.clear();
@@ -291,6 +296,8 @@ void Application::ProcessPendingFileWork() {
         io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
                              m_skyLibrary,     m_renderer,       m_graph, &m_models};
         if (io::LoadProject(path, m_device, m_pipelineCache, refs)) {
+            m_materialEditPending = false;
+            m_materialEditAppearanceChanged = false;
             // 比較用の起動引数は保存された品質設定より優先する。
             if (m_options.referenceCloudLighting) m_renderer.CloudLightingCache() = false;
             if (m_options.fullResolutionClouds) m_renderer.FullResolutionClouds() = true;
