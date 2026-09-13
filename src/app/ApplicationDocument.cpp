@@ -40,6 +40,8 @@ DocumentSnapshot Application::CaptureDocument() const {
         MaterialSnapshot material;
         material.id = asset.id;
         material.name = asset.name;
+        material.assetPath = asset.assetPath;
+        material.assetUid = asset.assetUid;
         material.baseColor = asset.baseColor;
         material.normal = asset.normal;
         material.roughness = asset.roughness;
@@ -66,7 +68,12 @@ DocumentSnapshot Application::CaptureDocument() const {
 void Application::ApplyDocument(const DocumentSnapshot& snapshot) {
     m_materialEditPending = false;
     m_materialEditAppearanceChanged = false;
-    m_models = snapshot.models;
+    auto models = snapshot.models;
+    for (auto& model : models) if (model.assetUid.empty()) {
+        const auto current = std::find_if(m_models.begin(), m_models.end(), [&](const auto& a) { return a.id == model.id; });
+        if (current != m_models.end()) { model.assetUid = current->assetUid; model.assetPath = current->assetPath; }
+    }
+    m_models = std::move(models);
     m_renderedModelThumbnails.clear();
     // --- マテリアル ---------------------------------------------------------
     // 写し取った時点に無かったものを消す。破棄は GPU 待機を伴う。
@@ -88,6 +95,11 @@ void Application::ApplyDocument(const DocumentSnapshot& snapshot) {
         compositor::MaterialAsset& asset =
             m_materialLibrary.RestoreAsset(material.id, material.name);
         asset.name = material.name;
+        // 初回保存で付いた永続IDは、保存前に作った編集履歴へ戻っても保持する。
+        if (!material.assetUid.empty() || asset.assetUid.empty()) {
+            asset.assetPath = material.assetPath;
+            asset.assetUid = material.assetUid;
+        }
         asset.baseColor = ValidTexture(material.baseColor);
         asset.normal = ValidTexture(material.normal);
         asset.roughness = material.roughness;

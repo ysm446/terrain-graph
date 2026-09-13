@@ -1965,8 +1965,9 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     node["planeSize"] = renderer.PlaneSize();
     node["tessellation"] = renderer.TessellationEnabled();
     node["tessellationFactor"] = renderer.TessellationFactor();
-    node["materialResolution"] = renderer.MaterialResolution();
-    node["meshSubdivisions"] = renderer.MeshSubdivisions();
+    // 読み込み直後の保存でも、GPUへの適用待ちの設定値を失わない。
+    node["materialResolution"] = renderer.RequestedMaterialResolution();
+    node["meshSubdivisions"] = renderer.RequestedMeshSubdivisions();
     node["showSkybox"] = renderer.ShowSkybox();
     node["skyboxBlur"] = renderer.SkyboxBlur();
     node["shadow"] = renderer.ShadowEnabled();
@@ -2252,6 +2253,8 @@ renderer::SkyAssetId ReadSky(const json& node, renderer::SkyLibrary& skies,
         return renderer::kNoSkyAsset;
     }
 
+    asset->assetPath = FromUtf8(ReadString(node, "_assetPath"));
+    asset->assetUid = ReadString(node, "uid");
     asset->sky.source = static_cast<renderer::SkySource>(
         EnumValue(kSkySourceNames, node, "source", static_cast<uint32_t>(defaults.source)));
     if (const std::string hdri = ReadString(node, "hdri"); !hdri.empty()) {
@@ -2424,7 +2427,7 @@ void RemoveStalePaintMasks(const fs::path& directory, const std::vector<fs::path
 }  // namespace
 
 bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
-                 const ProjectRefs& refs) {
+                 const ProjectRefs& refs, ProjectWorkspace* workspace) {
     // 裸のファイル名（親ディレクトリ無し）で保存すると相対パスが作れず、
     // 全参照が絶対パスで書かれてしまう。先に絶対化してから基準を取る。
     std::error_code absoluteError;
@@ -2432,6 +2435,8 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
     const fs::path& savePath = absoluteError ? path : absolutePath;
     const fs::path baseDir = savePath.parent_path();
 
+    if (workspace && (savePath.extension() != L".tgscene" || !workspace->Contains(savePath) ||
+                      !SaveSharedAssets(*workspace, refs))) return false;
     json document;
     document["format"] = kProjectFormat;
     document["version"] = kProjectFormatVersion;
@@ -2468,6 +2473,7 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
 
         json node = WriteMaterialBody(asset, writeTexture);
         node["id"] = index;
+        if (workspace) { node["_assetPath"] = ToUtf8Portable(asset.assetPath); node["uid"] = asset.assetUid; }
         materials.push_back(std::move(node));
     }
     document["materials"] = std::move(materials);
@@ -2483,6 +2489,7 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
             models.push_back({{"id", asset.id}, {"name", asset.name},
                               {"path", RelativePathString(asset.path, baseDir)},
                               {"materials", slots}});
+            if (workspace) { models.back()["_assetPath"] = ToUtf8Portable(asset.assetPath); models.back()["uid"] = asset.assetUid; }
         }
         document["models"] = std::move(models);
     }
@@ -2495,6 +2502,7 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
     const fs::path paintDir = PaintMaskDirectory(savePath);
     // 今回書いたファイル名を控えておき、書き終えてから前回の残りを片付ける。
     std::vector<fs::path> writtenPaintFiles;
+    bool paintSaveFailed = false;
     const auto collectPaintMask = [&](compositor::PaintMaskId id) {
         if (id == compositor::kNoPaintMask || paintIndex.count(id) != 0) {
             return;
@@ -2502,7 +2510,8 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
         const std::vector<uint8_t> pixels = refs.paintMasks.ReadPixels(device, id);
         const uint32_t resolution = refs.paintMasks.Resolution();
         if (pixels.empty()) {
-            TG_LOG_WARN("ペイントマスクを読み出せませんでした（保存から外します）");
+            TG_LOG_ERROR("ペイントマスクを読み出せないため保存を中止します");
+            paintSaveFailed = true;
             return;
         }
 
@@ -2513,6 +2522,7 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
         if (!SaveGray8Png(paintDir / FromUtf8(fileName), resolution, resolution, resolution,
                           pixels.data())) {
             TG_LOG_WARN("ペイントマスクを書き出せませんでした: %s", fileName.c_str());
+            paintSaveFailed = true;
             return;
         }
 
@@ -2532,9 +2542,9 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
         }
     }
     document["paintMasks"] = std::move(paintMasks);
+    if (paintSaveFailed) return false;
     document["paintResolution"] = refs.paintMasks.Resolution();
     // マスクを減らしたときに前回の PNG が残らないよう、ここで片付ける。
-    RemoveStalePaintMasks(paintDir, writtenPaintFiles);
 
     // --- ノードグラフ -----------------------------------------------------
     // 版 4 から layers 節は書かない。合成の構造はグラフだけが持つ。
@@ -2558,23 +2568,32 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
             activeSkyIndex = static_cast<int>(skies.size());
         }
         skies.push_back(WriteSky(asset, baseDir));
+        if (workspace) { skies.back()["_assetPath"] = ToUtf8Portable(asset.assetPath); skies.back()["uid"] = asset.assetUid; }
     }
     document["skies"] = std::move(skies);
     document["activeSky"] = activeSkyIndex;
 
     document["preview"] = WritePreview(refs.renderer);
 
+    if (workspace) {
+        if (!workspace->SaveScene(savePath, document)) return false;
+        RemoveStalePaintMasks(paintDir, writtenPaintFiles);
+        return true;
+    }
     if (!WriteJsonFile(savePath, document)) {
         return false;
     }
+    RemoveStalePaintMasks(paintDir, writtenPaintFiles);
     TG_LOG_INFO("プロジェクトを保存しました: %s", ToUtf8Portable(savePath).c_str());
     return true;
 }
 
 bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
-                 rhi::PipelineCache& pipelineCache, const ProjectRefs& refs) {
+                 rhi::PipelineCache& pipelineCache, const ProjectRefs& refs, ProjectWorkspace* workspace) {
     json document;
-    if (!ReadJsonFile(path, kProjectFormat, kProjectFormatVersion, document)) {
+    if (!(workspace ? workspace->ReadScene(path, document)
+                    : ReadJsonFile(path, kProjectFormat, kProjectFormatVersion, document))) {
+        if (workspace) TG_LOG_ERROR("シーンまたは参照アセットを開けません: %s", ToUtf8Portable(path).c_str());
         return false;
     }
 
@@ -2643,6 +2662,8 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
             if (compositor::MaterialAsset* asset = refs.materials.FindMutable(id);
                 asset != nullptr) {
                 ReadMaterialBody(node, *asset, readTexture);
+                asset->assetPath = FromUtf8(ReadString(node, "_assetPath"));
+                asset->assetUid = ReadString(node, "uid");
                 asset->thumbnailDirty = true;
             }
             if (index > 0) {
@@ -2663,6 +2684,8 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
                     asset.id = savedId->get<uint64_t>();
                 while (std::any_of(refs.models->begin(),refs.models->end(),[&](const auto& existing){ return existing.id==asset.id; })) ++asset.id;
                 asset.name = ReadString(node, "name");
+                asset.assetPath = FromUtf8(ReadString(node, "_assetPath"));
+                asset.assetUid = ReadString(node, "uid");
                 asset.path = baseDir / FromUtf8(ReadString(node, "path"));
                 if (!renderer::LoadModel(asset.path, asset)) {
                     TG_LOG_WARN("モデルの読み込みに失敗: %s", asset.error.c_str());
@@ -2820,6 +2843,121 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
     refs.skies.EnsureDefault();
 
     TG_LOG_INFO("プロジェクトを開きました: %s", ToUtf8Portable(path).c_str());
+    return true;
+}
+
+
+// 共有アセットは個別に保存する。シーンを切り替えても同じファイルを参照する。
+bool SaveSharedAssets(ProjectWorkspace& workspace, const ProjectRefs& refs) {
+    if (!workspace.Scan()) return false;
+    bool valid = true;
+    const auto source = [&](const fs::path& path) -> json {
+        if (path.empty()) return nullptr;
+        const auto target = workspace.Import(path, workspace.Root() / L"Imported");
+        const auto result = target.empty() ? json() : workspace.Reference(target);
+        if (result.is_null()) valid = false;
+        return result;
+    };
+    const TextureWriter texture = [&](compositor::TextureId id) -> json {
+        const auto* entry = refs.textures.Find(id);
+        return entry ? source(entry->path) : json();
+    };
+    std::unordered_map<compositor::MaterialAssetId, json> materials;
+    for (const auto& entry : refs.materials.Entries()) {
+        auto* asset = refs.materials.FindMutable(entry.id);
+        json body = WriteMaterialBody(*asset, texture);
+        body["uid"] = asset->assetUid;
+        auto path = asset->assetPath;
+        if (path.empty()) path = workspace.UniquePath(workspace.Root() / L"Materials", asset->name, ".tgmat");
+        if (!valid || !workspace.SaveAsset(path, "material-asset", body)) return false;
+        asset->assetPath = path; asset->assetUid = ReadString(body, "uid");
+        materials[asset->id] = workspace.Reference(path);
+    }
+    if (refs.models) for (auto& asset : *refs.models) {
+        json slots = json::array();
+        for (const auto id : asset.materials) {
+            const auto found = materials.find(id);
+            slots.push_back(found == materials.end() ? json() : found->second);
+        }
+        json body = {{"name", asset.name}, {"uid", asset.assetUid},
+                     {"source", source(asset.path)}, {"materials", slots}};
+        auto path = asset.assetPath;
+        if (path.empty()) path = workspace.UniquePath(workspace.Root() / L"Models", asset.name, ".tgmodel");
+        if (!valid || !workspace.SaveAsset(path, "model-asset", body)) return false;
+        asset.assetPath = path; asset.assetUid = ReadString(body, "uid");
+    }
+    for (const auto& entry : refs.skies.Entries()) {
+        auto* asset = refs.skies.FindMutable(entry.id);
+        json body = WriteSky(*asset, workspace.Root());
+        body["hdri"] = source(asset->sky.hdriPath);
+        body["uid"] = asset->assetUid;
+        auto path = asset->assetPath;
+        if (path.empty()) path = workspace.UniquePath(workspace.Root() / L"Skies", asset->name, ".tgsky");
+        if (!valid || !workspace.SaveAsset(path, "sky-asset", body)) return false;
+        asset->assetPath = path; asset->assetUid = ReadString(body, "uid");
+    }
+    return valid;
+}
+
+bool LoadSharedAsset(ProjectWorkspace& workspace, const fs::path& path,
+                     rhi::Device& device, rhi::PipelineCache& pipelineCache, const ProjectRefs& refs) {
+    if (!workspace.Scan()) return false;
+    const auto ref = workspace.Reference(path);
+    if (ref.is_null()) return false;
+    const auto ext = path.extension();
+    const char* key = ext == L".tgmat" ? "materials" : ext == L".tgmodel" ? "models" : "skies";
+    json document;
+    document[key] = json::array({{{"id", 1}, {"asset", ref}}});
+    if (!workspace.Expand(document)) return false;
+    std::unordered_map<int, compositor::TextureId> textures;
+    for (const auto& node : document["textures"]) {
+        const auto texturePath = FromUtf8(ReadString(node, "path"));
+        auto id = refs.textures.Load(device, pipelineCache, texturePath);
+        if (!id) id = refs.textures.AddMissing(texturePath, ReadString(node, "name"));
+        textures[ReadInt(node, "id", 0)] = id;
+    }
+    const TextureReader texture = [&](const json& value) {
+        const auto found = textures.find(value.is_number_integer() ? value.get<int>() : 0);
+        return found == textures.end() ? compositor::kNoTexture : found->second;
+    };
+    std::unordered_map<int, compositor::MaterialAssetId> materials;
+    for (const auto& node : document["materials"]) {
+        auto uid = ReadString(node, "uid");
+        auto existing = std::find_if(refs.materials.Entries().begin(), refs.materials.Entries().end(),
+                                     [&](const auto& a) { return a.assetUid == uid; });
+        compositor::MaterialAssetId id;
+        if (existing != refs.materials.Entries().end()) id = existing->id;
+        else {
+            id = refs.materials.Add(ReadString(node, "name"));
+            auto* asset = refs.materials.FindMutable(id);
+            ReadMaterialBody(node, *asset, texture);
+            asset->assetUid = uid; asset->assetPath = FromUtf8(ReadString(node, "_assetPath"));
+        }
+        materials[ReadInt(node, "id", 0)] = id;
+    }
+    if (refs.models) for (const auto& node : document["models"]) {
+        const auto uid = ReadString(node, "uid");
+        if (std::any_of(refs.models->begin(), refs.models->end(), [&](const auto& a) { return a.assetUid == uid; })) continue;
+        renderer::ModelAsset asset;
+        asset.id = 1;
+        for (const auto& a : *refs.models) asset.id = std::max(asset.id, a.id + 1);
+        asset.assetUid = uid; asset.assetPath = FromUtf8(ReadString(node, "_assetPath"));
+        asset.name = ReadString(node, "name"); asset.path = FromUtf8(ReadString(node, "path"));
+        renderer::LoadModel(asset.path, asset);
+        asset.materials.resize(std::max(asset.materials.size(), node["materials"].size()));
+        size_t i = 0;
+        for (const auto& value : node["materials"]) {
+            const auto found = materials.find(value.is_number_integer() ? value.get<int>() : 0);
+            asset.materials[i++] = found == materials.end() ? compositor::kNoMaterialAsset : found->second;
+        }
+        refs.models->push_back(std::move(asset));
+    }
+    for (const auto& node : document["skies"]) {
+        const auto uid = ReadString(node, "uid");
+        const auto existing = std::find_if(refs.skies.Entries().begin(), refs.skies.Entries().end(), [&](const auto& a) { return a.assetUid == uid; });
+        if (existing == refs.skies.Entries().end()) refs.skies.SetActive(ReadSky(node, refs.skies, workspace.Root()));
+        else refs.skies.SetActive(existing->id);
+    }
     return true;
 }
 

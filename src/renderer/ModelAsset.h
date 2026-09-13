@@ -23,6 +23,8 @@ struct ModelGeometry {
 // CPU形状は不変・共有。履歴へ頂点配列を複製しない。
 struct ModelAsset {
     uint64_t id = 0;
+    std::filesystem::path assetPath;
+    std::string assetUid;
     std::string name;
     std::filesystem::path path;
     std::shared_ptr<const ModelGeometry> geometry;

@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include "io/ProjectWorkspace.h"
 
 #include "compositor/MaterialLibrary.h"
 #include "compositor/MaterialStack.h"
@@ -48,6 +49,7 @@ struct StartupOptions {
     std::vector<std::filesystem::path> texturePaths;
     // 起動時に開くプロジェクト (.tgproj)。空なら既定のスタックで始める。
     std::filesystem::path projectPath;
+    std::filesystem::path projectRoot;
     // 指定すると、数フレーム描いてから合成結果を画像へ書き出して終了する。
     // 対話せずに書き出しを確かめるための開発用オプション。
     std::filesystem::path exportDirectory;
@@ -159,6 +161,11 @@ private:
     // 一覧のサムネイルをダブルクリックするか、ウィンドウメニューから開く。
     void DrawSkyPreviewWindow();
     void DrawTextureLibraryPanel();
+    void DrawAssetBrowser();
+    void RefreshAssetBrowser();
+    void ProcessAssetWork();
+    void DrawSceneSwitchDialog();
+    void ResumeSceneSwitch();
     // テクスチャ一覧の右クリックメニュー（読み込む / 削除）。
     // target が kNoTexture なら、対象の要る項目は出さない。
     void DrawTextureContextMenu(compositor::TextureId target);
@@ -541,6 +548,21 @@ private:
     // --- ファイル操作の保留 -------------------------------------------------
     // ダイアログはフレームの中で出すが、読み書きは GPU 待機を伴うので、
     // 選ばれたパスをここへ積んでおき、次のフレームの頭で処理する。
+    io::ProjectWorkspace m_workspace;
+    std::filesystem::path m_assetDirectory;
+    std::vector<std::filesystem::directory_entry> m_assetEntries;
+    std::filesystem::path m_selectedAssetPath;
+    std::filesystem::path m_pendingRoot;
+    std::filesystem::path m_pendingAssetOpen;
+    bool m_pendingAssetsSave = false;
+    bool m_assetRefresh = true;
+    char m_assetSearch[128]{};
+    std::filesystem::path m_deferredRoot;
+    std::filesystem::path m_deferredScene;
+    bool m_deferredNew = false;
+    bool m_sceneSwitchDialog = false;
+    bool m_allowSceneSwitch = false;
+    bool m_saveThenSwitch = false;
     std::filesystem::path m_projectPath;  // 現在のプロジェクト。未保存なら空
     io::RecentFiles m_recentProjects;
     io::AppSettings m_settings;

@@ -7,6 +7,7 @@
 #include "renderer/PreviewRenderer.h"
 #include "renderer/SkyLibrary.h"
 #include "renderer/ModelAsset.h"
+#include "io/ProjectWorkspace.h"
 #include "rhi/Device.h"
 #include "rhi/PipelineCache.h"
 
@@ -29,6 +30,10 @@ struct ProjectRefs {
     std::vector<renderer::ModelAsset>* models = nullptr;
 };
 
+bool SaveSharedAssets(ProjectWorkspace& workspace, const ProjectRefs& refs);
+bool LoadSharedAsset(ProjectWorkspace& workspace, const std::filesystem::path& path,
+                     rhi::Device& device, rhi::PipelineCache& pipelineCache, const ProjectRefs& refs);
+
 // --- プロジェクト (.tgproj) -----------------------------------------------
 //
 // マテリアルの構造は丸ごと埋め込む。開くのに別のマテリアルファイルは要らない。
@@ -37,9 +42,9 @@ struct ProjectRefs {
 //
 // どちらも GPU 待機を伴うため、**フレームの外で呼ぶこと。**
 
-bool SaveProject(const std::filesystem::path& path, rhi::Device& device, const ProjectRefs& refs);
+bool SaveProject(const std::filesystem::path& path, rhi::Device& device, const ProjectRefs& refs, ProjectWorkspace* workspace = nullptr);
 bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
-                 rhi::PipelineCache& pipelineCache, const ProjectRefs& refs);
+                 rhi::PipelineCache& pipelineCache, const ProjectRefs& refs, ProjectWorkspace* workspace = nullptr);
 
 // --- マテリアル単体 (.tgmat) ----------------------------------------------
 //

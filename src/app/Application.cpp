@@ -140,6 +140,8 @@ bool Application::Initialize(const StartupOptions& options) {
         HandleDroppedFiles(paths);
     });
 
+    if (!m_workspace.Open(options.projectRoot.empty() ? ResolveScreenshotDirectory().parent_path() : options.projectRoot)) return false;
+    m_assetDirectory = m_workspace.Root();
     m_pendingTexturePaths = options.texturePaths;
 
     // 天球は必ず 1 つある状態にする。--hdri が来ていれば、その既定の天球へ入れる。
@@ -157,6 +159,8 @@ bool Application::Initialize(const StartupOptions& options) {
     // 最初のフレームの前に ProcessPendingFileWork が処理する。
     if (!options.projectPath.empty()) {
         m_pendingProjectOpen = options.projectPath;
+    } else {
+        m_pendingProjectOpen = m_workspace.StartupScene();
     }
     UpdateWindowTitle();
 
@@ -325,7 +329,8 @@ int Application::Run() {
         if (!m_options.saveProjectPath.empty() && m_frameCounter >= m_options.screenshotFrame) {
             const io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
                                        m_skyLibrary,     m_renderer,       m_graph, &m_models};
-            io::SaveProject(m_options.saveProjectPath, m_device, refs);
+            if (!io::SaveProject(m_options.saveProjectPath, m_device, refs,
+                m_options.saveProjectPath.extension() == L".tgscene" ? &m_workspace : nullptr)) return 1;
             break;
         }
 
@@ -415,7 +420,7 @@ int Application::Run() {
             bool loaded = false;
             for (const std::filesystem::path& path : paths) {
                 const compositor::TextureId id =
-                    m_textureLibrary.Load(m_device, m_pipelineCache, path);
+                    m_textureLibrary.Load(m_device, m_pipelineCache, m_workspace.Import(path, m_assetDirectory));
                 if (id == compositor::kNoTexture) {
                     continue;
                 }
@@ -426,6 +431,7 @@ int Application::Run() {
                 m_scrollToSelectedTexture = true;
             }
             if (loaded) {
+                m_assetRefresh = true;
                 // 読み込んだ画像を参照しているサムネイルを作り直す。
                 for (const compositor::MaterialAsset& asset : m_materialLibrary.Entries()) {
                     m_materialLibrary.MarkThumbnailDirty(asset.id);
@@ -651,7 +657,7 @@ void Application::DrawUi() {
     // ドックスペースの ID には版を付ける。**パネルを増減したら版を上げること。**
     // ID が変われば ini に配置が無い状態になり、既定レイアウトが組み直される。
     // 上げないと、新しいパネルがどこにも入らず浮いたままになる。
-    const ImGuiID dockspaceId = ImGui::GetID("TerrainGraphDockSpace_v18");
+    const ImGuiID dockspaceId = ImGui::GetID("TerrainGraphDockSpace_v19");
 
     // ステータスバーもメニューバーと同じく、先に作って作業領域を狭めておく。
     DrawStatusBar();
@@ -677,10 +683,7 @@ void Application::DrawUi() {
     // アセットの帯は畳める。出さなければドックノードが空になり、中央（ビューポート）が
     // その高さをもらう。ウィンドウはドック先を覚えているので、戻せば同じ所へ入る。
     if (m_settings.Display().showAssetBand) {
-        DrawTextureLibraryPanel();
-        DrawMaterialLibraryPanel();
-        DrawModelLibraryPanel();
-        DrawSkyLibraryPanel();
+        DrawAssetBrowser();
     }
     DrawMaterialPanel();
     DrawLightingPanel();
@@ -689,6 +692,7 @@ void Application::DrawUi() {
     DrawModelPreviewWindow();
     DrawTexturePreviewWindow();
     DrawSkyPreviewWindow();
+    DrawSceneSwitchDialog();
     DrawInfoWindow();
     DrawSettingsWindow();
     DrawExportWindow();
@@ -762,11 +766,8 @@ void Application::BuildDefaultLayout(ImGuiID dockspaceId) {
     ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.28f, &bottom, &center);
 
     ImGui::DockBuilderDockWindow("ビューポート", center);
-    // アセットは帯全体を共有し、テクスチャ・マテリアル・モデル・天球をタブで切り替える。
-    ImGui::DockBuilderDockWindow("テクスチャ", bottom);
-    ImGui::DockBuilderDockWindow("マテリアル", bottom);
-    ImGui::DockBuilderDockWindow("モデル", bottom);
-    ImGui::DockBuilderDockWindow("天球", bottom);
+    // アセット帯の左にフォルダ階層、右にその内容を表示する。
+    ImGui::DockBuilderDockWindow("アセット", bottom);
     // 右カラムへタブで重ねる。縦に積むと 1 枚あたりが短くなり、
     // どれもスクロールしないと全体が見えなくなる。
     // **グラフは右カラムに置く。** 中央のタブにするとビューポートと排他になり、

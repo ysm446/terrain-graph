@@ -35,7 +35,9 @@ tg::StartupOptions ParseCommandLine() {
 
     for (int i = 1; i < argc; ++i) {
         const std::wstring argument = argv[i];
-        if (argument == L"--project" && (i + 1) < argc) {
+        if (argument == L"--root" && i + 1 < argc) {
+            options.projectRoot = argv[++i];
+        } else if (argument == L"--project" && (i + 1) < argc) {
             options.projectPath = argv[i + 1];
             ++i;
         } else if (argument == L"--preview-model" && i + 1 < argc) {

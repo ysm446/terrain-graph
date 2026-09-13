@@ -138,6 +138,8 @@ set(tg_sources
     src/io/AppSettings.h
     src/io/MaterialExport.cpp
     src/io/MaterialExport.h
+    src/io/ProjectWorkspace.cpp
+    src/app/ApplicationAssetBrowser.cpp
     src/io/ProjectIo.cpp
     src/io/ProjectIo.h
     src/io/RecentFiles.cpp
@@ -317,3 +319,9 @@ target_include_directories(model_import_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DI
 target_compile_options(model_import_tests PRIVATE /W4 /permissive- /utf-8)
 target_link_libraries(model_import_tests PRIVATE ufbx::ufbx)
 add_test(NAME model-import COMMAND model_import_tests)
+
+add_executable(project_workspace_tests tests/ProjectWorkspaceTests.cpp src/io/ProjectWorkspace.cpp src/core/Log.cpp)
+target_include_directories(project_workspace_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_compile_options(project_workspace_tests PRIVATE /W4 /permissive- /utf-8)
+target_link_libraries(project_workspace_tests PRIVATE nlohmann_json::nlohmann_json ole32)
+add_test(NAME project-workspace COMMAND project_workspace_tests)

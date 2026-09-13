@@ -105,17 +105,23 @@ void Application::DrawModelScatters(ID3D12GraphicsCommandList* commandList,
 
 void Application::ProcessModelWork() {
     for (const auto& asset : m_models) m_nextModelId = std::max(m_nextModelId, asset.id + 1);
-    for (const auto& path : m_pendingModels) {
+    for (const auto& inputPath : m_pendingModels) {
+        const auto path = m_workspace.Import(inputPath, m_assetDirectory);
+        if (path.empty()) continue;
+        if (std::any_of(m_models.begin(), m_models.end(), [&](const auto& a) { return a.path == path; })) continue;
         renderer::ModelAsset asset;
         asset.id = m_nextModelId++;
         asset.name = ToUtf8Display(path.stem());
         asset.path = path;
+        asset.assetPath = m_workspace.UniquePath(m_assetDirectory, asset.name, ".tgmodel");
         if (renderer::LoadModel(path, asset)) {
             m_selectedModel = asset.id;
             m_modelLod = 0;
             m_showModelPreview = true;
             m_focusModelLibrary = true;
             m_models.push_back(std::move(asset));
+            m_pendingAssetsSave = true;
+            m_assetRefresh = true;
             MarkDocumentChanged(false);
             TG_LOG_INFO("モデルを読み込みました: %s", ToUtf8Display(path).c_str());
         } else

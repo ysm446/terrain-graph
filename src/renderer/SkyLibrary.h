@@ -43,6 +43,8 @@ bool NeedsLuminanceRebuild(const SkyDefinition& before, const SkyDefinition& aft
 // 天球 1 つぶん。マテリアルと同じく、名前とサムネイルを持つアセット。
 struct SkyAsset {
     SkyAssetId id = kNoSkyAsset;
+    std::filesystem::path assetPath;
+    std::string assetUid;
     std::string name;
     SkyDefinition sky;
 

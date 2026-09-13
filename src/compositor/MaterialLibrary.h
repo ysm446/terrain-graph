@@ -17,6 +17,8 @@ namespace tg::compositor {
 // マスクだけはレイヤー固有なので、ここには入れない。
 struct MaterialAsset {
     MaterialAssetId id = kNoMaterialAsset;
+    std::filesystem::path assetPath;
+    std::string assetUid;
     std::string name;
 
     // 未指定のスロットは下の定数を使う。

@@ -296,10 +296,12 @@ public:
     // 直前のフレームの描画の量。
     const RenderStats& Stats() const { return m_stats; }
     uint32_t MaterialResolution() const { return m_materialResolution; }
+    uint32_t RequestedMaterialResolution() const { return m_requestedMaterialResolution; }
     void RequestMaterialResolution(uint32_t resolution) { m_requestedMaterialResolution = resolution; }
     // 平面メッシュの分割数。作り直しは GPU 待機を伴うのでフレームの外で行う
     // （`ProcessPendingWork`）。合成解像度と同じ作法。
     uint32_t MeshSubdivisions() const { return m_meshSubdivisions; }
+    uint32_t RequestedMeshSubdivisions() const { return m_requestedMeshSubdivisions; }
     void RequestMeshSubdivisions(uint32_t subdivisions) {
         m_requestedMeshSubdivisions = subdivisions;
     }

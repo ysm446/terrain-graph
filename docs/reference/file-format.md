@@ -1,7 +1,12 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-09-13 19:57
+更新日時: 2026-09-13 20:34
+
+## プロジェクトルート方式（2026-09-13）
+
+新しい通常保存はルート直下のproject.tgproj（terrain-graph.workspace、版1）と、任意の場所の.tgscene（terrain-graph.scene、版1）を分離する。共有.tgmat・.tgsky・.tgmodelと元画像/FBXの.metaを固定IDで参照する。[新形式の設計](../design/project-workspace.md)を参照。以下の埋め込み形式の説明は、旧.tgprojと持ち出し用.tgmatの互換読み込み・開発用書き出しに適用する。
+
 
 ## Model Merge
 

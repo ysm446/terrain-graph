@@ -28,23 +28,28 @@ namespace tg {
 // ProcessPendingFileWork がフレームの外で行う（GPU 待機を伴うため）。
 void Application::RequestOpenProject() {
     const std::filesystem::path path =
-        ShowOpenFileDialog(L"プロジェクトを開く", ProjectFileFilters());
+        ShowPickFolderDialog(L"プロジェクトのルートフォルダを開く", m_workspace.Root());
     if (!path.empty()) {
-        m_pendingProjectOpen = path;
+        m_pendingRoot = path;
     }
 }
 
 // saveAs が偽でも、まだ一度も保存していなければ保存先を聞く。
 void Application::RequestSaveProject(bool saveAs) {
     CommitMaterialEdit();
-    if (!saveAs && !m_projectPath.empty()) {
+    if (!saveAs && m_projectPath.extension() == L".tgscene") {
         m_pendingProjectSave = m_projectPath;
         return;
     }
     const std::filesystem::path path = ShowSaveFileDialog(
-        L"プロジェクトを保存", ProjectFileFilters(), L"tgproj", m_projectPath);
-    if (!path.empty()) {
+        L"シーンを保存", {{L"Terrain Graph シーン", L"*.tgscene"}}, L"tgscene",
+        m_projectPath.extension() == L".tgscene" ? m_projectPath :
+            m_workspace.Root() / L"Scenes" / (m_projectPath.empty() ? L"Untitled.tgscene" : m_projectPath.stem().wstring() + L".tgscene"));
+    if (!path.empty() && m_workspace.Contains(path)) {
         m_pendingProjectSave = path;
+        m_pendingProjectSave.replace_extension(L".tgscene");
+    } else if (!path.empty()) {
+        TG_LOG_ERROR("シーンはプロジェクトルート内に保存してください");
     }
 }
 
@@ -132,11 +137,14 @@ void Application::DrawFileMenu() {
         return;
     }
 
-    if (ImGui::MenuItem("新規", "Ctrl+N")) {
+    if (ImGui::MenuItem("新規シーン", "Ctrl+N")) {
         m_pendingProjectNew = true;
     }
-    if (ImGui::MenuItem("開く…", "Ctrl+O")) {
+    if (ImGui::MenuItem("ルートフォルダを開く…", "Ctrl+O")) {
         RequestOpenProject();
+    }
+    if (ImGui::MenuItem("シーンを開く…")) {
+        m_pendingProjectOpen = ShowOpenFileDialog(L"シーンを開く", {{L"シーン / 旧プロジェクト", L"*.tgscene;*.tgproj;*.mmproj"}});
     }
     DrawRecentMenu();
     if (ImGui::MenuItem("保存", "Ctrl+S")) {
@@ -178,8 +186,10 @@ void Application::HandleDroppedFiles(const std::vector<std::filesystem::path>& p
 
         // 拡張子で行き先を決める。読み込み自体はどれも保留し、フレームの外で処理する。
         // 旧拡張子 (.mmproj / .mmmat) は material-mixer 時代のファイル。読み込みだけ受け付ける。
-        if (extension == ".tgproj" || extension == ".mmproj") {
+        if (extension == ".tgscene" || extension == ".tgproj" || extension == ".mmproj") {
             m_pendingProjectOpen = path;
+        } else if (extension == ".tgsky" || extension == ".tgmodel") {
+            m_pendingAssetOpen = path;
         } else if (extension == ".tgmat" || extension == ".mmmat") {
             m_pendingMaterialImport = path;
         } else if (extension == ".fbx") {
@@ -260,6 +270,20 @@ void Application::UpdateWindowTitle() {
 }
 
 void Application::ProcessPendingFileWork() {
+    if (m_pendingAssetOpen.extension() == L".tgscene" || m_pendingAssetOpen.extension() == L".tgproj" ||
+        m_pendingAssetOpen.extension() == L".mmproj") {
+        m_pendingProjectOpen = std::move(m_pendingAssetOpen); m_pendingAssetOpen.clear();
+    }
+    // 対話中のシーン/ルート切り替えは、保存の機会を設けてから実行する。
+    if ((!m_pendingRoot.empty() || !m_pendingProjectOpen.empty() || m_pendingProjectNew) &&
+        m_frameCounter > 1 && !Headless() && !m_allowSceneSwitch) {
+        m_deferredRoot = std::move(m_pendingRoot); m_pendingRoot.clear();
+        m_deferredScene = std::move(m_pendingProjectOpen); m_pendingProjectOpen.clear();
+        m_deferredNew = m_pendingProjectNew; m_pendingProjectNew = false;
+        m_sceneSwitchDialog = true;
+    }
+    m_allowSceneSwitch = false;
+    ProcessAssetWork();
     // どれもリソースの生成・破棄と GPU 待機を伴う。フレームの外で処理すること。
 
     // アンドゥ / リドゥ。マテリアルの破棄を伴うのでここで処理する。
@@ -295,7 +319,8 @@ void Application::ProcessPendingFileWork() {
 
         io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
                              m_skyLibrary,     m_renderer,       m_graph, &m_models};
-        if (io::LoadProject(path, m_device, m_pipelineCache, refs)) {
+        if (io::LoadProject(path, m_device, m_pipelineCache, refs,
+                            path.extension() == L".tgscene" ? &m_workspace : nullptr)) {
             m_materialEditPending = false;
             m_materialEditAppearanceChanged = false;
             // 比較用の起動引数は保存された品質設定より優先する。
@@ -304,6 +329,7 @@ void Application::ProcessPendingFileWork() {
             if (m_options.disableTemporalClouds) m_renderer.TemporalClouds() = false;
             m_recentProjects.Add(path);
             m_projectPath = path;
+            m_assetRefresh = true;
             m_selectedGraphNode = m_graph.FindNode(m_options.selectNode) ? m_options.selectNode : 0;
             m_previewGraphNode = 0;
             m_previewGraphPin = 0;
@@ -337,10 +363,16 @@ void Application::ProcessPendingFileWork() {
 
         io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
                              m_skyLibrary,     m_renderer,       m_graph, &m_models};
-        if (io::SaveProject(path, m_device, refs)) {
+        if (io::SaveProject(path, m_device, refs, &m_workspace)) {
+            m_assetRefresh = true;
             m_recentProjects.Add(path);
             m_projectPath = path;
             UpdateWindowTitle();
+            if (m_saveThenSwitch) { m_saveThenSwitch = false; ResumeSceneSwitch(); }
+        } else {
+            m_saveThenSwitch = false;
+            m_deferredRoot.clear(); m_deferredScene.clear(); m_deferredNew = false;
+            TG_LOG_ERROR("シーンの保存に失敗しました。現在の作業を保持しています");
         }
     }
 
@@ -360,10 +392,17 @@ void Application::ProcessPendingFileWork() {
         const std::filesystem::path path = m_pendingMaterialImport;
         m_pendingMaterialImport.clear();
 
+        nlohmann::json assetDocument;
+        if (io::ProjectWorkspace::ReadJson(path, assetDocument) &&
+            io::ProjectWorkspace::String(assetDocument, "format") == "terrain-graph.material-asset") {
+            m_pendingAssetOpen = path;
+            return;
+        }
         const compositor::MaterialAssetId id = io::LoadMaterial(
             path, m_device, m_pipelineCache, m_textureLibrary, m_materialLibrary);
         if (id != compositor::kNoMaterialAsset) {
             m_selectedMaterial = static_cast<int>(m_materialLibrary.Entries().size()) - 1;
+            m_pendingAssetsSave = true;
         }
     }
 
