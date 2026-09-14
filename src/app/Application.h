@@ -621,6 +621,9 @@ private:
     std::filesystem::path m_pendingAssetMoveTarget;
     std::filesystem::path m_pendingRoot;
     std::filesystem::path m_pendingAssetOpen;
+    std::filesystem::path m_pendingScatterModel;
+    graph::GraphId m_pendingScatterNode = 0;
+    size_t m_pendingScatterChoice = 0;
     bool m_pendingAssetsSave = false;
     // 「天球を作成」で足した天球だけを残す要求。破棄は GPU 待機を伴うのでフレームの外で。
     bool m_pendingSkyKeepOnly = false;

@@ -75,6 +75,14 @@ bool ProjectWorkspace::WriteJson(const fs::path& path, const json& document) {
     }
     return true;
 }
+std::vector<fs::path> ProjectWorkspace::AssetsWithExtension(const wchar_t* extension) const {
+    std::vector<fs::path> paths;
+    for (const auto& [uid, path] : m_paths)
+        if (_wcsicmp(path.extension().c_str(), extension) == 0) paths.push_back(path);
+    std::sort(paths.begin(), paths.end());
+    return paths;
+}
+
 bool ProjectWorkspace::Contains(const fs::path& path) const {
     if (m_root.empty() || path.empty()) return false;
     const auto target = Absolute(path);

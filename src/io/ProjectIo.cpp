@@ -1661,7 +1661,8 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                         for (const auto& choice : *choices) {
                             if (!choice.is_object()) continue;
                             const auto* modelId = FindMember(choice,"model");
-                            if (modelId && modelId->is_number_unsigned())
+                            // コンポーネント展開で再採番したIDは符号付き整数になる。
+                            if (modelId && modelId->is_number_integer() && *modelId >= 0)
                                 settings.models.push_back({modelId->get<uint64_t>(),std::clamp(ReadFloat(choice,"weight",1),0.0f,1000.0f)});
                         }
                     }
@@ -2691,7 +2692,7 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
                 if (!node.is_object()) continue;
                 renderer::ModelAsset asset;
                 asset.id = refs.models->size() + 1;
-                if (const auto* savedId = FindMember(node,"id"); savedId && savedId->is_number_unsigned() && savedId->get<uint64_t>() > 0)
+                if (const auto* savedId = FindMember(node,"id"); savedId && savedId->is_number_integer() && *savedId > 0)
                     asset.id = savedId->get<uint64_t>();
                 while (std::any_of(refs.models->begin(),refs.models->end(),[&](const auto& existing){ return existing.id==asset.id; })) ++asset.id;
                 asset.name = ReadString(node, "name");

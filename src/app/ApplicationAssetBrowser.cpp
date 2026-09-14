@@ -558,6 +558,21 @@ void Application::ProcessAssetWork() {
         m_assetRefresh = true;
         m_assetThumbnails.Invalidate();
     }
+    if (!m_pendingScatterModel.empty()) {
+        const auto path = std::exchange(m_pendingScatterModel, {});
+        auto* node = m_graph.FindMutableNode(m_pendingScatterNode);
+        auto* scatter = node ? std::get_if<graph::ModelScatterSettings>(&node->settings) : nullptr;
+        if (scatter && m_pendingScatterChoice < scatter->models.size()) {
+            if (io::LoadSharedAsset(m_workspace, path, m_device, m_pipelineCache, refs)) {
+                const auto model = std::find_if(m_models.begin(), m_models.end(), [&](const auto& asset) { return asset.assetPath == path; });
+                if (model != m_models.end()) {
+                    scatter->models[m_pendingScatterChoice].model = model->id;
+                    m_graph.MarkDirty(); MarkDocumentChanged(false);
+                    m_assetRefresh = true;
+                }
+            } else TG_LOG_ERROR("モデルを読み込めませんでした: %s", ToUtf8Display(path).c_str());
+        }
+    }
     if (!m_pendingAssetOpen.empty()) {
         const auto path = m_pendingAssetOpen; m_pendingAssetOpen.clear();
         const auto ext = Extension(path);

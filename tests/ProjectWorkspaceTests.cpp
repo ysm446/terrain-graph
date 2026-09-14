@@ -1,5 +1,6 @@
 #include "io/ProjectWorkspace.h"
 #include "core/PathUtf8.h"
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 
@@ -25,6 +26,13 @@ int main() {
     auto materialPath = workspace.UniquePath(root, "material", ".tgmat");
     json material = {{"name", "material"}, {"roughness", 0.25}, {"maps", {{"baseColor", source}}}};
     check(workspace.SaveAsset(materialPath, "material-asset", material), "save material");
+    auto modelPath = workspace.UniquePath(root / "Nested", "catalog-model", ".tgmodel");
+    json model = {{"name", "catalog-model"}, {"materials", json::array()}};
+    check(workspace.SaveAsset(modelPath, "model-asset", model), "save unloaded model asset");
+    check(workspace.Scan(), "scan project model catalog");
+    const auto modelPaths = workspace.AssetsWithExtension(L".tgmodel");
+    check(std::find(modelPaths.begin(), modelPaths.end(), modelPath) != modelPaths.end(), "catalog includes nested unloaded models");
+    check(std::find(modelPaths.begin(), modelPaths.end(), materialPath) == modelPaths.end(), "model catalog excludes materials");
     const auto materialRef = workspace.Reference(materialPath);
     json packed = {{"materials", json::array({{{"id", 7}, {"asset", materialRef}}})}};
     check(workspace.Expand(packed), "expand shared dependency");

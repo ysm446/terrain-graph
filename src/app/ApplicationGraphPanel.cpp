@@ -1668,7 +1668,7 @@ void Application::DrawGraphPanel() {
             changed |= ui::PropertyInt("LOD",&scatter->lod,0,16,0,"モデルにないLODは最も近い段階を使います");
             ui::EndPropertyTable();
         }
-        std::vector<const char*> names{"未指定 / 見つからないモデル"};
+        std::vector<const char*> names{"未指定"};
         for (const auto& model : m_models) names.push_back(model.name.c_str());
         int remove = -1;
         if (ui::BeginPropertyTable("scatterModels")) {
@@ -1679,12 +1679,24 @@ void Application::DrawGraphPanel() {
                 const auto label="モデル "+std::to_string(i+1);
                 ui::PropertyLabel(label.c_str());
                 ImGui::SetNextItemWidth(AssetReferenceWidth(std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x)));
-                if (ImGui::BeginCombo("##model", names[index])) {
+                if (ImGui::BeginCombo("##model", !index && choice.model ? "見つからないモデル" : names[index])) {
                     for (size_t j=0; j<names.size(); ++j) {
                         ImGui::PushID(static_cast<int>(j));
                         if (ImGui::Selectable(names[j], index == static_cast<int>(j))) {
                             index = static_cast<int>(j);
                             choice.model = j ? m_models[j-1].id : 0; changed = true;
+                        }
+                        ImGui::PopID();
+                    }
+                    // プロジェクト内の未読み込みモデルも選べる。読み込みは描画の外で行う。
+                    for (const auto& path : m_workspace.AssetsWithExtension(L".tgmodel")) {
+                        if (std::any_of(m_models.begin(), m_models.end(), [&](const auto& model) { return model.assetPath == path; })) continue;
+                        const auto relative = ToUtf8Display(path.lexically_relative(m_workspace.Root()));
+                        ImGui::PushID(relative.c_str());
+                        if (ImGui::Selectable(relative.c_str())) {
+                            m_pendingScatterModel = path;
+                            m_pendingScatterNode = selected->id;
+                            m_pendingScatterChoice = i;
                         }
                         ImGui::PopID();
                     }

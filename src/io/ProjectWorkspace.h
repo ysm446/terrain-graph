@@ -13,6 +13,7 @@ class ProjectWorkspace {
 public:
     bool Open(const std::filesystem::path& root);
     bool Scan();
+    std::vector<std::filesystem::path> AssetsWithExtension(const wchar_t* extension) const;
     const std::filesystem::path& Root() const { return m_root; }
     std::filesystem::path StartupScene() const;
     bool SetStartupScene(const std::filesystem::path& scene);
