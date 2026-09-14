@@ -977,6 +977,29 @@ void GridCaption(const char* text, float width) {
     ImGui::PopStyleColor();
 }
 
+CaptionEdit InlineNameInput(const char* id, char* buffer, size_t bufferSize, float width, bool* focus) {
+    ImGui::SetNextItemWidth(width);
+    if (*focus) ImGui::SetKeyboardFocusHere();
+    const bool enter = ImGui::InputText(id, buffer, bufferSize,
+                                        ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+    if (ImGui::IsItemActive()) *focus = false;
+    CaptionEdit result = CaptionEdit::Editing;
+    if (enter) result = CaptionEdit::Commit;
+    // 外をクリックして離れたら確定、Esc なら取り消し（エクスプローラと同じ）。
+    else if (ImGui::IsItemDeactivated()) result = ImGui::IsKeyPressed(ImGuiKey_Escape, false) ? CaptionEdit::Cancel : CaptionEdit::Commit;
+    return result;
+}
+
+CaptionEdit GridCaptionInput(const char* id, char* buffer, size_t bufferSize, float width, bool* focus) {
+    const float startY = ImGui::GetCursorPosY();
+    const CaptionEdit result = InlineNameInput(id, buffer, bufferSize, width, focus);
+    // GridCaption の 2 行ぶんに高さを揃える。
+    const float spacing = ImGui::GetStyle().ItemSpacing.y;
+    const float rest = 2.0f * ImGui::GetTextLineHeightWithSpacing() - (ImGui::GetCursorPosY() - startY) - spacing;
+    if (rest > 0.0f) ImGui::Dummy(ImVec2(width, rest));
+    return result;
+}
+
 void HintText(const char* format, ...) {
     va_list args;
     va_start(args, format);

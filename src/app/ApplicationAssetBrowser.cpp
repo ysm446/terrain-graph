@@ -187,38 +187,6 @@ void Application::DrawAssetDeleteDialog() {
     ImGui::EndPopup();
 }
 
-void Application::DrawAssetRenameDialog() {
-    if (m_assetRenameDialog && !ImGui::IsPopupOpen("名前の変更")) ImGui::OpenPopup("名前の変更");
-    if (!ImGui::BeginPopupModal("名前の変更", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
-    std::error_code error;
-    const bool folder = fs::is_directory(m_assetRenameTarget, error);
-    const auto extension = folder ? fs::path{} : m_assetRenameTarget.extension();
-    ImGui::TextDisabled("%s", ToUtf8Display(m_assetRenameTarget.lexically_relative(m_workspace.Root())).c_str());
-    bool confirmed = false;
-    if (ui::BeginPropertyTable("assetRenameRows")) {
-        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
-        ui::PropertyTextInput("名前", m_assetRenameBuffer, sizeof(m_assetRenameBuffer));
-        // 入力欄で Enter を押したら確定。拡張子は変えられないので隣に添える。
-        if (ImGui::IsItemDeactivatedAfterEdit() && ImGui::IsKeyPressed(ImGuiKey_Enter, false)) confirmed = true;
-        if (!extension.empty()) ui::PropertyValue("拡張子", "%s", ToUtf8Display(extension).c_str());
-        ui::EndPropertyTable();
-    }
-    if (folder) ui::HintText("フォルダ内のファイルの参照はIDで解決されるので、改名しても切れません。");
-    ImGui::Separator();
-    const bool empty = m_assetRenameBuffer[0] == '\0';
-    ImGui::BeginDisabled(empty);
-    if (ImGui::Button("変更する") || (confirmed && !empty)) {
-        m_pendingAssetRename = m_assetRenameTarget;
-        m_pendingAssetRenameName = std::string(m_assetRenameBuffer) + ToUtf8Portable(extension);
-        m_assetRenameDialog = false; ImGui::CloseCurrentPopup();
-    }
-    ImGui::EndDisabled(); ImGui::SameLine();
-    if (ImGui::Button("キャンセル") || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-        m_assetRenameDialog = false; ImGui::CloseCurrentPopup();
-    }
-    ImGui::EndPopup();
-}
-
 void Application::OpenAssetPicker(io::AssetKind kind, const fs::path& folder, const fs::path& exclude) {
     m_assetPickerKind = kind;
     m_assetPickerFolder = folder.empty() ? m_workspace.Root() : folder;
@@ -337,7 +305,20 @@ void Application::OpenAssetRename(const fs::path& path) {
     const auto name = fs::is_directory(path, error) ? path.filename() : path.stem();
     std::snprintf(m_assetRenameBuffer, sizeof(m_assetRenameBuffer), "%s", ToUtf8Portable(name).c_str());
     m_assetRenameTarget = path;
-    m_assetRenameDialog = true;
+    m_assetRenameFocus = true;
+    m_assetRenameInTree = false;
+}
+
+void Application::FinishAssetRename(bool commit) {
+    const auto target = m_assetRenameTarget;
+    m_assetRenameTarget.clear(); m_assetRenameFocus = false; m_assetRenameInTree = false;
+    if (!commit || target.empty() || m_assetRenameBuffer[0] == '\0') return;
+    std::error_code error;
+    const auto extension = fs::is_directory(target, error) ? fs::path{} : target.extension();
+    auto name = std::string(m_assetRenameBuffer) + ToUtf8Portable(extension);
+    if (name == ToUtf8Portable(target.filename())) return;
+    m_pendingAssetRename = target;
+    m_pendingAssetRenameName = std::move(name);
 }
 
 bool Application::IsAssetSelected(const fs::path& path) const {
@@ -705,20 +686,46 @@ void Application::DrawAssetBrowser() {
         const auto tree = [&](auto&& self, const fs::path& directory, int depth) -> void {
             if (depth > 32) return;
             const auto label = ToUtf8Display(directory.filename());
-            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
-            if (directory == m_workspace.Root()) flags |= ImGuiTreeNodeFlags_DefaultOpen;
+            const bool root = directory == m_workspace.Root();
+            // 改名中の行は名前の代わりに入力欄を並べる。行いっぱいに広げると入力欄と重なるので広げない。
+            const bool renaming = m_assetRenameInTree && directory == m_assetRenameTarget;
+            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow;
+            if (!renaming) flags |= ImGuiTreeNodeFlags_SpanAvailWidth;
+            if (root) flags |= ImGuiTreeNodeFlags_DefaultOpen;
             if (directory == m_assetDirectory) flags |= ImGuiTreeNodeFlags_Selected;
             ImGui::PushID(ToUtf8Portable(directory).c_str());
             if (!m_assetRevealTarget.empty()) {
                 const auto relative = m_assetDirectory.lexically_relative(directory);
                 if (!relative.empty() && *relative.begin() != L"..") ImGui::SetNextItemOpen(true);
             }
-            const bool open = ImGui::TreeNodeEx(label.c_str(), flags);
+            const bool open = ImGui::TreeNodeEx(renaming ? "##folder" : label.c_str(), flags);
             if (!m_assetRevealTarget.empty() && directory == m_assetDirectory) ImGui::SetScrollHereY(0.5f);
             if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
                 m_assetDirectory = directory; m_assetRefresh = true;
             }
             AssetFolderDropTarget(directory);
+            // 一覧のフォルダと同じ右クリックメニュー。ルートは改名・削除できない。
+            if (ImGui::BeginPopupContextItem("folderMenu")) {
+                if (ImGui::MenuItem("開く")) { m_assetDirectory = directory; m_assetRefresh = true; }
+                if (ImGui::MenuItem("エクスプローラで表示")) RevealFileInExplorer(directory);
+                if (!root) {
+                    if (ImGui::MenuItem("名前を変更…")) { OpenAssetRename(directory); m_assetRenameInTree = true; }
+                    std::error_code folderError;
+                    const bool empty = fs::is_empty(directory, folderError) && !folderError;
+                    if (ImGui::MenuItem("空のフォルダを削除", nullptr, false, empty && !IsAssetLoaded(directory))) {
+                        m_selectedAssets.assign(1, directory); QueueAssetDelete();
+                    }
+                    if (!empty && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                        ImGui::SetTooltip("ファイルやサブフォルダがあるため削除できません");
+                }
+                ImGui::EndPopup();
+            }
+            if (renaming) {
+                ImGui::SameLine();
+                const float width = std::max(ui::Scaled(60.0f), ImGui::GetContentRegionAvail().x);
+                const auto edit = ui::InlineNameInput("##rename", m_assetRenameBuffer, sizeof(m_assetRenameBuffer), width, &m_assetRenameFocus);
+                if (edit != ui::CaptionEdit::Editing) FinishAssetRename(edit == ui::CaptionEdit::Commit);
+            }
             if (open) {
                 std::error_code error;
                 fs::directory_iterator it(directory, fs::directory_options::skip_permission_denied, error), end;
@@ -744,10 +751,13 @@ void Application::DrawAssetBrowser() {
         if (m_assetEntries.empty()) ui::HintText("右クリックでアセットを作成、またはファイルを読み込みます");
         // 一覧にフォーカスがあるときのキー操作。テキスト入力中やダイアログ表示中は効かせない。
         if ((ImGui::IsWindowFocused() || ImGui::IsWindowHovered()) && !ImGui::GetIO().WantTextInput &&
-            !m_assetDeleteDialog && !m_assetRenameDialog && !m_selectedAssets.empty()) {
+            !m_assetDeleteDialog && m_assetRenameTarget.empty() && !m_selectedAssets.empty()) {
             if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) QueueAssetDelete();
             else if (ImGui::IsKeyPressed(ImGuiKey_F2, false)) OpenAssetRename(m_selectedAssets.front());
         }
+        // 一覧で改名中に別のフォルダへ移ったら、入力欄が描かれなくなるので取り消す。
+        if (!m_assetRenameTarget.empty() && !m_assetRenameInTree && m_assetRenameTarget.parent_path() != m_assetDirectory)
+            FinishAssetRename(false);
         const float size = ui::Scaled(84);
         const int columns = std::max(1, int(ImGui::GetContentRegionAvail().x / (size + ImGui::GetStyle().ItemSpacing.x)));
         // 読み込み済みのものはパスで引く。項目ごとにライブラリを総なめすると
@@ -872,7 +882,12 @@ void Application::DrawAssetBrowser() {
                 } else if (path.filename() != L"project.tgproj" && ImGui::MenuItem("削除…", "Del")) QueueAssetDelete();
                 ImGui::EndPopup();
             }
-            ui::GridCaption(ToUtf8Display(path.filename()).c_str(), size);
+            if (path == m_assetRenameTarget && !m_assetRenameInTree) {
+                const auto edit = ui::GridCaptionInput("##rename", m_assetRenameBuffer, sizeof(m_assetRenameBuffer), size, &m_assetRenameFocus);
+                if (edit != ui::CaptionEdit::Editing) FinishAssetRename(edit == ui::CaptionEdit::Commit);
+            } else {
+                ui::GridCaption(ToUtf8Display(path.filename()).c_str(), size);
+            }
             ImGui::EndGroup(); ImGui::PopID();
             if (path == m_assetRevealTarget) {
                 const bool visible = ImGui::IsItemVisible();
@@ -890,7 +905,7 @@ void Application::DrawAssetBrowser() {
                 m_assetRefresh = true;
             }
             for (const bool cloud : {false, true}) {
-                if (ImGui::MenuItem(cloud ? "新しい雲グラフを作成" : "新しい地形グラフを作成")) {
+                if (ImGui::MenuItem(cloud ? "雲グラフを作成" : "地形グラフを作成")) {
                     const auto path = io::CreateGraphAsset(m_workspace, m_assetDirectory, cloud);
                     if (path.empty()) TG_LOG_ERROR("グラフを作成できませんでした");
                     else { m_pendingAssetReveal = path; m_assetRefresh = true; }

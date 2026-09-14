@@ -176,7 +176,6 @@ private:
     bool IsAssetLoaded(const std::filesystem::path& path) const;
     // 一覧のサムネイルを受け取るドロップ先。フォルダ階層と一覧のフォルダに置く。
     void AssetFolderDropTarget(const std::filesystem::path& directory);
-    void DrawAssetRenameDialog();
     // 同じ種類のアセットを選ぶピッカー。削除確認の「代わり」と、シーンの天球の差し替えで使う。
     void DrawAssetPicker();
     void CollectAssetPickerCandidates();
@@ -192,6 +191,8 @@ private:
     // 選択中のファイルを順に削除確認へ回す。
     void QueueAssetDelete();
     void OpenAssetRename(const std::filesystem::path& path);
+    // その場の名前入力を終える。commit なら入力した名前で改名を予約する（拡張子は元のまま）。
+    void FinishAssetRename(bool commit);
     // 移動・改名したアセットの、読み込み済みの絶対パスを付け替える（フォルダなら配下も）。
     void RelinkAssetPaths(const std::filesystem::path& from, const std::filesystem::path& to);
     void ResumeSceneSwitch();
@@ -587,9 +588,12 @@ private:
     std::filesystem::path m_assetSelectionAnchor;
     // DEL で複数を削除するときの残り。確認ダイアログを 1 件ずつ出す。
     std::vector<std::filesystem::path> m_assetDeleteQueue;
-    // 名前の変更。ダイアログで入力し、確定分をフレームの外で処理する。
-    bool m_assetRenameDialog = false;
+    // 名前の変更。一覧のサムネイルの下でその場で入力し、確定分をフレームの外で処理する。
+    // m_assetRenameTarget が空でなければ編集中。m_assetRenameFocus は入力欄が掴むまで立てておく。
     std::filesystem::path m_assetRenameTarget;
+    bool m_assetRenameFocus = false;
+    // 左のフォルダ階層の行で編集しているとき true（一覧の同じフォルダには欄を出さない）。
+    bool m_assetRenameInTree = false;
     char m_assetRenameBuffer[256] = {};
     std::filesystem::path m_pendingAssetRename;
     std::string m_pendingAssetRenameName;

@@ -203,4 +203,11 @@ bool HorizontalSplitter(const char* id, float* height, float minHeight, float ma
 // 全体はホバーのツールチップで読める。
 void GridCaption(const char* text, float width);
 
+// 名前をその場で編集する 1 行の入力欄。Enter か外をクリックで確定、Esc で取り消し。
+// *focus が true の間は入力欄へフォーカスを移し続け、掴んだら false に戻す（開始時に全選択される）。
+enum class CaptionEdit { Editing, Commit, Cancel };
+CaptionEdit InlineNameInput(const char* id, char* buffer, size_t bufferSize, float width, bool* focus);
+// GridCaption の位置に置く InlineNameInput。高さは GridCaption と同じ 2 行ぶんを取る。
+CaptionEdit GridCaptionInput(const char* id, char* buffer, size_t bufferSize, float width, bool* focus);
+
 }  // namespace tg::ui
