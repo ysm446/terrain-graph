@@ -186,9 +186,11 @@ json ProjectWorkspace::Reference(const fs::path& path) {
         if (const auto found = m_paths.find(known->second); found != m_paths.end())
             return {{"uid", known->second}, {"path", ToUtf8Portable(found->second.lexically_relative(m_root))}};
     }
+    std::error_code error;
+    // 移動前の既知のパスは上で追跡する。未知の欠落パスにIDを発行しない。
+    if (!fs::is_regular_file(target, error) || error) return nullptr;
     const auto metadata = IsNative(target) ? target : fs::path(target.wstring() + L".meta");
     json body;
-    std::error_code error;
     if (fs::exists(metadata, error)) {
         if (!ReadJson(metadata, body)) return nullptr;
     } else body = json::object();

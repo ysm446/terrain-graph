@@ -127,6 +127,26 @@ int main() {
           fs::exists(imageDestination.wstring() + L".meta"), "metadata moved with asset");
     check(moving.Resolve(movedRef) == imageDestination, "reference follows moved asset");
     check(tg::io::MoveAsset(moving, imageDestination, moveRoot / "Textures") == imageDestination, "same folder is a no-op");
+    // 複数選択と同じ連続移動。未登録素材も旧パスで保存し直せ、再起動後もIDを維持する。
+    std::vector<nlohmann::json> batchRefs;
+    for (const auto* name : {"first.png", "second.png", "third.png"}) {
+        const auto batchSource = moveRoot / name;
+        std::ofstream(batchSource).put('b');
+        const auto destination = tg::io::MoveAsset(moving, batchSource, moveRoot / "Textures");
+        const auto reference = moving.Reference(batchSource);
+        check(!reference.is_null() && moving.Resolve(reference) == destination &&
+              destination == moveRoot / "Textures" / name, "unregistered batch asset follows old path");
+        check(!fs::exists(batchSource.wstring() + L".meta") && fs::exists(destination.wstring() + L".meta"),
+              "batch metadata exists only at destination");
+        batchRefs.push_back(reference);
+    }
+    tg::io::ProjectWorkspace reopenedMoves;
+    check(reopenedMoves.Open(moveRoot), "reopen after batch move");
+    for (const auto& reference : batchRefs)
+        check(!reference.is_null() && fs::is_regular_file(reopenedMoves.Resolve(reference)), "batch reference survives reopen");
+    const auto missingSource = moveRoot / "missing.png";
+    check(reopenedMoves.Reference(missingSource).is_null() && !fs::exists(missingSource.wstring() + L".meta"),
+          "missing source does not create orphan metadata");
     std::ofstream(moveRoot / "image.png").put('x');
     check(tg::io::MoveAsset(moving, imageDestination, moveRoot).empty() && fs::exists(imageDestination), "name clash refused");
     const auto movedScene = moveRoot / "scene.tgscene";

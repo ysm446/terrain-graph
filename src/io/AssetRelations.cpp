@@ -237,6 +237,11 @@ fs::path RelocateAsset(ProjectWorkspace& workspace, const fs::path& target, cons
         return {};
     }
     if (SamePath(target, destination)) return target;
+    // 未保存の素材も移動前にIDを確定し、古いパスを持つ参照から追跡できるようにする。
+    // 移動先のサイドカーとの衝突は、ID発行より先に確認する。
+    if (fs::exists(destination, error) || error ||
+        fs::exists(destination.wstring() + L".meta", error) || error) return {};
+    if (!IsDocument(target) && workspace.Reference(target).is_null()) return {};
     std::vector<std::pair<fs::path, fs::path>> files{{target, destination}};
     const fs::path meta = target.wstring() + L".meta";
     if (fs::exists(meta, error)) files.emplace_back(meta, destination.wstring() + L".meta");
