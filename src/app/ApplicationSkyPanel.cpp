@@ -1,8 +1,8 @@
-// 天球パネル。**一覧（サムネイル）だけ**を置き、設定はプレビューの窓が持つ。
+// 天球プレビューの窓。**シーンが持つ天球は 1 つ**で、その設定はここで行う。
 //
-// **一覧で選んだものが、そのままビューポートの環境になる。**
-// 環境は同時に 1 つしか使えないので、「選ぶ」と「適用する」を分けても
-// 操作が 1 つ増えるだけで、選んだのに反映されない状態を作るほうが混乱する。
+// 別の天球にするには、アセットの .tgsky をダブルクリックするか「差し替える…」で選ぶ。
+// 一覧のパネルは持たない（環境は同時に 1 つしか使えず、一覧に載せたぶんだけ
+// HDRI を読み込んでしまうため）。
 
 #include "app/Application.h"
 
@@ -22,124 +22,9 @@
 
 namespace tg {
 
-void Application::DrawSkyLibraryPanel() {
-    if (!ImGui::Begin("天球")) {
-        ImGui::End();
-        return;
-    }
-
-    // 一覧は空にしない。空だとビューポートの環境が決まらなくなる。
-    m_skyLibrary.EnsureDefault();
-    const std::vector<renderer::SkyAsset>& assets = m_skyLibrary.Entries();
-    const auto assetCount = static_cast<int>(assets.size());
-
-    // サムネイルの一覧。マテリアルと同じ作法で、パネルの幅に入るだけ横に並べる。
-    // **設定も操作のボタンも置かない。** 設定はプレビューの窓、
-    // 追加 / 複製 / 削除は右クリックのメニュー。
-    const float thumbnailSize = ui::Scaled(84.0f);
-    if (ImGui::BeginChild("skyGrid", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders)) {
-        const float step = thumbnailSize + ImGui::GetStyle().ItemSpacing.x;
-        const auto columns = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / step));
-
-        for (int i = 0; i < assetCount; ++i) {
-            const renderer::SkyAsset& asset = assets[static_cast<size_t>(i)];
-            ImGui::PushID(static_cast<int>(asset.id));
-
-            ImGui::BeginGroup();
-            const bool selected = (m_skyLibrary.ActiveId() == asset.id);
-            const ImTextureID textureId =
-                asset.thumbnail.IsValid()
-                    ? static_cast<ImTextureID>(asset.thumbnail.srv.gpu.ptr)
-                    : static_cast<ImTextureID>(0);
-            const ui::Thumbnail thumbnail =
-                ui::ThumbnailButton("##thumbnail", textureId, thumbnailSize, selected);
-            if (thumbnail.clicked) {
-                m_skyLibrary.SetActive(asset.id);
-            }
-            // ダブルクリックでプレビューの窓を開く。**適用も一緒に動く**ので、
-            // 開いた窓には必ずいま押した天球が出る。
-            if (thumbnail.doubleClicked) {
-                m_skyLibrary.SetActive(asset.id);
-                m_showSkyPreview = true;
-                ImGui::SetWindowFocus("天球プレビュー");
-            }
-            if (selected && m_scrollToSelectedSky) {
-                m_scrollToSelectedSky = false;
-                ImGui::SetScrollHereY(1.0f);
-            }
-            if (thumbnail.hovered) {
-                ImGui::SetTooltip("%s\nダブルクリックで設定 / 右クリックでメニュー",
-                                  asset.name.c_str());
-            }
-            // 右クリックのメニュー。**押したサムネイルが対象。**
-            if (ImGui::BeginPopupContextItem("##skyMenu")) {
-                m_skyLibrary.SetActive(asset.id);
-                DrawSkyContextMenu(asset.id);
-                ImGui::EndPopup();
-            }
-            // 名前を添える（マテリアル / テクスチャの一覧と同じ）。
-            // 空の絵は似たものが多く、ホバーしないと分からないと一覧として使いにくい。
-            ui::GridCaption(asset.name.c_str(), thumbnailSize);
-            ImGui::EndGroup();
-
-            ImGui::PopID();
-            if (((i + 1) % columns) != 0 && (i + 1) < assetCount) {
-                ImGui::SameLine();
-            }
-        }
-
-        // サムネイルの無い所での右クリック。対象が無いので「追加」だけ。
-        if (ImGui::BeginPopupContextWindow("##skyGridMenu",
-                                           ImGuiPopupFlags_MouseButtonRight |
-                                               ImGuiPopupFlags_NoOpenOverItems)) {
-            DrawSkyContextMenu(renderer::kNoSkyAsset);
-            ImGui::EndPopup();
-        }
-    }
-    ImGui::EndChild();
-
-    ImGui::End();
-}
-
-// 一覧の右クリックメニュー。**target が無効なら、対象の要る項目は出さない**
-// （サムネイルの無い所を押したとき）。ボタンの帯は持たず、追加も削除もここから行う。
-void Application::DrawSkyContextMenu(renderer::SkyAssetId target) {
-    const std::vector<renderer::SkyAsset>& assets = m_skyLibrary.Entries();
-    const renderer::SkyAsset* asset = m_skyLibrary.Find(target);
-
-    if (asset != nullptr) {
-        ImGui::TextDisabled("%s", asset->name.c_str());
-        ImGui::Separator();
-    }
-
-    if (ImGui::MenuItem("追加")) {
-        const renderer::SkyAssetId added =
-            m_skyLibrary.Add("天球 " + std::to_string(assets.size() + 1));
-        m_skyLibrary.SetActive(added);
-        m_scrollToSelectedSky = true;
-    }
-    if (asset != nullptr) {
-        if (ImGui::MenuItem("複製")) {
-            const renderer::SkyAssetId added = m_skyLibrary.Duplicate(*asset);
-            m_skyLibrary.SetActive(added);
-            m_scrollToSelectedSky = true;
-        }
-        // **最後の 1 つは消させない。** 消しても既定が作り直されるだけで、
-        // 効いていないように見える。
-        ImGui::BeginDisabled(assets.size() <= 1);
-        if (ImGui::MenuItem("削除")) {
-            // その場で消すと、この後の一覧描画が erase 済みの要素を読んでしまう。
-            // 要求だけ積み、フレームの外で処理する。
-            m_pendingSkyRemove = target;
-        }
-        ImGui::EndDisabled();
-    }
-}
-
 // 天球プレビューの窓。大きい絵と、その天球の設定。
 //
-// **映すのは適用中の天球**（一覧で選んだもの＝ビューポートの環境）。
-// マテリアル / テクスチャの窓と同じ作法で、窓の側に別の選択を持たせない。
+// **映すのはシーンの天球**（＝ビューポートの環境）。窓の側に別の選択を持たせない。
 void Application::DrawSkyPreviewWindow() {
     m_skyPreviewVisible = false;
     if (!m_showSkyPreview) {
@@ -208,7 +93,7 @@ void Application::DrawSkyPreviewWindow() {
     if (ui::Button("視点を戻す", ui::kWideButtonWidth)) {
         m_skySphere.ResetView();
     }
-    ui::HintText("一覧で選んだ天球が、そのままビューポートの環境になる");
+    ui::HintText("この天球がそのままビューポートの環境になる");
 
     renderer::SkyDefinition& sky = active->sky;
     const renderer::SkyDefinition kDefaultSkyDefinition;
@@ -222,6 +107,13 @@ void Application::DrawSkyPreviewWindow() {
         if (ui::PropertyTextInput("名前", nameBuffer, sizeof(nameBuffer))) {
             active->name = nameBuffer;
         }
+        // シーンの天球は 1 つ。どのファイルかを見せ、差し替えの入口をここにも置く。
+        DrawAssetPathRow("ファイル", active->assetPath, m_pendingAssetReveal);
+        ui::PropertyLabelEmpty("skyPick");
+        if (ui::Button("差し替える…", ui::kWideButtonWidth)) {
+            OpenSkyPicker();
+        }
+        ui::PropertyEnd();
 
         static const char* const kSourceLabels[] = {"手続き的な空", "HDRI"};
         int source = static_cast<int>(sky.source);

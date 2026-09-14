@@ -2566,17 +2566,14 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
     document["graph"] = WriteGraph(refs.graph, writeTexture, writeMaterial, writePaint);
 
     // 天球はマテリアルと同じく、構造ごと埋め込む（画像だけ相対パスの参照）。
+    // **シーンが持つ天球は適用中の 1 つだけ。** 配列の形は旧シーンとの互換のために残す。
     json skies = json::array();
-    int activeSkyIndex = 0;
-    for (const renderer::SkyAsset& asset : refs.skies.Entries()) {
-        if (asset.id == refs.skies.ActiveId()) {
-            activeSkyIndex = static_cast<int>(skies.size());
-        }
-        skies.push_back(WriteSky(asset, baseDir));
-        if (workspace) { skies.back()["_assetPath"] = ToUtf8Portable(asset.assetPath); skies.back()["uid"] = asset.assetUid; }
+    if (const renderer::SkyAsset* asset = refs.skies.Active(); asset != nullptr) {
+        skies.push_back(WriteSky(*asset, baseDir));
+        if (workspace) { skies.back()["_assetPath"] = ToUtf8Portable(asset->assetPath); skies.back()["uid"] = asset->assetUid; }
     }
     document["skies"] = std::move(skies);
-    document["activeSky"] = activeSkyIndex;
+    document["activeSky"] = 0;
 
     document["preview"] = WritePreview(refs.renderer);
 
@@ -2846,6 +2843,8 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
         MigrateSkyFromPreview(previewNode, refs.skies, baseDir);
     }
     refs.skies.EnsureDefault();
+    // 旧シーンは天球を複数持っていた。適用中の 1 つだけを引き継ぐ。
+    KeepOnlyActiveSky(device, refs.skies);
 
     TG_LOG_INFO("プロジェクトを開きました: %s", ToUtf8Portable(path).c_str());
     return true;
@@ -2967,8 +2966,19 @@ bool LoadSharedAsset(ProjectWorkspace& workspace, const fs::path& path,
         const auto existing = std::find_if(refs.skies.Entries().begin(), refs.skies.Entries().end(), [&](const auto& a) { return a.assetUid == uid; });
         if (existing == refs.skies.Entries().end()) refs.skies.SetActive(ReadSky(node, refs.skies, workspace.Root()));
         else refs.skies.SetActive(existing->id);
+        // 天球を開く＝シーンの天球を差し替える。前の天球は残さない。
+        KeepOnlyActiveSky(device, refs.skies);
     }
     return true;
+}
+
+void KeepOnlyActiveSky(rhi::Device& device, renderer::SkyLibrary& skies) {
+    skies.EnsureDefault();
+    const renderer::SkyAssetId active = skies.ActiveId();
+    std::vector<renderer::SkyAssetId> others;
+    for (const auto& asset : skies.Entries())
+        if (asset.id != active) others.push_back(asset.id);
+    for (const auto id : others) skies.Remove(device, id);
 }
 
 bool SaveMaterial(const std::filesystem::path& path, const compositor::MaterialAsset& asset,

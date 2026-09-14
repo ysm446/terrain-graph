@@ -31,6 +31,8 @@ struct ProjectRefs {
 };
 
 bool SaveSharedAssets(ProjectWorkspace& workspace, const ProjectRefs& refs);
+// シーンが持つ天球は 1 つ。適用中の天球だけを残し、ほかは破棄する（フレームの外で呼ぶこと）。
+void KeepOnlyActiveSky(rhi::Device& device, renderer::SkyLibrary& skies);
 bool LoadSharedAsset(ProjectWorkspace& workspace, const std::filesystem::path& path,
                      rhi::Device& device, rhi::PipelineCache& pipelineCache, const ProjectRefs& refs);
 

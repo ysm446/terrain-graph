@@ -550,13 +550,6 @@ void Application::ProcessPendingFileWork() {
         }
     }
 
-    if (m_pendingSkyRemove != renderer::kNoSkyAsset) {
-        const renderer::SkyAssetId removed = m_pendingSkyRemove;
-        m_pendingSkyRemove = renderer::kNoSkyAsset;
-        // 消したのが適用中の天球なら、SkyLibrary が隣へ移す。
-        // 環境の作り直しは、次のフレームの SetActiveSky が判断する。
-        m_skyLibrary.Remove(m_device, removed);
-    }
 }
 
 }  // namespace tg

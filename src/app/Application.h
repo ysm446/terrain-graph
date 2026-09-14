@@ -158,10 +158,7 @@ private:
     // 一覧のサムネイルをダブルクリックするか、ウィンドウメニューから開く。
     void DrawMaterialSphereWindow();
     // 天球パネル。一覧で選んだものがそのままビューポートの環境になる。
-    void DrawSkyLibraryPanel();
     // 天球一覧の右クリックメニュー（追加 / 複製 / 削除）。
-    // target が kNoSkyAsset なら、対象の要る項目は出さない。
-    void DrawSkyContextMenu(renderer::SkyAssetId target);
     // 天球プレビューの窓（大きい絵 + 設定）。
     // 一覧のサムネイルをダブルクリックするか、ウィンドウメニューから開く。
     void DrawSkyPreviewWindow();
@@ -175,9 +172,13 @@ private:
     // 一覧のサムネイルを受け取るドロップ先。フォルダ階層と一覧のフォルダに置く。
     void AssetFolderDropTarget(const std::filesystem::path& directory);
     void DrawAssetRenameDialog();
-    // 削除確認の中から開く、同じ種類のアセットを選ぶピッカー。
+    // 同じ種類のアセットを選ぶピッカー。削除確認の「代わり」と、シーンの天球の差し替えで使う。
     void DrawAssetPicker();
     void CollectAssetPickerCandidates();
+    void OpenAssetPicker(io::AssetKind kind, const std::filesystem::path& folder,
+                         const std::filesystem::path& exclude);
+    // シーンの天球を別の .tgsky に差し替えるピッカーを開く。
+    void OpenSkyPicker();
     // 一覧と確認ダイアログで使うサムネイル。読み込み済みならその絵、無ければ一覧用の生成物。
     ImTextureID AssetThumbnailHandle(const std::filesystem::path& path);
     bool IsAssetSelected(const std::filesystem::path& path) const;
@@ -555,7 +556,6 @@ private:
     // 追加・複製した直後のマテリアルを一覧の枠内へ送る要求。上と同じ理由。
     bool m_scrollToSelectedMaterial = false;
     // 追加・複製した直後の天球を一覧の枠内へ送る要求。上と同じ理由。
-    bool m_scrollToSelectedSky = false;
 
     // ステータスバーに出す直近の通知。ログから受け取る。
     // 時刻は ImGui に依存させない（ログはコンテキストが無い時期にも来る）。
@@ -595,6 +595,11 @@ private:
     // 削除対象の代わりに参照元へ割り当てるアセット。空なら参照切れのまま削除する。
     std::filesystem::path m_assetReplacement;
     // 代わりを選ぶピッカー。候補は開いたときに集め、絞り込みの条件が変わったら集め直す。
+    enum class AssetPickerPurpose { Replacement, SceneSky };
+    AssetPickerPurpose m_assetPickerPurpose = AssetPickerPurpose::Replacement;
+    io::AssetKind m_assetPickerKind = io::AssetKind::Other;
+    std::filesystem::path m_assetPickerFolder;   // 「同じフォルダだけ」の基準
+    std::filesystem::path m_assetPickerExclude;  // 候補から外すもの（対象自身）
     bool m_assetPickerOpen = false;
     bool m_assetPickerSameFolder = true;
     bool m_assetPickerRefresh = false;
@@ -608,6 +613,8 @@ private:
     std::filesystem::path m_pendingRoot;
     std::filesystem::path m_pendingAssetOpen;
     bool m_pendingAssetsSave = false;
+    // 「天球を作成」で足した天球だけを残す要求。破棄は GPU 待機を伴うのでフレームの外で。
+    bool m_pendingSkyKeepOnly = false;
     bool m_assetRefresh = true;
     char m_assetSearch[128]{};
     std::filesystem::path m_deferredRoot;
@@ -662,7 +669,6 @@ private:
     // 要素を読んでしまうため、フレームの外で処理する。
     compositor::MaterialAssetId m_pendingMaterialRemove = compositor::kNoMaterialAsset;
     // 削除要求のあった天球。マテリアルと同じ理由でフレームの外で処理する。
-    renderer::SkyAssetId m_pendingSkyRemove = renderer::kNoSkyAsset;
     // 確認待ちのテクスチャ。参照が残っているときだけ入る。
     compositor::TextureId m_textureRemoveCandidate = compositor::kNoTexture;
     std::vector<std::string> m_textureRemoveUsers;

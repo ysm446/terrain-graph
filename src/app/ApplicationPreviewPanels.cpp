@@ -453,8 +453,8 @@ void Application::DrawLightingPanel() {
             ui::EndPropertyTable();
         }
 
-        // **環境そのもの（何を空にするか）は天球パネルが持つ。**
-        // ここに残すのは、天球ではなく見え方に属する設定だけ。
+        // **環境そのもの（何を空にするか）はシーンの天球（1 つ）が持つ。**
+        // ここに残すのは、天球ではなく見え方に属する設定だけ。差し替えの入口だけ置く。
         if (!m_renderer.AtmosphericMode()) {
             ui::SectionHeader("環境 (IBL)");
             if (ui::BeginPropertyTable("iblRows")) {
@@ -462,6 +462,8 @@ void Application::DrawLightingPanel() {
                 ui::PropertyLabel("天球");
                 ImGui::TextUnformatted(activeSky ? activeSky->name.c_str() : "-");
                 DrawAssetSourceButton(activeSky ? activeSky->assetPath : std::filesystem::path{}, m_pendingAssetReveal);
+                ImGui::SameLine();
+                if (ui::Button("選ぶ…")) OpenSkyPicker();
                 ui::PropertyEnd();
                 ui::PropertyValue("環境", "%s", m_renderer.GetEnvironment().SourceName().c_str());
                 ui::PropertyValue("equirect", "%u x %u", m_renderer.GetEnvironment().EquirectWidth(),
@@ -478,7 +480,7 @@ void Application::DrawLightingPanel() {
                 ImGui::EndDisabled();
                 ui::EndPropertyTable();
             }
-            ui::HintText("空の切り替えと輝度は「天球」パネルで設定する");
+            ui::HintText("空の設定は「天球プレビュー」で行う。アセットの .tgsky をダブルクリックしても差し替わる");
         }
 
         ui::SectionHeader("トーンマップ");

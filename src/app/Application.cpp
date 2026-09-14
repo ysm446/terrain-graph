@@ -704,6 +704,8 @@ void Application::DrawUi() {
     DrawSceneSwitchDialog();
     DrawAssetDeleteDialog();
     DrawAssetRenameDialog();
+    // 削除確認の「代わり」は確認モーダルの中で重ねる。天球の差し替えはここで出す。
+    if (m_assetPickerPurpose == AssetPickerPurpose::SceneSky) DrawAssetPicker();
     DrawInfoWindow();
     DrawSettingsWindow();
     DrawExportWindow();

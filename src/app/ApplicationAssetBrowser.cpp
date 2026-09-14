@@ -136,14 +136,15 @@ void Application::DrawAssetDeleteDialog() {
             row(m_assetReplacement, ui::Scaled(36), false);
         }
         if (ui::Button("選ぶ…")) {
-            m_assetPickerOpen = true; m_assetPickerRefresh = true;
-            m_assetPickerSelection = m_assetReplacement; m_assetPickerFilter[0] = '\0';
+            m_assetPickerPurpose = AssetPickerPurpose::Replacement;
+            OpenAssetPicker(io::KindOfAsset(report.target), report.target.parent_path(), report.target);
+            m_assetPickerSelection = m_assetReplacement;
         }
         if (!m_assetReplacement.empty()) {
             ImGui::SameLine();
             if (ui::Button("解除")) m_assetReplacement.clear();
         }
-        DrawAssetPicker();
+        if (m_assetPickerPurpose == AssetPickerPurpose::Replacement) DrawAssetPicker();
     }
     list("関連ファイル（削除せず残します）", report.related);
     const bool loaded = IsAssetLoaded(report.target);
@@ -201,18 +202,38 @@ void Application::DrawAssetRenameDialog() {
     ImGui::EndPopup();
 }
 
+void Application::OpenAssetPicker(io::AssetKind kind, const fs::path& folder, const fs::path& exclude) {
+    m_assetPickerKind = kind;
+    m_assetPickerFolder = folder.empty() ? m_workspace.Root() : folder;
+    m_assetPickerExclude = exclude;
+    m_assetPickerOpen = true; m_assetPickerRefresh = true;
+    m_assetPickerFilter[0] = '\0';
+}
+
+void Application::OpenSkyPicker() {
+    m_assetPickerPurpose = AssetPickerPurpose::SceneSky;
+    const renderer::SkyAsset* active = m_skyLibrary.Active();
+    const fs::path current = active ? active->assetPath : fs::path{};
+    // いまの天球にファイルがあればそのフォルダ、無ければルートの Skies/ を起点にする。
+    std::error_code error;
+    fs::path folder = current.empty() ? m_workspace.Root() / L"Skies" : current.parent_path();
+    if (!fs::is_directory(folder, error)) folder = m_workspace.Root();
+    OpenAssetPicker(io::AssetKind::Sky, folder, current);
+    m_assetPickerSelection.clear();
+}
+
 void Application::CollectAssetPickerCandidates() {
     m_assetPickerCandidates.clear();
-    const auto& target = m_assetDeleteRelations.target;
-    const auto kind = io::KindOfAsset(target);
+    const auto kind = m_assetPickerKind;
     std::error_code error;
     const auto consider = [&](const fs::path& path) {
-        if (io::KindOfAsset(path) != kind || path.lexically_normal() == target.lexically_normal()) return;
+        if (io::KindOfAsset(path) != kind) return;
+        if (!m_assetPickerExclude.empty() && path.lexically_normal() == m_assetPickerExclude.lexically_normal()) return;
         if (path.filename().wstring().starts_with(L".")) return;
         m_assetPickerCandidates.push_back(path);
     };
     if (m_assetPickerSameFolder) {
-        fs::directory_iterator it(target.parent_path(), fs::directory_options::skip_permission_denied, error), end;
+        fs::directory_iterator it(m_assetPickerFolder, fs::directory_options::skip_permission_denied, error), end;
         for (; it != end && !error; it.increment(error))
             if (it->is_regular_file(error) && !it->is_symlink(error)) consider(it->path());
     } else {
@@ -234,8 +255,11 @@ void Application::CollectAssetPickerCandidates() {
 }
 
 void Application::DrawAssetPicker() {
-    if (m_assetPickerOpen && !ImGui::IsPopupOpen("代わりのアセットを選ぶ")) ImGui::OpenPopup("代わりのアセットを選ぶ");
-    if (!ImGui::BeginPopupModal("代わりのアセットを選ぶ", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    const bool sceneSky = (m_assetPickerPurpose == AssetPickerPurpose::SceneSky);
+    const char* title = sceneSky ? "シーンの天球を選ぶ" : "代わりのアセットを選ぶ";
+    if (m_assetPickerOpen && !ImGui::IsPopupOpen(title)) ImGui::OpenPopup(title);
+    if (!ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    if (sceneSky) ui::HintText("シーンが持つ天球は 1 つ。選んだ .tgsky に差し替える");
     if (m_assetPickerRefresh) CollectAssetPickerCandidates();
     if (ui::BeginPropertyTable("assetPickerRows")) {
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
@@ -279,7 +303,8 @@ void Application::DrawAssetPicker() {
     ImGui::Separator();
     ImGui::BeginDisabled(m_assetPickerSelection.empty());
     if (ui::Button("決定") || chosen) {
-        m_assetReplacement = m_assetPickerSelection;
+        if (sceneSky) m_pendingAssetOpen = m_assetPickerSelection;  // 開く＝差し替え
+        else m_assetReplacement = m_assetPickerSelection;
         m_assetPickerOpen = false; ImGui::CloseCurrentPopup();
     }
     ImGui::EndDisabled(); ImGui::SameLine();
@@ -510,6 +535,10 @@ void Application::ProcessAssetWork() {
     }
     io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
                          m_skyLibrary, m_renderer, m_graph, &m_models};
+    if (m_pendingSkyKeepOnly) {
+        m_pendingSkyKeepOnly = false;
+        io::KeepOnlyActiveSky(m_device, m_skyLibrary);
+    }
     if (m_pendingAssetsSave) {
         m_pendingAssetsSave = false;
         CommitMaterialEdit();
@@ -794,10 +823,12 @@ void Application::DrawAssetBrowser() {
                 m_showMaterialSphere = true; m_pendingAssetsSave = true; MarkDocumentChanged();
             }
             if (ImGui::MenuItem("天球を作成")) {
+                // シーンの天球は 1 つ。作った天球に差し替える（前の天球のファイルは残る）。
                 const auto id = m_skyLibrary.Add("新規天球");
                 auto* asset = m_skyLibrary.FindMutable(id);
                 asset->assetPath = m_workspace.UniquePath(m_assetDirectory, asset->name, ".tgsky");
-                m_skyLibrary.SetActive(id); m_showSkyPreview = true; m_pendingAssetsSave = true;
+                m_skyLibrary.SetActive(id); m_pendingSkyKeepOnly = true;
+                m_showSkyPreview = true; m_pendingAssetsSave = true;
             }
             if (ImGui::MenuItem("ファイルを読み込む…")) {
                 const auto paths = ShowOpenFilesDialog(L"アセットを読み込む", {{L"画像 / モデル / マテリアル", L"*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.exr;*.hdr;*.fbx;*.tgmat"}});
