@@ -1,6 +1,7 @@
 #include "app/Application.h"
 
 #include "core/Log.h"
+#include "io/SceneComponents.h"
 
 #include <Windows.h>
 #include <shellapi.h>
@@ -35,7 +36,11 @@ tg::StartupOptions ParseCommandLine() {
 
     for (int i = 1; i < argc; ++i) {
         const std::wstring argument = argv[i];
-        if (argument == L"--root" && i + 1 < argc) {
+        if (argument == L"--migrate-scene" && i + 1 < argc) {
+            options.migrateComponents = true; options.projectPath = argv[++i];
+        } else if (argument == L"--open-graph" && i + 1 < argc) {
+            options.openGraph = argv[++i];
+        } else if (argument == L"--root" && i + 1 < argc) {
             options.projectRoot = argv[++i];
         } else if (argument == L"--inspect-asset-delete" && i + 1 < argc) {
             options.inspectAssetDelete = argv[++i];
@@ -99,6 +104,11 @@ tg::StartupOptions ParseCommandLine() {
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     const tg::StartupOptions options = ParseCommandLine();
 
+    if (options.migrateComponents) {
+        tg::io::ProjectWorkspace workspace;
+        if (options.projectRoot.empty() || !workspace.Open(options.projectRoot)) return 1;
+        return tg::io::MigrateSceneComponents(workspace, options.projectPath).empty() ? 1 : 0;
+    }
     tg::Application app;
     if (!app.Initialize(options)) {
         app.Shutdown();

@@ -385,6 +385,7 @@ using NodeSettings =
 
 struct Node {
     GraphId id = 0;
+    int component = 0;  // 0: 地形、1: 雲。評価は同じシーン上で行う。
     NodeKind kind = NodeKind::Surface;
     std::vector<Pin> inputs;
     std::vector<Pin> outputs;

@@ -45,6 +45,8 @@ namespace tg {
 
 // コマンドラインから渡せる起動オプション。
 struct StartupOptions {
+    bool migrateComponents = false;
+    std::filesystem::path openGraph;
     // 起動時に読み込む HDRI。空なら手続き的な空を使う。
     std::filesystem::path hdriPath;
     // 起動時にテクスチャライブラリへ読み込む画像。--texture を繰り返し指定できる。
@@ -102,6 +104,9 @@ private:
     // ノードグラフパネル。サーフェス / シェイプ / 水面をノードとして繋ぎ、
     // 出力ノードへ届いたチェーンをレイヤー列へコンパイルしてプレビューに使う。
     void DrawGraphPanel();
+    void DrawSceneHierarchy();
+    void OpenComponentEditor(int component);
+    void FinishComponentPreview(bool place);
     // エディタのコンテキストを破棄する。Shutdown から呼ぶ。
     void DestroyGraphEditor();
     // グラフのノード位置をエディタへ流し込み直す（読み込み・リセット・アンドゥの後）。
@@ -623,6 +628,14 @@ private:
     bool m_sceneSwitchDialog = false;
     bool m_allowSceneSwitch = false;
     bool m_saveThenSwitch = false;
+    nlohmann::json m_sceneComponents = nlohmann::json::array();
+    int m_editComponent = -1;
+    bool m_pendingComponentMigration = false;
+    int m_componentPreview = -1;
+    int m_pendingPreviewFinish = 0;
+    graph::NodeGraph m_previewOriginalGraph;
+    nlohmann::json m_previewOriginalComponents;
+    std::filesystem::path m_componentPreviewPath;
     std::filesystem::path m_projectPath;  // 現在のプロジェクト。未保存なら空
     io::RecentFiles m_recentProjects;
     io::AppSettings m_settings;

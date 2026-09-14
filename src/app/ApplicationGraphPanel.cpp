@@ -441,6 +441,7 @@ void Application::PasteGraphNodes(const ImVec2& viewCenter) {
             continue;
         }
         node->settings = entry.settings;
+        node->component = std::max(0, m_editComponent);
         node->posX = entry.posX + deltaX;
         node->posY = entry.posY + deltaY;
         node->positionValid = true;
@@ -689,7 +690,7 @@ void Application::DrawGraphEditor() {
     if (!m_graphNodesToPlace.empty()) {
         for (const graph::GraphId nodeId : m_graphNodesToPlace) {
             graph::Node* node = m_graph.FindMutableNode(nodeId);
-            if (node == nullptr) {
+            if (node == nullptr || (m_editComponent >= 0 && node->component != m_editComponent)) {
                 continue;
             }
             if (!node->positionValid || !IsValidNodePosition(node->posX, node->posY)) {
@@ -710,6 +711,7 @@ void Application::DrawGraphEditor() {
     }
 
     for (const graph::Node& node : m_graph.Nodes()) {
+        if (m_editComponent >= 0 && node.component != m_editComponent) continue;
         DrawGraphNode(node);
     }
 
@@ -747,6 +749,9 @@ void Application::DrawGraphEditor() {
     }
 
     for (const graph::Link& link : m_graph.Links()) {
+        const auto* pin = m_graph.FindPin(link.startPin);
+        const auto* owner = pin ? m_graph.FindNode(pin->nodeId) : nullptr;
+        if (m_editComponent >= 0 && (!owner || owner->component != m_editComponent)) continue;
         ImVec4 color(0.52f, 0.60f, 0.55f, 1.0f);
         if (const graph::Pin* startPin = m_graph.FindPin(link.startPin)) {
             color = PinTypeColor(startPin->valueType);
@@ -827,6 +832,10 @@ void Application::DrawGraphEditor() {
         ImGui::TextDisabled("ノードを追加");
         ImGui::Separator();
         const auto addNodeMenuItem = [&](graph::NodeKind kind, const char* label) {
+            const auto* definition = graph::FindNodeDefinition(kind);
+            const std::string name = definition ? definition->name : "";
+            if (m_editComponent == 0 && name.starts_with("cloud")) return;
+            if (m_editComponent == 1 && !name.starts_with("cloud") && !name.starts_with("mask") && name != "path") return;
             const bool available = kind != graph::NodeKind::CloudOutput || !m_graph.CompileCloud().hasOutput;
             if (!ImGui::MenuItem(label, nullptr, false, available)) {
                 return;
@@ -845,6 +854,7 @@ void Application::DrawGraphEditor() {
                 settings->layer.name +=
                     " " + std::to_string(m_graph.Nodes().size());
             }
+            node->component = std::max(0, m_editComponent);
             node->posX = addNodePosition.x;
             node->posY = addNodePosition.y;
             node->positionValid = true;
@@ -990,6 +1000,7 @@ void Application::DrawGraphEditor() {
     // エディタは知らないノードに FLT_MAX を返すため、書き戻すと次の流し込みで
     // ノードが無限遠へ飛び、キャンバスが操作不能になる（実際に踏んだ）。
     for (graph::Node& node : m_graph.MutableNodes()) {
+        if (m_editComponent >= 0 && node.component != m_editComponent) continue;
         const ImVec2 position = ed::GetNodePosition(ed::NodeId(node.id));
         if (!IsValidNodePosition(position.x, position.y)) {
             continue;
@@ -1002,6 +1013,46 @@ void Application::DrawGraphEditor() {
     ed::SetCurrentEditor(nullptr);
 }
 
+void Application::OpenComponentEditor(int component) {
+    if (m_editComponent == component && m_nodeEditor) return;
+    m_editComponent = component;
+    m_graphClipboard.clear();
+    m_selectedGraphNode = 0; m_selectedGraphNodes.clear();
+    m_previewGraphNode = 0; m_previewGraphPin = 0;
+    if (m_nodeEditor) { ed::DestroyEditor(m_nodeEditor); m_nodeEditor = nullptr; }
+    RequestGraphNodePlacement();
+}
+
+void Application::DrawSceneHierarchy() {
+    if (!ImGui::Begin("シーン階層")) { ImGui::End(); return; }
+    ImGui::TextUnformatted(m_projectPath.empty() ? "新規シーン" : ToUtf8Display(m_projectPath.stem()).c_str());
+    if (!m_sceneComponents.is_array()) {
+        ui::HintText("旧形式のシーンです。保存済みの元データを残して部品へ分離できます。");
+        if (ui::Button("部品へ分離…", ui::kWideButtonWidth)) m_pendingComponentMigration = true;
+    }
+    for (int component = 0; component < 3; ++component) {
+        const char* label = component == 0 ? "地形" : component == 1 ? "雲" : "天球";
+        ImGui::PushID(component);
+        ImGui::BeginDisabled(m_componentPreview >= 0);
+        if (ImGui::Selectable(label, m_editComponent == component, ImGuiSelectableFlags_AllowDoubleClick)) {
+            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                if (component == 2) m_showSkyPreview = true;
+                else OpenComponentEditor(m_sceneComponents.is_array() ? component : -1);
+            }
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("ダブルクリックで編集");
+        if (m_sceneComponents.is_array() && component < 2) {
+            for (const auto& entry : m_sceneComponents) if (io::ProjectWorkspace::String(entry, "role") == (component ? "cloud" : "terrain")) {
+                const auto path = m_workspace.Resolve(entry.value("asset", nlohmann::json::object()));
+                ImGui::TextDisabled("%s", ToUtf8Display(path.filename()).c_str());
+            }
+        }
+        ImGui::EndDisabled(); ImGui::PopID();
+    }
+    ui::HintText("グラフの編集は共有アセットに反映されます。");
+    ImGui::End();
+}
+
 void Application::DrawGraphPanel() {
     // 既定レイアウトを組んだ直後は、右カラムの前面タブをこのパネルにする。
     if (m_focusDefaultTabs > 0) {
@@ -1012,6 +1063,22 @@ void Application::DrawGraphPanel() {
         return;
     }
 
+    if (m_componentPreview >= 0) {
+        ui::HintText("未配置のアセットをシーン内で一時プレビュー中");
+        if (ui::Button("保存")) RequestSaveProject(false);
+        ImGui::SameLine();
+        if (ui::Button("元を保存して配置", ui::kWideButtonWidth)) m_pendingPreviewFinish = 1;
+        ImGui::SameLine();
+        if (ui::Button("破棄して戻る", ui::kWideButtonWidth)) m_pendingPreviewFinish = 2;
+    }
+    if (m_sceneComponents.is_array()) {
+        ImGui::BeginDisabled(m_componentPreview >= 0);
+        if (ui::Button("地形グラフ", ui::kWideButtonWidth)) OpenComponentEditor(0);
+        ImGui::SameLine();
+        if (ui::Button("雲グラフ", ui::kWideButtonWidth)) OpenComponentEditor(1);
+        ImGui::EndDisabled();
+        ImGui::TextUnformatted(m_editComponent == 1 ? "編集中：雲" : "編集中：地形");
+    }
     if (const graph::Node* selected = m_graph.FindNode(m_selectedGraphNode);
         selected != nullptr && graph::IsLayerNodeKind(selected->kind)) {
         ui::HintText("選択したノードまでを表示中（選択を外すと出力まで）");

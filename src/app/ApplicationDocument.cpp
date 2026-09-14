@@ -146,6 +146,12 @@ void Application::ApplyDocument(const DocumentSnapshot& snapshot) {
     m_selectedGraphNode =
         (m_graph.FindNode(snapshot.selectedGraphNode) != nullptr) ? snapshot.selectedGraphNode
                                                                   : 0;
+    if (const auto* selected = m_graph.FindNode(m_selectedGraphNode);
+        selected && m_sceneComponents.is_array() && selected->component != m_editComponent) {
+        const auto id = m_selectedGraphNode;
+        OpenComponentEditor(selected->component);
+        m_selectedGraphNode = id;
+    }
     const auto materialCount = static_cast<int>(m_materialLibrary.Entries().size());
     m_selectedMaterial = std::clamp(snapshot.selectedMaterial, 0, std::max(0, materialCount - 1));
 }
@@ -179,6 +185,7 @@ void Application::SweepPaintMasks() {
     };
 
     collectNodes(m_graph.Nodes());
+    if (m_componentPreview >= 0) collectNodes(m_previewOriginalGraph.Nodes());
     collectNodes(m_committed.graphNodes);
     for (const DocumentSnapshot& snapshot : m_undoHistory.UndoStack()) {
         collectNodes(snapshot.graphNodes);

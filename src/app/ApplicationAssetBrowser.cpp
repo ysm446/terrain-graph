@@ -56,7 +56,23 @@ bool Application::IsAssetLoaded(const fs::path& path) const {
         const auto a = fs::weakly_canonical(candidate, ea), b = fs::weakly_canonical(path, eb);
         return !ea && !eb && _wcsicmp(a.c_str(), b.c_str()) == 0;
     };
-    if (matches(m_projectPath)) return true;
+    if (matches(m_projectPath) || matches(m_componentPreviewPath)) return true;
+    for (const auto* components : {&m_sceneComponents, &m_previewOriginalComponents}) {
+        if (!components->is_array()) continue;
+        for (const auto& entry : *components) {
+            const auto asset = m_workspace.Resolve(entry.value("asset", nlohmann::json::object()));
+            if (matches(asset)) return true;
+            if (asset.empty()) continue;
+            const auto paintDirectory = asset.parent_path() / (asset.stem().wstring() + L".assets");
+            for (auto parent = path.parent_path(); !parent.empty();) {
+                std::error_code error;
+                if (fs::equivalent(parent, paintDirectory, error)) return true;
+                const auto next = parent.parent_path();
+                if (next == parent) break;
+                parent = next;
+            }
+        }
+    }
     if (!m_projectPath.empty()) {
         const auto paintDirectory = m_projectPath.parent_path() / (m_projectPath.stem().wstring() + L".assets");
         for (auto parent = path.parent_path(); !parent.empty();) {
@@ -430,7 +446,7 @@ void Application::RefreshAssetBrowser() {
         const auto ext = Extension(entry.path());
         if (!entry.is_directory(error) && !IsImage(ext) && ext != ".fbx" && ext != ".hdr" &&
             ext != ".tgmat" && ext != ".tgsky" && ext != ".tgmodel" &&
-            ext != ".tgscene" && ext != ".tgproj" && ext != ".mmproj") continue;
+            ext != ".tgterrain" && ext != ".tgcloud" && ext != ".tgscene" && ext != ".tgproj" && ext != ".mmproj") continue;
         m_assetEntries.push_back(entry);
     }
     std::sort(m_assetEntries.begin(), m_assetEntries.end(), [](const auto& a, const auto& b) {
@@ -534,7 +550,7 @@ void Application::ProcessAssetWork() {
         }
     }
     io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
-                         m_skyLibrary, m_renderer, m_graph, &m_models};
+                         m_skyLibrary, m_renderer, m_graph, &m_models, &m_sceneComponents};
     if (m_pendingSkyKeepOnly) {
         m_pendingSkyKeepOnly = false;
         io::KeepOnlyActiveSky(m_device, m_skyLibrary);
@@ -549,6 +565,29 @@ void Application::ProcessAssetWork() {
     if (!m_pendingAssetOpen.empty()) {
         const auto path = m_pendingAssetOpen; m_pendingAssetOpen.clear();
         const auto ext = Extension(path);
+        if (ext == ".tgterrain" || ext == ".tgcloud") {
+            if (m_componentPreview >= 0) { TG_LOG_WARN("先にプレビュー中の編集を保存または終了してください"); return; }
+            const int component = ext == ".tgcloud" ? 1 : 0;
+            bool placed = false;
+            if (m_sceneComponents.is_array()) for (const auto& entry : m_sceneComponents) {
+                std::error_code error;
+                if (fs::equivalent(path, m_workspace.Resolve(entry.value("asset", nlohmann::json::object())), error)) placed = true;
+            }
+            if (!placed) {
+                if (!m_sceneComponents.is_array()) { TG_LOG_WARN("先にシーンを部品へ分離してください"); return; }
+                m_previewOriginalGraph = m_graph;
+                m_previewOriginalComponents = m_sceneComponents;
+                if (!io::LoadSharedAsset(m_workspace, path, m_device, m_pipelineCache, refs)) {
+                    TG_LOG_ERROR("グラフアセットを開けませんでした"); return;
+                }
+                m_componentPreview = component; m_componentPreviewPath = path;
+                m_undoHistory.Clear(); m_committed = CaptureDocument();
+            }
+            m_editComponent = -1; OpenComponentEditor(component);
+            m_compiledGraphRevision = 0; m_graphStack.MarkDirty();
+            for (auto& slot : m_cloudMasks) slot.graphRevision = 0;
+            return;
+        }
         if (ext == ".tgmat" || ext == ".tgsky" || ext == ".tgmodel") {
             nlohmann::json assetHeader;
             if (ext == ".tgmat" && io::ProjectWorkspace::ReadJson(path, assetHeader) &&
@@ -740,7 +779,7 @@ void Application::DrawAssetBrowser() {
             if (folder) {
                 DrawFolderIcon(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
             } else if (!handle) {
-                const char* type = ext == ".tgscene" ? "シーン" : ext == ".tgmat" ? "マテリアル" :
+                const char* type = ext == ".tgterrain" ? "地形グラフ" : ext == ".tgcloud" ? "雲グラフ" : ext == ".tgscene" ? "シーン" : ext == ".tgmat" ? "マテリアル" :
                     ext == ".tgsky" ? "天球" : ext == ".tgmodel" || ext == ".fbx" ? "モデル" : IsImage(ext) ? "画像" : "ファイル";
                 const auto min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
                 const auto text = ImGui::CalcTextSize(type);
@@ -792,6 +831,20 @@ void Application::DrawAssetBrowser() {
                 if (ImGui::MenuItem("開く")) {
                     if (folder) { m_assetDirectory = path; m_assetRefresh = true; }
                     else m_pendingAssetOpen = path;
+                }
+                if ((ext == ".tgterrain" || ext == ".tgcloud") && ImGui::MenuItem("複製")) {
+                    nlohmann::json body;
+                    const char* kind = ext == ".tgcloud" ? "cloud-graph" : "terrain-graph";
+                    if (m_workspace.ReadAsset(path, kind, body)) {
+                        body.erase("uid");
+                        const auto name = io::ProjectWorkspace::String(body, "name") + " コピー";
+                        body["name"] = name;
+                        auto copy = m_workspace.UniquePath(path.parent_path(), name, ext.c_str());
+                        if (!copy.empty() && m_workspace.SaveAsset(copy, kind, body)) {
+                            m_assetRefresh = true;
+                            TG_LOG_INFO("グラフを複製しました: %s", ToUtf8Display(copy.filename()).c_str());
+                        } else TG_LOG_ERROR("グラフを複製できませんでした");
+                    }
                 }
                 if (ImGui::MenuItem("エクスプローラで表示")) RevealFileInExplorer(path);
                 if (path.filename() != L"project.tgproj" && ImGui::MenuItem("名前を変更…", "F2")) OpenAssetRename(path);

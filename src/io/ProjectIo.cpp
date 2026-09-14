@@ -1,4 +1,7 @@
 #include "io/ProjectIo.h"
+#include "io/SceneComponents.h"
+#include <set>
+#include <map>
 
 #include "core/PathUtf8.h"
 
@@ -1385,6 +1388,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
         json item;
         item["id"] = node.id;
         item["kind"] = definition->name;
+        item["component"] = node.component;
         // 見つからなかった種類は元の保存名で書き戻し、別の版で開いたときに復元できるようにする。
         if (const auto* missing = std::get_if<graph::MissingNodeSettings>(&node.settings);
             missing != nullptr && !missing->kindName.empty()) {
@@ -1584,6 +1588,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                 TG_LOG_WARN("扱えないノードの種類です: %s (id %d)", kindName.c_str(), id);
             }
             graph::Node created;
+            created.component = ReadInt(item, "component", 0);
             created.id = id;
             created.kind = definition->kind;
             maxId = std::max(maxId, created.id);
@@ -2578,7 +2583,10 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
     document["preview"] = WritePreview(refs.renderer);
 
     if (workspace) {
+        if (refs.components && refs.components->is_array()) document["_components"] = *refs.components;
+        if (refs.componentOnly >= 0) document["_componentOnly"] = refs.componentOnly;
         if (!workspace->SaveScene(savePath, document)) return false;
+        if (refs.components && refs.componentOnly < 0 && document.contains("components")) *refs.components = document["components"];
         RemoveStalePaintMasks(paintDir, writtenPaintFiles);
         return true;
     }
@@ -2599,6 +2607,7 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
         return false;
     }
 
+    if (refs.components) *refs.components = document.value("_components", json());
     const fs::path baseDir = path.parent_path();
     const fs::path paintDir = PaintMaskDirectory(path);
 
@@ -2928,10 +2937,15 @@ bool LoadSharedAsset(ProjectWorkspace& workspace, const fs::path& path,
     if (assetUid.empty()) return false;
     const json ref = {{"uid", assetUid}, {"path", RelativePathString(path, workspace.Root())}};
     const auto ext = path.extension();
+    const bool graphAsset = ext == L".tgterrain" || ext == L".tgcloud";
+    const int graphComponent = ext == L".tgcloud" ? 1 : 0;
     const char* key = _wcsicmp(ext.c_str(), L".tgmat") == 0 ? "materials" :
                       _wcsicmp(ext.c_str(), L".tgmodel") == 0 ? "models" : "skies";
     json document;
-    document[key] = json::array({{{"id", 1}, {"asset", ref}}});
+    if (graphAsset) {
+        document["components"] = json::array({{{"role", graphComponent ? "cloud" : "terrain"}, {"asset", ref}}});
+        if (!ExpandSceneComponents(workspace, document)) return false;
+    } else document[key] = json::array({{{"id", 1}, {"asset", ref}}});
     if (!workspace.Expand(document)) return false;
     std::unordered_map<int, compositor::TextureId> textures;
     for (const auto& node : document["textures"]) {
@@ -2983,6 +2997,68 @@ bool LoadSharedAsset(ProjectWorkspace& workspace, const fs::path& path,
         else refs.skies.SetActive(existing->id);
         // 天球を開く＝シーンの天球を差し替える。前の天球は残さない。
         KeepOnlyActiveSky(device, refs.skies);
+    }
+    if (graphAsset) {
+        std::unordered_map<int, compositor::PaintMaskId> paints;
+        for (const auto& entry : document["paintMasks"]) {
+            LdrImage image;
+            if (!LoadLdrImage(FromUtf8(ReadString(entry, "file")), image) || !image.IsValid() || image.width != image.height) return false;
+            std::vector<uint8_t> gray(static_cast<size_t>(image.width) * image.height);
+            for (size_t i = 0; i < gray.size(); ++i) gray[i] = image.pixels[i * 4];
+            const auto id = refs.paintMasks.AddFromPixels(device, image.width, gray);
+            if (!id) return false;
+            paints[ReadInt(entry, "id", 0)] = id;
+        }
+        graph::NodeGraph imported;
+        const auto material = [&](const json& value) {
+            const auto found = materials.find(value.is_number_integer() ? value.get<int>() : 0);
+            return found == materials.end() ? compositor::kNoMaterialAsset : found->second;
+        };
+        const auto paint = [&](const json& value) {
+            const auto found = paints.find(value.is_number_integer() ? value.get<int>() : 0);
+            return found == paints.end() ? compositor::kNoPaintMask : found->second;
+        };
+        if (!document["graph"]["nodes"].empty() && !ReadGraph(document["graph"], imported, texture, material, paint, graph::TerrainScale{})) return false;
+        // ノード、ピン、リンクのIDはシーン全体で重複させない。
+        auto nodes = refs.graph.Nodes();
+        auto links = refs.graph.Links();
+        std::set<graph::GraphId> removedPins;
+        graph::GraphId nextId = 1;
+        for (const auto& node : nodes) {
+            nextId = std::max(nextId, node.id + 1);
+            for (const auto* pins : {&node.inputs, &node.outputs}) for (const auto& pin : *pins) {
+                nextId = std::max(nextId, pin.id + 1);
+                if (node.component == graphComponent) removedPins.insert(pin.id);
+            }
+        }
+        for (const auto& link : links) nextId = std::max(nextId, link.id + 1);
+        std::erase_if(nodes, [&](const auto& node) { return node.component == graphComponent; });
+        std::erase_if(links, [&](const auto& link) { return removedPins.contains(link.startPin) || removedPins.contains(link.endPin); });
+        std::map<graph::GraphId, graph::GraphId> ids;
+        const auto remap = [&](graph::GraphId id) { if (!ids.contains(id)) ids[id] = nextId++; return ids.at(id); };
+        for (auto node : imported.Nodes()) {
+            node.id = remap(node.id); node.component = graphComponent;
+            for (auto* pins : {&node.inputs, &node.outputs}) for (auto& pin : *pins) { pin.id = remap(pin.id); pin.nodeId = node.id; }
+            if (auto* scatter = std::get_if<graph::ModelScatterSettings>(&node.settings); scatter && refs.models) {
+                for (auto& choice : scatter->models) {
+                    const auto entry = std::find_if(document["models"].begin(), document["models"].end(), [&](const auto& value) { return ReadInt(value, "id", 0) == choice.model; });
+                    if (entry != document["models"].end()) {
+                        const auto model = std::find_if(refs.models->begin(), refs.models->end(), [&](const auto& value) { return value.assetUid == ReadString(*entry, "uid"); });
+                        if (model != refs.models->end()) choice.model = model->id;
+                    }
+                }
+            }
+            nodes.push_back(std::move(node));
+        }
+        for (auto link : imported.Links()) { link.id = remap(link.id); link.startPin = remap(link.startPin); link.endPin = remap(link.endPin); links.push_back(link); }
+        refs.graph.Replace(std::move(nodes), std::move(links));
+        if (refs.components) {
+            if (!refs.components->is_array()) *refs.components = json::array();
+            auto& entries = refs.components->get_ref<json::array_t&>();
+            const std::string role = graphComponent ? "cloud" : "terrain";
+            std::erase_if(entries, [&](const auto& entry) { return ReadString(entry, "role") == role; });
+            entries.push_back({{"role", role}, {"asset", ref}});
+        }
     }
     return true;
 }

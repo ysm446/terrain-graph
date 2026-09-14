@@ -28,6 +28,8 @@ struct ProjectRefs {
     renderer::PreviewRenderer& renderer;
     graph::NodeGraph& graph;
     std::vector<renderer::ModelAsset>* models = nullptr;
+    nlohmann::json* components = nullptr;
+    int componentOnly = -1;
 };
 
 bool SaveSharedAssets(ProjectWorkspace& workspace, const ProjectRefs& refs);

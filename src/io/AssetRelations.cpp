@@ -16,7 +16,7 @@ bool SamePath(const fs::path& a, const fs::path& b) {
 }
 bool IsDocument(const fs::path& path) {
     const auto ext = path.extension().wstring();
-    for (const auto* value : {L".tgscene", L".tgmat", L".tgsky", L".tgmodel", L".tgproj", L".mmproj", L".mmmat"})
+    for (const auto* value : {L".tgterrain", L".tgcloud", L".tgscene", L".tgmat", L".tgsky", L".tgmodel", L".tgproj", L".mmproj", L".mmmat"})
         if (_wcsicmp(ext.c_str(), value) == 0) return true;
     return false;
 }
@@ -100,7 +100,7 @@ AssetRelations InspectAssetRelations(ProjectWorkspace& workspace, const fs::path
     };
     result.uid = uid;
     if (header.is_object()) references(header, target, true);
-    if (target.extension() == L".tgscene") {
+    if (target.extension() == L".tgscene" || target.extension() == L".tgterrain" || target.extension() == L".tgcloud") {
         const auto thumbnail = SceneThumbnailPath(workspace, target);
         if (!thumbnail.empty() && fs::exists(thumbnail, error)) result.related.push_back(thumbnail);
         const auto paint = target.parent_path() / (target.stem().wstring() + L".assets");
@@ -245,7 +245,7 @@ fs::path RelocateAsset(ProjectWorkspace& workspace, const fs::path& target, cons
     std::vector<std::pair<fs::path, fs::path>> files{{target, destination}};
     const fs::path meta = target.wstring() + L".meta";
     if (fs::exists(meta, error)) files.emplace_back(meta, destination.wstring() + L".meta");
-    if (target.extension() == L".tgscene") {
+    if (target.extension() == L".tgscene" || target.extension() == L".tgterrain" || target.extension() == L".tgcloud") {
         const auto paint = target.parent_path() / (target.stem().wstring() + L".assets");
         if (fs::is_directory(paint, error))
             files.emplace_back(paint, destination.parent_path() / (destination.stem().wstring() + L".assets"));

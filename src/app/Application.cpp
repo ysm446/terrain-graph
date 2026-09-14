@@ -160,6 +160,7 @@ bool Application::Initialize(const StartupOptions& options) {
     if (!m_options.importModel.empty()) HandleDroppedFiles({m_options.importModel});
 
     // 通常起動は新規シーン。明示されたシーンだけ最初のフレームの前に読み込む。
+    m_editComponent = 0;
     if (!options.projectPath.empty()) {
         m_pendingProjectOpen = options.projectPath;
     }
@@ -311,6 +312,7 @@ int Application::Run() {
 
         // プロジェクトとマテリアルの読み書きも GPU 待機を伴うため、フレームの外で。
         // 他の保留処理より先に行う（読み込みが中身を丸ごと入れ替えるため）。
+        if (m_frameCounter == 2 && !m_options.openGraph.empty()) m_pendingAssetOpen = m_options.openGraph;
         ProcessPendingFileWork();
         ProcessModelWork();
         // 経路探索用の地形（Path ノードの Base）の焼き直しも GPU 待機を伴うため、フレームの外で。
@@ -332,7 +334,7 @@ int Application::Run() {
         if (!m_options.saveProjectPath.empty() && m_frameCounter >= m_options.screenshotFrame &&
             (m_options.saveProjectPath.extension() != L".tgscene" || m_frameCounter > 0)) {
             const io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
-                                       m_skyLibrary,     m_renderer,       m_graph, &m_models};
+                                       m_skyLibrary,     m_renderer,       m_graph, &m_models, &m_sceneComponents, m_componentPreview};
             if (!io::SaveProject(m_options.saveProjectPath, m_device, refs,
                 m_options.saveProjectPath.extension() == L".tgscene" ? &m_workspace : nullptr)) return 1;
             SaveSceneThumbnail(m_options.saveProjectPath);
@@ -665,7 +667,7 @@ void Application::DrawUi() {
     // ドックスペースの ID には版を付ける。**パネルを増減したら版を上げること。**
     // ID が変われば ini に配置が無い状態になり、既定レイアウトが組み直される。
     // 上げないと、新しいパネルがどこにも入らず浮いたままになる。
-    const ImGuiID dockspaceId = ImGui::GetID("TerrainGraphDockSpace_v19");
+    const ImGuiID dockspaceId = ImGui::GetID("TerrainGraphDockSpace_v20");
 
     // ステータスバーもメニューバーと同じく、先に作って作業領域を狭めておく。
     DrawStatusBar();
@@ -687,6 +689,7 @@ void Application::DrawUi() {
     // タブが重なる枠では、**最初に submit したパネルが前面のタブになり、
     // タブは submit した順に並ぶ**（ini に配置が無いとき）。
     // 作業の起点はグラフなので、右カラムの他のパネルより先に描く。
+    DrawSceneHierarchy();
     DrawGraphPanel();
     // アセットの帯は畳める。出さなければドックノードが空になり、中央（ビューポート）が
     // その高さをもらう。ウィンドウはドック先を覚えているので、戻せば同じ所へ入る。
@@ -786,6 +789,9 @@ void Application::BuildDefaultLayout(ImGuiID dockspaceId) {
     // **グラフは右カラムに置く。** 中央のタブにするとビューポートと排他になり、
     // ノードを選んだ結果をプレビューで確かめられない。盤面は狭くなるが、
     // 「繋ぎ替えて見た目を確かめる」の往復を優先する。
+    ImGuiID hierarchy = 0;
+    ImGui::DockBuilderSplitNode(right, ImGuiDir_Up, 0.22f, &hierarchy, &right);
+    ImGui::DockBuilderDockWindow("シーン階層", hierarchy);
     ImGui::DockBuilderDockWindow("グラフ", right);
     ImGui::DockBuilderDockWindow("プレビュー設定", right);
     ImGui::DockBuilderDockWindow("ライティング", right);

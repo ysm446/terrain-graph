@@ -8,6 +8,7 @@
 #include "core/Log.h"
 #include "core/Shell.h"
 #include "io/ProjectIo.h"
+#include "io/SceneComponents.h"
 #include "ui/UiStyle.h"
 
 #include <imgui.h>
@@ -38,6 +39,10 @@ void Application::RequestOpenProject() {
 // saveAs が偽でも、まだ一度も保存していなければ保存先を聞く。
 void Application::RequestSaveProject(bool saveAs) {
     CommitMaterialEdit();
+    if (m_componentPreview >= 0) {
+        m_pendingProjectSave = m_workspace.Root() / L".terrain-graph/editor/Preview.tgscene";
+        return;
+    }
     if (!saveAs && m_projectPath.extension() == L".tgscene") {
         m_pendingProjectSave = m_projectPath;
         return;
@@ -186,6 +191,9 @@ void Application::DrawFileMenu() {
         m_pendingProjectOpen = ShowOpenFileDialog(L"シーンを開く", {{L"シーン / 旧プロジェクト", L"*.tgscene;*.tgproj;*.mmproj"}});
     }
     DrawRecentMenu();
+    if (ImGui::MenuItem("保存済みシーンを部品に分離…", nullptr, false,
+                        m_projectPath.extension() == L".tgscene" && !m_sceneComponents.is_array()))
+        m_pendingComponentMigration = true;
     if (ImGui::MenuItem("保存", "Ctrl+S")) {
         RequestSaveProject(false);
     }
@@ -256,7 +264,34 @@ void Application::HandleDroppedFiles(const std::vector<std::filesystem::path>& p
     }
 }
 
+void Application::FinishComponentPreview(bool place) {
+    if (m_componentPreview < 0) return;
+    if (place) {
+        // 差し替えで、元グラフの未保存編集を失わない。
+        const auto path = m_projectPath.extension() == L".tgscene" ? m_projectPath :
+            m_workspace.Root() / L"Scenes/Untitled.tgscene";
+        io::ProjectRefs previous{m_textureLibrary, m_materialLibrary, m_paintMasks,
+            m_skyLibrary, m_renderer, m_previewOriginalGraph, &m_models, &m_previewOriginalComponents, m_componentPreview};
+        if (!io::SaveProject(path, m_device, previous, &m_workspace)) {
+            TG_LOG_ERROR("元のグラフを保存できないため、差し替えを中止しました");
+            return;
+        }
+    }
+    if (!place) { m_graph = std::move(m_previewOriginalGraph); m_sceneComponents = m_previewOriginalComponents; }
+    m_previewOriginalGraph = graph::NodeGraph{}; m_previewOriginalComponents = nullptr;
+    m_componentPreview = -1; m_componentPreviewPath.clear();
+    m_undoHistory.Clear(); m_documentDirty = false; m_committed = CaptureDocument();
+    m_compiledGraphRevision = 0; m_graphStack.MarkDirty();
+    for (auto& slot : m_cloudMasks) slot.graphRevision = 0;
+    const int component = m_editComponent;
+    m_editComponent = -1; OpenComponentEditor(component);
+}
+
 void Application::ResetProject() {
+    m_componentPreview = -1; m_componentPreviewPath.clear();
+    m_previewOriginalGraph = graph::NodeGraph{}; m_previewOriginalComponents = nullptr;
+    m_sceneComponents = nlohmann::json::array();
+    m_editComponent = 0;
     m_materialEditPending = false;
     m_materialEditAppearanceChanged = false;
     // どれも GPU 待機を伴う。フレームの外から呼ぶこと。
@@ -309,6 +344,11 @@ void Application::UpdateWindowTitle() {
 }
 
 void Application::ProcessPendingFileWork() {
+    if (m_pendingPreviewFinish) { FinishComponentPreview(m_pendingPreviewFinish == 1); m_pendingPreviewFinish = 0; }
+    if (m_componentPreview >= 0 && (!m_pendingRoot.empty() || !m_pendingProjectOpen.empty() || m_pendingProjectNew)) {
+        m_pendingRoot.clear(); m_pendingProjectOpen.clear(); m_pendingProjectNew = false;
+        TG_LOG_WARN("先にグラフの一時プレビューを終了してください");
+    }
     if (m_pendingAssetOpen.extension() == L".tgscene" || m_pendingAssetOpen.extension() == L".tgproj" ||
         m_pendingAssetOpen.extension() == L".mmproj") {
         m_pendingProjectOpen = std::move(m_pendingAssetOpen); m_pendingAssetOpen.clear();
@@ -332,6 +372,16 @@ void Application::ProcessPendingFileWork() {
     m_allowSceneSwitch = false;
     const auto loadStart = std::chrono::steady_clock::now();
     ProcessAssetWork();
+    if (m_pendingComponentMigration) {
+        m_pendingComponentMigration = false;
+        const auto migrated = io::MigrateSceneComponents(m_workspace, m_projectPath);
+        if (!migrated.empty()) {
+            m_pendingProjectOpen = migrated;
+            m_assetRefresh = true;
+            TG_LOG_INFO("保存済みの元シーンを保持して分離しました: %s", ToUtf8Display(migrated).c_str());
+        } else TG_LOG_ERROR("シーンを分離できませんでした。元データは保持しています");
+        return;
+    }
     // どれもリソースの生成・破棄と GPU 待機を伴う。フレームの外で処理すること。
 
     // アンドゥ / リドゥ。マテリアルの破棄を伴うのでここで処理する。
@@ -367,9 +417,10 @@ void Application::ProcessPendingFileWork() {
         m_pendingProjectOpen.clear();
 
         io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
-                             m_skyLibrary,     m_renderer,       m_graph, &m_models};
+                             m_skyLibrary,     m_renderer,       m_graph, &m_models, &m_sceneComponents};
         if (io::LoadProject(path, m_device, m_pipelineCache, refs,
                             path.extension() == L".tgscene" ? &m_workspace : nullptr)) {
+            m_editComponent = m_sceneComponents.is_array() ? 0 : -1;
             m_materialEditPending = false;
             m_materialEditAppearanceChanged = false;
             // 比較用の起動引数は保存された品質設定より優先する。
@@ -380,6 +431,8 @@ void Application::ProcessPendingFileWork() {
             m_projectPath = path;
             m_assetRefresh = true;
             m_selectedGraphNode = m_graph.FindNode(m_options.selectNode) ? m_options.selectNode : 0;
+            if (m_sceneComponents.is_array() && m_selectedGraphNode)
+                m_editComponent = m_graph.FindNode(m_selectedGraphNode)->component;
             m_previewGraphNode = 0;
             m_previewGraphPin = 0;
             m_compiledGraphRevision = 0;
@@ -417,8 +470,14 @@ void Application::ProcessPendingFileWork() {
         m_pendingProjectSave.clear();
 
         io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
-                             m_skyLibrary,     m_renderer,       m_graph, &m_models};
+                             m_skyLibrary,     m_renderer,       m_graph, &m_models, &m_sceneComponents};
+        if (m_componentPreview >= 0) refs.componentOnly = m_componentPreview;
         if (io::SaveProject(path, m_device, refs, &m_workspace)) {
+            if (m_componentPreview >= 0) {
+                m_assetRefresh = true;
+                TG_LOG_INFO("グラフアセットを保存しました: %s", ToUtf8Display(m_componentPreviewPath).c_str());
+                return;
+            }
             SaveSceneThumbnail(path);
             m_assetRefresh = true;
             m_recentProjects.Add(m_workspace.Root(), path);

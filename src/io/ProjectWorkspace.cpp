@@ -1,4 +1,5 @@
 #include "io/ProjectWorkspace.h"
+#include "io/SceneComponents.h"
 #include "core/PathUtf8.h"
 #include "core/Log.h"
 
@@ -30,7 +31,7 @@ fs::path Absolute(const fs::path& path) {
 }
 bool IsNative(const fs::path& path) {
     const auto ext = path.extension();
-    return ext == L".tgmat" || ext == L".tgsky" || ext == L".tgmodel";
+    return ext == L".tgmat" || ext == L".tgsky" || ext == L".tgmodel" || ext == L".tgterrain" || ext == L".tgcloud";
 }
 void MapTextures(json& material, const std::function<json(const json&)>& convert) {
     auto maps = material.find("maps");
@@ -318,13 +319,19 @@ bool ProjectWorkspace::SaveScene(const fs::path& path, json& document) {
     if (String(document, "sceneUid").empty()) return false;
     document["format"] = "terrain-graph.scene";
     document["version"] = 1;
+    if (document.contains("_components")) {
+        if (!SaveSceneComponents(*this, path, document)) return false;
+        if (document.value("_componentOnly", -1) >= 0) return true;
+        return SetStartupScene(path);
+    }
     if (!WriteJson(path, document)) return false;
     return SetStartupScene(path);
 }
 
 bool ProjectWorkspace::ReadScene(const fs::path& path, json& document) {
     if (!Contains(path) || !Scan() || !ReadJson(path, document) ||
-        String(document, "format") != "terrain-graph.scene" || document["version"] != 1) return false;
+        String(document, "format") != "terrain-graph.scene" || (document["version"] != 1 && document["version"] != 2)) return false;
+    if (document["version"] == 2 && !ExpandSceneComponents(*this, document)) return false;
     return Expand(document);
 }
 bool ProjectWorkspace::Expand(json& document) {
