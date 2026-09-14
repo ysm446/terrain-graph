@@ -4,6 +4,7 @@
 #include "core/Shell.h"
 #include "core/Log.h"
 #include "io/ProjectIo.h"
+#include "io/SceneComponents.h"
 #include "ui/UiStyle.h"
 
 #include <imgui.h>
@@ -369,8 +370,7 @@ void Application::SelectAsset(const fs::path& path, bool toggle, bool range) {
 void Application::QueueAssetDelete() {
     m_assetDeleteQueue.clear();
     for (const auto& path : m_selectedAssets) {
-        std::error_code error;
-        if (!fs::is_directory(path, error) && path.filename() != L"project.tgproj") m_assetDeleteQueue.push_back(path);
+        if (path.filename() != L"project.tgproj") m_assetDeleteQueue.push_back(path);
     }
     if (m_assetDeleteQueue.empty()) return;
     m_pendingAssetDeleteInspect = m_assetDeleteQueue.front();
@@ -481,6 +481,21 @@ void Application::ProcessAssetWork() {
         } else {
             TG_LOG_WARN("削除できませんでした。対象と参照関係を再確認してください");
             m_pendingAssetDeleteInspect = path;
+        }
+    }
+    while (!m_pendingAssetDeleteInspect.empty()) {
+        std::error_code error;
+        const auto path = m_pendingAssetDeleteInspect;
+        if (!fs::is_directory(path, error)) break;
+        m_pendingAssetDeleteInspect.clear();
+        if (!IsAssetLoaded(path) && io::RemoveEmptyAssetFolder(m_workspace, path)) {
+            std::erase(m_selectedAssets, path);
+            if (m_assetDirectory == path) m_assetDirectory = path.parent_path();
+            m_assetRefresh = true;
+        } else TG_LOG_WARN("フォルダを削除できません。空で、使用中でないことを確認してください");
+        if (!m_assetDeleteQueue.empty()) {
+            m_pendingAssetDeleteInspect = m_assetDeleteQueue.front();
+            m_assetDeleteQueue.erase(m_assetDeleteQueue.begin());
         }
     }
     if (!m_pendingAssetDeleteInspect.empty()) {
@@ -848,7 +863,13 @@ void Application::DrawAssetBrowser() {
                 }
                 if (ImGui::MenuItem("エクスプローラで表示")) RevealFileInExplorer(path);
                 if (path.filename() != L"project.tgproj" && ImGui::MenuItem("名前を変更…", "F2")) OpenAssetRename(path);
-                if (!folder && path.filename() != L"project.tgproj" && ImGui::MenuItem("削除…", "Del")) QueueAssetDelete();
+                if (folder) {
+                    std::error_code folderError;
+                    const bool empty = fs::is_empty(path, folderError) && !folderError;
+                    if (ImGui::MenuItem("空のフォルダを削除", "Del", false, empty && !IsAssetLoaded(path))) QueueAssetDelete();
+                    if (!empty && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                        ImGui::SetTooltip("ファイルやサブフォルダがあるため削除できません");
+                } else if (path.filename() != L"project.tgproj" && ImGui::MenuItem("削除…", "Del")) QueueAssetDelete();
                 ImGui::EndPopup();
             }
             ui::GridCaption(ToUtf8Display(path.filename()).c_str(), size);
@@ -867,6 +888,13 @@ void Application::DrawAssetBrowser() {
                 if (!path.empty()) fs::create_directory(path, error);
                 if (error) TG_LOG_ERROR("フォルダを作成できませんでした");
                 m_assetRefresh = true;
+            }
+            for (const bool cloud : {false, true}) {
+                if (ImGui::MenuItem(cloud ? "新しい雲グラフを作成" : "新しい地形グラフを作成")) {
+                    const auto path = io::CreateGraphAsset(m_workspace, m_assetDirectory, cloud);
+                    if (path.empty()) TG_LOG_ERROR("グラフを作成できませんでした");
+                    else { m_pendingAssetReveal = path; m_assetRefresh = true; }
+                }
             }
             if (ImGui::MenuItem("マテリアルを作成")) {
                 const auto id = m_materialLibrary.Add("新規マテリアル");

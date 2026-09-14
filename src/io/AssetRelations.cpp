@@ -2,6 +2,10 @@
 #include "io/ThumbnailStore.h"
 #include "core/PathUtf8.h"
 #include "core/Log.h"
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
 #include <algorithm>
 #include <cwctype>
 #include <fstream>
@@ -31,6 +35,25 @@ bool Unchanged(const AssetRelations& approved, const AssetRelations& current) {
            current.companions == approved.companions && current.companionVersions == approved.companionVersions;
 }
 }
+bool RemoveEmptyAssetFolder(ProjectWorkspace& workspace, const fs::path& target) {
+    std::error_code error;
+    const auto attributes = GetFileAttributesW(target.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT)) return false;
+    const auto resolved = fs::weakly_canonical(target, error);
+    if (error || !workspace.Contains(resolved) || SamePath(resolved, workspace.Root())) return false;
+    for (const auto& part : resolved.lexically_relative(workspace.Root()))
+        if (part.wstring().starts_with(L".")) return false;
+    if (fs::is_symlink(target, error) || error || !fs::is_directory(target, error) || error) return false;
+    if (!fs::is_empty(target, error) || error) {
+        TG_LOG_WARN("空でないフォルダは削除できません: %s", ToUtf8Display(target).c_str());
+        return false;
+    }
+    // 確認後にファイルが追加されても、非再帰のremoveなら削除されない。
+    if (!fs::remove(target, error) || error) return false;
+    TG_LOG_INFO("空のフォルダを削除しました: %s", ToUtf8Display(target).c_str());
+    return true;
+}
+
 AssetKind KindOfAsset(const fs::path& path) {
     auto ext = path.extension().wstring();
     std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });

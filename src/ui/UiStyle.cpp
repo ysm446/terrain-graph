@@ -963,8 +963,7 @@ void GridCaption(const char* text, float width) {
     if (text == nullptr) {
         return;
     }
-    // ImGui 1.92 は同じフォントを別サイズで積める。第 2 フォントは読み込まない。
-    ImGui::PushFont(nullptr, kCaptionFontSize * FontScale());
+    // 名前も現在の標準UIフォントサイズで描く。
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
 
     // 2 行目が空でも行は描く。**空行を飛ばすと升目の高さが揃わない。**
@@ -976,7 +975,6 @@ void GridCaption(const char* text, float width) {
     }
 
     ImGui::PopStyleColor();
-    ImGui::PopFont();
 }
 
 void HintText(const char* format, ...) {

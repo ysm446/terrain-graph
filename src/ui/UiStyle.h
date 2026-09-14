@@ -24,17 +24,11 @@ inline constexpr float kButtonWidth = 68.0f;
 inline constexpr float kWideButtonWidth = 148.0f;
 
 // 文字の基準サイズ（px、拡大率を掛ける前）の既定値と、設定で選べる範囲。
-// **これが寸法の基準**で、下の kCaptionFontSize や TextScaled() はこの値を 1.0 とみなす。
+// **これが寸法の基準**で、TextScaled() はこの値を 1.0 とみなす。
 // 小さすぎると日本語が潰れ、大きすぎるとパネルに収まらないので上下を切る。
 inline constexpr float kDefaultFontSize = 17.0f;
 inline constexpr float kMinFontSize = 11.0f;
 inline constexpr float kMaxFontSize = 28.0f;
-
-// 一覧のサムネイルに添える名前の文字サイズ（基準は 17）。
-// **これ以外の場所で文字サイズを変えない。**
-// 本文よりはっきり小さくして、サムネイルの添え物だと分かるようにする。
-// 素材名は長い（`T_Rocky_Soil_..._D.EXR`）ので、小さいほど省略が減る。
-inline constexpr float kCaptionFontSize = 12.0f;
 
 // グラフのノードに出すサムネイル（マスクの結果 / マテリアル）の一辺。
 // レイヤー一覧の 40 では模様が読めず、一覧の 84 ではノードが縦に伸びすぎる。

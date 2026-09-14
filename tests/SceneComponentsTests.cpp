@@ -12,6 +12,41 @@ int main() {
     int failures = 0;
     const auto check = [&](bool ok, const char* name) { if (!ok) { ++failures; std::cerr << name << '\n'; } };
     check(workspace.Open(root), "open root");
+    // 新規グラフは独立IDと有効な出力ノードを持ち、同名でも上書きしない。
+    for (const bool cloud : {false, true}) {
+        const auto asset = CreateGraphAsset(workspace, root, cloud);
+        const auto another = CreateGraphAsset(workspace, root, cloud);
+        json body, other;
+        check(!asset.empty() && asset != another &&
+              workspace.ReadAsset(asset, cloud ? "cloud-graph" : "terrain-graph", body) &&
+              ProjectWorkspace::ReadJson(another, other), "create independent graph assets");
+        check(body["uid"].is_string() && body["uid"] != other["uid"], "new graphs have distinct IDs");
+        check(body["graph"]["nodes"].size() == 1 && body["graph"]["links"].empty() &&
+              body["graph"]["nodes"][0]["kind"] == (cloud ? "cloudOutput" : "output"), "new graph output node");
+        json document = {{"components", json::array({{{"role", cloud ? "cloud" : "terrain"},
+            {"asset", workspace.Reference(asset)}}})}};
+        check(ExpandSceneComponents(workspace, document) && document["graph"]["nodes"].size() == 1,
+              "new graph expands as scene component");
+    }
+    check(CreateGraphAsset(workspace, root.parent_path(), false).empty(), "create outside root refused");
+    std::error_code folderError;
+    const auto emptyFolder = workspace.UniquePath(root, "empty-folder", "");
+    fs::create_directory(emptyFolder, folderError);
+    check(RemoveEmptyAssetFolder(workspace, emptyFolder) && !fs::exists(emptyFolder), "delete empty folder");
+    const auto occupiedFolder = workspace.UniquePath(root, "occupied-folder", "");
+    fs::create_directory(occupiedFolder, folderError);
+    const auto hiddenFile = occupiedFolder / ".hidden.meta";
+    std::ofstream(hiddenFile).put('x');
+    check(!RemoveEmptyAssetFolder(workspace, occupiedFolder) && fs::exists(hiddenFile), "hidden file prevents folder deletion");
+    check(!RemoveEmptyAssetFolder(workspace, hiddenFile), "regular file cannot be deleted as folder");
+    const auto parentFolder = workspace.UniquePath(root, "parent-folder", "");
+    fs::create_directories(parentFolder / "child", folderError);
+    check(!RemoveEmptyAssetFolder(workspace, parentFolder), "child folder prevents deletion");
+    check(!RemoveEmptyAssetFolder(workspace, root) && !RemoveEmptyAssetFolder(workspace, root.parent_path()),
+          "root and outside folder protected");
+    const auto protectedFolder = root / ".terrain-graph" / "protected-empty";
+    fs::create_directories(protectedFolder, folderError);
+    check(!RemoveEmptyAssetFolder(workspace, protectedFolder), "internal folder protected");
     const auto scene = workspace.UniquePath(root, "original", ".tgscene");
     json graph = {{"nodes", json::array({
         {{"id", 1}, {"kind", "heightmap"}, {"inputs", json::array()}, {"outputs", {2}}},

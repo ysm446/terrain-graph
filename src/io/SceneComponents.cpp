@@ -282,6 +282,22 @@ bool ExpandSceneComponents(ProjectWorkspace& workspace, json& document) {
     return true;
 }
 
+fs::path CreateGraphAsset(ProjectWorkspace& workspace, const fs::path& directory, bool cloud) {
+    std::error_code error;
+    if (!workspace.Contains(directory) || !fs::is_directory(directory, error) || error) return {};
+    auto path = workspace.UniquePath(directory, cloud ? "新規雲グラフ" : "新規地形グラフ",
+                                     cloud ? ".tgcloud" : ".tgterrain");
+    if (path.empty()) return {};
+    json body = {{"name", ToUtf8Display(path.stem())},
+        {"graph", {{"nodes", json::array({{{"id", 1}, {"kind", cloud ? "cloudOutput" : "output"},
+            {"position", {0.0f, 0.0f}}, {"inputs", {2}}, {"outputs", json::array()}}})},
+            {"links", json::array()}}},
+        {"textures", json::array()}, {"materials", json::array()}, {"models", json::array()},
+        {"paintMasks", json::array()}, {"paintResolution", 1024}};
+    if (!workspace.SaveAsset(path, cloud ? "cloud-graph" : "terrain-graph", body)) return {};
+    return path;
+}
+
 fs::path MigrateSceneComponents(ProjectWorkspace& workspace, const fs::path& source) {
     json document;
     if (!workspace.Contains(source) || !workspace.Scan() || !ProjectWorkspace::ReadJson(source, document) ||

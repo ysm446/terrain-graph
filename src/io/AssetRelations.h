@@ -3,6 +3,8 @@
 namespace tg::io {
 // 参照の付け替えで「同じ種類」とみなす区分。
 enum class AssetKind { Image, Material, Sky, Model, Other };
+// ルート内の通常の空フォルダだけを削除する。再帰削除は行わない。
+bool RemoveEmptyAssetFolder(ProjectWorkspace& workspace, const std::filesystem::path& target);
 AssetKind KindOfAsset(const std::filesystem::path& path);
 
 struct AssetRelations {
