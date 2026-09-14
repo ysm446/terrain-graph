@@ -241,13 +241,7 @@ void Application::DrawSkyPreviewWindow() {
     if (sky.source == renderer::SkySource::Hdri) {
         ui::SectionHeader("HDRI");
         if (ui::BeginPropertyTable("skyHdriRows")) {
-            ui::PropertyValue("ファイル", "%s",
-                              sky.hdriPath.empty()
-                                  ? "（未指定）"
-                                  : ToUtf8Display(sky.hdriPath.filename()).c_str());
-            if (!sky.hdriPath.empty() && ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s", ToUtf8Display(sky.hdriPath).c_str());
-            }
+            DrawAssetPathRow("ファイル", sky.hdriPath, m_pendingAssetReveal);
 
             ui::PropertyLabelEmpty("hdrPick");
             if (ui::Button("HDRI を選ぶ…", ui::kWideButtonWidth)) {

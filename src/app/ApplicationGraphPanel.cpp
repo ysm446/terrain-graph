@@ -1228,7 +1228,7 @@ void Application::DrawGraphPanel() {
                     changed |= DrawAreaMaskRows(mask->areaMask);
                     break;
                 default:
-                    changed |= DrawMapSlotRow("画像", mask->map, m_textureLibrary);
+                    changed |= DrawMapSlotRow("画像", mask->map, m_textureLibrary, m_pendingAssetReveal);
                     break;
             }
             ui::EndPropertyTable();
@@ -1610,9 +1610,22 @@ void Application::DrawGraphPanel() {
                 auto& choice=scatter->models[i]; int index=0;
                 for(size_t j=0;j<m_models.size();++j) if(m_models[j].id==choice.model) index=static_cast<int>(j)+1;
                 const auto label="モデル "+std::to_string(i+1);
-                if(ui::PropertyCombo(label.c_str(),&index,names.data(),static_cast<int>(names.size()),0)) {
-                    choice.model=index ? m_models[index-1].id : 0; changed=true;
+                ui::PropertyLabel(label.c_str());
+                ImGui::SetNextItemWidth(AssetReferenceWidth(std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x)));
+                if (ImGui::BeginCombo("##model", names[index])) {
+                    for (size_t j=0; j<names.size(); ++j) {
+                        ImGui::PushID(static_cast<int>(j));
+                        if (ImGui::Selectable(names[j], index == static_cast<int>(j))) {
+                            index = static_cast<int>(j);
+                            choice.model = j ? m_models[j-1].id : 0; changed = true;
+                        }
+                        ImGui::PopID();
+                    }
+                    ImGui::EndCombo();
                 }
+                DrawAssetSourceButton(index ? (m_models[index-1].assetPath.empty() ? m_models[index-1].path : m_models[index-1].assetPath)
+                                            : std::filesystem::path{}, m_pendingAssetReveal);
+                ui::PropertyEnd();
                 changed |= ui::PropertyFloat("出現比率",&choice.weight,0,1000,1);
                 ui::PropertyLabel("候補"); if(ui::Button("削除")) remove=static_cast<int>(i); ui::PropertyEnd();
                 ImGui::PopID();

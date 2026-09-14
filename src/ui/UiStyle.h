@@ -11,6 +11,9 @@
 // ここのヘルパーを通すことで、ラベルの体裁・幅・既定値・ツールチップが揃う。
 namespace tg::ui {
 
+// 参照欄の右に置く、アセットブラウザへ移動するアイコン。
+bool RevealSourceButton(bool enabled, const char* tooltip);
+
 // 部品の寸法。96 DPI 基準の値を置き、使うときに Scaled() で現在の DPI へ合わせる。
 // 値の意味と使い分けは design-guide.md にある。種類を勝手に増やさない。
 inline constexpr float kLabelColumnWidth = 108.0f;

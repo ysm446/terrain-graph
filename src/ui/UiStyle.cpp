@@ -655,6 +655,29 @@ bool CommitDeferredInput(T* value, T shown, bool edited, T minValue, T maxValue)
 
 }  // namespace
 
+bool RevealSourceButton(bool enabled, const char* tooltip) {
+    const float size = ImGui::GetFrameHeight();
+    ImGui::BeginDisabled(!enabled);
+    const bool clicked = ImGui::Button("##revealSource", ImVec2(size, size));
+    const auto origin = ImGui::GetItemRectMin();
+    const auto point = [&](float x, float y) { return ImVec2(origin.x + size*x, origin.y + size*y); };
+    auto* draw = ImGui::GetWindowDrawList();
+    const auto color = ImGui::GetColorU32(ImGuiCol_Text);
+    const float thickness = Scaled(1.2f);
+    // 枠から右上へ向かう矢印。フォントに依存しない単純な輪郭。
+    draw->AddLine(point(.25f,.25f), point(.25f,.75f), color, thickness);
+    draw->AddLine(point(.25f,.75f), point(.75f,.75f), color, thickness);
+    draw->AddLine(point(.75f,.75f), point(.75f,.60f), color, thickness);
+    draw->AddLine(point(.25f,.25f), point(.40f,.25f), color, thickness);
+    draw->AddLine(point(.45f,.55f), point(.78f,.22f), color, thickness);
+    draw->AddLine(point(.55f,.22f), point(.78f,.22f), color, thickness);
+    draw->AddLine(point(.78f,.22f), point(.78f,.45f), color, thickness);
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled | ImGuiHoveredFlags_DelayShort))
+        ImGui::SetTooltip("%s", tooltip);
+    return clicked;
+}
+
 bool PropertyFloat(const char* label, float* value, float minValue, float maxValue,
                    float defaultValue, const char* tooltip, const char* format,
                    ImGuiSliderFlags flags, float snapStep) {

@@ -289,7 +289,7 @@ void Application::DrawModelPreviewWindow() {
             asset.name = name;
             changed = true;
         }
-        ui::PropertyValue("ファイル", "%s", ToUtf8Display(asset.path.filename()).c_str());
+        DrawAssetPathRow("ファイル", asset.path, m_pendingAssetReveal);
         if (asset.geometry) {
             const auto& geo = *asset.geometry;
             ui::PropertyValue("寸法 X / Y / Z", "%.4f / %.4f / %.4f m",
@@ -305,22 +305,11 @@ void Application::DrawModelPreviewWindow() {
     if (!asset.error.empty()) ui::HintText(asset.error.c_str());
     if (asset.geometry) {
         ui::SectionHeader("マテリアルスロット");
-        std::vector<const char*> names = {"未割り当て"};
-        for (const auto& mat : m_materialLibrary.Entries()) names.push_back(mat.name.c_str());
         if (ui::BeginPropertyTable("modelMaterials")) {
             for (size_t i = 0; i < asset.geometry->slots.size(); ++i) {
                 ImGui::PushID(static_cast<int>(i));
-                int selected = 0;
-                const auto& entries = m_materialLibrary.Entries();
-                for (size_t j = 0; j < entries.size(); ++j)
-                    if (entries[j].id == asset.materials[i]) selected = int(j) + 1;
                 const std::string label = "スロット " + std::to_string(i + 1);
-                if (ui::PropertyCombo(label.c_str(), &selected, names.data(), int(names.size()), 0,
-                                      asset.geometry->slots[i].c_str())) {
-                    asset.materials[i] =
-                        selected ? entries[selected - 1].id : compositor::kNoMaterialAsset;
-                    changed = true;
-                }
+                changed |= DrawMaterialSlotRow(label.c_str(), asset.materials[i], m_materialLibrary, m_pendingAssetReveal);
                 ImGui::PopID();
             }
             ui::EndPropertyTable();

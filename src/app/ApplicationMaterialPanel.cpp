@@ -273,18 +273,18 @@ bool Application::DrawMaterialProperties(compositor::MaterialAsset& asset) {
 
     ui::SectionHeader("マップ");
     if (ui::BeginPropertyTable("materialMapRows")) {
-        changed |= DrawTextureSlotRow("ベースカラー", asset.baseColor, m_textureLibrary);
-        changed |= DrawTextureSlotRow("法線", asset.normal, m_textureLibrary);
+        changed |= DrawTextureSlotRow("ベースカラー", asset.baseColor, m_textureLibrary, m_pendingAssetReveal);
+        changed |= DrawTextureSlotRow("法線", asset.normal, m_textureLibrary, m_pendingAssetReveal);
         if (asset.normal != compositor::kNoTexture) {
             changed |= ui::PropertyBool(
                 "緑を反転", &asset.flipNormalGreen, true,
                 "法線マップの規約。OpenGL（Megascans などの既定）は入、"
                 "DirectX 規約の素材は切る。切り替えて陰影が自然なほうが正しい");
         }
-        changed |= DrawMapSlotRow("ラフネス", asset.roughness, m_textureLibrary);
-        changed |= DrawMapSlotRow("メタルネス", asset.metallic, m_textureLibrary);
-        changed |= DrawMapSlotRow("AO", asset.ambientOcclusion, m_textureLibrary);
-        changed |= DrawMapSlotRow("ハイト", asset.height, m_textureLibrary);
+        changed |= DrawMapSlotRow("ラフネス", asset.roughness, m_textureLibrary, m_pendingAssetReveal);
+        changed |= DrawMapSlotRow("メタルネス", asset.metallic, m_textureLibrary, m_pendingAssetReveal);
+        changed |= DrawMapSlotRow("AO", asset.ambientOcclusion, m_textureLibrary, m_pendingAssetReveal);
+        changed |= DrawMapSlotRow("ハイト", asset.height, m_textureLibrary, m_pendingAssetReveal);
 
         // 1 枚に AO / ラフネス / ハイトを詰めたテクスチャをまとめて割り当てる。
         ui::PropertyLabel("ORD", "1 枚に AO / ラフネス / ハイトを詰めたテクスチャ");
@@ -294,7 +294,7 @@ bool Application::DrawMaterialProperties(compositor::MaterialAsset& asset) {
             ui::Scaled(60.0f),
             std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x) -
                 ordButtonWidth - ordSpacing);
-        DrawTextureCombo("##ord", m_ordTexture, m_textureLibrary, ordComboWidth);
+        DrawTextureCombo("##ord", m_ordTexture, m_textureLibrary, ordComboWidth, m_pendingAssetReveal);
         ImGui::SameLine(0.0f, ordSpacing);
         ImGui::BeginDisabled(m_ordTexture == compositor::kNoTexture);
         if (ui::Button("割り当て")) {

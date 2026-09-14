@@ -144,6 +144,7 @@ bool Application::Initialize(const StartupOptions& options) {
     io::MigrateSceneThumbnails(m_workspace);
     m_assetDirectory = m_workspace.Root();
     m_pendingAssetDeleteInspect = options.inspectAssetDelete;
+    m_pendingAssetReveal = options.revealAsset;
     m_pendingTexturePaths = options.texturePaths;
 
     // 天球は必ず 1 つある状態にする。--hdri が来ていれば、その既定の天球へ入れる。

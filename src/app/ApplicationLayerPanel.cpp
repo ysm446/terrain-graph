@@ -957,7 +957,7 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                 // シェイプはマテリアルを持たないので、ハイトマップは
                 // レイヤー直結のスロットから読む（マスクの画像と同じ作法）。
                 if (layer.heightSource == compositor::ValueSource::Texture) {
-                    changed |= DrawMapSlotRow("画像", layer.heightTexture, m_textureLibrary);
+                    changed |= DrawMapSlotRow("画像", layer.heightTexture, m_textureLibrary, m_pendingAssetReveal);
                 }
                 // シェイプの基準の高さは「全体の持ち上げ」。0.5 で変化なし。
                 changed |= ui::PropertyFloat("持ち上げ", &layer.heightBase, 0.0f, 1.0f,
@@ -1017,7 +1017,7 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                                          "ソースの値に掛ける係数", "%.2f");
 
             if (!maskFromNode && layer.mask.source == compositor::MaskSource::Texture) {
-                changed |= DrawMapSlotRow("画像", layer.mask.texture, m_textureLibrary);
+                changed |= DrawMapSlotRow("画像", layer.mask.texture, m_textureLibrary, m_pendingAssetReveal);
             }
             if (!maskFromNode && layer.mask.source == compositor::MaskSource::Noise) {
                 changed |= DrawNoiseRows(layer.mask.noise, kDefaultLayer.mask.noise);
@@ -1071,7 +1071,7 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
     if (!isShape && !isLiquid) {
         ui::SectionHeader("マテリアル");
         if (ui::BeginPropertyTable("layerMaterialRows")) {
-            changed |= DrawMaterialSlotRow("マテリアル", layer.material, m_materialLibrary);
+            changed |= DrawMaterialSlotRow("マテリアル", layer.material, m_materialLibrary, m_pendingAssetReveal);
             ui::EndPropertyTable();
         }
         if (const compositor::MaterialAsset* material = m_materialLibrary.Find(layer.material);

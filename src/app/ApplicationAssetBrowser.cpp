@@ -9,6 +9,7 @@
 #include <imgui.h>
 #include <algorithm>
 #include <functional>
+#include <utility>
 #include <unordered_map>
 
 namespace tg {
@@ -417,6 +418,7 @@ void Application::RefreshAssetBrowser() {
 }
 
 void Application::ProcessAssetWork() {
+
     if (m_pendingAssetDelete) {
         m_pendingAssetDelete = false;
         const auto path = m_assetDeleteRelations.target;
@@ -547,6 +549,25 @@ void Application::ProcessAssetWork() {
         } else HandleDroppedFiles({path});
         m_assetRefresh = true;
     }
+    if (!m_pendingAssetReveal.empty()) {
+        const auto request = std::exchange(m_pendingAssetReveal, {});
+        std::error_code error;
+        const auto path = fs::weakly_canonical(request, error);
+        if (!error && m_workspace.Contains(path) && fs::is_regular_file(path, error)) {
+            m_assetDirectory = path.parent_path();
+            RefreshAssetBrowser();
+            const auto found = std::find_if(m_assetEntries.begin(), m_assetEntries.end(), [&](const auto& entry) {
+                return fs::equivalent(entry.path(), path, error);
+            });
+            if (found != m_assetEntries.end()) {
+                m_assetRevealTarget = found->path();
+                m_selectedAssets.clear();
+                SelectAsset(m_assetRevealTarget, false, false);
+                m_settings.Display().showAssetBand = true;
+            } else TG_LOG_WARN("アセットブラウザで表示できないファイルです: %s", ToUtf8Display(path).c_str());
+        } else TG_LOG_WARN("参照元が見つからないか、現在のルート外にあります: %s", ToUtf8Display(request).c_str());
+    }
+
     if (m_assetRefresh) RefreshAssetBrowser();
     m_assetThumbnails.Process(m_device, m_pipelineCache, m_workspace, m_assetDirectory, m_renderer);
 }
@@ -584,6 +605,7 @@ void Application::AssetFolderDropTarget(const fs::path& directory) {
 }
 
 void Application::DrawAssetBrowser() {
+    if (!m_assetRevealTarget.empty()) { ImGui::SetNextWindowCollapsed(false); ImGui::SetNextWindowFocus(); }
     if (!ImGui::Begin("アセット")) { ImGui::End(); return; }
     if (ImGui::Button("ルートを開く…")) RequestOpenProject();
     ImGui::SameLine();
@@ -604,7 +626,12 @@ void Application::DrawAssetBrowser() {
             if (directory == m_workspace.Root()) flags |= ImGuiTreeNodeFlags_DefaultOpen;
             if (directory == m_assetDirectory) flags |= ImGuiTreeNodeFlags_Selected;
             ImGui::PushID(ToUtf8Portable(directory).c_str());
+            if (!m_assetRevealTarget.empty()) {
+                const auto relative = m_assetDirectory.lexically_relative(directory);
+                if (!relative.empty() && *relative.begin() != L"..") ImGui::SetNextItemOpen(true);
+            }
             const bool open = ImGui::TreeNodeEx(label.c_str(), flags);
+            if (!m_assetRevealTarget.empty() && directory == m_assetDirectory) ImGui::SetScrollHereY(0.5f);
             if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
                 m_assetDirectory = directory; m_assetRefresh = true;
             }
@@ -744,6 +771,11 @@ void Application::DrawAssetBrowser() {
             }
             ui::GridCaption(ToUtf8Display(path.filename()).c_str(), size);
             ImGui::EndGroup(); ImGui::PopID();
+            if (path == m_assetRevealTarget) {
+                const bool visible = ImGui::IsItemVisible();
+                ImGui::SetScrollHereY(0.5f);
+                if (visible) m_assetRevealTarget.clear();
+            }
             if (++index % columns && index < int(m_assetEntries.size())) ImGui::SameLine();
         }
         if (ImGui::BeginPopupContextWindow("createAsset", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {

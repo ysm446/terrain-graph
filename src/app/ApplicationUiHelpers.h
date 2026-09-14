@@ -379,9 +379,28 @@ inline bool DrawNoiseRows(compositor::NoiseParams& noise, const compositor::Nois
     return changed;
 }
 
+inline void DrawAssetSourceButton(const std::filesystem::path& path, std::filesystem::path& request) {
+    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+    const auto tooltip = path.empty() ? std::string("参照元がありません（未指定または未保存）")
+        : std::string("参照元をアセットブラウザで表示\n") + ToUtf8Display(path);
+    if (ui::RevealSourceButton(!path.empty(), tooltip.c_str())) request = path;
+}
+inline float AssetReferenceWidth(float width) {
+    return std::max(ui::Scaled(24.0f), width - ImGui::GetFrameHeight() - ImGui::GetStyle().ItemInnerSpacing.x);
+}
+inline void DrawAssetPathRow(const char* label, const std::filesystem::path& path, std::filesystem::path& request) {
+    ui::PropertyLabel(label);
+    // アイコンを先に置き、長いファイル名でも画面外へ押し出されないようにする。
+    const auto tooltip = path.empty() ? std::string("参照元がありません") : std::string("参照元をアセットブラウザで表示\n") + ToUtf8Display(path);
+    if (ui::RevealSourceButton(!path.empty(), tooltip.c_str())) request = path;
+    ImGui::SameLine();
+    ImGui::TextWrapped("%s", path.empty() ? "（未指定）" : ToUtf8Display(path.filename()).c_str());
+    ui::PropertyEnd();
+}
+
 // マテリアルを選ぶ行。サムネイル付きの一覧から選ぶ。
 inline bool DrawMaterialSlotRow(const char* label, compositor::MaterialAssetId& slot,
-                         const compositor::MaterialLibrary& library) {
+                         const compositor::MaterialLibrary& library, std::filesystem::path& revealRequest) {
     ui::PropertyLabel(label, "「なし」ならレイヤーの定数値だけで塗る");
 
     std::string preview = "なし";
@@ -392,7 +411,7 @@ inline bool DrawMaterialSlotRow(const char* label, compositor::MaterialAssetId& 
     const float thumbnailSize = ImGui::GetFrameHeight();
     bool changed = false;
     ImGui::SetNextItemWidth(
-        std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x));
+        AssetReferenceWidth(std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x)));
     if (ImGui::BeginCombo("##value", preview.c_str())) {
         if (ImGui::Selectable("なし", slot == compositor::kNoMaterialAsset)) {
             slot = compositor::kNoMaterialAsset;
@@ -423,13 +442,15 @@ inline bool DrawMaterialSlotRow(const char* label, compositor::MaterialAssetId& 
         }
         ImGui::EndDragDropTarget();
     }
+    const auto* source = library.Find(slot);
+    DrawAssetSourceButton(source ? source->assetPath : std::filesystem::path{}, revealRequest);
     ui::PropertyEnd();
     return changed;
 }
 
 // テクスチャを選ぶコンボ。行の中に置く部品。
 inline bool DrawTextureCombo(const char* id, compositor::TextureId& slot,
-                      const compositor::TextureLibrary& library, float width) {
+                      const compositor::TextureLibrary& library, float width, std::filesystem::path& revealRequest) {
     std::string preview = "なし";
     bool missing = false;
     if (const compositor::LibraryTexture* current = library.Find(slot); current != nullptr) {
@@ -438,7 +459,7 @@ inline bool DrawTextureCombo(const char* id, compositor::TextureId& slot,
     }
 
     bool changed = false;
-    ImGui::SetNextItemWidth(width);
+    ImGui::SetNextItemWidth(AssetReferenceWidth(width));
     // リンク切れの画像を指しているときは、名前を警告色で出す。
     // 割り当ては保ってあるので「なし」とは違い、繋ぎ直せば戻る。
     if (missing) {
@@ -503,6 +524,10 @@ inline bool DrawTextureCombo(const char* id, compositor::TextureId& slot,
             ImGui::SetTooltip("なし\nテクスチャ一覧からドラッグしても割り当てられる");
         }
     }
+    const auto* source = library.Find(slot);
+    ImGui::PushID(id);
+    DrawAssetSourceButton(source ? source->path : std::filesystem::path{}, revealRequest);
+    ImGui::PopID();
     return changed;
 }
 
@@ -752,11 +777,11 @@ inline bool DrawBlendRows(compositor::BlendParams& blend) {
 
 // テクスチャスロットを選ぶ行。RGB をそのまま使うマップ（ベースカラー / 法線）用。
 inline bool DrawTextureSlotRow(const char* label, compositor::TextureId& slot,
-                        const compositor::TextureLibrary& library) {
+                        const compositor::TextureLibrary& library, std::filesystem::path& revealRequest) {
     ui::PropertyLabel(label, "「なし」なら定数値を使う");
     const float width =
         std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x);
-    const bool changed = DrawTextureCombo("##value", slot, library, width);
+    const bool changed = DrawTextureCombo("##value", slot, library, width, revealRequest);
     ui::PropertyEnd();
     return changed;
 }
@@ -764,7 +789,7 @@ inline bool DrawTextureSlotRow(const char* label, compositor::TextureId& slot,
 // スカラーのマップを選ぶ行。テクスチャに加えて、どのチャンネルを読むかも選ぶ。
 // Megascans の _ORD のように 1 枚へ複数のマップを詰めたテクスチャがあるため。
 inline bool DrawMapSlotRow(const char* label, compositor::MapSlot& slot,
-                    const compositor::TextureLibrary& library) {
+                    const compositor::TextureLibrary& library, std::filesystem::path& revealRequest) {
     ui::PropertyLabel(label, "「なし」なら定数値を使う。右は読むチャンネル");
 
     const float channelWidth = ui::Scaled(52.0f);
@@ -774,7 +799,7 @@ inline bool DrawMapSlotRow(const char* label, compositor::MapSlot& slot,
         std::max(ui::Scaled(60.0f),
                  std::min(ui::Scaled(ui::kComboMaxWidth), available) - channelWidth - spacing);
 
-    bool changed = DrawTextureCombo("##texture", slot.texture, library, comboWidth);
+    bool changed = DrawTextureCombo("##texture", slot.texture, library, comboWidth, revealRequest);
 
     if (slot.texture != compositor::kNoTexture) {
         ImGui::SameLine(0.0f, spacing);

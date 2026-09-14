@@ -76,6 +76,7 @@ struct StartupOptions {
     int previewModel = -1;
     int previewModelLod = 0;
     std::filesystem::path importModel; // 開発用。読み込みとプレビューの確認。
+    std::filesystem::path revealAsset; // 開発用。参照元への移動を画面確認する。
     graph::GraphId selectNode = 0; // 開発用。読み込んだグラフのプロパティを画像で確認する。
 };
 
@@ -574,6 +575,7 @@ private:
     io::ProjectWorkspace m_workspace;
     AssetThumbnailCache m_assetThumbnails;
     std::filesystem::path m_assetDirectory;
+    std::filesystem::path m_pendingAssetReveal, m_assetRevealTarget;
     std::vector<std::filesystem::directory_entry> m_assetEntries;
     // 一覧で選んでいるもの（複数）。Shift の範囲選択は m_assetSelectionAnchor を起点にする。
     std::vector<std::filesystem::path> m_selectedAssets;

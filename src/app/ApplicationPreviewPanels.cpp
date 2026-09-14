@@ -459,7 +459,10 @@ void Application::DrawLightingPanel() {
             ui::SectionHeader("環境 (IBL)");
             if (ui::BeginPropertyTable("iblRows")) {
                 const renderer::SkyAsset* activeSky = m_skyLibrary.Active();
-                ui::PropertyValue("天球", "%s", (activeSky != nullptr) ? activeSky->name.c_str() : "-");
+                ui::PropertyLabel("天球");
+                ImGui::TextUnformatted(activeSky ? activeSky->name.c_str() : "-");
+                DrawAssetSourceButton(activeSky ? activeSky->assetPath : std::filesystem::path{}, m_pendingAssetReveal);
+                ui::PropertyEnd();
                 ui::PropertyValue("環境", "%s", m_renderer.GetEnvironment().SourceName().c_str());
                 ui::PropertyValue("equirect", "%u x %u", m_renderer.GetEnvironment().EquirectWidth(),
                                   m_renderer.GetEnvironment().EquirectHeight());

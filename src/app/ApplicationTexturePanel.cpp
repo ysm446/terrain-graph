@@ -564,13 +564,7 @@ void Application::DrawTexturePreviewWindow() {
         }
         ui::PropertyValue("参照", "%zu か所", CountTextureUsers(selected.id));
 
-        ui::PropertyLabel("場所", "プロジェクトにはここへの相対パスを記録する");
-        const std::string directory = ToUtf8Display(selected.path.parent_path());
-        ImGui::TextUnformatted(directory.c_str());
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%s", ToUtf8Display(selected.path).c_str());
-        }
-        ui::PropertyEnd();
+        DrawAssetPathRow("場所", selected.path, m_pendingAssetReveal);
 
         if (selected.missing) {
             ui::PropertyLabelEmpty("relink");
