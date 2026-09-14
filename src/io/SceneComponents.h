@@ -6,6 +6,8 @@ namespace tg::io {
 // 出力ノードを持つ空のグラフを、重複しない名前で作成する。
 std::filesystem::path CreateGraphAsset(ProjectWorkspace& workspace,
                                        const std::filesystem::path& directory, bool cloud);
+nlohmann::json AtmosphereAssetBody(const nlohmann::json& preview, const std::string& name);
+bool ExpandSceneAtmosphere(ProjectWorkspace& workspace, nlohmann::json& document);
 bool AssignGraphComponents(nlohmann::json& graph);
 bool SaveSceneComponents(ProjectWorkspace& workspace, const std::filesystem::path& scene,
                          nlohmann::json& document);

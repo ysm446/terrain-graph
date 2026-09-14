@@ -1,7 +1,15 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-09-14 12:50
+更新日時: 2026-09-14 16:41
+
+## 大気散乱スカイと作業環境（シーン版3）
+
+.tgscene版3は従来のcomponents（地形・雲）に加え、atmosphereに大気散乱スカイの固定ID参照を持つ。.tgatmosphereはformatがterrain-graph.atmosphere-sky、versionが1、uid・name・settingsを持つ。settingsはazimuth、elevation（ラジアン）、illuminance（大気圏外照度lux）、density、mie、eccentricity、altitude、groundAlbedo、lowerHemisphere、skylightIntensity。雲の形・分布・動きと露出は含めない。
+
+シーンにはIBLのskies・activeSky、preview.lightingMode、preview.lightを保存しない。IBLアセットは従来の.tgskyのまま、ルートのproject.tgprojのworkEnvironment.skyから参照する。workEnvironment.lightingModeに表示環境、lightに作業用ライトを保存する。露出・カメラ・描画品質はシーンのpreviewに残す。
+
+版1・版2の読み込みは維持する。版2のシーン保存と版1の明示的な部品分離では、元の大気・太陽設定から同じフォルダにスカイを生成する。更新済みのスカイとグラフは保存前バックアップを取り、シーン保存失敗時に元へ戻す。作業設定も復元する。既存アセットの固定IDは維持し、スカイの欠落時はシーン読み込みを中止する。未配置グラフだけの保存ではシーンのスカイを更新しない。
 
 ## コンポーネント参照シーン（版2）
 

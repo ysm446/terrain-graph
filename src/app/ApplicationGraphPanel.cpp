@@ -1030,25 +1030,32 @@ void Application::DrawSceneHierarchy() {
         ui::HintText("旧形式のシーンです。保存済みの元データを残して部品へ分離できます。");
         if (ui::Button("部品へ分離…", ui::kWideButtonWidth)) m_pendingComponentMigration = true;
     }
-    for (int component = 0; component < 3; ++component) {
-        const char* label = component == 0 ? "地形" : component == 1 ? "雲" : "天球";
+    const auto graphEntry = [&](int component) {
         ImGui::PushID(component);
-        ImGui::BeginDisabled(m_componentPreview >= 0);
-        if (ImGui::Selectable(label, m_editComponent == component, ImGuiSelectableFlags_AllowDoubleClick)) {
-            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                if (component == 2) m_showSkyPreview = true;
-                else OpenComponentEditor(m_sceneComponents.is_array() ? component : -1);
-            }
-        }
+        if (ImGui::Selectable(component ? "雲グラフ" : "地形グラフ", m_editComponent == component,
+                              ImGuiSelectableFlags_AllowDoubleClick) && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+            OpenComponentEditor(m_sceneComponents.is_array() ? component : -1);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("ダブルクリックで編集");
-        if (m_sceneComponents.is_array() && component < 2) {
-            for (const auto& entry : m_sceneComponents) if (io::ProjectWorkspace::String(entry, "role") == (component ? "cloud" : "terrain")) {
+        if (m_sceneComponents.is_array()) for (const auto& entry : m_sceneComponents)
+            if (io::ProjectWorkspace::String(entry, "role") == (component ? "cloud" : "terrain")) {
                 const auto path = m_workspace.Resolve(entry.value("asset", nlohmann::json::object()));
                 ImGui::TextDisabled("%s", ToUtf8Display(path.filename()).c_str());
             }
+        ImGui::PopID();
+    };
+    ImGui::BeginDisabled(m_componentPreview >= 0);
+    graphEntry(0);
+    if (ImGui::TreeNodeEx("空", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::Selectable("大気散乱スカイ", false, ImGuiSelectableFlags_AllowDoubleClick) &&
+            ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            m_renderer.AtmosphericMode() = true; m_pendingWorkEnvironmentSave = true; m_focusLighting = true;
         }
-        ImGui::EndDisabled(); ImGui::PopID();
+        const auto path = m_sceneAtmosphere.is_null() ? std::filesystem::path{} : m_workspace.Resolve(m_sceneAtmosphere);
+        ImGui::TextDisabled("%s", path.empty() ? "シーン保存時にアセットを作成" : ToUtf8Display(path.filename()).c_str());
+        graphEntry(1);
+        ImGui::TreePop();
     }
+    ImGui::EndDisabled();
     ui::HintText("グラフの編集は共有アセットに反映されます。");
     ImGui::End();
 }
@@ -1724,7 +1731,7 @@ void Application::DrawGraphPanel() {
         ui::HintText("Cloud Noise の Volume を接続して表示します。Cloud Animation を挟むと移動できます。未接続なら雲は表示しません");
         ui::HintText("保存済みの Cloud / Cloud Layer (Legacy) も引き続き表示できます");
         if (!m_renderer.AtmosphericMode() && ui::Button("大気散乱へ切替", ui::kWideButtonWidth)) {
-            m_renderer.AtmosphericMode() = true;
+            m_renderer.AtmosphericMode() = true; m_pendingWorkEnvironmentSave = true;
             MarkDocumentChanged();
         }
     } else if (std::get_if<graph::PathNodeSettings>(&selected->settings) != nullptr) {

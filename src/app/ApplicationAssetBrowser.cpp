@@ -57,6 +57,7 @@ bool Application::IsAssetLoaded(const fs::path& path) const {
         const auto a = fs::weakly_canonical(candidate, ea), b = fs::weakly_canonical(path, eb);
         return !ea && !eb && _wcsicmp(a.c_str(), b.c_str()) == 0;
     };
+    if (!m_sceneAtmosphere.is_null() && matches(m_workspace.Resolve(m_sceneAtmosphere))) return true;
     if (matches(m_projectPath) || matches(m_componentPreviewPath)) return true;
     for (const auto* components : {&m_sceneComponents, &m_previewOriginalComponents}) {
         if (!components->is_array()) continue;
@@ -241,10 +242,10 @@ void Application::CollectAssetPickerCandidates() {
 
 void Application::DrawAssetPicker() {
     const bool sceneSky = (m_assetPickerPurpose == AssetPickerPurpose::SceneSky);
-    const char* title = sceneSky ? "シーンの天球を選ぶ" : "代わりのアセットを選ぶ";
+    const char* title = sceneSky ? "作業用IBLを選ぶ" : "代わりのアセットを選ぶ";
     if (m_assetPickerOpen && !ImGui::IsPopupOpen(title)) ImGui::OpenPopup(title);
     if (!ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
-    if (sceneSky) ui::HintText("シーンが持つ天球は 1 つ。選んだ .tgsky に差し替える");
+    if (sceneSky) ui::HintText("作業用IBLを選択します。シーンの大気散乱スカイは変更しません");
     if (m_assetPickerRefresh) CollectAssetPickerCandidates();
     if (ui::BeginPropertyTable("assetPickerRows")) {
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
@@ -427,7 +428,7 @@ void Application::RefreshAssetBrowser() {
         const auto ext = Extension(entry.path());
         if (!entry.is_directory(error) && !IsImage(ext) && ext != ".fbx" && ext != ".hdr" &&
             ext != ".tgmat" && ext != ".tgsky" && ext != ".tgmodel" &&
-            ext != ".tgterrain" && ext != ".tgcloud" && ext != ".tgscene" && ext != ".tgproj" && ext != ".mmproj") continue;
+            ext != ".tgterrain" && ext != ".tgcloud" && ext != ".tgatmosphere" && ext != ".tgscene" && ext != ".tgproj" && ext != ".mmproj") continue;
         m_assetEntries.push_back(entry);
     }
     std::sort(m_assetEntries.begin(), m_assetEntries.end(), [](const auto& a, const auto& b) {
@@ -440,6 +441,19 @@ void Application::RefreshAssetBrowser() {
 }
 
 void Application::ProcessAssetWork() {
+    io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
+                         m_skyLibrary, m_renderer, m_graph, &m_models, &m_sceneComponents, -1, &m_sceneAtmosphere};
+    if (m_pendingWorkEnvironmentSave && !ImGui::IsAnyItemActive()) {
+        m_pendingWorkEnvironmentSave = false;
+        if (!io::SaveWorkEnvironment(m_workspace, refs, m_pendingWorkSkySave)) TG_LOG_ERROR("作業用IBLの設定を保存できませんでした");
+        m_pendingWorkSkySave = false;
+    }
+    if (m_pendingAtmosphereSave) {
+        m_pendingAtmosphereSave = false;
+        const auto directory = m_projectPath.empty() ? m_assetDirectory : m_projectPath.parent_path();
+        if (!io::SaveAtmosphereAsset(m_workspace, refs, directory)) TG_LOG_ERROR("大気散乱スカイを保存できませんでした");
+        else { m_assetRefresh = true; MarkDocumentChanged(); }
+    }
 
     if (m_pendingAssetDelete) {
         m_pendingAssetDelete = false;
@@ -545,8 +559,7 @@ void Application::ProcessAssetWork() {
             m_pendingProjectOpen.clear();
         }
     }
-    io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
-                         m_skyLibrary, m_renderer, m_graph, &m_models, &m_sceneComponents};
+
     if (m_pendingSkyKeepOnly) {
         m_pendingSkyKeepOnly = false;
         io::KeepOnlyActiveSky(m_device, m_skyLibrary);
@@ -599,6 +612,13 @@ void Application::ProcessAssetWork() {
             for (auto& slot : m_cloudMasks) slot.graphRevision = 0;
             return;
         }
+        if (ext == ".tgatmosphere") {
+            if (io::LoadSharedAsset(m_workspace, path, m_device, m_pipelineCache, refs)) {
+                m_focusLighting = true; m_pendingWorkEnvironmentSave = true;
+                MarkDocumentChanged();
+            } else TG_LOG_ERROR("大気散乱スカイを開けませんでした");
+            return;
+        }
         if (ext == ".tgmat" || ext == ".tgsky" || ext == ".tgmodel") {
             nlohmann::json assetHeader;
             if (ext == ".tgmat" && io::ProjectWorkspace::ReadJson(path, assetHeader) &&
@@ -611,12 +631,14 @@ void Application::ProcessAssetWork() {
                     for (size_t i = 0; i < m_materialLibrary.Entries().size(); ++i)
                         if (m_materialLibrary.Entries()[i].assetPath == path) m_selectedMaterial = static_cast<int>(i);
                     m_showMaterialSphere = true;
-                } else if (ext == ".tgsky") m_showSkyPreview = true;
+                } else if (ext == ".tgsky") {
+                    m_showSkyPreview = true; m_renderer.AtmosphericMode() = false; m_pendingWorkEnvironmentSave = true;
+                }
                 else {
                     for (const auto& a : m_models) if (a.assetPath == path) m_selectedModel = a.id;
                     m_modelLod = 0; m_showModelPreview = true;
                 }
-                MarkDocumentChanged();
+                if (ext != ".tgsky") MarkDocumentChanged();
             } else TG_LOG_ERROR("アセットを開けません: %s", ToUtf8Display(path).c_str());
         } else if (IsImage(ext)) {
             const auto id = m_textureLibrary.Load(m_device, m_pipelineCache, path);
@@ -819,8 +841,8 @@ void Application::DrawAssetBrowser() {
             if (folder) {
                 DrawFolderIcon(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
             } else if (!handle) {
-                const char* type = ext == ".tgterrain" ? "地形グラフ" : ext == ".tgcloud" ? "雲グラフ" : ext == ".tgscene" ? "シーン" : ext == ".tgmat" ? "マテリアル" :
-                    ext == ".tgsky" ? "天球" : ext == ".tgmodel" || ext == ".fbx" ? "モデル" : IsImage(ext) ? "画像" : "ファイル";
+                const char* type = ext == ".tgterrain" ? "地形グラフ" : ext == ".tgatmosphere" ? "大気散乱" : ext == ".tgcloud" ? "雲グラフ" : ext == ".tgscene" ? "シーン" : ext == ".tgmat" ? "マテリアル" :
+                    ext == ".tgsky" ? "作業用IBL" : ext == ".tgmodel" || ext == ".fbx" ? "モデル" : IsImage(ext) ? "画像" : "ファイル";
                 const auto min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
                 const auto text = ImGui::CalcTextSize(type);
                 ImGui::GetWindowDrawList()->AddText(ImVec2((min.x + max.x - text.x) * 0.5f, (min.y + max.y - text.y) * 0.5f),
@@ -872,9 +894,9 @@ void Application::DrawAssetBrowser() {
                     if (folder) { m_assetDirectory = path; m_assetRefresh = true; }
                     else m_pendingAssetOpen = path;
                 }
-                if ((ext == ".tgterrain" || ext == ".tgcloud") && ImGui::MenuItem("複製")) {
+                if ((ext == ".tgterrain" || ext == ".tgcloud" || ext == ".tgatmosphere") && ImGui::MenuItem("複製")) {
                     nlohmann::json body;
-                    const char* kind = ext == ".tgcloud" ? "cloud-graph" : "terrain-graph";
+                    const char* kind = ext == ".tgatmosphere" ? "atmosphere-sky" : ext == ".tgcloud" ? "cloud-graph" : "terrain-graph";
                     if (m_workspace.ReadAsset(path, kind, body)) {
                         body.erase("uid");
                         const auto name = io::ProjectWorkspace::String(body, "name") + " コピー";
@@ -933,13 +955,20 @@ void Application::DrawAssetBrowser() {
                 m_selectedMaterial = static_cast<int>(m_materialLibrary.Entries().size()) - 1;
                 m_showMaterialSphere = true; m_pendingAssetsSave = true; MarkDocumentChanged();
             }
-            if (ImGui::MenuItem("天球を作成")) {
-                // シーンの天球は 1 つ。作った天球に差し替える（前の天球のファイルは残る）。
-                const auto id = m_skyLibrary.Add("新規天球");
+            if (ImGui::MenuItem("大気散乱スカイを作成")) {
+                auto path = m_workspace.UniquePath(m_assetDirectory, "大気散乱スカイ", ".tgatmosphere");
+                auto body = io::AtmosphereAssetBody(nlohmann::json::object(), "大気散乱スカイ");
+                if (!path.empty() && m_workspace.SaveAsset(path, "atmosphere-sky", body)) {
+                    m_pendingAssetReveal = path; m_assetRefresh = true;
+                } else TG_LOG_ERROR("大気散乱スカイを作成できませんでした");
+            }
+            if (ImGui::MenuItem("作業用IBLを作成")) {
+                // 作業用IBLを差し替える。以前のアセットは残す。
+                const auto id = m_skyLibrary.Add("新規作業用IBL");
                 auto* asset = m_skyLibrary.FindMutable(id);
                 asset->assetPath = m_workspace.UniquePath(m_assetDirectory, asset->name, ".tgsky");
                 m_skyLibrary.SetActive(id); m_pendingSkyKeepOnly = true;
-                m_showSkyPreview = true; m_pendingAssetsSave = true;
+                m_showSkyPreview = true; m_pendingAssetsSave = true; m_renderer.AtmosphericMode() = false;
             }
             if (ImGui::MenuItem("ファイルを読み込む…")) {
                 const auto paths = ShowOpenFilesDialog(L"アセットを読み込む", {{L"画像 / モデル / マテリアル", L"*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.exr;*.hdr;*.fbx;*.tgmat"}});

@@ -30,8 +30,14 @@ struct ProjectRefs {
     std::vector<renderer::ModelAsset>* models = nullptr;
     nlohmann::json* components = nullptr;
     int componentOnly = -1;
+    nlohmann::json* atmosphereAsset = nullptr;
 };
 
+bool SaveWorkEnvironment(ProjectWorkspace& workspace, const ProjectRefs& refs, bool saveAsset = true);
+bool LoadWorkEnvironment(ProjectWorkspace& workspace, rhi::Device& device,
+                         rhi::PipelineCache& pipelineCache, const ProjectRefs& refs);
+bool SaveAtmosphereAsset(ProjectWorkspace& workspace, const ProjectRefs& refs,
+                         const std::filesystem::path& directory);
 bool SaveSharedAssets(ProjectWorkspace& workspace, const ProjectRefs& refs);
 // シーンが持つ天球は 1 つ。適用中の天球だけを残し、ほかは破棄する（フレームの外で呼ぶこと）。
 void KeepOnlyActiveSky(rhi::Device& device, renderer::SkyLibrary& skies);

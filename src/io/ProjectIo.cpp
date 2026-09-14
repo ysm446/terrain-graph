@@ -2586,8 +2586,10 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
     if (workspace) {
         if (refs.components && refs.components->is_array()) document["_components"] = *refs.components;
         if (refs.componentOnly >= 0) document["_componentOnly"] = refs.componentOnly;
+        if (refs.atmosphereAsset) document["_atmosphereAsset"] = *refs.atmosphereAsset;
         if (!workspace->SaveScene(savePath, document)) return false;
         if (refs.components && refs.componentOnly < 0 && document.contains("components")) *refs.components = document["components"];
+        if (refs.atmosphereAsset && refs.componentOnly < 0 && document.contains("atmosphere")) *refs.atmosphereAsset = document["atmosphere"];
         RemoveStalePaintMasks(paintDir, writtenPaintFiles);
         return true;
     }
@@ -2609,6 +2611,7 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
     }
 
     if (refs.components) *refs.components = document.value("_components", json());
+    if (refs.atmosphereAsset) *refs.atmosphereAsset = document.value("_atmosphereAsset", json());
     const fs::path baseDir = path.parent_path();
     const fs::path paintDir = PaintMaskDirectory(path);
 
@@ -2856,12 +2859,78 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
     // 旧シーンは天球を複数持っていた。適用中の 1 つだけを引き継ぐ。
     KeepOnlyActiveSky(device, refs.skies);
 
+    if (workspace && document.contains("_atmosphereAsset")) {
+        if (!LoadWorkEnvironment(*workspace, device, pipelineCache, refs))
+            TG_LOG_WARN("作業用IBLを読み込めません。既定の作業環境を使用します");
+    }
+
     TG_LOG_INFO("プロジェクトを開きました: %s", ToUtf8Portable(path).c_str());
     return true;
 }
 
 
 // 共有アセットは個別に保存する。シーンを切り替えても同じファイルを参照する。
+bool SaveWorkEnvironment(ProjectWorkspace& workspace, const ProjectRefs& refs, bool saveAsset) {
+    json settings = workspace.WorkEnvironment();
+    const auto preview = WritePreview(refs.renderer);
+    settings["lightingMode"] = preview["lightingMode"];
+    settings["light"] = preview["light"];
+    if (auto* asset = refs.skies.ActiveMutable()) {
+        if (saveAsset || asset->assetPath.empty()) {
+            auto body = WriteSky(*asset, workspace.Root());
+            body["uid"] = asset->assetUid;
+            body["hdri"] = nullptr;
+            if (!asset->sky.hdriPath.empty()) {
+                const auto source = workspace.Import(asset->sky.hdriPath, workspace.Root() / L"Imported");
+                if (source.empty()) return false;
+                body["hdri"] = workspace.Reference(source);
+                if (body["hdri"].is_null()) return false;
+            }
+            auto path = asset->assetPath;
+            if (path.empty()) {
+                std::string uid;
+                path = workspace.FindIdenticalAsset("sky-asset", body, uid);
+                if (!path.empty()) body["uid"] = uid;
+                else path = workspace.UniquePath(workspace.Root() / L"Skies", asset->name, ".tgsky");
+            }
+            if (!workspace.SaveAsset(path, "sky-asset", body)) return false;
+            asset->assetPath = path; asset->assetUid = ReadString(body, "uid");
+        }
+        settings["sky"] = workspace.Reference(asset->assetPath);
+    }
+    return workspace.SetWorkEnvironment(settings);
+}
+
+bool LoadWorkEnvironment(ProjectWorkspace& workspace, rhi::Device& device,
+                         rhi::PipelineCache& pipelineCache, const ProjectRefs& refs) {
+    const auto settings = workspace.WorkEnvironment();
+    bool ready = true;
+    if (settings.contains("sky")) {
+        const auto path = workspace.Resolve(settings["sky"]);
+        ready = !path.empty() && LoadSharedAsset(workspace, path, device, pipelineCache, refs);
+    }
+    auto preview = WritePreview(refs.renderer);
+    preview["lightingMode"] = ProjectWorkspace::String(settings, "lightingMode") == "ibl" ? "ibl" : "atmospheric";
+    if (settings.contains("light")) preview["light"] = settings["light"];
+    ReadPreview(preview, refs.renderer);
+    return ready;
+}
+
+bool SaveAtmosphereAsset(ProjectWorkspace& workspace, const ProjectRefs& refs, const fs::path& directory) {
+    if (!refs.atmosphereAsset) return false;
+    auto body = AtmosphereAssetBody(WritePreview(refs.renderer), "大気散乱スカイ");
+    fs::path path;
+    if (!refs.atmosphereAsset->is_null()) {
+        path = workspace.Resolve(*refs.atmosphereAsset);
+        json existing;
+        if (path.empty() || !workspace.ReadAsset(path, "atmosphere-sky", existing)) return false;
+        body["uid"] = ReadString(existing, "uid"); body["name"] = existing.value("name", "大気散乱スカイ");
+    } else path = workspace.UniquePath(directory, "大気散乱スカイ", ".tgatmosphere");
+    if (!workspace.SaveAsset(path, "atmosphere-sky", body)) return false;
+    *refs.atmosphereAsset = workspace.Reference(path);
+    return !refs.atmosphereAsset->is_null();
+}
+
 bool SaveSharedAssets(ProjectWorkspace& workspace, const ProjectRefs& refs) {
     if (!workspace.Scan()) return false;
     bool valid = true;
@@ -2915,17 +2984,7 @@ bool SaveSharedAssets(ProjectWorkspace& workspace, const ProjectRefs& refs) {
         if (!valid || !workspace.SaveAsset(path, "model-asset", body)) return false;
         asset.assetPath = path; asset.assetUid = ReadString(body, "uid");
     }
-    for (const auto& entry : refs.skies.Entries()) {
-        auto* asset = refs.skies.FindMutable(entry.id);
-        json body = WriteSky(*asset, workspace.Root());
-        body["hdri"] = source(asset->sky.hdriPath);
-        body["uid"] = asset->assetUid;
-        auto path = asset->assetPath;
-        if (path.empty()) path = destination(body, "sky-asset", L"Skies", asset->name.c_str(), ".tgsky");
-        if (!valid || !workspace.SaveAsset(path, "sky-asset", body)) return false;
-        asset->assetPath = path; asset->assetUid = ReadString(body, "uid");
-    }
-    return valid;
+    return valid && SaveWorkEnvironment(workspace, refs);
 }
 
 bool LoadSharedAsset(ProjectWorkspace& workspace, const fs::path& path,
@@ -2938,6 +2997,13 @@ bool LoadSharedAsset(ProjectWorkspace& workspace, const fs::path& path,
     if (assetUid.empty()) return false;
     const json ref = {{"uid", assetUid}, {"path", RelativePathString(path, workspace.Root())}};
     const auto ext = path.extension();
+    if (_wcsicmp(ext.c_str(), L".tgatmosphere") == 0) {
+        json document = {{"atmosphere", ref}, {"preview", WritePreview(refs.renderer)}};
+        if (!ExpandSceneAtmosphere(workspace, document)) return false;
+        ReadPreview(document["preview"], refs.renderer);
+        if (refs.atmosphereAsset) *refs.atmosphereAsset = ref;
+        return true;
+    }
     const bool graphAsset = ext == L".tgterrain" || ext == L".tgcloud";
     const int graphComponent = ext == L".tgcloud" ? 1 : 0;
     const char* key = _wcsicmp(ext.c_str(), L".tgmat") == 0 ? "materials" :

@@ -55,7 +55,17 @@ struct MaterialSnapshot {
 // テクスチャとペイントマスクは入れない。GPU リソースそのもので、
 // 複製も作り直しも高くつく。参照している ID だけを持ち、
 // 戻すときに存在しない ID は落とす（DocumentSnapshot を適用する側の責任）。
+// 作業用IBLを含めず、シーンのスカイ参照と太陽・大気だけを戻す。
+struct SceneAtmosphereSnapshot {
+    bool valid = false;
+    std::string uid, path;
+    float azimuth = 0, elevation = 0, illuminance = 0;
+    float density = 0, mie = 0, eccentricity = 0, altitude = 0, groundAlbedo = 0, skylightIntensity = 0;
+    uint32_t lowerHemisphere = 1;
+};
+
 struct DocumentSnapshot {
+    SceneAtmosphereSnapshot atmosphere;
     std::vector<graph::Node> graphNodes;
     std::vector<graph::Link> graphLinks;
     std::vector<MaterialSnapshot> materials;

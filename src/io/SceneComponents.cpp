@@ -39,9 +39,11 @@ bool GraphValid(const json& graph) {
     }
     return true;
 }
-const char* Kind(int component) { return component == 1 ? "cloud-graph" : "terrain-graph"; }
+const char* Kind(int component) { return component == 2 ? "atmosphere-sky" : component == 1 ? "cloud-graph" : "terrain-graph"; }
 const char* Extension(int component) { return component == 1 ? ".tgcloud" : ".tgterrain"; }
 const char* Role(int component) { return component == 1 ? "cloud" : "terrain"; }
+const char* const AtmosphereKeys[] = {"azimuth", "elevation", "illuminance", "density", "mie",
+    "eccentricity", "altitude", "groundAlbedo", "lowerHemisphere", "skylightIntensity"};
 const char* const Tables[] = {"textures", "materials", "models", "paintMasks"};
 const char* const RefKeys[] = {"texture", "material", "model", "paint"};
 // グラフ設定内の資源参照だけを変換する。Pathの点IDなどには触れない。
@@ -64,6 +66,35 @@ bool RemapResources(json& value, const std::map<int, int> (&maps)[4]) {
     }
     return true;
 }
+}
+
+json AtmosphereAssetBody(const json& preview, const std::string& name) {
+    json settings = json::object();
+    const auto source = preview.is_object() ? preview.value("atmosphere", json::object()) : json::object();
+    if (source.is_object()) for (const auto* key : AtmosphereKeys)
+        if (source.contains(key)) settings[key] = source[key];
+    return {{"name", name}, {"settings", settings}};
+}
+
+bool ExpandSceneAtmosphere(ProjectWorkspace& workspace, json& document) {
+    if (!document.contains("atmosphere")) return true;
+    const auto reference = document["atmosphere"];
+    json body;
+    const auto path = workspace.Resolve(reference);
+    if (path.empty() || !workspace.ReadAsset(path, "atmosphere-sky", body) ||
+        !body.contains("settings") || !body["settings"].is_object()) return false;
+    auto& preview = document["preview"];
+    if (preview.is_null()) preview = json::object();
+    if (!preview.is_object()) return false;
+    auto& settings = preview["atmosphere"];
+    if (settings.is_null()) settings = json::object();
+    if (!settings.is_object()) return false;
+    // 新しいスカイに無い値は、前のスカイから引き継がず既定値へ戻す。
+    for (const auto* key : AtmosphereKeys) settings.erase(key);
+    for (const auto* key : AtmosphereKeys) if (body["settings"].contains(key)) settings[key] = body["settings"][key];
+    preview["lightingMode"] = "atmospheric";
+    document["_atmosphereAsset"] = reference;
+    return true;
 }
 
 bool AssignGraphComponents(json& graph) {
@@ -101,7 +132,8 @@ bool AssignGraphComponents(json& graph) {
 }
 
 bool SaveSceneComponents(ProjectWorkspace& workspace, const fs::path& scene, json& document) {
-    if (!workspace.Contains(scene) || !document.is_object()) return false;
+    if (!workspace.Contains(scene) || !document.is_object() ||
+        (document.contains("preview") && !document["preview"].is_object())) return false;
     auto graph = document.value("graph", json());
     if (!AssignGraphComponents(graph)) return false;
     const auto previous = document.value("_components", json::array());
@@ -111,6 +143,34 @@ bool SaveSceneComponents(ProjectWorkspace& workspace, const fs::path& scene, jso
     struct Pending { fs::path path; json body; int component; };
     std::vector<Pending> pending;
     const int only = document.value("_componentOnly", -1);
+    const auto previousWork = workspace.WorkEnvironment();
+    auto work = previousWork;
+    const auto preview = document.value("preview", json::object());
+    if (only < 0 && preview.is_object()) {
+        const auto mode = ProjectWorkspace::String(preview, "lightingMode");
+        work["lightingMode"] = mode.empty() ? previousWork.value("lightingMode", "atmospheric") : mode;
+        if (preview.contains("light")) work["light"] = preview["light"];
+        const auto skies = document.value("skies", json::array());
+        if (skies.is_array() && !skies.empty()) {
+            const int active = document.value("activeSky", 0);
+            const auto& sky = skies[active >= 0 && active < static_cast<int>(skies.size()) ? active : 0];
+            if (sky.contains("asset")) work["sky"] = sky["asset"];
+        }
+    }
+    if (only < 0) {
+        auto body = AtmosphereAssetBody(document.value("preview", json::object()), ToUtf8Display(scene.stem()) + " スカイ");
+        fs::path path;
+        const auto reference = document.value("_atmosphereAsset", json());
+        if (!reference.is_null()) {
+            path = workspace.Resolve(reference);
+            json existing;
+            if (path.empty() || !workspace.ReadAsset(path, "atmosphere-sky", existing)) return false;
+            body["uid"] = ProjectWorkspace::String(existing, "uid");
+            body["name"] = existing.value("name", body["name"]);
+        } else path = workspace.UniquePath(scene.parent_path(), ToUtf8Display(scene.stem()) + "_sky", ".tgatmosphere");
+        if (path.empty()) return false;
+        pending.push_back({path, std::move(body), 2});
+    }
     for (int component = 0; component < 2; ++component) {
         if (only >= 0 && only != component) continue;
         json part = {{"nodes", json::array()}, {"links", json::array()}};
@@ -202,16 +262,31 @@ bool SaveSceneComponents(ProjectWorkspace& workspace, const fs::path& scene, jso
         if (!workspace.SaveAsset(item.path, Kind(item.component), item.body)) {
             rollback(); return false;
         }
-        components.push_back({{"role", Role(item.component)}, {"asset", workspace.Reference(item.path)}});
+        if (item.component == 2) document["atmosphere"] = workspace.Reference(item.path);
+        else components.push_back({{"role", Role(item.component)}, {"asset", workspace.Reference(item.path)}});
     }
     document["components"] = components;
     document.erase("_components"); document.erase("graph");
     for (const auto* key : Tables) document.erase(key);
     document.erase("paintResolution");
-    document["version"] = 2;
+    document["version"] = 3;
+    document.erase("_atmosphereAsset");
+    document.erase("skies"); document.erase("activeSky");
+    if (document.contains("preview") && document["preview"].is_object()) {
+        auto& scenePreview = document["preview"];
+        scenePreview.erase("lightingMode"); scenePreview.erase("light");
+        if (scenePreview.contains("atmosphere") && scenePreview["atmosphere"].is_object())
+            for (const auto* key : AtmosphereKeys) scenePreview["atmosphere"].erase(key);
+    }
     json validation = document;
     if (!ExpandSceneComponents(workspace, validation) || !workspace.Expand(validation)) { rollback(); return false; }
-    if (only < 0 && !ProjectWorkspace::WriteJson(scene, document)) { rollback(); return false; }
+    if (only < 0) {
+        if (!workspace.SetWorkEnvironment(work)) { rollback(); return false; }
+        if (!ProjectWorkspace::WriteJson(scene, document)) {
+            if (!workspace.SetWorkEnvironment(previousWork)) TG_LOG_ERROR("作業環境の復元に失敗しました");
+            rollback(); return false;
+        }
+    }
     return true;
 }
 

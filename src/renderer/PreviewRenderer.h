@@ -251,11 +251,14 @@ public:
     LightSettings& Light() { return m_atmosphericMode ? m_atmosphericLight : m_light; }
     LightSettings& LegacyLight() { return m_light; }
     LightSettings& AtmosphericLight() { return m_atmosphericLight; }
+    const LightSettings& AtmosphericLight() const { return m_atmosphericLight; }
     bool& AtmosphericMode() { return m_atmosphericMode; }
     AtmosphereSettings& AtmosphericSettings() { return m_atmosphereSettings; }
+    const AtmosphereSettings& AtmosphericSettings() const { return m_atmosphereSettings; }
     LightSettings EffectiveLight() const;
     static constexpr float DefaultSkylightIntensity = 1.0f;
     float& AtmosphericEnvironmentIntensity() { return m_atmosphericEnvironmentIntensity; }
+    float AtmosphericEnvironmentIntensity() const { return m_atmosphericEnvironmentIntensity; }
     float EnvironmentIntensity() const { return m_atmosphericMode ? m_atmosphericEnvironmentIntensity : m_activeSky.iblIntensity; }
     const Environment& LegacyEnvironment() const { return m_environment; }
     MaterialSettings& Material() { return m_material; }

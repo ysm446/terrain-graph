@@ -29,6 +29,17 @@ compositor::TextureId Application::ValidTexture(compositor::TextureId id) const 
 
 DocumentSnapshot Application::CaptureDocument() const {
     DocumentSnapshot snapshot;
+    auto& atmosphere = snapshot.atmosphere;
+    atmosphere.valid = true;
+    atmosphere.uid = io::ProjectWorkspace::String(m_sceneAtmosphere, "uid");
+    atmosphere.path = io::ProjectWorkspace::String(m_sceneAtmosphere, "path");
+    const auto& sun = m_renderer.AtmosphericLight();
+    const auto& sky = m_renderer.AtmosphericSettings();
+    atmosphere.azimuth = sun.azimuth; atmosphere.elevation = sun.elevation; atmosphere.illuminance = sun.illuminance;
+    atmosphere.density = sky.density; atmosphere.mie = sky.mie; atmosphere.eccentricity = sky.eccentricity;
+    atmosphere.altitude = sky.altitude; atmosphere.groundAlbedo = sky.groundAlbedo; atmosphere.lowerHemisphere = sky.lowerHemisphere;
+    atmosphere.skylightIntensity = m_renderer.AtmosphericEnvironmentIntensity();
+
     snapshot.models = m_models;
     snapshot.graphNodes = m_graph.Nodes();
     snapshot.graphLinks = m_graph.Links();
@@ -67,6 +78,17 @@ DocumentSnapshot Application::CaptureDocument() const {
 // 履歴の対象外なので、写し取った後に消えていることがある。
 // 宙に浮いた ID を残すと、次に同じ番号が払い出されたとき別の画像が現れる。
 void Application::ApplyDocument(const DocumentSnapshot& snapshot) {
+    if (snapshot.atmosphere.valid) {
+        const auto& source = snapshot.atmosphere;
+        m_sceneAtmosphere = source.uid.empty() ? nlohmann::json() : nlohmann::json{{"uid", source.uid}, {"path", source.path}};
+        auto& sun = m_renderer.AtmosphericLight();
+        auto& sky = m_renderer.AtmosphericSettings();
+        sun.azimuth = source.azimuth; sun.elevation = source.elevation; sun.illuminance = source.illuminance;
+        sky.density = source.density; sky.mie = source.mie; sky.eccentricity = source.eccentricity;
+        sky.altitude = source.altitude; sky.groundAlbedo = source.groundAlbedo; sky.lowerHemisphere = source.lowerHemisphere;
+        m_renderer.AtmosphericEnvironmentIntensity() = source.skylightIntensity;
+    }
+
     m_materialEditPending = false;
     m_materialEditAppearanceChanged = false;
     auto models = snapshot.models;

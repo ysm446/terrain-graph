@@ -620,6 +620,11 @@ private:
     std::vector<std::filesystem::path> m_pendingAssetMoves;
     std::filesystem::path m_pendingAssetMoveTarget;
     std::filesystem::path m_pendingRoot;
+    nlohmann::json m_sceneAtmosphere;
+    bool m_pendingWorkEnvironmentSave = false;
+    bool m_pendingWorkSkySave = false;
+    bool m_pendingAtmosphereSave = false;
+    bool m_focusLighting = false;
     std::filesystem::path m_pendingAssetOpen;
     std::filesystem::path m_pendingScatterModel;
     graph::GraphId m_pendingScatterNode = 0;

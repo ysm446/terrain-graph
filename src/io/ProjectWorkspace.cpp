@@ -31,7 +31,7 @@ fs::path Absolute(const fs::path& path) {
 }
 bool IsNative(const fs::path& path) {
     const auto ext = path.extension();
-    return ext == L".tgmat" || ext == L".tgsky" || ext == L".tgmodel" || ext == L".tgterrain" || ext == L".tgcloud";
+    return ext == L".tgmat" || ext == L".tgsky" || ext == L".tgmodel" || ext == L".tgterrain" || ext == L".tgcloud" || ext == L".tgatmosphere";
 }
 void MapTextures(json& material, const std::function<json(const json&)>& convert) {
     auto maps = material.find("maps");
@@ -83,6 +83,17 @@ std::vector<fs::path> ProjectWorkspace::AssetsWithExtension(const wchar_t* exten
     return paths;
 }
 
+json ProjectWorkspace::WorkEnvironment() const { return m_project.value("workEnvironment", json::object()); }
+bool ProjectWorkspace::SetWorkEnvironment(const json& settings) {
+    if (!settings.is_object() || m_root.empty()) return false;
+    if (WorkEnvironment() == settings) return true;
+    auto project = m_project;
+    project["workEnvironment"] = settings;
+    if (!WriteJson(m_root / L"project.tgproj", project)) return false;
+    m_project = std::move(project);
+    return true;
+}
+
 bool ProjectWorkspace::Contains(const fs::path& path) const {
     if (m_root.empty() || path.empty()) return false;
     const auto target = Absolute(path);
@@ -111,6 +122,7 @@ bool ProjectWorkspace::Open(const fs::path& root) {
                           {"uid", NewUid()}, {"startupScene", ""}};
         if (!WriteJson(projectPath, next.m_project)) return false;
     }
+    if (next.m_project.contains("workEnvironment") && !next.m_project["workEnvironment"].is_object()) return false;
     if (!next.Scan()) return false;
     *this = std::move(next);
     return true;
@@ -338,11 +350,13 @@ bool ProjectWorkspace::SaveScene(const fs::path& path, json& document) {
 
 bool ProjectWorkspace::ReadScene(const fs::path& path, json& document) {
     if (!Contains(path) || !Scan() || !ReadJson(path, document) ||
-        String(document, "format") != "terrain-graph.scene" || (document["version"] != 1 && document["version"] != 2)) return false;
-    if (document["version"] == 2 && !ExpandSceneComponents(*this, document)) return false;
+        String(document, "format") != "terrain-graph.scene" || (document["version"] != 1 && document["version"] != 2 && document["version"] != 3)) return false;
+    if (document["version"] == 3 && !document.contains("atmosphere")) return false;
+    if (document["version"] >= 2 && !ExpandSceneComponents(*this, document)) return false;
     return Expand(document);
 }
 bool ProjectWorkspace::Expand(json& document) {
+    if (!ExpandSceneAtmosphere(*this, document)) return false;
     for (const char* key : {"textures", "materials", "models", "skies"}) {
         if (!document.contains(key)) document[key] = json::array();
         if (!document[key].is_array()) return false;

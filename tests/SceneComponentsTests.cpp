@@ -56,7 +56,8 @@ int main() {
     })}, {"links", json::array({{{"id", 5}, {"start", 2}, {"end", 4}}, {{"id", 11}, {"start", 7}, {"end", 9}}})}};
     json original = {{"format", "terrain-graph.scene"}, {"version", 1}, {"graph", graph},
         {"textures", json::array()}, {"materials", json::array()}, {"models", json::array()}, {"skies", json::array()},
-        {"paintMasks", json::array()}, {"preview", {{"exposure", 2.5}}}};
+        {"paintMasks", json::array()}, {"preview", {{"exposure", 2.5}, {"lightingMode", "ibl"}, {"light", {{"azimuth", 0.4}}},
+            {"atmosphere", {{"azimuth", 1.2}, {"elevation", 0.3}, {"illuminance", 85000}, {"mie", 0.7}, {"coverage", 0.4}}}}}};
     const auto image = workspace.UniquePath(root, "height", ".png");
     std::ofstream(image).put('i');
     original["textures"].push_back({{"id", 22}, {"source", workspace.Reference(image)}});
@@ -73,10 +74,19 @@ int main() {
     check(!migrated.empty() && migrated != scene, "migrate to new file");
     json unchanged, packed, expanded;
     check(ProjectWorkspace::ReadJson(scene, unchanged) && unchanged == original, "original unchanged");
-    check(ProjectWorkspace::ReadJson(migrated, packed) && packed["version"] == 2 &&
+    check(ProjectWorkspace::ReadJson(migrated, packed) && packed["version"] == 3 &&
           !packed.contains("graph") && packed["components"].size() == 2, "scene references two components");
     check(workspace.ReadScene(migrated, expanded) && expanded["graph"]["nodes"].size() == 4 &&
-          expanded["graph"]["links"].size() == 2 && expanded["preview"] == original["preview"], "expand without loss");
+          expanded["graph"]["links"].size() == 2 && expanded["preview"]["exposure"] == original["preview"]["exposure"] &&
+          expanded["preview"]["atmosphere"] == original["preview"]["atmosphere"], "expand without loss");
+    json skyBody;
+    const auto skyPath = workspace.Resolve(packed["atmosphere"]);
+    check(!skyPath.empty() && workspace.ReadAsset(skyPath, "atmosphere-sky", skyBody), "scene references independent atmosphere asset");
+    check(skyBody["settings"]["azimuth"] == 1.2 && skyBody["settings"]["illuminance"] == 85000 &&
+          !skyBody["settings"].contains("coverage") && !skyBody["settings"].contains("exposure"), "sky owns sun but not clouds or exposure");
+    check(!packed.contains("skies") && !packed["preview"].contains("lightingMode") && !packed["preview"].contains("light"), "work environment removed from scene");
+    check(workspace.WorkEnvironment()["lightingMode"] == "ibl" && workspace.WorkEnvironment()["light"]["azimuth"] == 0.4,
+          "legacy working lighting preserved in project");
     check(expanded["graph"]["nodes"][2]["component"] == 1, "cloud mask belongs to cloud graph");
     check(expanded["textures"].size() == 1 && expanded["graph"]["nodes"][0]["layer"]["height"]["texture"]["texture"] == 1 &&
           expanded["graph"]["nodes"][2]["map"]["texture"] == 1, "shared texture deduplicated and remapped");
@@ -95,8 +105,15 @@ int main() {
     failedSave["graph"]["nodes"][0]["extra"] = "must roll back";
     const auto blockedPath = root / "blocked.tgscene";
     fs::create_directory(blockedPath, paintError);
+    const auto workBeforeFailure = workspace.WorkEnvironment();
+    json skyBeforeFailure; ProjectWorkspace::ReadJson(skyPath, skyBeforeFailure);
+    failedSave["preview"]["atmosphere"]["azimuth"] = 2.0;
+    failedSave["preview"]["lightingMode"] = "ibl";
     check(!SaveSceneComponents(workspace, blockedPath, failedSave), "scene write failure reported");
     check(ProjectWorkspace::ReadJson(originalTerrain, afterFailure) && beforeFailure == afterFailure, "component update rolled back on scene failure");
+    json skyAfterFailure; ProjectWorkspace::ReadJson(skyPath, skyAfterFailure);
+    check(skyBeforeFailure == skyAfterFailure && workspace.WorkEnvironment() == workBeforeFailure,
+          "sky and work environment rolled back on scene failure");
     // 不正な接続や地形から雲への依存を勝手に切らない。
     auto crossing = graph;
     crossing["links"].push_back({{"id", 12}, {"start", 2}, {"end", 9}});
@@ -111,6 +128,20 @@ int main() {
     check(!moved.empty() && workspace.ReadScene(migrated, expanded), "component move keeps scene reference");
     ProjectWorkspace reopened;
     check(reopened.Open(root) && reopened.ReadScene(migrated, expanded), "reopen migrated scene");
+    const auto movedSky = MoveAsset(workspace, skyPath, folder);
+    check(!movedSky.empty() && workspace.ReadScene(migrated, expanded) && expanded["preview"]["atmosphere"]["azimuth"] == 1.2,
+          "sky move retains sun and scene reference");
+    const auto relations = InspectAssetRelations(workspace, movedSky);
+    check(relations.complete && !relations.referencers.empty(), "sky deletion finds scene references");
+    const auto skyBackup = movedSky.wstring() + L".saved";
+    fs::rename(movedSky, skyBackup, error);
+    check(!workspace.ReadScene(migrated, expanded), "missing sky prevents scene load");
+    fs::rename(skyBackup, movedSky, error);
+    json standalone = {{"atmosphere", packed["atmosphere"]},
+        {"preview", {{"atmosphere", {{"density", 8}, {"coverage", 0.8}}}, {"exposure", 4}}}};
+    check(workspace.Scan() && ExpandSceneAtmosphere(workspace, standalone) &&
+          !standalone["preview"]["atmosphere"].contains("density") && standalone["preview"]["atmosphere"]["coverage"] == 0.8 &&
+          standalone["preview"]["exposure"] == 4, "sky replacement resets unspecified sky values but preserves clouds and exposure");
     // 名前が同じでも別の移行先へ書く。
     const auto second = MigrateSceneComponents(workspace, scene);
     check(!second.empty() && second != migrated, "repeat migration never overwrites");

@@ -258,18 +258,39 @@ void Application::DrawMaterialPanel() {
 }
 
 void Application::DrawLightingPanel() {
+    const auto workLightBefore = m_renderer.LegacyLight();
+    const auto sunBefore = m_renderer.AtmosphericLight();
+    const auto skyBefore = m_renderer.AtmosphericSettings();
+    const float skylightBefore = m_renderer.AtmosphericEnvironmentIntensity();
+    if (m_focusLighting) { ImGui::SetNextWindowFocus(); m_focusLighting = false; }
     if (ImGui::Begin("ライティング")) {
         if (ui::BeginPropertyTable("lightingModeRows")) {
-            const char* modes[] = {"環境マップ (IBL)", "大気散乱スカイ"};
+            const char* modes[] = {"作業用IBL", "シーンの空・照明"};
             int mode = m_renderer.AtmosphericMode() ? 1 : 0;
-            if (ui::PropertyCombo("モード", &mode, modes, 2, 0,
-                                  "環境マップは天球アセットで照らします。大気散乱スカイは太陽と大気から空を生成し、雲も描画できます。\n"
-                                  "切り替えても、それぞれの天球・太陽設定は保持されます。")) m_renderer.AtmosphericMode() = mode == 1;
+            if (ui::PropertyCombo("表示環境", &mode, modes, 2, 1,
+                                  "作業用IBLは質感の確認用です。シーンの空・照明では大気散乱スカイと雲を描画します。\n"
+                                  "表示の切り替えはプロジェクトの作業設定に保存します。")) {
+                m_renderer.AtmosphericMode() = mode == 1; m_pendingWorkEnvironmentSave = true;
+            }
             ui::EndPropertyTable();
         }
+        ui::SectionHeader("シーンの大気散乱スカイ");
+        if (ui::BeginPropertyTable("sceneAtmosphereAsset")) {
+            const auto path = m_sceneAtmosphere.is_null() ? std::filesystem::path{} : m_workspace.Resolve(m_sceneAtmosphere);
+            DrawAssetPathRow("ファイル", path, m_pendingAssetReveal);
+            ui::PropertyLabelEmpty("sceneSkyActions");
+            if (ui::Button("読み込む…", ui::kWideButtonWidth)) {
+                const auto selected = ShowOpenFileDialog(L"大気散乱スカイを読み込む", {{L"大気散乱スカイ", L"*.tgatmosphere"}});
+                if (!selected.empty()) m_pendingAssetOpen = selected;
+            }
+            ImGui::SameLine();
+            if (ui::Button("保存")) m_pendingAtmosphereSave = true;
+            ui::PropertyEnd(); ui::EndPropertyTable();
+        }
+        if (!m_renderer.AtmosphericMode()) ui::HintText("作業用IBLで確認中。シーンの太陽・大気の設定は保持されています");
         renderer::LightSettings& light = m_renderer.Light();
 
-        ui::SectionHeader("ライト");
+        ui::SectionHeader(m_renderer.AtmosphericMode() ? "シーンの太陽" : "作業用ライト");
         if (ui::BeginPropertyTable("lightRows", "カスケードシャドウ")) {
             float azimuthDeg = RadiansToDegrees(light.azimuth);
             if (ui::PropertyFloat("方位角", &azimuthDeg, -180.0f, 180.0f,
@@ -456,7 +477,7 @@ void Application::DrawLightingPanel() {
         // **環境そのもの（何を空にするか）はシーンの天球（1 つ）が持つ。**
         // ここに残すのは、天球ではなく見え方に属する設定だけ。差し替えの入口だけ置く。
         if (!m_renderer.AtmosphericMode()) {
-            ui::SectionHeader("環境 (IBL)");
+            ui::SectionHeader("作業用IBL");
             if (ui::BeginPropertyTable("iblRows")) {
                 const renderer::SkyAsset* activeSky = m_skyLibrary.Active();
                 ui::PropertyLabel("天球");
@@ -480,7 +501,7 @@ void Application::DrawLightingPanel() {
                 ImGui::EndDisabled();
                 ui::EndPropertyTable();
             }
-            ui::HintText("空の設定は「天球プレビュー」で行う。アセットの .tgsky をダブルクリックしても差し替わる");
+            ui::HintText("作業用IBLの設定は「作業用IBL」ウィンドウで行う。.tgskyを開いてもシーンのスカイは変更しない");
         }
 
         ui::SectionHeader("トーンマップ");
@@ -494,6 +515,18 @@ void Application::DrawLightingPanel() {
             ui::EndPropertyTable();
         }
     }
+    const auto& workLight = m_renderer.LegacyLight();
+    if (workLightBefore.azimuth != workLight.azimuth || workLightBefore.elevation != workLight.elevation ||
+        workLightBefore.illuminance != workLight.illuminance || workLightBefore.color.x != workLight.color.x ||
+        workLightBefore.color.y != workLight.color.y || workLightBefore.color.z != workLight.color.z)
+        m_pendingWorkEnvironmentSave = true;
+    const auto& sun = m_renderer.AtmosphericLight();
+    const auto& sky = m_renderer.AtmosphericSettings();
+    if (sunBefore.azimuth != sun.azimuth || sunBefore.elevation != sun.elevation || sunBefore.illuminance != sun.illuminance ||
+        skyBefore.density != sky.density || skyBefore.mie != sky.mie || skyBefore.eccentricity != sky.eccentricity ||
+        skyBefore.altitude != sky.altitude || skyBefore.groundAlbedo != sky.groundAlbedo ||
+        skyBefore.lowerHemisphere != sky.lowerHemisphere || skylightBefore != m_renderer.AtmosphericEnvironmentIntensity())
+        MarkDocumentChanged(false);
     ImGui::End();
 }
 

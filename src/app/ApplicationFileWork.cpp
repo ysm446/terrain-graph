@@ -235,7 +235,7 @@ void Application::HandleDroppedFiles(const std::vector<std::filesystem::path>& p
         // 旧拡張子 (.mmproj / .mmmat) は material-mixer 時代のファイル。読み込みだけ受け付ける。
         if (extension == ".tgscene" || extension == ".tgproj" || extension == ".mmproj") {
             m_pendingProjectOpen = path;
-        } else if (extension == ".tgsky" || extension == ".tgmodel") {
+        } else if (extension == ".tgsky" || extension == ".tgmodel" || extension == ".tgatmosphere") {
             m_pendingAssetOpen = path;
         } else if (extension == ".tgmat" || extension == ".mmmat") {
             m_pendingMaterialImport = path;
@@ -271,7 +271,7 @@ void Application::FinishComponentPreview(bool place) {
         const auto path = m_projectPath.extension() == L".tgscene" ? m_projectPath :
             m_workspace.Root() / L"Scenes/Untitled.tgscene";
         io::ProjectRefs previous{m_textureLibrary, m_materialLibrary, m_paintMasks,
-            m_skyLibrary, m_renderer, m_previewOriginalGraph, &m_models, &m_previewOriginalComponents, m_componentPreview};
+            m_skyLibrary, m_renderer, m_previewOriginalGraph, &m_models, &m_previewOriginalComponents, m_componentPreview, &m_sceneAtmosphere};
         if (!io::SaveProject(path, m_device, previous, &m_workspace)) {
             TG_LOG_ERROR("元のグラフを保存できないため、差し替えを中止しました");
             return;
@@ -291,6 +291,7 @@ void Application::ResetProject() {
     m_componentPreview = -1; m_componentPreviewPath.clear();
     m_previewOriginalGraph = graph::NodeGraph{}; m_previewOriginalComponents = nullptr;
     m_sceneComponents = nlohmann::json::array();
+    m_sceneAtmosphere = nullptr;
     m_editComponent = 0;
     m_materialEditPending = false;
     m_materialEditAppearanceChanged = false;
@@ -320,6 +321,12 @@ void Application::ResetProject() {
     // **プレビュー設定も既定へ戻す。** 形状・変位量・カメラ・ライト・露出・
     // 被写界深度はプロジェクトが持つ値なので、戻さないと前の中身が残る。
     m_renderer.ResetSettings();
+    {
+        io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
+            m_skyLibrary, m_renderer, m_graph, &m_models, &m_sceneComponents, -1, &m_sceneAtmosphere};
+        if (!io::LoadWorkEnvironment(m_workspace, m_device, m_pipelineCache, refs))
+            TG_LOG_WARN("作業用IBLを読み込めませんでした");
+    }
 
     m_selectedMaterial = 0;
     m_selectedTexture = 0;
@@ -417,7 +424,7 @@ void Application::ProcessPendingFileWork() {
         m_pendingProjectOpen.clear();
 
         io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
-                             m_skyLibrary,     m_renderer,       m_graph, &m_models, &m_sceneComponents};
+                             m_skyLibrary,     m_renderer,       m_graph, &m_models, &m_sceneComponents, -1, &m_sceneAtmosphere};
         if (io::LoadProject(path, m_device, m_pipelineCache, refs,
                             path.extension() == L".tgscene" ? &m_workspace : nullptr)) {
             m_editComponent = m_sceneComponents.is_array() ? 0 : -1;
@@ -470,7 +477,7 @@ void Application::ProcessPendingFileWork() {
         m_pendingProjectSave.clear();
 
         io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
-                             m_skyLibrary,     m_renderer,       m_graph, &m_models, &m_sceneComponents};
+                             m_skyLibrary,     m_renderer,       m_graph, &m_models, &m_sceneComponents, -1, &m_sceneAtmosphere};
         if (m_componentPreview >= 0) refs.componentOnly = m_componentPreview;
         if (io::SaveProject(path, m_device, refs, &m_workspace)) {
             if (m_componentPreview >= 0) {

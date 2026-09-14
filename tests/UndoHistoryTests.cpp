@@ -57,6 +57,25 @@ void RunUndoHistoryTests() {
         Check(history.UndoCount() == 2, "別のウィジェットへ移ると別の段になる");
     }
 
+    Section("シーンの太陽とスカイ参照");
+    {
+        UndoHistory history;
+        auto before = MakeSnapshot(1);
+        before.atmosphere.valid = true;
+        before.atmosphere.uid = "sky-a";
+        before.atmosphere.azimuth = 0.2f;
+        auto after = before;
+        after.atmosphere.uid = "sky-b";
+        after.atmosphere.azimuth = 1.1f;
+        history.Push(before, 0);
+        const auto undone = history.Undo(after);
+        Check(undone.atmosphere.uid == "sky-a" && undone.atmosphere.azimuth == 0.2f,
+              "太陽とスカイの参照を一緒に戻す");
+        const auto redone = history.Redo(undone);
+        Check(redone.atmosphere.uid == "sky-b" && redone.atmosphere.azimuth == 1.1f,
+              "太陽とスカイの参照を一緒にやり直す");
+    }
+
     Section("アンドゥ履歴 — 戻すとやり直す");
     {
         UndoHistory history;

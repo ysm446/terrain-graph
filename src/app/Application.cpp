@@ -149,7 +149,14 @@ bool Application::Initialize(const StartupOptions& options) {
 
     // 天球は必ず 1 つある状態にする。--hdri が来ていれば、その既定の天球へ入れる。
     m_skyLibrary.EnsureDefault();
+    {
+        io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
+            m_skyLibrary, m_renderer, m_graph, &m_models, &m_sceneComponents, -1, &m_sceneAtmosphere};
+        if (!io::LoadWorkEnvironment(m_workspace, m_device, m_pipelineCache, refs))
+            TG_LOG_WARN("作業用IBLを読み込めませんでした");
+    }
     if (!options.hdriPath.empty()) {
+        m_renderer.AtmosphericMode() = false;
         if (renderer::SkyAsset* sky = m_skyLibrary.ActiveMutable(); sky != nullptr) {
             sky->name = ToUtf8Display(options.hdriPath.stem());
             sky->sky.source = renderer::SkySource::Hdri;
@@ -334,7 +341,7 @@ int Application::Run() {
         if (!m_options.saveProjectPath.empty() && m_frameCounter >= m_options.screenshotFrame &&
             (m_options.saveProjectPath.extension() != L".tgscene" || m_frameCounter > 0)) {
             const io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
-                                       m_skyLibrary,     m_renderer,       m_graph, &m_models, &m_sceneComponents, m_componentPreview};
+                                       m_skyLibrary,     m_renderer,       m_graph, &m_models, &m_sceneComponents, m_componentPreview, &m_sceneAtmosphere};
             if (!io::SaveProject(m_options.saveProjectPath, m_device, refs,
                 m_options.saveProjectPath.extension() == L".tgscene" ? &m_workspace : nullptr)) return 1;
             SaveSceneThumbnail(m_options.saveProjectPath);
@@ -654,7 +661,7 @@ void Application::DrawUi() {
             ImGui::MenuItem("マテリアルプレビュー", nullptr, &m_showMaterialSphere);
             ImGui::MenuItem("モデルプレビュー", nullptr, &m_showModelPreview);
             ImGui::MenuItem("テクスチャプレビュー", nullptr, &m_showTexturePreview);
-            ImGui::MenuItem("天球プレビュー", nullptr, &m_showSkyPreview);
+            ImGui::MenuItem("作業用IBL", nullptr, &m_showSkyPreview);
             ImGui::MenuItem("情報", nullptr, &m_showInfo);
             ImGui::MenuItem("設定", nullptr, &m_showSettings);
             ImGui::EndMenu();

@@ -1,4 +1,4 @@
-// 天球プレビューの窓。**シーンが持つ天球は 1 つ**で、その設定はここで行う。
+// 作業用IBLのプレビューと設定。シーンの大気散乱スカイとは独立して保持する。
 //
 // 別の天球にするには、アセットの .tgsky をダブルクリックするか「差し替える…」で選ぶ。
 // 一覧のパネルは持たない（環境は同時に 1 つしか使えず、一覧に載せたぶんだけ
@@ -24,7 +24,7 @@ namespace tg {
 
 // 天球プレビューの窓。大きい絵と、その天球の設定。
 //
-// **映すのはシーンの天球**（＝ビューポートの環境）。窓の側に別の選択を持たせない。
+// 作業用IBL表示中だけ、その環境を球へ描く。
 void Application::DrawSkyPreviewWindow() {
     m_skyPreviewVisible = false;
     if (!m_showSkyPreview) {
@@ -35,7 +35,7 @@ void Application::DrawSkyPreviewWindow() {
     // **窓そのものはスクロールさせない。** スクロールするのは下の区画だけ。
     ImGui::SetNextWindowSize(ImVec2(ui::Scaled(420.0f), ui::Scaled(620.0f)),
                              ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("天球プレビュー", &m_showSkyPreview,
+    if (!ImGui::Begin("作業用IBL", &m_showSkyPreview,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         ImGui::End();
         return;
@@ -48,7 +48,11 @@ void Application::DrawSkyPreviewWindow() {
         return;
     }
     // 球は**適用中の環境キューブ**から毎フレーム描く（フレームの中で走る）。
-    m_skyPreviewVisible = true;
+    m_skyPreviewVisible = !m_renderer.AtmosphericMode();
+    if (m_renderer.AtmosphericMode() && ui::Button("作業用IBLで表示", ui::kWideButtonWidth)) {
+        m_renderer.AtmosphericMode() = false; m_pendingWorkEnvironmentSave = true;
+        m_skyPreviewVisible = true;
+    }
 
     // --- 上下 2 区画。上は幅に合わせた正方形の絵 -------------------------------
     const float paneSize = PreviewPaneSize();
@@ -77,7 +81,7 @@ void Application::DrawSkyPreviewWindow() {
 
         // まだ絵が無いときは枠だけ描く。ImTextureID の 0 を AddImage へ渡すと
         // デバッグビルドの ImGui がアサートで落ちる。
-        if (m_skySphere.HasOutput()) {
+        if (m_skyPreviewVisible && m_skySphere.HasOutput()) {
             ImGui::GetWindowDrawList()->AddImage(
                 static_cast<ImTextureID>(m_skySphere.OutputHandle().ptr), min, max);
         }
@@ -93,7 +97,7 @@ void Application::DrawSkyPreviewWindow() {
     if (ui::Button("視点を戻す", ui::kWideButtonWidth)) {
         m_skySphere.ResetView();
     }
-    ui::HintText("この天球がそのままビューポートの環境になる");
+    ui::HintText("地形・マテリアル確認用のIBLです。シーンの大気散乱スカイとは別に保存します");
 
     renderer::SkyDefinition& sky = active->sky;
     const renderer::SkyDefinition kDefaultSkyDefinition;
@@ -105,9 +109,9 @@ void Application::DrawSkyPreviewWindow() {
         char nameBuffer[128] = {};
         std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", active->name.c_str());
         if (ui::PropertyTextInput("名前", nameBuffer, sizeof(nameBuffer))) {
-            active->name = nameBuffer;
+            active->name = nameBuffer; m_pendingWorkEnvironmentSave = true; m_pendingWorkSkySave = true;
         }
-        // シーンの天球は 1 つ。どのファイルかを見せ、差し替えの入口をここにも置く。
+        // 選択中の作業用IBLのファイルと、差し替えの入口を表示する。
         DrawAssetPathRow("ファイル", active->assetPath, m_pendingAssetReveal);
         ui::PropertyLabelEmpty("skyPick");
         if (ui::Button("差し替える…", ui::kWideButtonWidth)) {
@@ -176,6 +180,7 @@ void Application::DrawSkyPreviewWindow() {
     }
 
     if (changed) {
+        m_pendingWorkEnvironmentSave = true; m_pendingWorkSkySave = true;
         m_skyLibrary.MarkThumbnailDirty(active->id);
     }
     ImGui::EndChild();
