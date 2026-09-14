@@ -235,6 +235,24 @@ bool ProjectWorkspace::SaveAsset(fs::path& path, const char* kind, json& body) {
     m_paths[uid] = path;
     return true;
 }
+fs::path ProjectWorkspace::FindIdenticalAsset(const char* kind, const json& body,
+                                              std::string& uid) const {
+    uid.clear();
+    // 比べるのは中身だけ。ID と形式の印は持ち主ごとに違ってよい。
+    json wanted = body;
+    for (const char* key : {"uid", "format", "version", "id", "_assetPath"}) wanted.erase(key);
+    // Scan() が拾った native アセットだけが対象。走査順に依らないよう、パスの小さい方を選ぶ。
+    fs::path found;
+    for (const auto& [knownUid, path] : m_paths) {
+        if (!IsNative(path)) continue;
+        json existing;
+        if (!ReadAsset(path, kind, existing)) continue;
+        for (const char* key : {"uid", "format", "version", "id", "_assetPath"}) existing.erase(key);
+        if (existing != wanted) continue;
+        if (found.empty() || path < found) { found = path; uid = knownUid; }
+    }
+    return found;
+}
 bool ProjectWorkspace::ReadAsset(const fs::path& path, const char* kind, json& body) const {
     return Contains(path) && ReadJson(path, body) &&
            String(body, "format") == std::string("terrain-graph.") + kind &&

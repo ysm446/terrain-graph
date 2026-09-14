@@ -73,6 +73,21 @@ int main() {
     check(movedWorkspace.ReadScene(movedWorkspace.StartupScene(), movedScene), "open scene after project move");
     check(movedScene["textures"][0]["path"] == tg::ToUtf8Portable(relocated / movedImage.lexically_relative(root)),
           "source resolves within relocated root");
+    // 同じ中身のアセットは増やさない。中身が一致するファイルを引き当て、そのIDを返す。
+    std::string adoptedUid;
+    json sameBody = {{"name", "sky"}, {"iblIntensity", 1.5}};
+    auto skyPath = workspace.UniquePath(root, "sky", ".tgsky");
+    check(workspace.SaveAsset(skyPath, "sky-asset", sameBody), "save sky for adoption");
+    const auto savedUid = ProjectWorkspace::String(sameBody, "uid");
+    check(workspace.Scan(), "scan after sky save");
+    json fresh = {{"name", "sky"}, {"iblIntensity", 1.5}};
+    check(workspace.FindIdenticalAsset("sky-asset", fresh, adoptedUid) == skyPath && adoptedUid == savedUid,
+          "identical asset is adopted with its ID");
+    json renamed = {{"name", "other"}, {"iblIntensity", 1.5}};
+    check(workspace.FindIdenticalAsset("sky-asset", renamed, adoptedUid).empty(), "different name is a different asset");
+    json edited = {{"name", "sky"}, {"iblIntensity", 2.0}};
+    check(workspace.FindIdenticalAsset("sky-asset", edited, adoptedUid).empty(), "edited body is a different asset");
+    check(workspace.FindIdenticalAsset("material-asset", fresh, adoptedUid).empty(), "other kind is never adopted");
     std::cout << failures << " failures\n";
     return failures ? 1 : 0;
 }

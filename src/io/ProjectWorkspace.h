@@ -24,6 +24,13 @@ public:
     std::filesystem::path Resolve(const nlohmann::json& reference) const;
     nlohmann::json Reference(const std::filesystem::path& path);
     bool SaveAsset(std::filesystem::path& path, const char* kind, nlohmann::json& body);
+    // **同じ種類・同じ中身（ID と形式を除く）のアセットが既にあれば、そのパスを返す。**
+    // 名前まで一致したものだけを同じとみなす。まだ保存したことのないアセットを
+    // 書き出す前に引き、見つかったらそれを使う（同じ中身のファイルを増やさない）。
+    // 見つかったファイルの ID を uid へ返す。**必ずその ID で上書きすること**
+    // （新しい ID を振ると、そのファイルを参照している他のシーンが切れる）。
+    std::filesystem::path FindIdenticalAsset(const char* kind, const nlohmann::json& body,
+                                             std::string& uid) const;
     bool ReadAsset(const std::filesystem::path& path, const char* kind, nlohmann::json& body) const;
     bool SaveScene(const std::filesystem::path& path, nlohmann::json& document);
     bool ReadScene(const std::filesystem::path& path, nlohmann::json& document);

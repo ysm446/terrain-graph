@@ -2855,6 +2855,21 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
 bool SaveSharedAssets(ProjectWorkspace& workspace, const ProjectRefs& refs) {
     if (!workspace.Scan()) return false;
     bool valid = true;
+    // **まだファイルを持たないアセットの保存先。** 同じ中身のファイルが既にあれば
+    // それを使う。新規シーンの既定の天球のように、中身の同じアセットが保存のたびに
+    // 「名前_1」「名前_2」と増えていくのを防ぐ。乗っ取らないよう ID も既存のものへ揃える。
+    const auto destination = [&](json& body, const char* kind, const wchar_t* folder,
+                                 const char* name, const char* extension) {
+        std::string existingUid;
+        if (ReadString(body, "uid").empty()) {
+            const auto existing = workspace.FindIdenticalAsset(kind, body, existingUid);
+            if (!existing.empty()) {
+                body["uid"] = existingUid;
+                return existing;
+            }
+        }
+        return workspace.UniquePath(workspace.Root() / folder, name, extension);
+    };
     const auto source = [&](const fs::path& path) -> json {
         if (path.empty()) return nullptr;
         const auto target = workspace.Import(path, workspace.Root() / L"Imported");
@@ -2872,7 +2887,7 @@ bool SaveSharedAssets(ProjectWorkspace& workspace, const ProjectRefs& refs) {
         json body = WriteMaterialBody(*asset, texture);
         body["uid"] = asset->assetUid;
         auto path = asset->assetPath;
-        if (path.empty()) path = workspace.UniquePath(workspace.Root() / L"Materials", asset->name, ".tgmat");
+        if (path.empty()) path = destination(body, "material-asset", L"Materials", asset->name.c_str(), ".tgmat");
         if (!valid || !workspace.SaveAsset(path, "material-asset", body)) return false;
         asset->assetPath = path; asset->assetUid = ReadString(body, "uid");
         materials[asset->id] = workspace.Reference(path);
@@ -2886,7 +2901,7 @@ bool SaveSharedAssets(ProjectWorkspace& workspace, const ProjectRefs& refs) {
         json body = {{"name", asset.name}, {"uid", asset.assetUid},
                      {"source", source(asset.path)}, {"materials", slots}};
         auto path = asset.assetPath;
-        if (path.empty()) path = workspace.UniquePath(workspace.Root() / L"Models", asset.name, ".tgmodel");
+        if (path.empty()) path = destination(body, "model-asset", L"Models", asset.name.c_str(), ".tgmodel");
         if (!valid || !workspace.SaveAsset(path, "model-asset", body)) return false;
         asset.assetPath = path; asset.assetUid = ReadString(body, "uid");
     }
@@ -2896,7 +2911,7 @@ bool SaveSharedAssets(ProjectWorkspace& workspace, const ProjectRefs& refs) {
         body["hdri"] = source(asset->sky.hdriPath);
         body["uid"] = asset->assetUid;
         auto path = asset->assetPath;
-        if (path.empty()) path = workspace.UniquePath(workspace.Root() / L"Skies", asset->name, ".tgsky");
+        if (path.empty()) path = destination(body, "sky-asset", L"Skies", asset->name.c_str(), ".tgsky");
         if (!valid || !workspace.SaveAsset(path, "sky-asset", body)) return false;
         asset->assetPath = path; asset->assetUid = ReadString(body, "uid");
     }
