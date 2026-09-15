@@ -957,7 +957,15 @@ void Application::DrawAssetBrowser() {
                 const auto path = m_workspace.UniquePath(m_assetDirectory, "NewFolder", "");
                 std::error_code error;
                 if (!path.empty()) fs::create_directory(path, error);
-                if (error) TG_LOG_ERROR("フォルダを作成できませんでした");
+                if (error || path.empty()) TG_LOG_ERROR("フォルダを作成できませんでした");
+                else {
+                    // 仮の名前で作ってすぐ改名に入る（エクスプローラと同じ）。
+                    // 一覧は次のフレームで読み直され、その項目に入力欄が付く。
+                    // Esc や名前を変えずに確定したときは仮の名前のまま残る。
+                    m_selectedAssets.assign(1, path);
+                    m_assetRevealTarget = path;
+                    OpenAssetRename(path);
+                }
                 m_assetRefresh = true;
             }
             for (const bool cloud : {false, true}) {
