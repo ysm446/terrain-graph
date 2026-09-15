@@ -1459,7 +1459,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
                 {"streets",weather->streets},{"variation",weather->variation},
                 {"noiseScale",weather->noiseScale},{"detailScale",weather->detailScale},{"distanceLod",weather->distanceLod},{"farDistance",weather->farDistance},{"noiseType",EnumName(kCloudNoiseNames,static_cast<uint32_t>(weather->noiseType))},
                 {"detailStrength",weather->detailStrength},{"edgeSoftness",weather->edgeSoftness},
-                {"extinction",weather->extinction},{"indirectLight",weather->indirectLight},{"ambientLight",weather->ambientLight},
+                {"extinction",weather->extinction},{"indirectLight",weather->indirectLight},{"ambientLight",weather->ambientLight},{"scatterSpread",weather->scatterSpread},
                 {"loopPosition",weather->loopPosition},{"loopDuration",weather->loopDuration},
                 {"seed",weather->seed},{"animate",weather->animate},{"windSpeed",weather->windSpeed},{"windDirection",weather->windDirection},
                 {"evolveNoise",weather->evolveNoise},{"noiseSpeedRatio",weather->noiseSpeedRatio}};
@@ -1500,6 +1500,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["proceduralCloud"]["extinction"] = cloudNoise->extinction;
             item["proceduralCloud"]["indirectLight"] = cloudNoise->indirectLight;
             item["proceduralCloud"]["ambientLight"] = cloudNoise->ambientLight;
+            item["proceduralCloud"]["scatterSpread"] = cloudNoise->scatterSpread;
             item["proceduralCloud"]["seed"] = cloudNoise->seed;
         } else if (const auto* cloud = std::get_if<graph::CloudNodeSettings>(&node.settings)) {
             item["cloud"]["enabled"] = cloud->enabled;
@@ -1521,6 +1522,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["cloud"]["bottomFlatness"] = cloud->bottomFlatness;
             item["cloud"]["indirectLight"] = cloud->indirectLight;
             item["cloud"]["ambientLight"] = cloud->ambientLight;
+            item["cloud"]["scatterSpread"] = cloud->scatterSpread;
             item["cloud"]["seed"] = cloud->seed;
             item["cloud"]["animate"] = cloud->animate;
             item["cloud"]["motionMode"] = cloud->motionMode == 2 ? "drift" : cloud->motionMode == 1 ? "flow" : "translate";
@@ -1756,8 +1758,9 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.detailStrength=std::clamp(ReadFloat(*value,"detailStrength",settings.detailStrength),0.0f,1.0f);
                     settings.edgeSoftness=std::clamp(ReadFloat(*value,"edgeSoftness",settings.edgeSoftness),0.01f,1.0f);
                     settings.extinction=std::clamp(ReadFloat(*value,"extinction",settings.extinction),0.0001f,0.03f);
-                    settings.indirectLight=std::clamp(ReadFloat(*value,"indirectLight",settings.indirectLight),0.0f,5.0f);
+                    settings.indirectLight=std::clamp(ReadFloat(*value,"indirectLight",settings.indirectLight),0.0f,1.0f);
                     settings.ambientLight=std::clamp(ReadFloat(*value,"ambientLight",settings.ambientLight),0.0f,5.0f);
+                    settings.scatterSpread=std::clamp(ReadFloat(*value,"scatterSpread",settings.scatterSpread),0.05f,0.9f);
                     settings.seed=std::clamp(ReadInt(*value,"seed",settings.seed),0,10000);
                     settings.animate=ReadBool(*value,"animate",settings.animate);
                     settings.loopPosition=std::clamp(ReadFloat(*value,"loopPosition",settings.loopPosition),0.0f,1.0f);
@@ -1830,8 +1833,9 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.bottomHeight=std::clamp(ReadFloat(*shape,"bottomHeight",settings.bottomHeight),-20000.0f,20000.0f);
                     settings.bottomFeather=std::clamp(ReadFloat(*shape,"bottomFeather",settings.bottomFeather),0.0f,300.0f);
                     settings.extinction = std::clamp(ReadFloat(*shape, "extinction", settings.extinction), 0.0001f, 0.03f);
-                    settings.indirectLight = std::clamp(ReadFloat(*shape, "indirectLight", settings.indirectLight), 0.0f, 5.0f);
+                    settings.indirectLight = std::clamp(ReadFloat(*shape, "indirectLight", settings.indirectLight), 0.0f, 1.0f);
                     settings.ambientLight = std::clamp(ReadFloat(*shape, "ambientLight", settings.ambientLight), 0.0f, 5.0f);
+                    settings.scatterSpread = std::clamp(ReadFloat(*shape, "scatterSpread", settings.scatterSpread), 0.05f, 0.9f);
                     settings.seed = std::clamp(ReadInt(*shape, "seed", settings.seed), 0, 10000);
                 }
                 created.settings = settings;
@@ -1863,8 +1867,9 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.edgeSoftness = std::clamp(ReadFloat(*cloud, "edgeSoftness", settings.edgeSoftness), 0.02f, 1.0f);
                     settings.flatBottom = ReadBool(*cloud, "flatBottom", false);
                     settings.bottomFlatness = std::clamp(ReadFloat(*cloud, "bottomFlatness", settings.bottomFlatness), 0.0f, 1.0f);
-                    settings.indirectLight = std::clamp(ReadFloat(*cloud, "indirectLight", settings.indirectLight), 0.0f, 5.0f);
+                    settings.indirectLight = std::clamp(ReadFloat(*cloud, "indirectLight", settings.indirectLight), 0.0f, 1.0f);
                     settings.ambientLight = std::clamp(ReadFloat(*cloud, "ambientLight", settings.ambientLight), 0.0f, 5.0f);
+                    settings.scatterSpread = std::clamp(ReadFloat(*cloud, "scatterSpread", settings.scatterSpread), 0.05f, 0.9f);
                 }
                 created.settings = settings;
             } else if (created.kind == graph::NodeKind::Path) {
@@ -2000,6 +2005,7 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     atmosphereNode["clouds"] = atmosphere.clouds != 0;
     atmosphereNode["indirectLight"] = atmosphere.indirectLight;
     atmosphereNode["ambientLight"] = atmosphere.ambientLight;
+    atmosphereNode["scatterSpread"] = atmosphere.scatterSpread;
     atmosphereNode["coverage"] = atmosphere.coverage;
     atmosphereNode["extinction"] = atmosphere.extinction;
     atmosphereNode["cloudBottom"] = atmosphere.cloudBottom;
@@ -2109,8 +2115,9 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
         atmosphere.cloudNoiseType = EnumValue(kCloudNoiseNames, source, "cloudNoiseType", defaults.cloudNoiseType);
         atmosphere.extinction = std::clamp(ReadFloat(source, "extinction", defaults.extinction), .0001f, .03f);
         atmosphere.cloudBottom = std::clamp(ReadFloat(source, "cloudBottom", defaults.cloudBottom), -10000.0f, 10000.0f);
-        atmosphere.indirectLight = std::clamp(ReadFloat(source, "indirectLight", defaults.indirectLight), 0.0f, 5.0f);
+        atmosphere.indirectLight = std::clamp(ReadFloat(source, "indirectLight", defaults.indirectLight), 0.0f, 1.0f);
         atmosphere.ambientLight = std::clamp(ReadFloat(source, "ambientLight", defaults.ambientLight), 0.0f, 5.0f);
+        atmosphere.scatterSpread = std::clamp(ReadFloat(source, "scatterSpread", defaults.scatterSpread), 0.05f, 0.9f);
         atmosphere.cloudThickness = std::clamp(ReadFloat(source, "cloudThickness", defaults.cloudThickness), 10.0f, 6000.0f);
         atmosphere.cloudScale = std::clamp(ReadFloat(source, "cloudScale", defaults.cloudScale), 10.0f, 40000.0f);
         atmosphere.fieldCenterX = std::clamp(ReadFloat(source, "fieldCenterX", defaults.fieldCenterX), -200000.0f, 200000.0f);

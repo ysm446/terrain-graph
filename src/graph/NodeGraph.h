@@ -229,8 +229,9 @@ struct CloudNodeSettings {
     float edgeSoftness = 0.2f;
     bool flatBottom = true;
     float bottomFlatness = 1.0f;
-    float indirectLight = 1.0f;
+    float indirectLight = 1.0f; // 多重散乱の反射率（0〜1）。
     float ambientLight = 1.0f;
+    float scatterSpread = 0.5f; // 多重散乱の広がり（0.05〜0.9）。
     int seed = 1;
     bool animate = false;
     int motionMode = 2; // 0: 雲全体、1: 範囲内の模様、2: 流れながら変化。
@@ -289,7 +290,7 @@ struct CloudWeatherSettings {
     float detailStrength=0.3f;
     float edgeSoftness=0.1f; // 範囲端のフェード（範囲に対する比率）。
     float extinction=0.008f;
-    float indirectLight=1, ambientLight=1;
+    float indirectLight=1, ambientLight=1, scatterSpread=0.5f;
     int seed=1;
     bool animate=false;
     float loopPosition=0.0f, loopDuration=60.0f; // 再生位置0〜1と1周の秒数。
@@ -322,7 +323,7 @@ struct CloudNoiseSettings {
     float scale=500, displacement=120, detail=40, feather=60;
     bool flattenBottom=false;
     float bottomHeight=0, bottomFeather=20;
-    float extinction=0.012f, indirectLight=1, ambientLight=1;
+    float extinction=0.012f, indirectLight=1, ambientLight=1, scatterSpread=0.5f;
     int seed=1;
 };
 struct CloudPrimitive {

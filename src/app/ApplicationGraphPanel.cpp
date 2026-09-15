@@ -1405,7 +1405,12 @@ void Application::DrawGraphPanel() {
             changed |= ui::PropertyFloat("遠景の開始距離", &weather->farDistance, 0.0f, 200000.0f, defaults.farDistance, "この距離より先の雲を 1/4 解像度の別パスで描き、手前と合成します。0 で無効。層は地球と同心の球殻として扱い、遠くの雲は地平線へ沈みます。", "%.0f m");
             changed |= ui::PropertyBool("距離 LOD", &weather->distanceLod, defaults.distanceLod, "オンで遠景ほど刻みを伸ばし、刻みより細かいノイズを平均へ寄せ、25〜60 km より先で細部を省きます。オフは全距離を近景の刻みで評価するため負荷が上がります。");
             changed |= ui::PropertyFloat("密度", &weather->extinction, 0.0001f, 0.03f, defaults.extinction, nullptr, "%.4f");
-            changed |= ui::PropertyFloat("Indirect Light", &weather->indirectLight, 0.0f, 5.0f, defaults.indirectLight, nullptr, "%.2f");
+            changed |= ui::PropertyFloat("Indirect Light", &weather->indirectLight, 0.0f, 1.0f, defaults.indirectLight,
+                "雲の中で繰り返し散乱する太陽光の反射率。1 で各次数のエネルギーが単散乱と同じ上限、\n"
+                "0 は太陽光の多重散乱なし。光を足す方向には働かず、密度・透過率・地形への雲影は変えません。", "%.2f");
+            changed |= ui::PropertyFloat("多重散乱の広がり", &weather->scatterSpread, 0.05f, 0.9f, defaults.scatterSpread,
+                "多重散乱した光が雲の中へ行き渡る度合い。高次ほど太陽方向の減衰を (1-広がり) の累乗で縮めます。\n"
+                "大きいほど陰の側まで光が回って柔らかく、小さいほど陰が締まります。エネルギーは増えません。", "%.2f");
             changed |= ui::PropertyFloat("Ambient Light", &weather->ambientLight, 0.0f, 5.0f, defaults.ambientLight, nullptr, "%.2f");
             changed |= ui::PropertyInt("シード", &weather->seed, 0, 10000, defaults.seed);
             ui::EndPropertyTable();
@@ -1546,7 +1551,12 @@ void Application::DrawGraphPanel() {
                     "雲底から上方向に密度を立ち上げる幅。0では水平面で切り取ります。", "%.0f m");
             }
             changed |= ui::PropertyFloat("密度", &cloudNoise->extinction, 0.0001f, 0.03f, defaults.extinction, "形状を一体にしてノイズと密度を評価します。Volume をCloud Output へ接続。", "%.4f");
-            changed |= ui::PropertyFloat("Indirect Light", &cloudNoise->indirectLight, 0.0f, 5.0f, defaults.indirectLight, "形状を一体にしてノイズと密度を評価します。Volume をCloud Output へ接続。", "%.2f");
+            changed |= ui::PropertyFloat("Indirect Light", &cloudNoise->indirectLight, 0.0f, 1.0f, defaults.indirectLight,
+                "雲の中で繰り返し散乱する太陽光の反射率。1 で各次数のエネルギーが単散乱と同じ上限、\n"
+                "0 は太陽光の多重散乱なし。光を足す方向には働かず、密度・透過率・地形への雲影は変えません。", "%.2f");
+            changed |= ui::PropertyFloat("多重散乱の広がり", &cloudNoise->scatterSpread, 0.05f, 0.9f, defaults.scatterSpread,
+                "多重散乱した光が雲の中へ行き渡る度合い。高次ほど太陽方向の減衰を (1-広がり) の累乗で縮めます。\n"
+                "大きいほど陰の側まで光が回って柔らかく、小さいほど陰が締まります。エネルギーは増えません。", "%.2f");
             changed |= ui::PropertyFloat("Ambient Light", &cloudNoise->ambientLight, 0.0f, 5.0f, defaults.ambientLight, "形状を一体にしてノイズと密度を評価します。Volume をCloud Output へ接続。", "%.2f");
             changed |= ui::PropertyInt("シード", &cloudNoise->seed, 0, 10000, defaults.seed, "形状を一体にしてノイズと密度を評価します。Volume をCloud Output へ接続。");
             ui::EndPropertyTable();
@@ -1598,9 +1608,12 @@ void Application::DrawGraphPanel() {
         ui::HintText("再生中の環境光・反射は固定し、停止後に更新します");
         ui::SectionHeader("ライティング");
         if (ui::BeginPropertyTable("cloudLightingRows")) {
-            changed |= ui::PropertyFloat("Indirect Light", &cloud->indirectLight, 0.0f, 5.0f, defaults.indirectLight,
-                "雲の中で繰り返し散乱する太陽光の倍率。上げると雲自体が明るくなります。\n"
-                "1 は従来の明るさ、0 は太陽光の多重散乱なし。密度・透過率・地形への雲影は変えません。", "%.2f");
+            changed |= ui::PropertyFloat("Indirect Light", &cloud->indirectLight, 0.0f, 1.0f, defaults.indirectLight,
+                "雲の中で繰り返し散乱する太陽光の反射率。1 で各次数のエネルギーが単散乱と同じ上限、\n"
+                "0 は太陽光の多重散乱なし。光を足す方向には働かず、密度・透過率・地形への雲影は変えません。", "%.2f");
+            changed |= ui::PropertyFloat("多重散乱の広がり", &cloud->scatterSpread, 0.05f, 0.9f, defaults.scatterSpread,
+                "多重散乱した光が雲の中へ行き渡る度合い。高次ほど太陽方向の減衰を (1-広がり) の累乗で縮めます。\n"
+                "大きいほど陰の側まで光が回って柔らかく、小さいほど陰が締まります。エネルギーは増えません。", "%.2f");
             changed |= ui::PropertyFloat("Ambient Light", &cloud->ambientLight, 0.0f, 5.0f, defaults.ambientLight,
                 "雲が空と地面反射から受ける環境光の倍率。スカイライト強度に掛け合わせます。\n"
                 "0 は影響なし、1 は従来どおり。地形のスカイライト強度や雲の太陽光・密度は変えません。", "%.2f");

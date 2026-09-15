@@ -419,6 +419,7 @@ int Application::Run() {
             cloudSettings.edgeSoftness = cloud.edgeSoftness;
             cloudSettings.indirectLight = cloud.indirectLight;
             cloudSettings.ambientLight = cloud.ambientLight;
+            cloudSettings.scatterSpread = cloud.scatterSpread;
             cloudSettings.flatCloudBottom = cloud.flatBottom ? cloud.bottomFlatness : 0.0f;
             cloudSettings.seed = static_cast<uint32_t>(cloud.seed);
             cloudSettings.coverage = compiledCloud.layer ? cloud.coverage : 1.0f;

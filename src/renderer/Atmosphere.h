@@ -47,7 +47,7 @@ struct AtmosphereSettings {
     float flatCloudBottom = 0.0f; // 0: 丸い底、1: 平らな底。
     float cloudSkylightIntensity = 1.0f; // 実行時に地形と共通のスカイライト強度を受け取る。
     float cloudBodyOffsetX = 0.0f, cloudBodyOffsetZ = 0.0f; // 雲層の塊と表面ノイズの移流を分離。
-    float indirectLight = 1.0f; // 雲の太陽光の多重散乱の倍率。
+    float indirectLight = 1.0f; // 雲の多重散乱の反射率（0〜1）。高次散乱の寄与を次数ごとにこの比で縮める。
     float ambientLight = 1.0f; // 雲が受ける天空照明の倍率。
     uint32_t cloudCellIndex = UINT32_MAX; // 実行時のみ。周期セルの事前計算。
     uint32_t cloudNoiseType = 0; // 0: Perlin fBM、1: Perlin-Worley。旧 padding を利用する。
@@ -80,8 +80,10 @@ struct AtmosphereSettings {
     float weatherThickness = 5000.0f; // 球殻の厚さ（m）。
     float weatherFar = 20000.0f; // 遠景パスの開始距離（m）。0 で無効。
     float weatherCurvature = 1.0f; // 実行時のみ。1 で球殻状に曲げ、0 で平らな層（プレビュー設定）。
+    float scatterSpread = 0.5f; // 雲の多重散乱の広がり（0.05〜0.9）。高次ほど太陽方向の消散を (1-spread)^n に縮める。
+    float reservedA = 0, reservedB = 0, reservedC = 0; // 16 byte 境界の明示パディング。
 };
-static_assert(sizeof(AtmosphereSettings) == 304);
+static_assert(sizeof(AtmosphereSettings) == 320);
 
 struct CloudGeometry {
     std::vector<AtmosphereSettings::Primitive> primitives;

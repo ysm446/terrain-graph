@@ -26,6 +26,7 @@ struct AtmosphericParameters {
     float weatherType; float weatherAnvil; float weatherWisp; uint opticalCacheSize;
     float weatherStreets; float weatherVariation; float weatherDetailScale; uint weatherLod;
     float weatherBottom; float weatherThickness; float weatherFar; float weatherCurvature;
+    float scatterSpread; float reservedA; float reservedB; float reservedC;
 };
 float3 AtmosphereSun(AtmosphericParameters p) {
     return float3(cos(p.elevation) * sin(p.azimuth), sin(p.elevation), cos(p.elevation) * cos(p.azimuth));
@@ -558,12 +559,16 @@ float4 IntegrateCloudEx(float3 origin, float3 ray, float limit, AtmosphericParam
     // 地形と共通の倍率を天空照明にだけ適用。太陽光と光学的厚さは変えない。
     float3 skyAbove=cloudLighting.Load(int3(0,0,0)).rgb*p.cloudSkylightIntensity*p.ambientLight;
     float3 skyBelow=cloudLighting.Load(int3(1,0,0)).rgb*p.cloudSkylightIntensity*p.ambientLight;
-    float4 phases=float4(CloudPhase(mu,1),CloudPhase(mu,0.5),CloudPhase(mu,0.25),CloudPhase(mu,0.125));
-    // 寄与と消散を分離するオクターブ近似。0.85 は有限次数で失われる光の調整値。
-    // 単散乱は維持し、高次の等方化した太陽光を残す（設計資料 atmospheric-sky.md）。
-    const float contribution=0.85;
-    phases*=float4(1,contribution,contribution*contribution,contribution*contribution*contribution);
-    phases.yzw*=p.indirectLight; // 雲自体の明るさを高次散乱だけで調整する。
+    // 多重散乱のオクターブ近似（設計資料 atmospheric-sky.md）。単散乱は維持し、高次は
+    // 「広がり」で太陽方向の消散を縮め、寄与は同じ縮小率×反射率で縮める。次数ごとの光路積分は
+    // 反射率^n に収まり、単散乱を超える光を作らない。第 5 次は残りの高次を等方位相で代表する。
+    const float spread=clamp(p.scatterSpread,0.05,0.9), albedo=saturate(p.indirectLight);
+    float phases[5]={CloudPhase(mu,1),CloudPhase(mu,0.5),CloudPhase(mu,0.25),CloudPhase(mu,0.125),0.0795774715};
+    float attenuations[5], contributions[5];
+    [unroll] for(uint n=0;n<5;++n) {
+        attenuations[n]=CloudOrderAttenuation(spread,(float)n);
+        contributions[n]=CloudOrderContribution(spread,albedo,(float)n);
+    }
     float transmission=1; float3 radiance=0;
     float weightedDistance=0, weightSum=0;
     float t=start;
@@ -602,25 +607,21 @@ float4 IntegrateCloudEx(float3 origin, float3 ray, float limit, AtmosphericParam
             float verticalProbability=pow(lerp(0.4,1.0,smoothstep(0.07,0.14,hh)),0.8);
             inScatter=lerp(1,depthProbability*verticalProbability,0.6);
         }
-        // 多重散乱のオクターブ近似。太陽光の寄与は上で位相へ適用済み。
+        // 多重散乱のオクターブ近似。太陽光・天空光とも同じ消散の縮小率に従い、
+        // 独立した光源（減衰しない等方項など）は持たない。
         // 地形の直射影にはこの散乱光を使わず、元の Beer 透過率だけを使う。
         float3 light=0;
-        // 天候層: 高次散乱の太陽光は減衰を強めて陰の側を暗くし、天空光の比重を下げる。
-        float orderFalloff=p.localCloud==4 ? 0.8 : 0.5;
+        // 天候層: 天空光の比重を下げる。
         float skyWeight=p.localCloud==4 ? 0.75 : 1.0;
-        [unroll] for(uint order=0;order<4;++order) {
-            float attenuation=pow(orderFalloff,(float)order);
+        [unroll] for(uint order=0;order<5;++order) {
+            float attenuation=attenuations[order];
             float weight=exp2(-(float)order);
             float scale=order==0 ? 1 : inScatter;
             // 下からの天空光・地面反射は雲底を照らす主成分なので in-scatter で削りすぎない。
             float belowScale=p.localCloud==4 ? lerp(1,inScatter,0.5) : inScatter;
-            light+=sunlight*phases[order]*exp(-sunDepth*attenuation)*scale
+            light+=sunlight*phases[order]*contributions[order]*exp(-sunDepth*attenuation)*scale
                 +weight*0.5*skyWeight*(skyAbove*exp(-topDepth*attenuation)*inScatter+skyBelow*exp(-bottomDepth*attenuation)*belowScale);
         }
-        // 天候層: 4次で打ち切った多重散乱の残りを等方項で補う。太陽を背にした視点でも雲頂が白く反射し、
-        // 太陽方向の光学的厚さで減衰するので陰の側との差が残る。
-        // 減衰の異なる2項。後者は厚い雲の内部まで拡散する光を表し、雲底が黒に落ちるのを防ぐ。
-        if (p.localCloud==4) light+=sunlight*p.indirectLight*inScatter*(0.22*exp(-sunDepth*0.5)+0.12*exp(-sunDepth*0.12));
         // 区間内一定の密度・光源に対する解析積分（Beer-Lambert）。
         float opacity=1-exp(-density*p.extinction*stepLength);
         radiance+=transmission*opacity*light;

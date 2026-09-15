@@ -376,7 +376,8 @@ void Atmosphere::UpdateFrameLighting(rhi::Device& device, rhi::PipelineCache& pi
     auto settings = m_applied;
     settings.opticalDepthIndex = UINT32_MAX;
     settings.ambientLight = 1.0f; // 天空照明の倍率は光学的厚さを変えない。
-    settings.indirectLight = 1.0f; // 散乱の倍率は光学的厚さを変えない。
+    settings.indirectLight = 1.0f; // 散乱の反射率は光学的厚さを変えない。
+    settings.scatterSpread = 0.5f; // 散乱の広がりも光学的厚さを変えない。
     settings.cloudSkylightIntensity = 1.0f; // 照明倍率は光学的厚さを変えない。
     if (m_opticalDirty || std::memcmp(&settings, &m_opticalSettings, sizeof(settings)) != 0) {
         auto* pipeline = pipelines.GetCompute(L"AtmosphereOpticalDepth.hlsl", L"CsMain");

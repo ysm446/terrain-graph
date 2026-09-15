@@ -684,6 +684,7 @@ CompiledCloud NodeGraph::CompileCloud() const {
             cloud.extinction = weather.extinction;
             cloud.indirectLight = weather.indirectLight;
             cloud.ambientLight = weather.ambientLight;
+            cloud.scatterSpread = weather.scatterSpread;
             cloud.seed = weather.seed;
             cloud.flatBottom = false;
             cloud.animate = weather.animate;
@@ -720,6 +721,7 @@ CompiledCloud NodeGraph::CompileCloud() const {
             cloud.extinction=noise.extinction;
             cloud.indirectLight=noise.indirectLight;
             cloud.ambientLight=noise.ambientLight;
+            cloud.scatterSpread=noise.scatterSpread;
             cloud.seed=noise.seed;
             if (result.connected) {
                 float loX=1e9f,loY=1e9f,loZ=1e9f,hiX=-1e9f,hiY=-1e9f,hiZ=-1e9f;

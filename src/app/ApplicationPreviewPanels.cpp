@@ -376,9 +376,12 @@ void Application::DrawLightingPanel() {
                                      "立体的な雲を描画し、環境光と反射にも反映します。\n"
                                      "ライトの「影」がオンなら地形に雲影も落とします。オフにしても雲の設定は保持されます。")) sky.clouds = clouds ? 1u : 0u;
                 if (clouds) {
-                    ui::PropertyFloat("Indirect Light", &sky.indirectLight, 0.0f, 5.0f, defaults.indirectLight,
-                        "雲の中で繰り返し散乱する太陽光の倍率。上げると雲自体が明るくなります。\n"
-                        "1 は従来の明るさ、0 は太陽光の多重散乱なし。密度・透過率・地形への雲影は変えません。", "%.2f");
+                    ui::PropertyFloat("Indirect Light", &sky.indirectLight, 0.0f, 1.0f, defaults.indirectLight,
+                        "雲の中で繰り返し散乱する太陽光の反射率。1 で各次数のエネルギーが単散乱と同じ上限、\n"
+                "0 は太陽光の多重散乱なし。光を足す方向には働かず、密度・透過率・地形への雲影は変えません。", "%.2f");
+                    ui::PropertyFloat("多重散乱の広がり", &sky.scatterSpread, 0.05f, 0.9f, defaults.scatterSpread,
+                        "多重散乱した光が雲の中へ行き渡る度合い。高次ほど太陽方向の減衰を (1-広がり) の累乗で縮めます。\n"
+                "大きいほど陰の側まで光が回って柔らかく、小さいほど陰が締まります。エネルギーは増えません。", "%.2f");
                     ui::PropertyFloat("Ambient Light", &sky.ambientLight, 0.0f, 5.0f, defaults.ambientLight,
                         "雲が空と地面反射から受ける環境光の倍率。スカイライト強度に掛け合わせます。\n"
                         "0 は影響なし、1 は従来どおり。地形のスカイライト強度や雲の太陽光・密度は変えません。", "%.2f");

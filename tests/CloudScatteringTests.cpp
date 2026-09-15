@@ -24,4 +24,24 @@ void RunCloudScatteringTests() {
     Check(std::abs(CloudPhase(-1e-5f,1)-CloudPhase(1e-5f,1))<1e-5,"No discontinuity across the sun's perpendicular plane");
     Check(CloudPhase(1,1)>CloudPhase(-1,1) && CloudPhase(-1,1)>CloudPhase(-0.5f,1),
           "Forward peak and a separate back-scattering lobe");
+    // 各次数の光路積分 ∫ contribution·exp(-attenuation·τ) dτ = contribution/attenuation は
+    // albedo^n。albedo<=1 なら単散乱（次数 0 の 1）を超えず、次数が上がると単調に減る。
+    using tg::renderer::CloudOrderAttenuation;
+    using tg::renderer::CloudOrderContribution;
+    bool conserving=true, monotone=true, shrinking=true;
+    for (float spread : {0.05f,0.5f,0.9f}) for (float albedo : {0.0f,0.5f,1.0f}) {
+        double previous=1;
+        for (int order=0; order<5; ++order) {
+            const double attenuation=CloudOrderAttenuation(spread,float(order));
+            const double energy=CloudOrderContribution(spread,albedo,float(order))/attenuation;
+            conserving=conserving && energy<=1+1e-6 && std::abs(energy-std::pow(albedo,order))<1e-5;
+            monotone=monotone && energy<=previous+1e-6;
+            previous=energy;
+            shrinking=shrinking && std::abs(attenuation-std::pow(1.0-spread,order))<1e-6;
+        }
+    }
+    Check(conserving,"Per-order path-integrated energy is albedo^n and never exceeds single scattering");
+    Check(monotone,"Higher orders never carry more energy than lower ones");
+    Check(shrinking,"Sun-direction attenuation shrinks by (1-spread)^n");
+    Check(CloudOrderAttenuation(0.9f,3)<CloudOrderAttenuation(0.3f,3),"Larger spread lets higher orders reach deeper");
 }
