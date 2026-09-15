@@ -14,6 +14,10 @@ namespace tg::ui {
 // 参照欄の右に置く、アセットブラウザへ移動するアイコン。
 bool RevealSourceButton(bool enabled, const char* tooltip);
 
+// 未保存の印。行の高さの枠に小さな丸を描く（テーマのアクセント色）。
+// フォントに無い記号を避けて図形で描く。tooltip はホバー時の説明。
+void UnsavedMark(const char* tooltip);
+
 // 部品の寸法。96 DPI 基準の値を置き、使うときに Scaled() で現在の DPI へ合わせる。
 // 値の意味と使い分けは design-guide.md にある。種類を勝手に増やさない。
 inline constexpr float kLabelColumnWidth = 108.0f;

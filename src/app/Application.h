@@ -14,6 +14,7 @@
 #include "app/UndoHistory.h"
 #include "io/AppSettings.h"
 #include "io/MaterialExport.h"
+#include "io/ProjectIo.h"
 #include "io/RecentFiles.h"
 #include "renderer/MaterialSphere.h"
 #include "renderer/ModelPreview.h"
@@ -80,6 +81,8 @@ struct StartupOptions {
     std::filesystem::path importModel; // 開発用。読み込みとプレビューの確認。
     std::filesystem::path revealAsset; // 開発用。参照元への移動を画面確認する。
     graph::GraphId selectNode = 0; // 開発用。読み込んだグラフのプロパティを画像で確認する。
+    // 開発用。読み込んだシーンの全項目を未保存扱いにし、階層の印と保存ボタンを画像で確認する。
+    bool showUnsaved = false;
 };
 
 // アプリ本体。ウィンドウ、デバイス、UI の生存期間とフレームループを持つ。
@@ -239,6 +242,17 @@ private:
     void DrawRecentMenu();
     // saveAs が偽でも、まだ保存先が決まっていなければダイアログを出す。
     void RequestSaveProject(bool saveAs);
+    // シーン階層の項目 1 つだけを保存する要求（0 地形 / 1 雲 / 2 大気散乱スカイ / 3 シーン本体）。
+    // シーン本体は変更の無い部品を書き直さず、まだ無い部品だけ作る。
+    // まだ保存先の無いシーンでは、通常の保存（保存先の問い合わせ）へ回す。
+    void RequestComponentSave(int item);
+    // 現在の内容を最後に保存 / 読み込みした内容と比べ、未保存の項目を m_sceneDirty へ入れる。
+    // グラフの書き出しを通すので毎フレームは呼ばず、編集の確定・ドラッグの終わり・保存の後で呼ぶ。
+    void RefreshSceneDirty();
+    // mask（kDirty* のビット）の項目を「いま保存した内容」として覚える。
+    void MarkSceneSaved(unsigned mask);
+    // 未保存の項目名を「、」で繋いだ文字列。確認ダイアログに出す。
+    std::string UnsavedItemNames() const;
     void SaveSceneThumbnail(const std::filesystem::path& path);
     // 画面下端のステータスバー。操作モード・評価中の状態と直近の通知を出す。
     // ドックスペースより前に呼ぶこと（作業領域をバーのぶん狭める）。
@@ -640,6 +654,30 @@ private:
     bool m_sceneSwitchDialog = false;
     bool m_allowSceneSwitch = false;
     bool m_saveThenSwitch = false;
+    // 切り替えではなく終了の確認として同じダイアログを出している印。
+    bool m_deferredExit = false;
+    // 確認を済ませたので、次の閉じる要求はそのまま通す。
+    bool m_allowClose = false;
+
+    // --- 未保存の判定 -------------------------------------------------------
+    // 項目のビット。地形 / 雲 / 大気散乱スカイは部品のファイル、シーン本体は .tgscene、
+    // 共有はマテリアルとモデル（Ctrl+S でまとめて書く。階層には出さない）。
+    static constexpr unsigned kDirtyTerrain = 1;
+    static constexpr unsigned kDirtyCloud = 2;
+    static constexpr unsigned kDirtyAtmosphere = 4;
+    static constexpr unsigned kDirtyScene = 8;
+    static constexpr unsigned kDirtyShared = 16;
+    // 最後に保存 / 読み込みした内容の指紋。現在の内容と比べて未保存の印を出す。
+    io::SceneFingerprint m_savedFingerprint;
+    // 未保存の項目（kDirty* のビット）。
+    unsigned m_sceneDirty = 0;
+    // ペイントの筆跡は指紋に映らないので、塗ったグラフを別に覚える（bit0 地形 / bit1 雲）。
+    unsigned m_paintDirty = 0;
+    // 項目単位の保存要求。ファイル入出力を伴うのでフレームの外で処理する。
+    int m_pendingComponentSave = -1;
+    // 前のフレームで掴んでいたウィジェット。離れたフレームに未保存の判定を更新する
+    // （ノードの移動のように、アンドゥの段を積まない編集も拾う）。
+    uint32_t m_lastActiveWidget = 0;
     nlohmann::json m_sceneComponents = nlohmann::json::array();
     int m_editComponent = -1;
     bool m_pendingComponentMigration = false;

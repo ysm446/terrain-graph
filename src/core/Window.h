@@ -31,6 +31,9 @@ public:
 
     // メニューなどからアプリを閉じる。
     void RequestClose() { m_shouldClose = true; }
+    // 閉じる要求を取り下げる。未保存の確認を出すときに使う（WM_CLOSE はウィンドウを
+    // 壊さずに要求だけ立てるので、取り下げれば動き続けられる）。
+    void CancelClose() { m_shouldClose = false; }
 
     // タイトルバーの文字列を差し替える。開いているプロジェクト名を出すのに使う。
     void SetTitle(const wchar_t* title);

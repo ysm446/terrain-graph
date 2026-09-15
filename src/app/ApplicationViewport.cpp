@@ -607,6 +607,12 @@ void Application::HandlePaintInput(compositor::MaterialLayer& layer, bool itemAc
         m_strokeActive = true;
         m_strokeLastX = x;
         m_strokeLastY = y;
+        // 筆跡は GPU 上にあって文書の指紋に映らない。塗ったグラフを未保存として覚える。
+        // 対象は選択中ノードのレイヤー（CurrentPaintLayer と同じ）。
+        if (const graph::Node* node = m_graph.FindNode(m_selectedGraphNode); node != nullptr) {
+            m_paintDirty |= node->component == 1 ? 2u : 1u;
+            RefreshSceneDirty();
+        }
     }
 
     compositor::BrushStroke stroke;

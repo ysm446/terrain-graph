@@ -185,6 +185,8 @@ bool Application::Initialize(const StartupOptions& options) {
 
     // アンドゥの起点。ここを取り忘れると、最初の 1 回が空の文書へ戻ってしまう。
     m_committed = CaptureDocument();
+    // 起動直後の空のシーンは保存済みとみなす。
+    MarkSceneSaved(~0u);
 
     TG_LOG_INFO("terrain-graph %s を起動しました", TG_APP_VERSION);
     return true;
@@ -279,7 +281,18 @@ int Application::Run() {
     std::chrono::steady_clock::time_point benchmarkStart;
     uint32_t capturedScreenshots = 0;
     uint64_t nextScreenshotFrame = m_options.screenshotFrame;
-    while (m_window.PumpMessages()) {
+    while (true) {
+        if (!m_window.PumpMessages()) {
+            // 未保存の変更があれば、閉じる前に保存の機会を設ける。確認は
+            // シーン切り替えと同じダイアログで、答えが出たら改めて閉じる。
+            // 一時プレビュー中は保存先が定まらないので、従来どおりそのまま閉じる。
+            if (m_allowClose || Headless() || m_componentPreview >= 0) break;
+            RefreshSceneDirty();
+            if (m_sceneDirty == 0) break;
+            m_window.CancelClose();
+            m_deferredExit = true;
+            m_sceneSwitchDialog = true;
+        }
         if (m_window.IsMinimized()) {
             ::WaitMessage();
             continue;
@@ -746,11 +759,16 @@ void Application::DrawUi() {
         m_committed = CaptureDocument();
         // 古い段が押し出されると、そこでしか参照されていなかったマスクが浮く。
         m_pendingPaintSweep = true;
+        RefreshSceneDirty();
     }
     // 掴んでいたものが離れたら、次の編集は別の段にする。
-    if (ImGui::GetActiveID() == 0) {
+    const auto activeWidget = static_cast<uint32_t>(ImGui::GetActiveID());
+    if (activeWidget == 0) {
         m_undoHistory.EndEdit();
+        // ノードの移動のように段を積まない編集も、離した時点で未保存の判定へ映す。
+        if (m_lastActiveWidget != 0) RefreshSceneDirty();
     }
+    m_lastActiveWidget = activeWidget;
 
     // **撮影するフレームには通知を描かない。** 直前の通知が写り込んでしまう。
     // 他のウィンドウより後に描くことで最前面に出す。

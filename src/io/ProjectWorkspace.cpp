@@ -344,6 +344,8 @@ bool ProjectWorkspace::SaveScene(const fs::path& path, json& document) {
         if (document.value("_componentOnly", -1) >= 0) return true;
         return SetStartupScene(path);
     }
+    // 部品単位の指定は部品のあるシーンだけのもの。旧形式のファイルには残さない。
+    document.erase("_componentWrite");
     if (!WriteJson(path, document)) return false;
     return SetStartupScene(path);
 }

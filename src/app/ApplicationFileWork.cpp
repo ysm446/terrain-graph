@@ -59,6 +59,73 @@ void Application::RequestSaveProject(bool saveAs) {
     }
 }
 
+void Application::RequestComponentSave(int item) {
+    CommitMaterialEdit();
+    // 保存先の無いシーンと旧形式のシーンは、項目に分けて書けない。通常の保存へ回す。
+    if (m_componentPreview >= 0 || m_projectPath.extension() != L".tgscene" || !m_sceneComponents.is_array()) {
+        RequestSaveProject(false);
+        return;
+    }
+    // まだファイルの無い部品は、単独では作れない（シーンが参照を持てない）。シーン本体の保存で作る。
+    if (item == 2 && m_sceneAtmosphere.is_null()) item = 3;
+    if (item >= 0 && item < 2) {
+        bool placed = false;
+        for (const auto& entry : m_sceneComponents)
+            if (io::ProjectWorkspace::String(entry, "role") == (item == 1 ? "cloud" : "terrain")) placed = true;
+        if (!placed) item = 3;
+    }
+    m_pendingComponentSave = item;
+}
+
+// --- 未保存の判定 -----------------------------------------------------------
+
+void Application::RefreshSceneDirty() {
+    io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
+                         m_skyLibrary,     m_renderer,       m_graph, &m_models, &m_sceneComponents, -1, &m_sceneAtmosphere};
+    const io::SceneFingerprint now = io::FingerprintScene(refs);
+    unsigned dirty = 0;
+    if (now.terrain != m_savedFingerprint.terrain || (m_paintDirty & 1u)) dirty |= kDirtyTerrain;
+    if (now.cloud != m_savedFingerprint.cloud || (m_paintDirty & 2u)) dirty |= kDirtyCloud;
+    if (now.atmosphere != m_savedFingerprint.atmosphere) dirty |= kDirtyAtmosphere;
+    if (now.scene != m_savedFingerprint.scene) dirty |= kDirtyScene;
+    if (now.shared != m_savedFingerprint.shared) dirty |= kDirtyShared;
+    if (dirty != m_sceneDirty) {
+        m_sceneDirty = dirty;
+        UpdateWindowTitle();
+    }
+}
+
+void Application::MarkSceneSaved(unsigned mask) {
+    io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
+                         m_skyLibrary,     m_renderer,       m_graph, &m_models, &m_sceneComponents, -1, &m_sceneAtmosphere};
+    const io::SceneFingerprint now = io::FingerprintScene(refs);
+    if (mask & kDirtyTerrain) { m_savedFingerprint.terrain = now.terrain; m_paintDirty &= ~1u; }
+    if (mask & kDirtyCloud) { m_savedFingerprint.cloud = now.cloud; m_paintDirty &= ~2u; }
+    if (mask & kDirtyAtmosphere) m_savedFingerprint.atmosphere = now.atmosphere;
+    if (mask & kDirtyScene) m_savedFingerprint.scene = now.scene;
+    if (mask & kDirtyShared) m_savedFingerprint.shared = now.shared;
+    RefreshSceneDirty();
+}
+
+std::string Application::UnsavedItemNames() const {
+    std::string names;
+    const auto add = [&names](const char* name) {
+        if (!names.empty()) names += "、";
+        names += name;
+    };
+    // 旧形式のシーンは全部が 1 つのファイルなので、シーンとしてまとめる。
+    if (!m_sceneComponents.is_array()) {
+        if (m_sceneDirty & ~kDirtyShared) add("シーン");
+    } else {
+        if (m_sceneDirty & kDirtyScene) add("シーン");
+        if (m_sceneDirty & kDirtyTerrain) add("地形グラフ");
+        if (m_sceneDirty & kDirtyCloud) add("雲グラフ");
+        if (m_sceneDirty & kDirtyAtmosphere) add("大気散乱スカイ");
+    }
+    if (m_sceneDirty & kDirtyShared) add("マテリアル・モデル");
+    return names;
+}
+
 // 保存ボタンを押した時点で画面に表示していたビューポートを残す。
 // フレーム外で完了させ、保存後に別シーンへ切り替わっても混ざらないようにする。
 void Application::SaveSceneThumbnail(const std::filesystem::path& path) {
@@ -279,8 +346,13 @@ void Application::FinishComponentPreview(bool place) {
     }
     if (!place) { m_graph = std::move(m_previewOriginalGraph); m_sceneComponents = m_previewOriginalComponents; }
     m_previewOriginalGraph = graph::NodeGraph{}; m_previewOriginalComponents = nullptr;
+    const int previewed = m_componentPreview;
     m_componentPreview = -1; m_componentPreviewPath.clear();
     m_undoHistory.Clear(); m_documentDirty = false; m_committed = CaptureDocument();
+    // 配置したグラフはファイルから読んだままなので保存済み。シーン本体は参照が変わるので未保存になる。
+    // 破棄して戻したときは、元グラフの未保存の編集をそのまま未保存として扱う。
+    if (place) MarkSceneSaved(previewed == 1 ? kDirtyCloud : kDirtyTerrain);
+    else RefreshSceneDirty();
     m_compiledGraphRevision = 0; m_graphStack.MarkDirty();
     for (auto& slot : m_cloudMasks) slot.graphRevision = 0;
     const int component = m_editComponent;
@@ -339,12 +411,18 @@ void Application::ResetProject() {
     m_documentDirty = false;
     m_pendingHistoryStep = 0;
     m_committed = CaptureDocument();
+    MarkSceneSaved(~0u);
 }
 
 void Application::UpdateWindowTitle() {
     std::wstring title;
     if (!m_projectPath.empty()) {
-        title = m_projectPath.filename().wstring() + L" - ";
+        title = m_projectPath.filename().wstring();
+        // 未保存の変更がある間は名前の後ろに * を付ける（一般的なエディタと同じ印）。
+        if (m_sceneDirty != 0) title += L"*";
+        title += L" - ";
+    } else if (m_sceneDirty != 0) {
+        title = L"新規シーン* - ";
     }
     title += L"Terrain Graph";
     m_window.SetTitle(title.c_str());
@@ -361,8 +439,10 @@ void Application::ProcessPendingFileWork() {
         m_pendingProjectOpen = std::move(m_pendingAssetOpen); m_pendingAssetOpen.clear();
     }
     // 対話中のシーン/ルート切り替えは、保存の機会を設けてから実行する。
-    if ((!m_pendingRoot.empty() || !m_pendingProjectOpen.empty() || m_pendingProjectNew) &&
-        m_frameCounter > 1 && !Headless() && !m_allowSceneSwitch) {
+    // 未保存の変更が無ければ確認を挟まずに切り替える。
+    const bool switching = !m_pendingRoot.empty() || !m_pendingProjectOpen.empty() || m_pendingProjectNew;
+    if (switching && m_frameCounter > 1 && !Headless() && !m_allowSceneSwitch) RefreshSceneDirty();
+    if (switching && m_frameCounter > 1 && !Headless() && !m_allowSceneSwitch && m_sceneDirty != 0) {
         m_deferredRoot = std::move(m_pendingRoot); m_pendingRoot.clear();
         m_deferredScene = std::move(m_pendingProjectOpen); m_pendingProjectOpen.clear();
         m_deferredNew = m_pendingProjectNew; m_pendingProjectNew = false;
@@ -404,6 +484,7 @@ void Application::ProcessPendingFileWork() {
         }
         m_committed = CaptureDocument();
         m_pendingPaintSweep = true;
+        RefreshSceneDirty();
     }
 
     if (m_pendingPaintSweep) {
@@ -459,6 +540,12 @@ void Application::ProcessPendingFileWork() {
             m_documentDirty = false;
             m_pendingHistoryStep = 0;
             m_committed = CaptureDocument();
+            MarkSceneSaved(~0u);
+            if (m_options.showUnsaved) {
+                // 保存済みの指紋を空にして、比較の経路そのものを通して全項目を未保存にする。
+                m_savedFingerprint = {};
+                RefreshSceneDirty();
+            }
             UpdateWindowTitle();
             // ルートの切り替えも含めた、このフレームで読み込みに掛かった時間。
             m_sceneLoadSeconds =
@@ -479,6 +566,9 @@ void Application::ProcessPendingFileWork() {
         io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
                              m_skyLibrary,     m_renderer,       m_graph, &m_models, &m_sceneComponents, -1, &m_sceneAtmosphere};
         if (m_componentPreview >= 0) refs.componentOnly = m_componentPreview;
+        // 変更の無い部品は書き直さない。共有アセットへの余計な上書きとバックアップを避ける。
+        RefreshSceneDirty();
+        refs.componentWrite = static_cast<int>(m_sceneDirty & (kDirtyTerrain | kDirtyCloud | kDirtyAtmosphere));
         if (io::SaveProject(path, m_device, refs, &m_workspace)) {
             if (m_componentPreview >= 0) {
                 m_assetRefresh = true;
@@ -489,12 +579,47 @@ void Application::ProcessPendingFileWork() {
             m_assetRefresh = true;
             m_recentProjects.Add(m_workspace.Root(), path);
             m_projectPath = path;
+            MarkSceneSaved(~0u);
             UpdateWindowTitle();
             if (m_saveThenSwitch) { m_saveThenSwitch = false; ResumeSceneSwitch(); }
         } else {
             m_saveThenSwitch = false;
-            m_deferredRoot.clear(); m_deferredScene.clear(); m_deferredNew = false;
+            m_deferredRoot.clear(); m_deferredScene.clear(); m_deferredNew = false; m_deferredExit = false;
             TG_LOG_ERROR("シーンの保存に失敗しました。現在の作業を保持しています");
+        }
+    }
+
+    // 階層の項目 1 つだけの保存。共有アセット（マテリアル・モデル）は通常の保存と同じく一緒に書く。
+    if (m_pendingComponentSave >= 0) {
+        const int item = m_pendingComponentSave;
+        m_pendingComponentSave = -1;
+        static const char* const kItemNames[] = {"地形グラフ", "雲グラフ", "大気散乱スカイ", "シーン"};
+        io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
+                             m_skyLibrary,     m_renderer,       m_graph, &m_models, &m_sceneComponents, -1, &m_sceneAtmosphere};
+        unsigned saved = kDirtyShared;
+        if (item < 3) {
+            refs.componentOnly = item;
+            saved |= 1u << item;
+        } else {
+            // シーン本体だけ。部品はまだファイルの無いものだけ作られる。
+            refs.componentWrite = 0;
+            saved |= kDirtyScene;
+            const auto hasComponent = [&](const char* role) {
+                for (const auto& entry : m_sceneComponents)
+                    if (io::ProjectWorkspace::String(entry, "role") == role) return true;
+                return false;
+            };
+            if (!hasComponent("terrain")) saved |= kDirtyTerrain;
+            if (!hasComponent("cloud")) saved |= kDirtyCloud;
+            if (m_sceneAtmosphere.is_null()) saved |= kDirtyAtmosphere;
+        }
+        if (io::SaveProject(m_projectPath, m_device, refs, &m_workspace)) {
+            if (item == 3) SaveSceneThumbnail(m_projectPath);
+            m_assetRefresh = true;
+            MarkSceneSaved(saved);
+            TG_LOG_INFO("%sを保存しました", kItemNames[item]);
+        } else {
+            TG_LOG_ERROR("%sの保存に失敗しました。現在の作業を保持しています", kItemNames[item]);
         }
     }
 

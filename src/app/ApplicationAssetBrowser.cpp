@@ -391,17 +391,31 @@ void Application::RelinkAssetPaths(const fs::path& from, const fs::path& to) {
 }
 
 void Application::ResumeSceneSwitch() {
+    m_sceneSwitchDialog = false;
+    // 終了の確認だったなら、改めて閉じる。今度は確認を出さない。
+    if (m_deferredExit) {
+        m_deferredExit = false;
+        m_allowClose = true;
+        m_window.RequestClose();
+        return;
+    }
     m_pendingRoot = std::move(m_deferredRoot); m_deferredRoot.clear();
     m_pendingProjectOpen = std::move(m_deferredScene); m_deferredScene.clear();
     m_pendingProjectNew = m_deferredNew; m_deferredNew = false;
     m_allowSceneSwitch = true;
-    m_sceneSwitchDialog = false;
 }
+// 未保存の変更があるときだけ出す。切り替えと終了の両方で使う。
 void Application::DrawSceneSwitchDialog() {
-    if (m_sceneSwitchDialog && !ImGui::IsPopupOpen("シーンの切り替え")) ImGui::OpenPopup("シーンの切り替え");
-    if (!ImGui::BeginPopupModal("シーンの切り替え", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
-    ui::HintText("現在のシーンと共有アセットを保存してから切り替えますか？");
-    if (ImGui::Button("保存して切り替え")) {
+    const char* title = m_deferredExit ? "終了の確認" : "シーンの切り替え";
+    if (m_sceneSwitchDialog && !ImGui::IsPopupOpen(title)) ImGui::OpenPopup(title);
+    if (!ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    ui::HintText(m_deferredExit ? "未保存の変更があります。保存してから終了しますか？"
+                                : "未保存の変更があります。保存してから切り替えますか？");
+    if (ui::BeginPropertyTable("unsavedItems")) {
+        ui::PropertyValue("未保存", "%s", UnsavedItemNames().c_str());
+        ui::EndPropertyTable();
+    }
+    if (ImGui::Button(m_deferredExit ? "保存して終了" : "保存して切り替え")) {
         RequestSaveProject(false);
         if (!m_pendingProjectSave.empty()) {
             m_saveThenSwitch = true;
@@ -410,10 +424,11 @@ void Application::DrawSceneSwitchDialog() {
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button("保存せず切り替え")) { ResumeSceneSwitch(); ImGui::CloseCurrentPopup(); }
+    if (ImGui::Button(m_deferredExit ? "保存せず終了" : "保存せず切り替え")) { ResumeSceneSwitch(); ImGui::CloseCurrentPopup(); }
     ImGui::SameLine();
     if (ImGui::Button("キャンセル")) {
         m_sceneSwitchDialog = false; m_deferredRoot.clear(); m_deferredScene.clear(); m_deferredNew = false;
+        m_deferredExit = false;
         ImGui::CloseCurrentPopup();
     }
     ImGui::EndPopup();

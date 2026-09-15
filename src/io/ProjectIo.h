@@ -29,9 +29,33 @@ struct ProjectRefs {
     graph::NodeGraph& graph;
     std::vector<renderer::ModelAsset>* models = nullptr;
     nlohmann::json* components = nullptr;
+    // 0 以上なら、その部品だけを書く（0 地形 / 1 雲 / 2 大気散乱スカイ）。シーン本体は書かない。
     int componentOnly = -1;
     nlohmann::json* atmosphereAsset = nullptr;
+    // シーン全体の保存で書き直す部品（kWriteTerrain などのビット）。
+    // ビットの無い部品は、まだファイルが無いときだけ作る。既定は全部。
+    int componentWrite = 7;
 };
+
+// componentWrite のビット。
+inline constexpr int kWriteTerrain = 1;
+inline constexpr int kWriteCloud = 2;
+inline constexpr int kWriteAtmosphere = 4;
+
+// 保存済みかどうかの判定に使う、部品ごとの内容の指紋。
+//
+// 保存時と同じ分け方で地形 / 雲 / 大気散乱スカイ / シーン本体 / 共有アセット
+// （マテリアル・モデル）へ振り分け、それぞれの JSON のハッシュを取る。
+// 読み込みや保存の直後の値と比べれば、どの項目にまだ書いていない変更があるか分かる。
+// ペイントの筆跡は GPU 上にあり、ここには映らない。
+struct SceneFingerprint {
+    size_t terrain = 0;
+    size_t cloud = 0;
+    size_t atmosphere = 0;
+    size_t scene = 0;
+    size_t shared = 0;
+};
+SceneFingerprint FingerprintScene(const ProjectRefs& refs);
 
 bool SaveWorkEnvironment(ProjectWorkspace& workspace, const ProjectRefs& refs, bool saveAsset = true);
 bool LoadWorkEnvironment(ProjectWorkspace& workspace, rhi::Device& device,

@@ -1025,38 +1025,75 @@ void Application::OpenComponentEditor(int component) {
 
 void Application::DrawSceneHierarchy() {
     if (!ImGui::Begin("シーン階層")) { ImGui::End(); return; }
+    const bool components = m_sceneComponents.is_array();
+    // 一時プレビュー中は保存先がプレビューのグラフになるので、項目の印と保存は出さない。
+    const bool previewing = m_componentPreview >= 0;
+    // 旧形式のシーンは全部が 1 つのファイル。シーンの行にまとめて印を出す。
+    const unsigned sceneDirty = components ? (m_sceneDirty & kDirtyScene) : (m_sceneDirty & ~kDirtyShared);
+
+    // 行の右端に置く「未保存の印 + 保存ボタン」の幅。変更のある行にだけ出す。
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float controlsWidth = ImGui::GetFrameHeight() + style.ItemSpacing.x + ui::TextScaled(ui::kButtonWidth);
+    const auto unsavedControls = [&](bool dirty, int item, const char* tooltip) {
+        if (!dirty || previewing) return;
+        ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - controlsWidth);
+        ui::UnsavedMark("未保存の変更があります");
+        ImGui::SameLine();
+        ImGui::PushID(item);
+        if (ui::Button("保存")) RequestComponentSave(item);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", tooltip);
+        ImGui::PopID();
+    };
+    // 見出しは Selectable の幅を控えの分だけ縮め、右端の操作を覆わないようにする。
+    const auto rowWidth = [&](bool dirty) {
+        return (dirty && !previewing) ? ImVec2(ImGui::GetContentRegionAvail().x - controlsWidth - style.ItemSpacing.x, 0.0f)
+                                      : ImVec2(0.0f, 0.0f);
+    };
+
     ImGui::TextUnformatted(m_projectPath.empty() ? "新規シーン" : ToUtf8Display(m_projectPath.stem()).c_str());
-    if (!m_sceneComponents.is_array()) {
+    unsavedControls(sceneDirty != 0, 3,
+                    components ? "シーン本体だけを保存する。部品のファイルは書き換えない" : "シーンを保存する");
+    if (!components) {
         ui::HintText("旧形式のシーンです。保存済みの元データを残して部品へ分離できます。");
         if (ui::Button("部品へ分離…", ui::kWideButtonWidth)) m_pendingComponentMigration = true;
     }
     const auto graphEntry = [&](int component) {
         ImGui::PushID(component);
+        const bool dirty = components && (m_sceneDirty & (component ? kDirtyCloud : kDirtyTerrain));
         if (ImGui::Selectable(component ? "雲グラフ" : "地形グラフ", m_editComponent == component,
-                              ImGuiSelectableFlags_AllowDoubleClick) && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
-            OpenComponentEditor(m_sceneComponents.is_array() ? component : -1);
+                              ImGuiSelectableFlags_AllowDoubleClick, rowWidth(dirty)) &&
+            ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+            OpenComponentEditor(components ? component : -1);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("ダブルクリックで編集");
-        if (m_sceneComponents.is_array()) for (const auto& entry : m_sceneComponents)
+        unsavedControls(dirty, component, "このグラフのファイルだけを保存する");
+        if (components) for (const auto& entry : m_sceneComponents)
             if (io::ProjectWorkspace::String(entry, "role") == (component ? "cloud" : "terrain")) {
                 const auto path = m_workspace.Resolve(entry.value("asset", nlohmann::json::object()));
                 ImGui::TextDisabled("%s", ToUtf8Display(path.filename()).c_str());
             }
         ImGui::PopID();
     };
-    ImGui::BeginDisabled(m_componentPreview >= 0);
+    ImGui::BeginDisabled(previewing);
     graphEntry(0);
     if (ImGui::TreeNodeEx("空", ImGuiTreeNodeFlags_DefaultOpen)) {
-        if (ImGui::Selectable("大気散乱スカイ", false, ImGuiSelectableFlags_AllowDoubleClick) &&
+        const bool atmosphereDirty = components && (m_sceneDirty & kDirtyAtmosphere);
+        if (ImGui::Selectable("大気散乱スカイ", false, ImGuiSelectableFlags_AllowDoubleClick, rowWidth(atmosphereDirty)) &&
             ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
             m_renderer.AtmosphericMode() = true; m_pendingWorkEnvironmentSave = true; m_focusLighting = true;
         }
+        unsavedControls(atmosphereDirty, 2, m_sceneAtmosphere.is_null()
+                                                ? "スカイのアセットを作り、シーン本体と一緒に保存する"
+                                                : "大気散乱スカイのファイルだけを保存する");
         const auto path = m_sceneAtmosphere.is_null() ? std::filesystem::path{} : m_workspace.Resolve(m_sceneAtmosphere);
         ImGui::TextDisabled("%s", path.empty() ? "シーン保存時にアセットを作成" : ToUtf8Display(path.filename()).c_str());
         graphEntry(1);
         ImGui::TreePop();
     }
     ImGui::EndDisabled();
-    ui::HintText("グラフの編集は共有アセットに反映されます。");
+    if ((m_sceneDirty & kDirtyShared) && !previewing) {
+        ui::HintText("マテリアル・モデルに未保存の変更があります（Ctrl+S でまとめて保存）。");
+    }
+    ui::HintText("編集は保存するまでファイルへ書き込まれません。Ctrl+S で変更のある項目をまとめて保存します。");
     ImGui::End();
 }
 

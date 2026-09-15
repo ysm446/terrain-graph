@@ -97,6 +97,75 @@ int main() {
         check(SaveSceneComponents(workspace, migrated, rewritten) && workspace.ReadScene(migrated, expanded), "repeat component save and reopen");
         check(expanded["textures"].size() == 1 && expanded["paintMasks"].size() == 1 && expanded["graph"]["nodes"].size() == 4, "repeat save does not multiply dependencies");
     }
+    // 変更の無い部品は書き直さない。ファイルの中身とバックアップの数が変わらず、参照は残る。
+    {
+        ProjectWorkspace::ReadJson(migrated, packed);
+        const auto terrainPath = workspace.Resolve(packed["components"][0]["asset"]);
+        const auto cloudPath = workspace.Resolve(packed["components"][1]["asset"]);
+        const auto atmospherePath = workspace.Resolve(packed["atmosphere"]);
+        const auto backups = root / ".terrain-graph/component-backups";
+        const auto countBackups = [&]() {
+            size_t count = 0;
+            std::error_code error;
+            for (const auto& entry : fs::directory_iterator(backups, error)) if (entry.is_regular_file()) ++count;
+            return count;
+        };
+        json terrainBefore, cloudBefore, skyBefore;
+        ProjectWorkspace::ReadJson(terrainPath, terrainBefore);
+        ProjectWorkspace::ReadJson(cloudPath, cloudBefore);
+        ProjectWorkspace::ReadJson(atmospherePath, skyBefore);
+        const auto backupsBefore = countBackups();
+        // 保存は渡した文書を参照形式へ書き換えるので、毎回展開済みの文書から作り直す。
+        const auto edited = [&](int write) {
+            auto document = expanded;
+            document["format"] = "terrain-graph.scene";
+            document["_componentWrite"] = write;
+            document["preview"]["exposure"] = 3.5;
+            document["graph"]["nodes"][0]["extra"] = "not written";
+            document["preview"]["atmosphere"]["azimuth"] = 9.0;
+            return document;
+        };
+        auto partial = edited(0);
+        json packedPartial, terrainAfter, cloudAfter, skyAfter;
+        check(SaveSceneComponents(workspace, migrated, partial) && ProjectWorkspace::ReadJson(migrated, packedPartial),
+              "scene-only save succeeds");
+        check(!packedPartial.contains("_componentWrite") && packedPartial["preview"]["exposure"] == 3.5 &&
+              packedPartial["components"].size() == 2 && packedPartial["atmosphere"] == packed["atmosphere"] &&
+              packedPartial["components"][0]["asset"] == packed["components"][0]["asset"], "scene-only save keeps component references");
+        check(ProjectWorkspace::ReadJson(terrainPath, terrainAfter) && terrainAfter == terrainBefore &&
+              ProjectWorkspace::ReadJson(cloudPath, cloudAfter) && cloudAfter == cloudBefore &&
+              ProjectWorkspace::ReadJson(atmospherePath, skyAfter) && skyAfter == skyBefore, "scene-only save leaves components untouched");
+        check(countBackups() == backupsBefore, "scene-only save makes no component backups");
+        // 地形だけを書き直す指定では、地形だけが変わる。
+        auto terrainOnly = edited(1);
+        check(SaveSceneComponents(workspace, migrated, terrainOnly) && ProjectWorkspace::ReadJson(terrainPath, terrainAfter) &&
+              terrainAfter["graph"]["nodes"][0]["extra"] == "not written" && ProjectWorkspace::ReadJson(cloudPath, cloudAfter) &&
+              cloudAfter == cloudBefore && ProjectWorkspace::ReadJson(atmospherePath, skyAfter) && skyAfter == skyBefore,
+              "write mask rewrites only the terrain");
+        json packedMasked;
+        check(ProjectWorkspace::ReadJson(migrated, packedMasked) && packedMasked["components"].size() == 2 &&
+              packedMasked["components"][0]["role"] == "terrain" && packedMasked["components"][1]["role"] == "cloud",
+              "partial writes keep the component order");
+        // 大気散乱スカイだけの保存。シーン本体と地形・雲は触らない。
+        json sceneBefore; ProjectWorkspace::ReadJson(migrated, sceneBefore);
+        ProjectWorkspace::ReadJson(terrainPath, terrainBefore);
+        auto restoreSky = expanded;
+        restoreSky["format"] = "terrain-graph.scene";
+        restoreSky["_componentOnly"] = 2;
+        auto skyOnly = restoreSky;
+        skyOnly["preview"]["atmosphere"]["azimuth"] = 2.5;
+        skyOnly["preview"]["exposure"] = 7.0;
+        json sceneAfter;
+        check(SaveSceneComponents(workspace, migrated, skyOnly) && ProjectWorkspace::ReadJson(atmospherePath, skyAfter) &&
+              skyAfter["settings"]["azimuth"] == 2.5 && skyAfter["uid"] == skyBefore["uid"], "atmosphere-only save updates the sky asset");
+        check(ProjectWorkspace::ReadJson(terrainPath, terrainAfter) && terrainAfter == terrainBefore, "atmosphere-only save leaves graphs untouched");
+        // 呼び出し側（SaveScene）が部品だけの保存ではシーン本体を書かない。ここでは書き込みの対象を確認する。
+        check(ProjectWorkspace::ReadJson(migrated, sceneAfter) && sceneAfter == sceneBefore, "atmosphere-only save does not touch the scene file in this call");
+        // 後続の確認は元の太陽の向きを前提にするので戻しておく。
+        check(SaveSceneComponents(workspace, migrated, restoreSky) && ProjectWorkspace::ReadJson(atmospherePath, skyAfter) &&
+              skyAfter["settings"]["azimuth"] == 1.2, "atmosphere-only save restores the sun");
+        check(workspace.ReadScene(migrated, expanded) && expanded["preview"]["atmosphere"]["azimuth"] == 1.2, "reopen after partial saves");
+    }
     ProjectWorkspace::ReadJson(migrated, packed);
     const auto originalTerrain = workspace.Resolve(packed["components"][0]["asset"]);
     json beforeFailure, afterFailure;

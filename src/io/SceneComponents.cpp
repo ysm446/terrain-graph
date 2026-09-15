@@ -139,10 +139,16 @@ bool SaveSceneComponents(ProjectWorkspace& workspace, const fs::path& scene, jso
     const auto previous = document.value("_components", json::array());
     if (!previous.is_array()) return false;
     if (document.contains("paintResolution") && !Integer(document["paintResolution"])) return false;
-    json components = json::array();
+    // 参照の並びは書いた順ではなく地形・雲の順で固定する（読み手が位置で見分けられるように）。
+    json componentEntries[2];
     struct Pending { fs::path path; json body; int component; };
     std::vector<Pending> pending;
+    // only: 0 以上ならその部品だけを書き、シーン本体は書かない（2 は大気散乱スカイ）。
+    // write: シーン全体の保存で書き直す部品のビット。無い部品はファイルが無いときだけ作る。
+    // どちらもファイルには残さない。
     const int only = document.value("_componentOnly", -1);
+    const int write = document.value("_componentWrite", 7);
+    document.erase("_componentWrite");
     const auto previousWork = workspace.WorkEnvironment();
     auto work = previousWork;
     const auto preview = document.value("preview", json::object());
@@ -157,7 +163,7 @@ bool SaveSceneComponents(ProjectWorkspace& workspace, const fs::path& scene, jso
             if (sky.contains("asset")) work["sky"] = sky["asset"];
         }
     }
-    if (only < 0) {
+    if (only < 0 || only == 2) {
         auto body = AtmosphereAssetBody(document.value("preview", json::object()), ToUtf8Display(scene.stem()) + " スカイ");
         fs::path path;
         const auto reference = document.value("_atmosphereAsset", json());
@@ -169,10 +175,25 @@ bool SaveSceneComponents(ProjectWorkspace& workspace, const fs::path& scene, jso
             body["name"] = existing.value("name", body["name"]);
         } else path = workspace.UniquePath(scene.parent_path(), ToUtf8Display(scene.stem()) + "_sky", ".tgatmosphere");
         if (path.empty()) return false;
-        pending.push_back({path, std::move(body), 2});
+        // 変更の無いスカイは書き直さず、既存の参照をそのまま持ち越す。
+        if (!reference.is_null() && only < 0 && !(write & 4)) document["atmosphere"] = reference;
+        else pending.push_back({path, std::move(body), 2});
     }
     for (int component = 0; component < 2; ++component) {
         if (only >= 0 && only != component) continue;
+        // 配置済みの部品は元ファイルの ID と名前を引き継ぐ。
+        fs::path path;
+        json existing, existingReference;
+        for (const auto& entry : previous) if (ProjectWorkspace::String(entry, "role") == Role(component)) {
+            existingReference = entry.value("asset", json::object());
+            path = workspace.Resolve(existingReference);
+            if (path.empty() || !workspace.ReadAsset(path, Kind(component), existing)) return false;
+        }
+        // 変更の無い部品は書き直さない（バックアップも増やさない）。
+        if (!path.empty() && only < 0 && !(write & (1 << component))) {
+            componentEntries[component] = {{"role", Role(component)}, {"asset", existingReference}};
+            continue;
+        }
         json part = {{"nodes", json::array()}, {"links", json::array()}};
         std::set<int> pins;
         for (auto node : graph["nodes"]) if (node["component"] == component) {
@@ -212,11 +233,7 @@ bool SaveSceneComponents(ProjectWorkspace& workspace, const fs::path& scene, jso
             for (const auto* key : {"mesh", "planeSize", "displacementScale", "tessellation", "tessellationFactor", "materialResolution", "meshSubdivisions"})
                 if (document["preview"].contains(key)) body["geometry"][key] = document["preview"][key];
         }
-        fs::path path;
-        for (const auto& entry : previous) if (ProjectWorkspace::String(entry, "role") == Role(component)) {
-            path = workspace.Resolve(entry.value("asset", json::object()));
-            json existing;
-            if (path.empty() || !workspace.ReadAsset(path, Kind(component), existing)) return false;
+        if (!path.empty()) {
             body["uid"] = ProjectWorkspace::String(existing, "uid");
             body["name"] = existing.value("name", body["name"]);
         }
@@ -263,8 +280,10 @@ bool SaveSceneComponents(ProjectWorkspace& workspace, const fs::path& scene, jso
             rollback(); return false;
         }
         if (item.component == 2) document["atmosphere"] = workspace.Reference(item.path);
-        else components.push_back({{"role", Role(item.component)}, {"asset", workspace.Reference(item.path)}});
+        else componentEntries[item.component] = {{"role", Role(item.component)}, {"asset", workspace.Reference(item.path)}};
     }
+    json components = json::array();
+    for (const auto& entry : componentEntries) if (!entry.is_null()) components.push_back(entry);
     document["components"] = components;
     document.erase("_components"); document.erase("graph");
     for (const auto* key : Tables) document.erase(key);

@@ -721,6 +721,15 @@ bool RevealSourceButton(bool enabled, const char* tooltip) {
     return clicked;
 }
 
+void UnsavedMark(const char* tooltip) {
+    const float size = ImGui::GetFrameHeight();
+    ImGui::Dummy(ImVec2(size, size));
+    const auto origin = ImGui::GetItemRectMin();
+    ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(origin.x + size * 0.5f, origin.y + size * 0.5f),
+                                                size * 0.2f, ImGui::GetColorU32(ImGuiCol_CheckMark));
+    if (tooltip != nullptr && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", tooltip);
+}
+
 bool PropertyFloat(const char* label, float* value, float minValue, float maxValue,
                    float defaultValue, const char* tooltip, const char* format,
                    ImGuiSliderFlags flags, float snapStep) {

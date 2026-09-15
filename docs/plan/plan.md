@@ -1,7 +1,7 @@
 # plan — 実装方針と優先順位
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-14 16:41
+更新日時: 2026-09-15 12:35
 
 ## シーンの空と作業環境の分離
 
@@ -223,6 +223,7 @@ terrain_graph.exe [--project <path>] [--save-project <path>]
                    [--export <dir>]
                    [--screenshot <path>] [--screenshot-ui <path>]
                    [--screenshot-frame <n>] [--select-node <id>]
+                   [--show-unsaved]
 ```
 
 `--texture` は繰り返し指定でき、起動時にテクスチャライブラリへ読み込む。
@@ -237,6 +238,7 @@ terrain_graph.exe [--project <path>] [--save-project <path>]
 ウィンドウ全体を PNG に書き出して終了する。
 画面キャプチャに頼らず結果を確認できるため、リモート環境や自動確認で使う。
 `--select-node` は読み込んだグラフで指定 ID のノードを選択し、プロパティの画像確認に使う。
+`--show-unsaved` は読み込んだシーンの全項目を未保存扱いにし、シーン階層の印と保存ボタンを画像で確認する。
 
 ## 見つけている課題（未着手）
 

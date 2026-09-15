@@ -85,6 +85,8 @@ tg::StartupOptions ParseCommandLine() {
             options.disableTemporalClouds = true;
         } else if (argument == L"--reveal-asset" && i + 1 < argc) {
             options.revealAsset = argv[++i];
+        } else if (argument == L"--show-unsaved") {
+            options.showUnsaved = true;
         } else if (argument == L"--select-node" && (i + 1) < argc) {
             options.selectNode = ::_wtoi(argv[++i]);
         } else if (argument == L"--screenshot-frame" && (i + 1) < argc) {

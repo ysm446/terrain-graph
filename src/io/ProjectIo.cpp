@@ -2593,6 +2593,7 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
     if (workspace) {
         if (refs.components && refs.components->is_array()) document["_components"] = *refs.components;
         if (refs.componentOnly >= 0) document["_componentOnly"] = refs.componentOnly;
+        document["_componentWrite"] = refs.componentWrite;
         if (refs.atmosphereAsset) document["_atmosphereAsset"] = *refs.atmosphereAsset;
         if (!workspace->SaveScene(savePath, document)) return false;
         if (refs.components && refs.componentOnly < 0 && document.contains("components")) *refs.components = document["components"];
@@ -3214,6 +3215,72 @@ compositor::MaterialAssetId LoadMaterial(const std::filesystem::path& path, rhi:
 
     TG_LOG_INFO("マテリアルを読み込みました: %s", ToUtf8Portable(path).c_str());
     return id;
+}
+
+// --- 未保存の判定 -----------------------------------------------------------
+//
+// 保存するときと同じ書き出し関数を通し、部品ごとに分けてからハッシュを取る。
+// 参照は通し番号へ置き換えずに実行中の ID のまま書く（ファイルに書くわけではなく、
+// 同じ状態から同じ値が出れば足りる）。ファイルに書く順序や番号とは一致しない。
+SceneFingerprint FingerprintScene(const ProjectRefs& refs) {
+    const auto hash = [](const json& value) { return std::hash<std::string>{}(value.dump()); };
+    const TextureWriter texture = [](compositor::TextureId id) { return json(id); };
+    json graph = WriteGraph(refs.graph, texture,
+                            [](compositor::MaterialAssetId id) { return json(id); },
+                            [](compositor::PaintMaskId id) { return json(id); });
+
+    // 地形と雲は SaveSceneComponents と同じ規則で振り分ける。
+    // 分けられないグラフ（旧形式）は丸ごと地形側に入れる。
+    json parts[2];
+    for (json& part : parts) part = {{"nodes", json::array()}, {"links", json::array()}};
+    if (AssignGraphComponents(graph)) {
+        std::set<int> pins[2];
+        for (auto node : graph["nodes"]) {
+            const int component = node.value("component", 0) == 1 ? 1 : 0;
+            for (const auto* key : {"inputs", "outputs"})
+                for (const auto& pin : node[key]) pins[component].insert(pin.get<int>());
+            parts[component]["nodes"].push_back(std::move(node));
+        }
+        for (const auto& link : graph["links"])
+            parts[pins[1].contains(link["start"].get<int>()) ? 1 : 0]["links"].push_back(link);
+    } else {
+        parts[0] = graph;
+    }
+
+    json preview = WritePreview(refs.renderer);
+    const int paintResolution = refs.paintMasks.Resolution();
+    // 太陽と大気はスカイのアセットへ行く。その残りがシーン本体。
+    json atmosphere = AtmosphereAssetBody(preview, "")["settings"];
+    if (preview.contains("atmosphere") && preview["atmosphere"].is_object())
+        for (const auto& item : atmosphere.items()) preview["atmosphere"].erase(item.key());
+    // 作業用の照明はプロジェクト側に自動で保存される。地形の形状はグラフの側へ行く。
+    preview.erase("lightingMode"); preview.erase("light");
+    json geometry = json::object();
+    for (const auto* key : {"mesh", "planeSize", "displacementScale", "tessellation", "tessellationFactor",
+                            "materialResolution", "meshSubdivisions"}) {
+        if (preview.contains(key)) { geometry[key] = preview[key]; preview.erase(key); }
+    }
+
+    SceneFingerprint result;
+    result.terrain = hash({{"graph", parts[0]}, {"geometry", geometry}, {"paintResolution", paintResolution}});
+    result.cloud = hash({{"graph", parts[1]}, {"paintResolution", paintResolution}});
+    result.atmosphere = hash(atmosphere);
+    result.scene = hash({{"preview", preview},
+                         {"components", refs.components ? *refs.components : json()},
+                         {"atmosphere", refs.atmosphereAsset ? *refs.atmosphereAsset : json()}});
+
+    json shared = json::array();
+    for (const auto& asset : refs.materials.Entries()) {
+        json body = WriteMaterialBody(asset, texture);
+        body["uid"] = asset.assetUid;
+        shared.push_back(std::move(body));
+    }
+    if (refs.models) for (const auto& asset : *refs.models) {
+        shared.push_back({{"name", asset.name}, {"uid", asset.assetUid},
+                          {"source", ToUtf8Portable(asset.path)}, {"materials", asset.materials}});
+    }
+    result.shared = hash(shared);
+    return result;
 }
 
 }  // namespace tg::io
