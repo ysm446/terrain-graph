@@ -289,6 +289,49 @@ void IconTileFrame(ImDrawList* drawList, const ImVec2& min, const ImVec2& max) {
 
 }  // namespace
 
+void DrawAssetIcon(AssetIcon icon, const ImVec2& min, const ImVec2& max) {
+    const float size = std::min(max.x - min.x, max.y - min.y);
+    const ImVec2 origin((min.x + max.x - size) * 0.5f, (min.y + max.y - size) * 0.5f);
+    const auto at = [&](float x, float y) { return ImVec2(origin.x + size * x, origin.y + size * y); };
+    auto* draw = ImGui::GetWindowDrawList();
+    const auto color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    const float thickness = size / 42.0f;
+    const auto line = [&](float x1, float y1, float x2, float y2) {
+        draw->AddLine(at(x1, y1), at(x2, y2), color, thickness);
+    };
+    draw->PathClear();
+    if (icon == AssetIcon::Atmosphere) {
+        // 地平線から昇る太陽。雲の輪郭とは異なる放射状のシルエット。
+        draw->PathArcTo(at(0.5f, 0.59f), size * 0.18f, 3.14159265f, 6.28318531f, 24);
+        draw->PathStroke(color, ImDrawFlags_None, thickness);
+        line(0.16f, 0.59f, 0.84f, 0.59f);
+        line(0.26f, 0.71f, 0.74f, 0.71f);
+        line(0.5f, 0.22f, 0.5f, 0.31f);
+        line(0.24f, 0.33f, 0.30f, 0.39f);
+        line(0.76f, 0.33f, 0.70f, 0.39f);
+    } else if (icon == AssetIcon::Terrain) {
+        draw->PathLineTo(at(0.16f, 0.73f));
+        draw->PathLineTo(at(0.40f, 0.29f));
+        draw->PathLineTo(at(0.57f, 0.57f));
+        draw->PathLineTo(at(0.67f, 0.42f));
+        draw->PathLineTo(at(0.84f, 0.73f));
+        draw->PathStroke(color, ImDrawFlags_Closed, thickness);
+        draw->PathLineTo(at(0.32f, 0.44f));
+        draw->PathLineTo(at(0.40f, 0.49f));
+        draw->PathLineTo(at(0.47f, 0.41f));
+        draw->PathStroke(color, ImDrawFlags_None, thickness);
+    } else {
+        // 底辺の途中で閉じ、継ぎ目に頂点が重ならない雲の輪郭。
+        draw->PathLineTo(at(0.44f, 0.70f));
+        draw->PathLineTo(at(0.72f, 0.70f));
+        draw->PathBezierCubicCurveTo(at(0.90f, 0.70f), at(0.90f, 0.44f), at(0.73f, 0.44f));
+        draw->PathBezierCubicCurveTo(at(0.73f, 0.20f), at(0.39f, 0.20f), at(0.37f, 0.42f));
+        draw->PathBezierCubicCurveTo(at(0.27f, 0.36f), at(0.20f, 0.43f), at(0.21f, 0.51f));
+        draw->PathBezierCubicCurveTo(at(0.10f, 0.55f), at(0.14f, 0.70f), at(0.27f, 0.70f));
+        draw->PathStroke(color, ImDrawFlags_Closed, thickness);
+    }
+}
+
 void MountainIcon(float size) {
     const ImVec2 min = ImGui::GetCursorScreenPos();
     const ImVec2 max(min.x + size, min.y + size);

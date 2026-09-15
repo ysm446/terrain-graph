@@ -840,6 +840,10 @@ void Application::DrawAssetBrowser() {
             const auto thumb = ui::ThumbnailButton("##asset", handle, size, IsAssetSelected(path));
             if (folder) {
                 DrawFolderIcon(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+            } else if (!handle && (ext == ".tgatmosphere" || ext == ".tgterrain" || ext == ".tgcloud")) {
+                const auto icon = ext == ".tgatmosphere" ? ui::AssetIcon::Atmosphere :
+                                  ext == ".tgterrain" ? ui::AssetIcon::Terrain : ui::AssetIcon::Cloud;
+                ui::DrawAssetIcon(icon, ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
             } else if (!handle) {
                 const char* type = ext == ".tgterrain" ? "地形グラフ" : ext == ".tgatmosphere" ? "大気散乱" : ext == ".tgcloud" ? "雲グラフ" : ext == ".tgscene" ? "シーン" : ext == ".tgmat" ? "マテリアル" :
                     ext == ".tgsky" ? "作業用IBL" : ext == ".tgmodel" || ext == ".fbx" ? "モデル" : IsImage(ext) ? "画像" : "ファイル";
