@@ -1404,7 +1404,9 @@ void Application::DrawGraphPanel() {
             changed |= ui::PropertyFloat("細部の削り", &weather->detailStrength, 0.0f, 1.0f, defaults.detailStrength, nullptr, "%.2f");
             changed |= ui::PropertyFloat("遠景の開始距離", &weather->farDistance, 0.0f, 200000.0f, defaults.farDistance, "この距離より先の雲を 1/4 解像度の別パスで描き、手前と合成します。0 で無効。層は地球と同心の球殻として扱い、遠くの雲は地平線へ沈みます。", "%.0f m");
             changed |= ui::PropertyBool("距離 LOD", &weather->distanceLod, defaults.distanceLod, "オンで遠景ほど刻みを伸ばし、刻みより細かいノイズを平均へ寄せ、25〜60 km より先で細部を省きます。オフは全距離を近景の刻みで評価するため負荷が上がります。");
-            changed |= ui::PropertyFloat("密度", &weather->extinction, 0.0001f, 0.03f, defaults.extinction, nullptr, "%.4f");
+            changed |= ui::PropertyFloat("密度", &weather->extinction, 0.0001f, 0.2f, defaults.extinction,
+                "雲の中を進む光の減衰の強さ（消散係数、1/m）。密度 1 の場所で 1 m 進むごとに光がこの割合で失われます。\n"
+                "大きいほど光を通しにくく、輪郭が硬く雲影が濃くなります。実際の積雲はおよそ 0.02〜0.1 /m。", "%.4f", ImGuiSliderFlags_Logarithmic);
             changed |= ui::PropertyFloat("Indirect Light", &weather->indirectLight, 0.0f, 1.0f, defaults.indirectLight,
                 "雲の中で繰り返し散乱する太陽光の反射率。1 で各次数のエネルギーが単散乱と同じ上限、\n"
                 "0 は太陽光の多重散乱なし。光を足す方向には働かず、密度・透過率・地形への雲影は変えません。", "%.2f");
@@ -1550,7 +1552,9 @@ void Application::DrawGraphPanel() {
                 changed |= ui::PropertyFloat("雲底のぼかし幅", &cloudNoise->bottomFeather, 0.0f, 300.0f, defaults.bottomFeather,
                     "雲底から上方向に密度を立ち上げる幅。0では水平面で切り取ります。", "%.0f m");
             }
-            changed |= ui::PropertyFloat("密度", &cloudNoise->extinction, 0.0001f, 0.03f, defaults.extinction, "形状を一体にしてノイズと密度を評価します。Volume をCloud Output へ接続。", "%.4f");
+            changed |= ui::PropertyFloat("密度", &cloudNoise->extinction, 0.0001f, 0.2f, defaults.extinction,
+                "雲の中を進む光の減衰の強さ（消散係数、1/m）。密度 1 の場所で 1 m 進むごとに光がこの割合で失われます。\n"
+                "大きいほど光を通しにくく、輪郭が硬く雲影が濃くなります。実際の積雲はおよそ 0.02〜0.1 /m。", "%.4f", ImGuiSliderFlags_Logarithmic);
             changed |= ui::PropertyFloat("Indirect Light", &cloudNoise->indirectLight, 0.0f, 1.0f, defaults.indirectLight,
                 "雲の中で繰り返し散乱する太陽光の反射率。1 で各次数のエネルギーが単散乱と同じ上限、\n"
                 "0 は太陽光の多重散乱なし。光を足す方向には働かず、密度・透過率・地形への雲影は変えません。", "%.2f");
@@ -1640,8 +1644,9 @@ void Application::DrawGraphPanel() {
                 changed |= ui::PropertyFloat("雲底の平らさ", &cloud->bottomFlatness, 0.0f, 1.0f, defaults.bottomFlatness,
                     "0 で丸い雲底、1 で従来の平らな雲底。中間値で底の丸みを調整します。", "%.2f");
             }
-            changed |= ui::PropertyFloat("消散係数", &cloud->extinction, 0.0001f, 0.03f, defaults.extinction,
-                                         "光の減衰（1/m）。大きくすると雲の内部と雲影が濃くなります。", "%.4f", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat("消散係数", &cloud->extinction, 0.0001f, 0.2f, defaults.extinction,
+                "雲の中を進む光の減衰の強さ（消散係数、1/m）。密度 1 の場所で 1 m 進むごとに光がこの割合で失われます。\n"
+                "大きいほど光を通しにくく、輪郭が硬く雲影が濃くなります。実際の積雲はおよそ 0.02〜0.1 /m。", "%.4f", ImGuiSliderFlags_Logarithmic);
             const char* noiseTypes[] = {"Perlin fBM", "Perlin-Worley"};
             changed |= ui::PropertyCombo("ノイズの種類", &cloud->noiseType, noiseTypes, 2, defaults.noiseType,
                 "Perlin fBM は従来の模様。Perlin-Worley は丸い細胞状の膨らみと、Worley による細部の崩しを使います。雲本体と影に共通です。");

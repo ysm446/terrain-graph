@@ -1757,7 +1757,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.noiseType=static_cast<int>(EnumValue(kCloudNoiseNames,*value,"noiseType",static_cast<uint32_t>(settings.noiseType)));
                     settings.detailStrength=std::clamp(ReadFloat(*value,"detailStrength",settings.detailStrength),0.0f,1.0f);
                     settings.edgeSoftness=std::clamp(ReadFloat(*value,"edgeSoftness",settings.edgeSoftness),0.01f,1.0f);
-                    settings.extinction=std::clamp(ReadFloat(*value,"extinction",settings.extinction),0.0001f,0.03f);
+                    settings.extinction=std::clamp(ReadFloat(*value,"extinction",settings.extinction),0.0001f,0.2f);
                     settings.indirectLight=std::clamp(ReadFloat(*value,"indirectLight",settings.indirectLight),0.0f,1.0f);
                     settings.ambientLight=std::clamp(ReadFloat(*value,"ambientLight",settings.ambientLight),0.0f,5.0f);
                     settings.scatterSpread=std::clamp(ReadFloat(*value,"scatterSpread",settings.scatterSpread),0.05f,0.9f);
@@ -1832,7 +1832,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.flattenBottom=ReadBool(*shape,"flattenBottom",settings.flattenBottom);
                     settings.bottomHeight=std::clamp(ReadFloat(*shape,"bottomHeight",settings.bottomHeight),-20000.0f,20000.0f);
                     settings.bottomFeather=std::clamp(ReadFloat(*shape,"bottomFeather",settings.bottomFeather),0.0f,300.0f);
-                    settings.extinction = std::clamp(ReadFloat(*shape, "extinction", settings.extinction), 0.0001f, 0.03f);
+                    settings.extinction = std::clamp(ReadFloat(*shape, "extinction", settings.extinction), 0.0001f, 0.2f);
                     settings.indirectLight = std::clamp(ReadFloat(*shape, "indirectLight", settings.indirectLight), 0.0f, 1.0f);
                     settings.ambientLight = std::clamp(ReadFloat(*shape, "ambientLight", settings.ambientLight), 0.0f, 5.0f);
                     settings.scatterSpread = std::clamp(ReadFloat(*shape, "scatterSpread", settings.scatterSpread), 0.05f, 0.9f);
@@ -1859,7 +1859,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.thickness = std::clamp(ReadFloat(*cloud, "thickness", settings.thickness), 10.0f, 20000.0f);
                     settings.depth = std::clamp(ReadFloat(*cloud, "depth", settings.depth), 10.0f, 20000.0f);
                     settings.noiseScale = std::clamp(ReadFloat(*cloud, "noiseScale", settings.noiseScale), 10.0f, 20000.0f);
-                    settings.extinction = std::clamp(ReadFloat(*cloud, "extinction", settings.extinction), 0.0001f, 0.03f);
+                    settings.extinction = std::clamp(ReadFloat(*cloud, "extinction", settings.extinction), 0.0001f, 0.2f);
                     settings.shapeStrength = std::clamp(ReadFloat(*cloud, "shapeStrength", settings.shapeStrength), 0.0f, 1.0f);
                     settings.detailStrength = std::clamp(ReadFloat(*cloud, "detailStrength", settings.detailStrength), 0.0f, 1.0f);
                     settings.cellCount = static_cast<int>(std::clamp(ReadUInt(*cloud, "cellCount", 10), 1u, 32u));
@@ -2113,7 +2113,7 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
         atmosphere.groundAlbedo = std::clamp(ReadFloat(source, "groundAlbedo", defaults.groundAlbedo), 0.0f, 1.0f);
         atmosphere.coverage = std::clamp(ReadFloat(source, "coverage", defaults.coverage), 0.0f, 1.0f);
         atmosphere.cloudNoiseType = EnumValue(kCloudNoiseNames, source, "cloudNoiseType", defaults.cloudNoiseType);
-        atmosphere.extinction = std::clamp(ReadFloat(source, "extinction", defaults.extinction), .0001f, .03f);
+        atmosphere.extinction = std::clamp(ReadFloat(source, "extinction", defaults.extinction), .0001f, .2f);
         atmosphere.cloudBottom = std::clamp(ReadFloat(source, "cloudBottom", defaults.cloudBottom), -10000.0f, 10000.0f);
         atmosphere.indirectLight = std::clamp(ReadFloat(source, "indirectLight", defaults.indirectLight), 0.0f, 1.0f);
         atmosphere.ambientLight = std::clamp(ReadFloat(source, "ambientLight", defaults.ambientLight), 0.0f, 5.0f);

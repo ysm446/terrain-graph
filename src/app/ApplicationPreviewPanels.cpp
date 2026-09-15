@@ -402,7 +402,7 @@ void Application::DrawLightingPanel() {
                     ui::PropertyFloat("雲量", &sky.coverage, 0.0f, 1.0f, defaults.coverage,
                                       "雲のできる範囲を調整します。大きいほど雲が増えてつながり、小さいほど晴れ間が増えます。\n"
                                       "空を覆う面積の割合そのものではありません。");
-                    ui::PropertyFloat("消散係数", &sky.extinction, 0.0001f, 0.03f, defaults.extinction,
+                    ui::PropertyFloat("消散係数", &sky.extinction, 0.0001f, 0.2f, defaults.extinction,
                                       "雲の中を進む光の減衰の強さ（1/m）。大きいほど光を通しにくく、雲と雲影が濃くなります。\n"
                                       "雲の範囲は「雲量」、上下の寸法は「厚さ」で調整します。", "%.4f");
                     ui::PropertyFloat("雲底", &sky.cloudBottom, -10000.0f, 10000.0f, defaults.cloudBottom,
