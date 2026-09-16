@@ -15,6 +15,7 @@
 #include <DirectXMath.h>
 
 #include <algorithm>
+#include <cstring>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -261,6 +262,7 @@ void Application::DrawLightingPanel() {
     const auto workLightBefore = m_renderer.LegacyLight();
     const auto sunBefore = m_renderer.AtmosphericLight();
     const auto skyBefore = m_renderer.AtmosphericSettings();
+    const auto celestialBefore = m_renderer.Celestial();
     const float skylightBefore = m_renderer.AtmosphericEnvironmentIntensity();
     if (m_focusLighting) { ImGui::SetNextWindowFocus(); m_focusLighting = false; }
     if (ImGui::Begin("ライティング")) {
@@ -288,10 +290,48 @@ void Application::DrawLightingPanel() {
             ui::PropertyEnd(); ui::EndPropertyTable();
         }
         if (!m_renderer.AtmosphericMode()) ui::HintText("作業用IBLで確認中。シーンの太陽・大気の設定は保持されています");
+        const bool dateTimeMode = m_renderer.AtmosphericMode() && m_renderer.Celestial().mode == 1;
+        if (m_renderer.AtmosphericMode()) {
+            auto& celestial = m_renderer.Celestial();
+            auto& sky = m_renderer.AtmosphericSettings();
+            const renderer::CelestialSettings celestialDefaults;
+            const renderer::AtmosphereSettings skyDefaults;
+            ui::SectionHeader("観測地と日時");
+            if (ui::BeginPropertyTable("celestialRows", "UTC オフセット")) {
+                static const char* const kCelestialModes[] = {"手動", "緯度経度と日時"};
+                int mode = static_cast<int>(celestial.mode);
+                if (ui::PropertyCombo("天体の位置", &mode, kCelestialModes, IM_ARRAYSIZE(kCelestialModes),
+                        static_cast<int>(celestialDefaults.mode),
+                        "手動では太陽・月・星空の回転を直接決めます。\n"
+                        "緯度経度と日時では、その場所と時刻に見える太陽・月・月相・星空を計算して書き込みます。\n"
+                        "手動へ戻すと計算した値がそのまま残るので、微調整の出発点にできます。"))
+                    celestial.mode = static_cast<uint32_t>(mode);
+                float latitude = RadiansToDegrees(sky.starLatitude);
+                if (ui::PropertyFloat("緯度", &latitude, -90.0f, 90.0f, RadiansToDegrees(skyDefaults.starLatitude),
+                        "観測地の緯度。北緯が正。手動でも星空の天の北極の高さに使います。+Z が北、+X が東です。", "%.2f deg"))
+                    sky.starLatitude = DegreesToRadians(latitude);
+                ImGui::BeginDisabled(!dateTimeMode);
+                float longitude = RadiansToDegrees(celestial.longitude);
+                if (ui::PropertyFloat("経度", &longitude, -180.0f, 180.0f, RadiansToDegrees(celestialDefaults.longitude),
+                        "観測地の経度。東経が正。", "%.2f deg"))
+                    celestial.longitude = DegreesToRadians(longitude);
+                ui::PropertyInt("年", &celestial.year, 1900, 2200, celestialDefaults.year, "グレゴリオ暦の年。");
+                ui::PropertyInt("月", &celestial.month, 1, 12, celestialDefaults.month);
+                ui::PropertyInt("日", &celestial.day, 1, 31, celestialDefaults.day);
+                ui::PropertyFloat("時刻", &celestial.hour, 0.0f, 24.0f, celestialDefaults.hour,
+                    "地方時（24 時間制、小数で分を表します）。", "%.2f 時");
+                ui::PropertyFloat("UTC オフセット", &celestial.utcOffset, -14.0f, 14.0f, celestialDefaults.utcOffset,
+                    "地方時と UTC の差。日本は +9。", "%.1f 時間");
+                ImGui::EndDisabled();
+                ui::EndPropertyTable();
+            }
+            if (dateTimeMode) ui::HintText("太陽・月・星空の回転は日時から計算しています。屈折と大気減光は含みません。");
+        }
         renderer::LightSettings& light = m_renderer.Light();
 
         ui::SectionHeader(m_renderer.AtmosphericMode() ? "シーンの太陽" : "作業用ライト");
         if (ui::BeginPropertyTable("lightRows", "カスケードシャドウ")) {
+            ImGui::BeginDisabled(dateTimeMode);
             float azimuthDeg = RadiansToDegrees(light.azimuth);
             if (ui::PropertyFloat("方位角", &azimuthDeg, -180.0f, 180.0f,
                                   RadiansToDegrees(kDefaultLight.azimuth),
@@ -304,6 +344,7 @@ void Application::DrawLightingPanel() {
                                   "太陽の高さ。低いほど影が伸びる", "%.0f 度")) {
                 light.elevation = DegreesToRadians(elevationDeg);
             }
+            ImGui::EndDisabled();
             ui::PropertyFloat("照度", &light.illuminance, 0.0f, 200000.0f,
                               m_renderer.AtmosphericMode() ? renderer::AtmosphereSettings{}.illuminance : kDefaultLight.illuminance,
                               m_renderer.AtmosphericMode() ? "大気圏外の照度 (lux)。地表では大気の透過率で減衰する" : "lux。晴天の直射日光がおよそ 100000 lux", "%.0f");
@@ -369,7 +410,7 @@ void Application::DrawLightingPanel() {
                 float azimuth = RadiansToDegrees(sky.moonAzimuth);
                 float elevation = RadiansToDegrees(sky.moonElevation);
                 float rotation = RadiansToDegrees(sky.starRotation);
-                float latitude = RadiansToDegrees(sky.starLatitude);
+                ImGui::BeginDisabled(dateTimeMode);
                 if (ui::PropertyFloat("月の方位角", &azimuth, -180.0f, 180.0f, RadiansToDegrees(defaults.moonAzimuth),
                     "月と月明かりの方向。日時による天体位置の計算は行いません。", "%.1f deg"))
                     sky.moonAzimuth = DegreesToRadians(azimuth);
@@ -378,17 +419,17 @@ void Application::DrawLightingPanel() {
                     sky.moonElevation = DegreesToRadians(elevation);
                 ui::PropertyFloat("月相", &sky.moonPhase, 0.0f, 1.0f, defaults.moonPhase,
                     "0: 新月、0.5: 半月、1: 満月。見える明部の面積と、月明かりの照度が変わります。", "%.2f");
+                ImGui::EndDisabled();
                 ui::PropertyFloat("満月時の照度", &sky.moonIlluminance, 0.0f, 1.0f, defaults.moonIlluminance,
                     "大気による減衰前の満月の照度（lux）。実際の光量は月相・仰角・大気で減衰します。", "%.3f lux");
                 ui::PropertyFloat("星の明るさ", &sky.starIntensity, 0.0f, 8.0f, defaults.starIntensity,
                     "星表（Yale Bright Star Catalog、約 9100 星）の実測等級に対する倍率。1 で実際の明るさです。\n"
                     "雲に隠れ、露出によって見え方が変わります。", "%.2f");
-                if (ui::PropertyFloat("観測緯度", &latitude, -90.0f, 90.0f, RadiansToDegrees(defaults.starLatitude),
-                    "観測地の緯度。天の北極の高さが決まり、見える星座が変わります。+Z が北、+X が東です。", "%.1f deg"))
-                    sky.starLatitude = DegreesToRadians(latitude);
+                ImGui::BeginDisabled(dateTimeMode);
                 if (ui::PropertyFloat("星空の回転", &rotation, -180.0f, 180.0f, RadiansToDegrees(defaults.starRotation),
-                    "地方恒星時に相当する回転。この赤経の星が南中します。日時からの計算は行いません。", "%.1f deg"))
+                    "地方恒星時に相当する回転。この赤経の星が南中します。緯度は「観測地と日時」で設定します。", "%.1f deg"))
                     sky.starRotation = DegreesToRadians(rotation);
+                ImGui::EndDisabled();
                 ImGui::EndDisabled();
                 ui::EndPropertyTable();
             }
@@ -571,9 +612,25 @@ void Application::DrawLightingPanel() {
         skyBefore.starIntensity != sky.starIntensity ||
         skyBefore.starRotation != sky.starRotation ||
         skyBefore.starLatitude != sky.starLatitude ||
+        std::memcmp(&celestialBefore, &m_renderer.Celestial(), sizeof(celestialBefore)) != 0 ||
         skyBefore.lowerHemisphere != sky.lowerHemisphere || skylightBefore != m_renderer.AtmosphericEnvironmentIntensity())
         MarkDocumentChanged(false);
     ImGui::End();
+}
+
+void Application::ApplyCelestialSettings() {
+    const auto& celestial = m_renderer.Celestial();
+    if (celestial.mode != 1) return;
+    auto& sun = m_renderer.AtmosphericLight();
+    auto& sky = m_renderer.AtmosphericSettings();
+    const auto state = renderer::ComputeCelestialState(celestial, sky.starLatitude);
+    sun.azimuth = state.sun.azimuth;
+    sun.elevation = std::clamp(state.sun.elevation, -1.55334f, 1.55334f);
+    sky.moonAzimuth = state.moon.azimuth;
+    sky.moonElevation = std::clamp(state.moon.elevation, -1.55334f, 1.55334f);
+    sky.moonPhase = state.moonPhase;
+    // 星空の回転は [-pi, pi] で保存するので、地方恒星時 [0, 2pi) を折り返す。
+    sky.starRotation = state.siderealTime > 3.1415927f ? state.siderealTime-6.2831853f : state.siderealTime;
 }
 
 }  // namespace tg

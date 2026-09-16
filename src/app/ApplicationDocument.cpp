@@ -46,6 +46,7 @@ DocumentSnapshot Application::CaptureDocument() const {
     atmosphere.starIntensity = sky.starIntensity;
     atmosphere.starRotation = sky.starRotation;
     atmosphere.starLatitude = sky.starLatitude;
+    atmosphere.celestial = m_renderer.Celestial();
     atmosphere.skylightIntensity = m_renderer.AtmosphericEnvironmentIntensity();
 
     snapshot.models = m_models;
@@ -102,6 +103,7 @@ void Application::ApplyDocument(const DocumentSnapshot& snapshot) {
         sky.starIntensity = source.starIntensity;
         sky.starRotation = source.starRotation;
         sky.starLatitude = source.starLatitude;
+        m_renderer.Celestial() = source.celestial;
         m_renderer.AtmosphericEnvironmentIntensity() = source.skylightIntensity;
     }
 

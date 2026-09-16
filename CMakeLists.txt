@@ -169,6 +169,8 @@ set(tg_sources
     src/renderer/ShadowCascades.cpp
     src/renderer/StarCatalog.cpp
     src/renderer/StarCatalog.h
+    src/renderer/Ephemeris.cpp
+    src/renderer/Ephemeris.h
     src/renderer/Camera.cpp
     src/renderer/Camera.h
     src/renderer/Environment.cpp
@@ -294,6 +296,8 @@ add_executable(terrain_graph_tests
     tests/UndoHistoryTests.cpp
     tests/ShadowCascadeTests.cpp
     tests/StarCatalogTests.cpp
+    tests/EphemerisTests.cpp
+    src/renderer/Ephemeris.cpp
     src/renderer/ShadowCascades.cpp
     src/renderer/StarCatalog.cpp
     src/core/Log.cpp

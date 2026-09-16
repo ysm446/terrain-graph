@@ -59,7 +59,8 @@ int main() {
         {"paintMasks", json::array()}, {"preview", {{"exposure", 2.5}, {"lightingMode", "ibl"}, {"light", {{"azimuth", 0.4}}},
             {"atmosphere", {{"azimuth", 1.2}, {"elevation", 0.3}, {"illuminance", 85000}, {"mie", 0.7}, {"coverage", 0.4}}}}}};
     const json night = {{"nightEnabled", true}, {"moonAzimuth", -1.1}, {"moonElevation", 0.7},
-        {"moonIlluminance", 0.3}, {"moonPhase", 0.5}, {"starIntensity", 2.0}, {"starRotation", 1.0}, {"starLatitude", 0.5}};
+        {"moonIlluminance", 0.3}, {"moonPhase", 0.5}, {"starIntensity", 2.0}, {"starRotation", 1.0}, {"starLatitude", 0.5},
+        {"celestialMode", "dateTime"}, {"longitude", 2.4}, {"dateYear", 2026}, {"dateMonth", 6}, {"dateDay", 21}, {"localHour", 21.5}, {"utcOffset", 9.0}};
     original["preview"]["atmosphere"].update(night);
     const auto image = workspace.UniquePath(root, "height", ".png");
     std::ofstream(image).put('i');

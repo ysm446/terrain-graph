@@ -201,6 +201,8 @@ private:
     void FinishAssetRename(bool commit);
     // 移動・改名したアセットの、読み込み済みの絶対パスを付け替える（フォルダなら配下も）。
     void RelinkAssetPaths(const std::filesystem::path& from, const std::filesystem::path& to);
+    // 日時モードなら観測地と日時から太陽・月・星空の回転を計算して設定へ書き込む。
+    void ApplyCelestialSettings();
     void ResumeSceneSwitch();
     // テクスチャ一覧の右クリックメニュー（読み込む / 削除）。
     // target が kNoTexture なら、対象の要る項目は出さない。

@@ -15,6 +15,7 @@ void RunUiInteractionTests();
 void RunUndoHistoryTests();
 void RunShadowCascadeTests();
 void RunStarCatalogTests();
+void RunEphemerisTests();
 
 int main() {
     RunAtmosphereIntegrationTests();
@@ -23,6 +24,7 @@ int main() {
     RunUndoHistoryTests();
     RunShadowCascadeTests();
     RunStarCatalogTests();
+    RunEphemerisTests();
     RunFrameLimiterTests();
     RunNodeGraphTests();
     RunMultiScaleBreachingTests();

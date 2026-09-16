@@ -484,6 +484,7 @@ int Application::Run() {
         }
 
         m_imgui.BeginFrame();
+        ApplyCelestialSettings();
         DrawUi();
         SyncGraphStack();
         PrepareModelScatters();

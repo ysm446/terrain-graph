@@ -44,7 +44,8 @@ const char* Extension(int component) { return component == 1 ? ".tgcloud" : ".tg
 const char* Role(int component) { return component == 1 ? "cloud" : "terrain"; }
 const char* const AtmosphereKeys[] = {"azimuth", "elevation", "illuminance", "density", "mie",
     "eccentricity", "altitude", "groundAlbedo", "lowerHemisphere", "skylightIntensity",
-    "nightEnabled", "moonAzimuth", "moonElevation", "moonIlluminance", "moonPhase", "starIntensity", "starRotation", "starLatitude"};
+    "nightEnabled", "moonAzimuth", "moonElevation", "moonIlluminance", "moonPhase", "starIntensity", "starRotation", "starLatitude",
+    "celestialMode", "longitude", "dateYear", "dateMonth", "dateDay", "localHour", "utcOffset"};
 const char* const Tables[] = {"textures", "materials", "models", "paintMasks"};
 const char* const RefKeys[] = {"texture", "material", "model", "paint"};
 // グラフ設定内の資源参照だけを変換する。Pathの点IDなどには触れない。

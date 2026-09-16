@@ -3,6 +3,7 @@
 // MaterialLibrary.h は含めない。あちらは rhi（D3D12）を引き込むため、
 // GPU の無いテストから使えなくなる。ID と MapSlot は MaterialLayer.h にある。
 // NodeGraph.h も STL と compositor のデータ構造にしか依存しない。
+#include "renderer/Ephemeris.h"
 #include "compositor/MaterialLayer.h"
 #include "graph/NodeGraph.h"
 #include "renderer/ModelAsset.h"
@@ -65,6 +66,7 @@ struct SceneAtmosphereSnapshot {
     uint32_t nightEnabled = 0;
     float moonAzimuth = -0.9f, moonElevation = 0.7f, moonIlluminance = 0.3f;
     float moonPhase = 1.0f, starIntensity = 1.0f, starRotation = 0.0f, starLatitude = 0.6108652f;
+    renderer::CelestialSettings celestial;
 };
 
 struct DocumentSnapshot {

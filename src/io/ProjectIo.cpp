@@ -2010,6 +2010,14 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     atmosphereNode["starIntensity"] = atmosphere.starIntensity;
     atmosphereNode["starRotation"] = atmosphere.starRotation;
     atmosphereNode["starLatitude"] = atmosphere.starLatitude;
+    const auto& celestial = renderer.Celestial();
+    atmosphereNode["celestialMode"] = celestial.mode == 1 ? "dateTime" : "manual";
+    atmosphereNode["longitude"] = celestial.longitude;
+    atmosphereNode["dateYear"] = celestial.year;
+    atmosphereNode["dateMonth"] = celestial.month;
+    atmosphereNode["dateDay"] = celestial.day;
+    atmosphereNode["localHour"] = celestial.hour;
+    atmosphereNode["utcOffset"] = celestial.utcOffset;
     atmosphereNode["lowerHemisphere"] = atmosphere.lowerHemisphere == 0 ? "skyExtension" : "groundReflection";
     atmosphereNode["clouds"] = atmosphere.clouds != 0;
     atmosphereNode["indirectLight"] = atmosphere.indirectLight;
@@ -2128,6 +2136,17 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
         atmosphere.starIntensity = std::clamp(ReadFloat(source, "starIntensity", defaults.starIntensity), 0.0f, 8.0f);
         atmosphere.starRotation = std::clamp(ReadFloat(source, "starRotation", defaults.starRotation), -3.1415927f, 3.1415927f);
         atmosphere.starLatitude = std::clamp(ReadFloat(source, "starLatitude", defaults.starLatitude), -1.5707964f, 1.5707964f);
+        {
+            const renderer::CelestialSettings celestialDefaults;
+            auto& celestial = renderer.Celestial();
+            celestial.mode = ReadString(source, "celestialMode", "manual") == "dateTime" ? 1u : 0u;
+            celestial.longitude = std::clamp(ReadFloat(source, "longitude", celestialDefaults.longitude), -3.1415927f, 3.1415927f);
+            celestial.year = std::clamp(ReadInt(source, "dateYear", celestialDefaults.year), 1900, 2200);
+            celestial.month = std::clamp(ReadInt(source, "dateMonth", celestialDefaults.month), 1, 12);
+            celestial.day = std::clamp(ReadInt(source, "dateDay", celestialDefaults.day), 1, 31);
+            celestial.hour = std::clamp(ReadFloat(source, "localHour", celestialDefaults.hour), 0.0f, 24.0f);
+            celestial.utcOffset = std::clamp(ReadFloat(source, "utcOffset", celestialDefaults.utcOffset), -14.0f, 14.0f);
+        }
         atmosphere.coverage = std::clamp(ReadFloat(source, "coverage", defaults.coverage), 0.0f, 1.0f);
         atmosphere.cloudNoiseType = EnumValue(kCloudNoiseNames, source, "cloudNoiseType", defaults.cloudNoiseType);
         atmosphere.extinction = std::clamp(ReadFloat(source, "extinction", defaults.extinction), .0001f, .2f);

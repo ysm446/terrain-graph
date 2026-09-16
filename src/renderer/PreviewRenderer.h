@@ -7,6 +7,7 @@
 #include "renderer/Camera.h"
 #include "renderer/Environment.h"
 #include "renderer/Atmosphere.h"
+#include "renderer/Ephemeris.h"
 #include "renderer/SkyLibrary.h"
 #include "renderer/Mesh.h"
 #include "rhi/Device.h"
@@ -257,6 +258,9 @@ public:
     bool& AtmosphericMode() { return m_atmosphericMode; }
     AtmosphereSettings& AtmosphericSettings() { return m_atmosphereSettings; }
     const AtmosphereSettings& AtmosphericSettings() const { return m_atmosphereSettings; }
+    // 観測地と日時。mode が 1 のとき Application が毎フレーム太陽・月・星空の回転へ書き込む。
+    CelestialSettings& Celestial() { return m_celestial; }
+    const CelestialSettings& Celestial() const { return m_celestial; }
     LightSettings EffectiveLight() const;
     static constexpr float DefaultSkylightIntensity = 1.0f;
     float& AtmosphericEnvironmentIntensity() { return m_atmosphericEnvironmentIntensity; }
@@ -367,6 +371,7 @@ private:
     bool m_cloudCurvature = true;
     bool m_cloudFarPass = true;
     AtmosphereSettings m_atmosphereSettings;
+    CelestialSettings m_celestial;
     LightSettings m_atmosphericLight{0.9f, 0.9f, 120000.0f, {1.0f, 1.0f, 1.0f}};
     bool m_atmosphericMode = false;
     float m_atmosphericEnvironmentIntensity = DefaultSkylightIntensity;
