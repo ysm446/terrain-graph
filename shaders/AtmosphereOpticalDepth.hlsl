@@ -12,7 +12,7 @@ void CsMain(uint3 id : SV_DispatchThreadID) {
     float3 uvw=float3(id)/float3(n-1,ny-1,n-1);
     float3 position=CloudRenderCenter(settings)+(uvw*2-1)*CloudRenderRadii(settings)+CloudCacheShift(settings);
     RWTexture2DArray<float4> output=ResourceDescriptorHeap[outputIndex];
-    float sun=CloudOpticalDepth(position,AtmosphereSun(settings),settings,noiseIndex,max(settings.samples/2,16u));
+    float sun=CloudOpticalDepth(position,AtmosphereLight(settings),settings,noiseIndex,max(settings.samples/2,16u));
     float top=CloudOpticalDepth(position,float3(0,1,0),settings,noiseIndex,8);
     float bottom=CloudOpticalDepth(position,float3(0,-1,0),settings,noiseIndex,8);
     output[id]=float4(sun,top,bottom,0);

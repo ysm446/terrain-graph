@@ -58,6 +58,9 @@ int main() {
         {"textures", json::array()}, {"materials", json::array()}, {"models", json::array()}, {"skies", json::array()},
         {"paintMasks", json::array()}, {"preview", {{"exposure", 2.5}, {"lightingMode", "ibl"}, {"light", {{"azimuth", 0.4}}},
             {"atmosphere", {{"azimuth", 1.2}, {"elevation", 0.3}, {"illuminance", 85000}, {"mie", 0.7}, {"coverage", 0.4}}}}}};
+    const json night = {{"nightEnabled", true}, {"moonAzimuth", -1.1}, {"moonElevation", 0.7},
+        {"moonIlluminance", 0.3}, {"moonPhase", 0.5}, {"starIntensity", 2.0}, {"starRotation", 1.0}, {"starLatitude", 0.5}};
+    original["preview"]["atmosphere"].update(night);
     const auto image = workspace.UniquePath(root, "height", ".png");
     std::ofstream(image).put('i');
     original["textures"].push_back({{"id", 22}, {"source", workspace.Reference(image)}});
@@ -82,6 +85,9 @@ int main() {
     json skyBody;
     const auto skyPath = workspace.Resolve(packed["atmosphere"]);
     check(!skyPath.empty() && workspace.ReadAsset(skyPath, "atmosphere-sky", skyBody), "scene references independent atmosphere asset");
+    for(const auto& [key,value] : night.items())
+        check(skyBody["settings"].contains(key) && skyBody["settings"][key]==value,
+              "night settings belong to the atmosphere asset and survive scene expansion");
     check(skyBody["settings"]["azimuth"] == 1.2 && skyBody["settings"]["illuminance"] == 85000 &&
           !skyBody["settings"].contains("coverage") && !skyBody["settings"].contains("exposure"), "sky owns sun but not clouds or exposure");
     check(!packed.contains("skies") && !packed["preview"].contains("lightingMode") && !packed["preview"].contains("light"), "work environment removed from scene");

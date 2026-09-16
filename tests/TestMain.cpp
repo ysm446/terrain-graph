@@ -14,6 +14,7 @@ void RunMultiScaleBreachingTests();
 void RunUiInteractionTests();
 void RunUndoHistoryTests();
 void RunShadowCascadeTests();
+void RunStarCatalogTests();
 
 int main() {
     RunAtmosphereIntegrationTests();
@@ -21,6 +22,7 @@ int main() {
     RunUiInteractionTests();
     RunUndoHistoryTests();
     RunShadowCascadeTests();
+    RunStarCatalogTests();
     RunFrameLimiterTests();
     RunNodeGraphTests();
     RunMultiScaleBreachingTests();

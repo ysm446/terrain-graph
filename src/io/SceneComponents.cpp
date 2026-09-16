@@ -43,7 +43,8 @@ const char* Kind(int component) { return component == 2 ? "atmosphere-sky" : com
 const char* Extension(int component) { return component == 1 ? ".tgcloud" : ".tgterrain"; }
 const char* Role(int component) { return component == 1 ? "cloud" : "terrain"; }
 const char* const AtmosphereKeys[] = {"azimuth", "elevation", "illuminance", "density", "mie",
-    "eccentricity", "altitude", "groundAlbedo", "lowerHemisphere", "skylightIntensity"};
+    "eccentricity", "altitude", "groundAlbedo", "lowerHemisphere", "skylightIntensity",
+    "nightEnabled", "moonAzimuth", "moonElevation", "moonIlluminance", "moonPhase", "starIntensity", "starRotation", "starLatitude"};
 const char* const Tables[] = {"textures", "materials", "models", "paintMasks"};
 const char* const RefKeys[] = {"texture", "material", "model", "paint"};
 // グラフ設定内の資源参照だけを変換する。Pathの点IDなどには触れない。

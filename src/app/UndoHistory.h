@@ -62,6 +62,9 @@ struct SceneAtmosphereSnapshot {
     float azimuth = 0, elevation = 0, illuminance = 0;
     float density = 0, mie = 0, eccentricity = 0, altitude = 0, groundAlbedo = 0, skylightIntensity = 0;
     uint32_t lowerHemisphere = 1;
+    uint32_t nightEnabled = 0;
+    float moonAzimuth = -0.9f, moonElevation = 0.7f, moonIlluminance = 0.3f;
+    float moonPhase = 1.0f, starIntensity = 1.0f, starRotation = 0.0f, starLatitude = 0.6108652f;
 };
 
 struct DocumentSnapshot {

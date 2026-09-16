@@ -1,4 +1,5 @@
 #include "AtmosphereCommon.hlsli"
+#include "NightSky.hlsli"
 cbuffer Constants : register(b1) {
     float4x4 inverseViewProjection;
     float3 camera; uint showSky;
@@ -62,7 +63,7 @@ float4 IntegrateCloudAndRays(float3 ray, float limit, float2 pixel, float jitter
     float nearLimit=farCloudIndex!=0xffffffff ? min(limit,farDistance) : limit;
     float4 cloud=IntegrateCloudEx(camera,ray,nearLimit,settings,noiseIndex,environmentIndex,0,jitter,meanDistance);
     cloud=CombineFarCloud(cloud,pixel,limit);
-    float3 sun=AtmosphereSun(settings);
+    float3 sun=AtmosphereLight(settings);
     if (godRays==0 || rayDensity<=0 || sun.y<=0.001) return cloud;
     float start=0, end=min(limit,rayDistance);
     // 雲なしでは視線全体を積分する。雲ありは従来の高さでの分離を保つ。
@@ -79,7 +80,7 @@ float4 IntegrateCloudAndRays(float3 ray, float limit, float2 pixel, float jitter
     float stepLength=(end-start)/48;
     float opacity=1-exp(-rayDensity*stepLength);
     float3 sunlight=AtmComputeSunTransmittance(sun,settings.density,settings.mie,
-        settings.altitude+max(camera.y,0))*settings.illuminance;
+        settings.altitude+max(camera.y,0))*AtmosphereLightIlluminance(settings);
     float phase=CloudHg(dot(ray,sun),0.65);
     float transmission=1;
     float3 radiance=0;
@@ -211,6 +212,7 @@ float4 PsMain(Vertex v):SV_Target {
         float3 sunlight=AtmComputeSunTransmittance(sun,settings.density,settings.mie,settings.altitude);
         // RGBA16F の範囲を守る。直接光・IBL の積分値はクランプしない。
         sky+=min(sunlight*settings.illuminance/(3.14159265*angularRadius*angularRadius),60000)*disc;
+        sky+=NightSky(ray,settings);
         return float4(min(sky*cloud.a+cloud.rgb,65000),1);
     }
     float opacity=1-cloud.a;

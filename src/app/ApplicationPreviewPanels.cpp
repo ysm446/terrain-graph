@@ -358,6 +358,41 @@ void Application::DrawLightingPanel() {
                                   "0 は暗く、1 は強く反射します。地形マテリアルの色や反射率自体は変えません。");
                 ui::EndPropertyTable();
             }
+            ui::SectionHeader("月と星空");
+            if (ui::BeginPropertyTable("nightSkyRows", "満月時の照度")) {
+                bool night = sky.nightEnabled != 0;
+                if (ui::PropertyBool("夜空を有効", &night, defaults.nightEnabled != 0,
+                    "日没後に月と星を表示し、月明かりで地形と雲を照らします。\n"
+                    "太陽高度 0〜-6 度で夜の照明へ移行します。昼夜の主光源と影は各1つです。"))
+                    sky.nightEnabled = night ? 1u : 0u;
+                ImGui::BeginDisabled(!night);
+                float azimuth = RadiansToDegrees(sky.moonAzimuth);
+                float elevation = RadiansToDegrees(sky.moonElevation);
+                float rotation = RadiansToDegrees(sky.starRotation);
+                float latitude = RadiansToDegrees(sky.starLatitude);
+                if (ui::PropertyFloat("月の方位角", &azimuth, -180.0f, 180.0f, RadiansToDegrees(defaults.moonAzimuth),
+                    "月と月明かりの方向。日時による天体位置の計算は行いません。", "%.1f deg"))
+                    sky.moonAzimuth = DegreesToRadians(azimuth);
+                if (ui::PropertyFloat("月の仰角", &elevation, -89.0f, 89.0f, RadiansToDegrees(defaults.moonElevation),
+                    "地平線より下の月は地球によって遮られます。", "%.1f deg"))
+                    sky.moonElevation = DegreesToRadians(elevation);
+                ui::PropertyFloat("月相", &sky.moonPhase, 0.0f, 1.0f, defaults.moonPhase,
+                    "0: 新月、0.5: 半月、1: 満月。見える明部の面積と、月明かりの照度が変わります。", "%.2f");
+                ui::PropertyFloat("満月時の照度", &sky.moonIlluminance, 0.0f, 1.0f, defaults.moonIlluminance,
+                    "大気による減衰前の満月の照度（lux）。実際の光量は月相・仰角・大気で減衰します。", "%.3f lux");
+                ui::PropertyFloat("星の明るさ", &sky.starIntensity, 0.0f, 8.0f, defaults.starIntensity,
+                    "星表（Yale Bright Star Catalog、約 9100 星）の実測等級に対する倍率。1 で実際の明るさです。\n"
+                    "雲に隠れ、露出によって見え方が変わります。", "%.2f");
+                if (ui::PropertyFloat("観測緯度", &latitude, -90.0f, 90.0f, RadiansToDegrees(defaults.starLatitude),
+                    "観測地の緯度。天の北極の高さが決まり、見える星座が変わります。+Z が北、+X が東です。", "%.1f deg"))
+                    sky.starLatitude = DegreesToRadians(latitude);
+                if (ui::PropertyFloat("星空の回転", &rotation, -180.0f, 180.0f, RadiansToDegrees(defaults.starRotation),
+                    "地方恒星時に相当する回転。この赤経の星が南中します。日時からの計算は行いません。", "%.1f deg"))
+                    sky.starRotation = DegreesToRadians(rotation);
+                ImGui::EndDisabled();
+                ui::EndPropertyTable();
+            }
+            ui::HintText("夜景は露出を調整してください。昼の露出では月明かりの地形は暗く写ります。");
             ui::SectionHeader("環境光");
             if (ui::BeginPropertyTable("atmosphericEnvironmentRows", "スカイライト強度")) {
                 ui::PropertyFloat("スカイライト強度", &m_renderer.AtmosphericEnvironmentIntensity(),
@@ -528,6 +563,14 @@ void Application::DrawLightingPanel() {
     if (sunBefore.azimuth != sun.azimuth || sunBefore.elevation != sun.elevation || sunBefore.illuminance != sun.illuminance ||
         skyBefore.density != sky.density || skyBefore.mie != sky.mie || skyBefore.eccentricity != sky.eccentricity ||
         skyBefore.altitude != sky.altitude || skyBefore.groundAlbedo != sky.groundAlbedo ||
+        skyBefore.nightEnabled != sky.nightEnabled ||
+        skyBefore.moonAzimuth != sky.moonAzimuth ||
+        skyBefore.moonElevation != sky.moonElevation ||
+        skyBefore.moonIlluminance != sky.moonIlluminance ||
+        skyBefore.moonPhase != sky.moonPhase ||
+        skyBefore.starIntensity != sky.starIntensity ||
+        skyBefore.starRotation != sky.starRotation ||
+        skyBefore.starLatitude != sky.starLatitude ||
         skyBefore.lowerHemisphere != sky.lowerHemisphere || skylightBefore != m_renderer.AtmosphericEnvironmentIntensity())
         MarkDocumentChanged(false);
     ImGui::End();

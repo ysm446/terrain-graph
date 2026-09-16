@@ -6,6 +6,7 @@
 #include <cstring>
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 
 namespace tg::renderer {
 static_assert(sizeof(AtmosphereSettings::Primitive)==32);
@@ -24,6 +25,40 @@ bool CreateTarget(rhi::Device& device, rhi::GpuTexture& texture, uint32_t size, 
     desc.debugName = L"AtmosphereCache";
     return device.Allocator().CreateTexture2D(desc, texture);
 }
+// 不変の構造化バッファを作り、フレームリング経由で内容を転送する。
+template <typename T>
+bool UploadImmutableBuffer(rhi::Device& device,const std::vector<T>& source,const wchar_t* name,rhi::GpuBuffer& buffer) {
+    if (source.empty()) return true;
+    const uint32_t stride=sizeof(T);
+    if (!device.Allocator().CreateStructuredBuffer(static_cast<uint32_t>(source.size()),stride,name,buffer)) return false;
+    const uint64_t bytes=source.size()*uint64_t(stride);
+    const uint64_t available=device.Upload().BytesPerFrame()-device.Upload().UsedBytes();
+    if (available<=65536) return false;
+    const auto staging=device.Upload().Allocate(std::min({bytes,uint64_t(1024*1024),available-65536}),16);
+    if (!staging.IsValid()) return false;
+    for (uint64_t offset=0;offset<bytes;) {
+        const uint64_t size=std::min(staging.size,bytes-offset);
+        std::memcpy(staging.cpu,reinterpret_cast<const uint8_t*>(source.data())+offset,size);
+        // 同じフレームリング領域の再利用は、この転送のGPU完了を待った後だけ。
+        if (!device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commands) {
+            PIXBeginEvent(commands,PIX_COLOR(120,180,255),"ImmutableBufferUpload");
+            commands->CopyBufferRegion(buffer.resource.Get(),offset,staging.resource,staging.offset,size);
+            if (offset+size==bytes) {
+                D3D12_RESOURCE_BARRIER barrier{};
+                barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+                barrier.Transition.pResource=buffer.resource.Get();
+                barrier.Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+                barrier.Transition.StateBefore=D3D12_RESOURCE_STATE_COPY_DEST;
+                barrier.Transition.StateAfter=ReadState;
+                commands->ResourceBarrier(1,&barrier);
+                buffer.state=ReadState;
+            }
+            PIXEndEvent(commands);
+        })) return false;
+        offset+=size;
+    }
+    return true;
+}
 }
 void Atmosphere::SetCloudPrimitives(std::span<const AtmosphereSettings::Primitive> primitives) {
     if (primitives.size()==m_sourcePrimitives.size() && (primitives.empty() ||
@@ -41,36 +76,7 @@ bool Atmosphere::UploadCloudGeometry(rhi::Device& device) {
     // 編集時だけ確保する不変バッファ。以前のフレームが使う領域は遅延解放する。
     rhi::GpuBuffer primitives,nodes;
     const auto upload=[&](const auto& source,const wchar_t* name,rhi::GpuBuffer& buffer) {
-        if (source.empty()) return true;
-        const uint32_t stride=sizeof(source[0]);
-        if (!device.Allocator().CreateStructuredBuffer(static_cast<uint32_t>(source.size()),stride,name,buffer)) return false;
-        const uint64_t bytes=source.size()*uint64_t(stride);
-        const uint64_t available=device.Upload().BytesPerFrame()-device.Upload().UsedBytes();
-        if (available<=65536) return false;
-        const auto staging=device.Upload().Allocate(std::min({bytes,uint64_t(1024*1024),available-65536}),16);
-        if (!staging.IsValid()) return false;
-        for (uint64_t offset=0;offset<bytes;) {
-            const uint64_t size=std::min(staging.size,bytes-offset);
-            std::memcpy(staging.cpu,reinterpret_cast<const uint8_t*>(source.data())+offset,size);
-            // 同じフレームリング領域の再利用は、この転送のGPU完了を待った後だけ。
-            if (!device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commands) {
-                PIXBeginEvent(commands,PIX_COLOR(120,180,255),"CloudGeometryUpload");
-                commands->CopyBufferRegion(buffer.resource.Get(),offset,staging.resource,staging.offset,size);
-                if (offset+size==bytes) {
-                    D3D12_RESOURCE_BARRIER barrier{};
-                    barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-                    barrier.Transition.pResource=buffer.resource.Get();
-                    barrier.Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-                    barrier.Transition.StateBefore=D3D12_RESOURCE_STATE_COPY_DEST;
-                    barrier.Transition.StateAfter=ReadState;
-                    commands->ResourceBarrier(1,&barrier);
-                    buffer.state=ReadState;
-                }
-                PIXEndEvent(commands);
-            })) return false;
-            offset+=size;
-        }
-        return true;
+        return UploadImmutableBuffer(device,source,name,buffer);
     };
     if (!upload(m_geometry.primitives,L"CloudPrimitives",primitives) || !upload(m_geometry.primitiveBvh,L"CloudBvh",nodes)) {
         device.DeferRelease(primitives); device.DeferRelease(nodes);
@@ -79,6 +85,23 @@ bool Atmosphere::UploadCloudGeometry(rhi::Device& device) {
     device.DeferRelease(m_primitiveBuffer); device.DeferRelease(m_primitiveBvhBuffer);
     m_primitiveBuffer=std::move(primitives); m_primitiveBvhBuffer=std::move(nodes);
     m_geometryDirty=false;
+    return true;
+}
+bool Atmosphere::UploadStarCatalog(rhi::Device& device) {
+    if (m_starUploadAttempted) return m_starBuffer.IsValid();
+    m_starUploadAttempted=true;
+    // 星表は起動後に一度だけ読み込み、夜空を最初に有効化したときに転送する。
+    const auto path=std::filesystem::path(TG_ASSET_DIR)/"stars"/"bsc5.csv";
+    if (!m_stars.LoadFile(path)) return false;
+    rhi::GpuBuffer stars,cells;
+    if (!UploadImmutableBuffer(device,m_stars.stars,L"StarCatalog",stars) ||
+        !UploadImmutableBuffer(device,m_stars.cellOffsets,L"StarCells",cells)) {
+        device.DeferRelease(stars); device.DeferRelease(cells);
+        TG_LOG_WARN("星表のGPU転送に失敗しました");
+        return false;
+    }
+    m_starBuffer=std::move(stars); m_starCellBuffer=std::move(cells);
+    TG_LOG_INFO("星表を読み込みました: %zu 星", m_stars.stars.size());
     return true;
 }
 void Atmosphere::ResetCloudMotion() {
@@ -103,6 +126,14 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
         requested.primitiveBufferIndex=m_primitiveBuffer.srv.index;
         requested.primitiveBvhIndex=m_primitiveBvhBuffer.srv.index;
         requested.primitiveRevision=m_geometryRevision;
+    }
+    if (requested.nightEnabled && UploadStarCatalog(device)) {
+        requested.starBufferIndex=m_starBuffer.srv.index;
+        requested.starCellIndex=m_starCellBuffer.srv.index;
+        requested.starCount=static_cast<uint32_t>(m_stars.stars.size());
+    } else {
+        requested.starBufferIndex=requested.starCellIndex=UINT32_MAX;
+        requested.starCount=0;
     }
     // 天候層は数十 km に及ぶため XZ の格子を細かくする。他は従来の 64。
     // 天候層は範囲に応じて格子を増やし、ボクセルを約80mに保つ（64〜256、8の倍数）。他は従来の 64×32。
@@ -185,7 +216,11 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
         settings.illuminance != baked.illuminance || settings.density != baked.density || settings.mie != baked.mie ||
         settings.eccentricity != baked.eccentricity || settings.altitude != baked.altitude ||
         settings.groundAlbedo != baked.groundAlbedo || settings.lowerHemisphere != baked.lowerHemisphere ||
-        settings.cloudSkylightIntensity != baked.cloudSkylightIntensity;
+        settings.cloudSkylightIntensity != baked.cloudSkylightIntensity ||
+        settings.nightEnabled != baked.nightEnabled || settings.moonAzimuth != baked.moonAzimuth ||
+        settings.moonElevation != baked.moonElevation || settings.moonIlluminance != baked.moonIlluminance ||
+        settings.moonPhase != baked.moonPhase || settings.starIntensity != baked.starIntensity ||
+        settings.starRotation != baked.starRotation;
     const bool updateLut = !m_ready || settings.density != baked.density || settings.mie != baked.mie || settings.groundAlbedo != baked.groundAlbedo;
     const bool updateNoise = !m_ready || settings.seed != baked.seed;
     const bool updateCells = updateNoise || m_cellsDirty;
@@ -313,6 +348,9 @@ void Atmosphere::Shutdown(rhi::Device& device) {
     device.DeferRelease(m_primitiveBuffer);
     device.DeferRelease(m_primitiveBvhBuffer);
     m_geometryDirty=true;
+    device.DeferRelease(m_starBuffer);
+    device.DeferRelease(m_starCellBuffer);
+    m_starUploadAttempted=false;
     device.DeferRelease(m_multiScatter);
     device.DeferRelease(m_noise);
     device.DeferRelease(m_skyView);

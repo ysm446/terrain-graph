@@ -26,10 +26,24 @@ struct AtmosphericParameters {
     float weatherType; float weatherAnvil; float weatherWisp; uint opticalCacheSize;
     float weatherStreets; float weatherVariation; float weatherDetailScale; uint weatherLod;
     float weatherBottom; float weatherThickness; float weatherFar; float weatherCurvature;
-    float scatterSpread; float reservedA; float reservedB; float reservedC;
+    float scatterSpread; uint starBufferIndex; uint starCellIndex; uint starCount;
+    uint nightEnabled; float moonAzimuth; float moonElevation; float moonIlluminance;
+    float moonPhase; float starIntensity; float starRotation; float starLatitude;
 };
 float3 AtmosphereSun(AtmosphericParameters p) {
     return float3(cos(p.elevation) * sin(p.azimuth), sin(p.elevation), cos(p.elevation) * cos(p.azimuth));
+}
+float3 AtmosphereMoon(AtmosphericParameters p) {
+    return float3(cos(p.moonElevation)*sin(p.moonAzimuth),sin(p.moonElevation),cos(p.moonElevation)*cos(p.moonAzimuth));
+}
+float MoonIlluminance(AtmosphericParameters p) {
+    return p.nightEnabled!=0 ? p.moonIlluminance*AtmosphereMoonPhase(p.moonPhase)*AtmosphereNightBlend(p.elevation) : 0;
+}
+float3 AtmosphereLight(AtmosphericParameters p) {
+    return p.nightEnabled!=0 && p.elevation<0 ? AtmosphereMoon(p) : AtmosphereSun(p);
+}
+float AtmosphereLightIlluminance(AtmosphericParameters p) {
+    return p.nightEnabled!=0 && p.elevation<0 ? MoonIlluminance(p) : p.illuminance;
 }
 // ローカル雲は全軸で同じワールド周期を使う。Y も厚さから独立した 3D ノイズ。
 float SampleCloudNoise(float3 uvw, uint noiseIndex, uint channel = 0) {
@@ -522,7 +536,7 @@ float3 SampleCloudOpticalCache(float3 position, AtmosphericParameters p) {
                 cache.SampleLevel(g_samplerLinearClamp,float3(uv,min(floor(z)+1,n-1)),0).rgb,frac(z));
 }
 float CloudShadow(float3 position, AtmosphericParameters p, uint noiseIndex) {
-    float3 sun=AtmosphereSun(p);
+    float3 sun=AtmosphereLight(p);
     if(p.clouds==0 || sun.y<=0.001) return 1;
     if (HasCloudOpticalCache(p)) {
         float start,end;
@@ -552,8 +566,8 @@ float4 IntegrateCloudEx(float3 origin, float3 ray, float limit, AtmosphericParam
         stepGrowth=p.weatherLod ? 0.002*64.0/max(p.samples,16u) : 0;
         count=2048;
     }
-    float3 sun=AtmosphereSun(p);
-    float3 sunlight=AtmComputeSunTransmittance(sun,p.density,p.mie,p.altitude+p.cloudBottom)*p.illuminance;
+    float3 sun=AtmosphereLight(p);
+    float3 sunlight=AtmComputeSunTransmittance(sun,p.density,p.mie,p.altitude+p.cloudBottom)*AtmosphereLightIlluminance(p);
     float mu=dot(ray,sun);
     Texture2D<float4> cloudLighting=ResourceDescriptorHeap[lightingIndex];
     // 地形と共通の倍率を天空照明にだけ適用。太陽光と光学的厚さは変えない。
@@ -644,9 +658,12 @@ float3 AtmosphericSky(float3 ray, AtmosphericParameters p, uint lutIndex, float3
     if(p.lowerHemisphere==0 && ray.y<0)
         sampleRay=normalize(float3(ray.x,max(-ray.y,0.005),ray.z));
     float3 sky=AtmComputeScattering(sampleRay,AtmosphereSun(p),p.density,p.mie,p.eccentricity,
-        lut,g_samplerLinearClamp,true,p.altitude,groundRadiance);
+        lut,g_samplerLinearClamp,true,p.altitude,groundRadiance,p.illuminance);
+    float moon=MoonIlluminance(p);
+    if(moon>0) sky+=AtmComputeScattering(sampleRay,AtmosphereMoon(p),p.density,p.mie,p.eccentricity,
+        lut,g_samplerLinearClamp,true,p.altitude,0,moon);
     if(p.lowerHemisphere==0 && ray.y<0)
         sky*=lerp(1,p.groundAlbedo,smoothstep(0,0.08,-ray.y));
-    return max(0,sky*p.illuminance);
+    return max(0,sky);
 }
 #endif

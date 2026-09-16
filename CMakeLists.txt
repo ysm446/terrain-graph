@@ -167,6 +167,8 @@ set(tg_sources
     src/rhi/UploadRing.cpp
     src/rhi/UploadRing.h
     src/renderer/ShadowCascades.cpp
+    src/renderer/StarCatalog.cpp
+    src/renderer/StarCatalog.h
     src/renderer/Camera.cpp
     src/renderer/Camera.h
     src/renderer/Environment.cpp
@@ -219,6 +221,8 @@ target_compile_definitions(terrain_graph PRIVATE
     # data/ は .gitignore で外してあるので、撮ったものがリポジトリに混ざらない。
     # コミットするアセットは assets/ で、こちらとは別。
     TG_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
+    # コミットするアセット（星表など）。実行時はソースツリーを直接参照する。
+    TG_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
     $<$<CONFIG:Debug>:TG_DEBUG=1>
 )
 
@@ -289,7 +293,10 @@ add_executable(terrain_graph_tests
     tests/UiInteractionTests.cpp
     tests/UndoHistoryTests.cpp
     tests/ShadowCascadeTests.cpp
+    tests/StarCatalogTests.cpp
     src/renderer/ShadowCascades.cpp
+    src/renderer/StarCatalog.cpp
+    src/core/Log.cpp
     src/renderer/Camera.cpp
     src/app/UndoHistory.cpp
     src/app/UndoHistory.h

@@ -374,6 +374,12 @@ LightSettings PreviewRenderer::EffectiveLight() const {
     if (!m_atmosphericMode) return m_light;
     LightSettings result = m_atmosphericLight;
     const auto& p = m_atmosphereSettings;
+    if (p.nightEnabled && result.elevation < 0.0f) {
+        const float blend = AtmosphereNightBlend(result.elevation);
+        result.azimuth = p.moonAzimuth;
+        result.elevation = p.moonElevation;
+        result.illuminance = p.moonIlluminance * AtmosphereMoonPhase(p.moonPhase) * blend;
+    }
     const double radius = 6360000.0, origin = radius + std::max(1.0f, p.altitude);
     const double mu = std::sin(result.elevation), b = origin * mu;
     const double groundD = b*b - (origin*origin-radius*radius);

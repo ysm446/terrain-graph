@@ -2,6 +2,7 @@
 #include "../../shaders/CloudLimits.hlsli"
 #include "renderer/Environment.h"
 #include "renderer/CloudMotion.h"
+#include "renderer/StarCatalog.h"
 #include <cstdint>
 #include <chrono>
 #include <span>
@@ -81,9 +82,13 @@ struct AtmosphereSettings {
     float weatherFar = 20000.0f; // 遠景パスの開始距離（m）。0 で無効。
     float weatherCurvature = 1.0f; // 実行時のみ。1 で球殻状に曲げ、0 で平らな層（プレビュー設定）。
     float scatterSpread = 0.5f; // 雲の多重散乱の広がり（0.05〜0.9）。高次ほど太陽方向の消散を (1-spread)^n に縮める。
-    float reservedA = 0, reservedB = 0, reservedC = 0; // 16 byte 境界の明示パディング。
+    uint32_t starBufferIndex = UINT32_MAX, starCellIndex = UINT32_MAX, starCount = 0; // 星表バッファ。実行時のみ。
+    uint32_t nightEnabled = 0; // 既存のスカイと共通で明示的に有効化する。
+    float moonAzimuth = -0.9f, moonElevation = 0.7f, moonIlluminance = 0.3f;
+    float moonPhase = 1.0f, starIntensity = 1.0f, starRotation = 0.0f; // starRotation は地方恒星時（赤経 = 値の星が南中）。
+    float starLatitude = 0.6108652f; // 観測地の緯度（rad、既定 35 度）。
 };
-static_assert(sizeof(AtmosphereSettings) == 320);
+static_assert(sizeof(AtmosphereSettings) == 352);
 
 struct CloudGeometry {
     std::vector<AtmosphereSettings::Primitive> primitives;
@@ -142,6 +147,10 @@ public:
                 float shadowTexelSize, float shadowBias);
 private:
     bool UploadCloudGeometry(rhi::Device& device);
+    bool UploadStarCatalog(rhi::Device& device);
+    StarCatalog m_stars;
+    rhi::GpuBuffer m_starBuffer, m_starCellBuffer;
+    bool m_starUploadAttempted = false;
     CloudGeometry m_geometry;
     std::vector<AtmosphereSettings::Primitive> m_sourcePrimitives;
     rhi::GpuBuffer m_primitiveBuffer, m_primitiveBvhBuffer;

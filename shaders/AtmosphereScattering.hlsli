@@ -62,7 +62,7 @@ float3 AtmSegmentWeight(float3 tau) {
 // 単位大気圏外照度に対する輝度。地表に当たるレイには地面反射の境界条件を加える。
 float3 AtmComputeScattering(float3 viewDir,float3 sunDir,float density,float mieStrength,float mieG,
     Texture2D<float4> multiScatterLut,SamplerState multiScatterSampler,bool useMultiScatter,
-    float observerHeight,float3 groundRadiance=0) {
+    float observerHeight,float3 groundRadiance=0,float illuminance=1) {
     float3 origin=float3(0,kAtmEarthRadius+max(observerHeight,1),0);
     float2 atmHit=AtmRaySphere(origin,viewDir,kAtmAtmosphereRadius);
     if(atmHit.y<=0) return 0;
@@ -89,6 +89,7 @@ float3 AtmComputeScattering(float3 viewDir,float3 sunDir,float density,float mie
         radiance+=transmission*source*(end-start)*AtmSegmentWeight(tau);
         transmission*=exp(-tau);
     }
+    radiance*=illuminance;
     if(hitGround) radiance+=transmission*groundRadiance;
     return radiance;
 }

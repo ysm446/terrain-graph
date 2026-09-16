@@ -38,6 +38,14 @@ DocumentSnapshot Application::CaptureDocument() const {
     atmosphere.azimuth = sun.azimuth; atmosphere.elevation = sun.elevation; atmosphere.illuminance = sun.illuminance;
     atmosphere.density = sky.density; atmosphere.mie = sky.mie; atmosphere.eccentricity = sky.eccentricity;
     atmosphere.altitude = sky.altitude; atmosphere.groundAlbedo = sky.groundAlbedo; atmosphere.lowerHemisphere = sky.lowerHemisphere;
+    atmosphere.nightEnabled = sky.nightEnabled;
+    atmosphere.moonAzimuth = sky.moonAzimuth;
+    atmosphere.moonElevation = sky.moonElevation;
+    atmosphere.moonIlluminance = sky.moonIlluminance;
+    atmosphere.moonPhase = sky.moonPhase;
+    atmosphere.starIntensity = sky.starIntensity;
+    atmosphere.starRotation = sky.starRotation;
+    atmosphere.starLatitude = sky.starLatitude;
     atmosphere.skylightIntensity = m_renderer.AtmosphericEnvironmentIntensity();
 
     snapshot.models = m_models;
@@ -86,6 +94,14 @@ void Application::ApplyDocument(const DocumentSnapshot& snapshot) {
         sun.azimuth = source.azimuth; sun.elevation = source.elevation; sun.illuminance = source.illuminance;
         sky.density = source.density; sky.mie = source.mie; sky.eccentricity = source.eccentricity;
         sky.altitude = source.altitude; sky.groundAlbedo = source.groundAlbedo; sky.lowerHemisphere = source.lowerHemisphere;
+        sky.nightEnabled = source.nightEnabled;
+        sky.moonAzimuth = source.moonAzimuth;
+        sky.moonElevation = source.moonElevation;
+        sky.moonIlluminance = source.moonIlluminance;
+        sky.moonPhase = source.moonPhase;
+        sky.starIntensity = source.starIntensity;
+        sky.starRotation = source.starRotation;
+        sky.starLatitude = source.starLatitude;
         m_renderer.AtmosphericEnvironmentIntensity() = source.skylightIntensity;
     }
 

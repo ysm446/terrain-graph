@@ -17,6 +17,20 @@ TG_ATM_INLINE float AtmosphereSegmentWeight(float tau) {
 #endif
 }
 TG_ATM_INLINE float AtmosphereRayFraction(float u) { return u*u; }
+// 夜の主光源は太陽高度 0〜-6 度で月へ移す。影マップは昼夜で共用する。
+TG_ATM_INLINE float AtmosphereNightBlend(float elevation) {
+    float t = -elevation / 0.104719755f;
+    if (t <= 0) return 0;
+    if (t >= 1) return 1;
+    return t*t*(3-2*t);
+}
+// phase は見かけの照らされた面積（0: 新月、0.5: 半月、1: 満月）。Lambert 球近似。
+TG_ATM_INLINE float AtmosphereMoonPhase(float phase) {
+    if (phase <= 0) return 0;
+    if (phase >= 1) return 1;
+    float alpha = acos(2*phase-1);
+    return (sin(alpha)+(3.141592654f-alpha)*cos(alpha))/3.141592654f;
+}
 #ifdef __cplusplus
 }
 #endif
