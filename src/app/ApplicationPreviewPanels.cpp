@@ -46,7 +46,7 @@ void Application::DrawMaterialPanel() {
             // 決める場所はノード側の 1 か所だけにする。
             const bool scaleFromGraph = (m_graph.FindChainScale(m_previewGraphNode) != nullptr);
             if (!scaleFromGraph) {
-                ui::PropertyFloat("平面のサイズ", &m_renderer.PlaneSize(), 0.5f, 8192.0f,
+                ui::PropertyFloat("平面のサイズ", &m_renderer.PlaneSize(), 0.5f, 32768.0f,
                                   defaults.planeSize,
                                   "平面の一辺の長さ（m）。素材は 2m 前後、"
                                   "地形なら 1000m 以上。カメラと影の範囲もこれに追従する",

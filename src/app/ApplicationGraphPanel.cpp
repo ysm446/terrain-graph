@@ -1221,7 +1221,7 @@ void Application::DrawGraphPanel() {
             if (ui::BeginPropertyTable("graphNodeScaleRows")) {
                 const graph::TerrainScale defaults;
                 changed |= ui::PropertyFloat(
-                    "サイズ", &settings->scale.sizeMeters, 0.5f, 8192.0f, defaults.sizeMeters,
+                    "サイズ", &settings->scale.sizeMeters, 0.5f, 32768.0f, defaults.sizeMeters,
                     "地形の一辺の長さ（m）。カメラと影の範囲もこれに追従する", "%.1f m",
                     ImGuiSliderFlags_Logarithmic);
                 changed |= ui::PropertyFloat(
