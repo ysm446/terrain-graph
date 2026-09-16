@@ -8,7 +8,7 @@ struct CelestialSettings {
     uint32_t mode = 0;            // 0: 手動、1: 緯度経度と日時から計算。
     float longitude = 2.43952f;   // 観測地の経度（rad、東経が正。既定 139.77 度）。
     int year = 2026, month = 6, day = 21;
-    float hour = 21.0f;           // 地方時（時、小数可）。
+    float hour = 12.0f;           // 地方時（時、小数可）。
     float utcOffset = 9.0f;       // 地方時の UTC からのずれ（時）。
 };
 
