@@ -233,6 +233,9 @@ bool IsShadedView(DebugView view) {
 }  // namespace
 
 float ExposureSettings::Ev100() const {
+    if (automatic) {
+        return std::clamp(autoEv100 + compensation, std::min(minEv100, maxEv100), std::max(minEv100, maxEv100));
+    }
     if (useManualEv) {
         return manualEv100;
     }
@@ -267,7 +270,95 @@ bool PreviewRenderer::Initialize(rhi::Device& device, rhi::PipelineCache& pipeli
     }
 
     if (!CreateShadowTexture(device, m_shadowMap, L"ShadowMap")) return false;
+    // 自動露出の測光バッファ。ヒストグラム 256 ビンと結果 4 要素、読み戻しはフレーム数ぶんの枠。
+    if (!device.Allocator().CreateStructuredBuffer(256, sizeof(uint32_t), L"ExposureHistogram", m_meterHistogram, true) ||
+        !device.Allocator().CreateStructuredBuffer(4, sizeof(float), L"ExposureMeterResult", m_meterResult, true) ||
+        !device.Allocator().CreateReadbackBuffer(sizeof(float) * 4 * rhi::kFrameCount, L"ExposureMeterReadback", m_meterReadback)) {
+        return false;
+    }
     return true;
+}
+
+namespace {
+void TransitionBuffer(ID3D12GraphicsCommandList* commandList, rhi::GpuBuffer& buffer, D3D12_RESOURCE_STATES state) {
+    if (buffer.state == state) return;
+    D3D12_RESOURCE_BARRIER barrier = {};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barrier.Transition.pResource = buffer.resource.Get();
+    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    barrier.Transition.StateBefore = buffer.state;
+    barrier.Transition.StateAfter = state;
+    commandList->ResourceBarrier(1, &barrier);
+    buffer.state = state;
+}
+void UavBarrier(ID3D12GraphicsCommandList* commandList, rhi::GpuBuffer& buffer) {
+    D3D12_RESOURCE_BARRIER barrier = {};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    barrier.UAV.pResource = buffer.resource.Get();
+    commandList->ResourceBarrier(1, &barrier);
+}
+}
+
+void PreviewRenderer::MeterExposure(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                    ID3D12GraphicsCommandList* commandList) {
+    ID3D12PipelineState* clearPipeline = pipelineCache.GetCompute(L"ExposureMeter.hlsl", L"CsClear");
+    ID3D12PipelineState* histogramPipeline = pipelineCache.GetCompute(L"ExposureMeter.hlsl", L"CsHistogram");
+    ID3D12PipelineState* resolvePipeline = pipelineCache.GetCompute(L"ExposureMeter.hlsl", L"CsResolve");
+    if (!clearPipeline || !histogramPipeline || !resolvePipeline || !m_meterHistogram.IsValid()) return;
+    PIXBeginEvent(commandList, PIX_COLOR(220, 170, 60), "PreviewExposureMeter");
+    struct MeterConstants {
+        uint32_t sourceIndex, histogramIndex, resultIndex, width, height;
+        float minLog2, rangeLog2, lowFraction, highFraction, calibration;
+    };
+    // 対数輝度 2^-16〜2^34 cd/m^2 を 256 ビンで覆う（約 0.2 段刻み）。
+    // 暗い側の半分と明るい側の 2% を捨て、黒い地形や太陽・月の円盤に引っ張られないようにする。
+    const MeterConstants constants{m_sceneColor.SrvIndex(), m_meterHistogram.uav.index, m_meterResult.uav.index,
+                                   m_width, m_height, -16.0f, 50.0f, 0.5f, 0.02f, 12.5f};
+    TransitionBuffer(commandList, m_meterHistogram, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionBuffer(commandList, m_meterResult, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    commandList->SetComputeRootSignature(pipelineCache.GlobalRootSignature());
+    commandList->SetComputeRoot32BitConstants(0, sizeof(constants) / sizeof(uint32_t), &constants, 0);
+    commandList->SetPipelineState(clearPipeline);
+    commandList->Dispatch(1, 1, 1);
+    UavBarrier(commandList, m_meterHistogram);
+    commandList->SetPipelineState(histogramPipeline);
+    commandList->Dispatch(rhi::DispatchCount(m_width, 16), rhi::DispatchCount(m_height, 16), 1);
+    UavBarrier(commandList, m_meterHistogram);
+    commandList->SetPipelineState(resolvePipeline);
+    commandList->Dispatch(1, 1, 1);
+    TransitionBuffer(commandList, m_meterResult, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    const uint32_t slot = device.FrameIndex();
+    commandList->CopyBufferRegion(m_meterReadback.resource.Get(), sizeof(float) * 4 * slot,
+                                  m_meterResult.resource.Get(), 0, sizeof(float) * 4);
+    m_meterPending[slot] = true;
+    PIXEndEvent(commandList);
+}
+
+void PreviewRenderer::ReadExposureMeter(rhi::Device& device) {
+    const uint32_t slot = device.FrameIndex();
+    if (!m_meterPending[slot] || !m_meterReadback.IsValid()) return;
+    m_meterPending[slot] = false;
+    const SIZE_T offset = sizeof(float) * 4 * slot;
+    const D3D12_RANGE readRange = {offset, offset + sizeof(float) * 4};
+    void* mapped = nullptr;
+    if (FAILED(m_meterReadback.resource->Map(0, &readRange, &mapped))) return;
+    float values[4];
+    std::memcpy(values, static_cast<const uint8_t*>(mapped) + offset, sizeof(values));
+    const D3D12_RANGE writtenRange = {0, 0};
+    m_meterReadback.resource->Unmap(0, &writtenRange);
+    if (values[2] <= 0.0f || !std::isfinite(values[0])) return;
+    const auto now = std::chrono::steady_clock::now();
+    const float delta = m_meterTime.time_since_epoch().count() == 0 ? 0.0f :
+        std::clamp(std::chrono::duration<float>(now - m_meterTime).count(), 0.0f, 0.25f);
+    m_meterTime = now;
+    if (!m_exposure.autoValid) {
+        // 最初の測光は即座に採用する。起動直後やスクリーンショットで暗いままにしない。
+        m_exposure.autoEv100 = values[0];
+        m_exposure.autoValid = true;
+        return;
+    }
+    const float weight = 1.0f - std::exp(-std::max(m_exposure.adaptationSpeed, 0.0f) * delta);
+    m_exposure.autoEv100 += (values[0] - m_exposure.autoEv100) * weight;
 }
 
 // ライトから見たビュー×投影。プレビューの被写体を囲む平行投影で足りる。
@@ -299,6 +390,10 @@ void PreviewRenderer::Shutdown(rhi::Device& device) {
     m_atmosphere.Shutdown(device);
     m_plane.Release(device);
     ReleaseTargets(device);
+    device.DeferRelease(m_meterHistogram);
+    device.DeferRelease(m_meterResult);
+    device.DeferRelease(m_meterReadback);
+    for (bool& pending : m_meterPending) pending = false;
 }
 
 void PreviewRenderer::ProcessPendingWork(rhi::Device& device,
@@ -646,6 +741,8 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     if (!m_sceneColor.IsValid() || !m_output.IsValid()) {
         return;
     }
+    // この枠の前回の測光値は、コマンドアロケータの再利用時点で完了している。
+    ReadExposureMeter(device);
 
     // 軌道の距離とクリップ面を被写体の大きさへ合わせる。**毎フレーム渡してよい。**
     // 平面のサイズや変位量はいつでも変わるので、描く直前に見るのが確実。
@@ -999,6 +1096,10 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     }
 
     TransitionIfNeeded(commandList, m_sceneColor, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+
+    // --- 自動露出の測光 ------------------------------------------------------
+    // 被写界深度と露出の前の線形 HDR を測る。結果は次のフレーム以降に CPU で読む。
+    if (m_exposure.automatic && IsShadedView(m_debugView)) MeterExposure(device, pipelineCache, commandList);
 
     // --- 被写界深度 --------------------------------------------------------
     // **トーンマップの前に、線形 HDR のまま掛ける。** 露出後だと明るい点が

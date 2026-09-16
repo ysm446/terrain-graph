@@ -2085,6 +2085,11 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
 
     const renderer::ExposureSettings& exposure = renderer.Exposure();
     json exposureNode;
+    exposureNode["automatic"] = exposure.automatic;
+    exposureNode["compensation"] = exposure.compensation;
+    exposureNode["minEv100"] = exposure.minEv100;
+    exposureNode["maxEv100"] = exposure.maxEv100;
+    exposureNode["adaptationSpeed"] = exposure.adaptationSpeed;
     exposureNode["useManualEv"] = exposure.useManualEv;
     exposureNode["manualEv100"] = exposure.manualEv100;
     exposureNode["aperture"] = exposure.aperture;
@@ -2237,6 +2242,11 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
         const json& exposure = section("exposure");
         renderer::ExposureSettings& target = renderer.Exposure();
         const renderer::ExposureSettings defaults;
+        target.automatic = ReadBool(exposure, "automatic", defaults.automatic);
+        target.compensation = std::clamp(ReadFloat(exposure, "compensation", defaults.compensation), -5.0f, 5.0f);
+        target.minEv100 = std::clamp(ReadFloat(exposure, "minEv100", defaults.minEv100), -10.0f, 20.0f);
+        target.maxEv100 = std::clamp(ReadFloat(exposure, "maxEv100", defaults.maxEv100), -10.0f, 20.0f);
+        target.adaptationSpeed = std::clamp(ReadFloat(exposure, "adaptationSpeed", defaults.adaptationSpeed), 0.1f, 20.0f);
         target.useManualEv = ReadBool(exposure, "useManualEv", defaults.useManualEv);
         target.manualEv100 = ReadFloat(exposure, "manualEv100", defaults.manualEv100);
         target.aperture = ReadFloat(exposure, "aperture", defaults.aperture);

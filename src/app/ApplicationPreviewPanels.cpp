@@ -527,9 +527,27 @@ void Application::DrawLightingPanel() {
         ui::SectionHeader("露出");
         renderer::ExposureSettings& exposure = m_renderer.Exposure();
         if (ui::BeginPropertyTable("exposureRows")) {
-            ui::PropertyBool("EV を直接指定", &exposure.useManualEv, kDefaultExposure.useManualEv,
-                             "オフにすると絞り / シャッター / ISO から EV100 を求める");
-            if (exposure.useManualEv) {
+            static const char* const kExposureModes[] = {"自動", "EV を直接指定", "物理カメラ"};
+            int exposureMode = exposure.automatic ? 0 : exposure.useManualEv ? 1 : 2;
+            if (ui::PropertyCombo("方式", &exposureMode, kExposureModes, IM_ARRAYSIZE(kExposureModes),
+                                  kDefaultExposure.automatic ? 0 : kDefaultExposure.useManualEv ? 1 : 2,
+                                  "自動は画面の輝度ヒストグラムから EV100 を測り、露出補正を足します。\n"
+                                  "EV を直接指定は値をそのまま使い、物理カメラは絞り / シャッター / ISO から EV100 を求めます。")) {
+                exposure.automatic = exposureMode == 0;
+                exposure.useManualEv = exposureMode == 1;
+            }
+            if (exposure.automatic) {
+                ui::PropertyFloat("露出補正", &exposure.compensation, -5.0f, 5.0f, kDefaultExposure.compensation,
+                                  "測った EV100 に足す値。正で暗く、負で明るくなります。", "%.2f EV");
+                ui::PropertyFloat("EV の下限", &exposure.minEv100, -10.0f, 20.0f, kDefaultExposure.minEv100,
+                                  "夜景で露出が上がりすぎないように止める値。", "%.1f");
+                ui::PropertyFloat("EV の上限", &exposure.maxEv100, -10.0f, 20.0f, kDefaultExposure.maxEv100,
+                                  "日中で露出が下がりすぎないように止める値。", "%.1f");
+                ui::PropertyFloat("順応の速さ", &exposure.adaptationSpeed, 0.1f, 20.0f, kDefaultExposure.adaptationSpeed,
+                                  "1 秒あたりの追従率。大きいほど明るさの変化にすぐ追従します。", "%.1f /s",
+                                  ImGuiSliderFlags_Logarithmic);
+                ui::PropertyValue("測光 EV100", exposure.autoValid ? "%.2f" : "測定中", exposure.autoEv100);
+            } else if (exposure.useManualEv) {
                 ui::PropertyFloat("EV100", &exposure.manualEv100, -6.0f, 20.0f,
                                   kDefaultExposure.manualEv100, nullptr, "%.2f");
             } else {
