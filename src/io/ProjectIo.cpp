@@ -2133,7 +2133,7 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
         atmosphere.moonElevation = std::clamp(ReadFloat(source, "moonElevation", defaults.moonElevation), -1.55334f, 1.55334f);
         atmosphere.moonIlluminance = std::clamp(ReadFloat(source, "moonIlluminance", defaults.moonIlluminance), 0.0f, 1.0f);
         atmosphere.moonPhase = std::clamp(ReadFloat(source, "moonPhase", defaults.moonPhase), 0.0f, 1.0f);
-        atmosphere.starIntensity = std::clamp(ReadFloat(source, "starIntensity", defaults.starIntensity), 0.0f, 8.0f);
+        atmosphere.starIntensity = std::clamp(ReadFloat(source, "starIntensity", defaults.starIntensity), 0.0f, 100.0f);
         atmosphere.starRotation = std::clamp(ReadFloat(source, "starRotation", defaults.starRotation), -3.1415927f, 3.1415927f);
         atmosphere.starLatitude = std::clamp(ReadFloat(source, "starLatitude", defaults.starLatitude), -1.5707964f, 1.5707964f);
         {

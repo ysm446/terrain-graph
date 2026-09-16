@@ -422,9 +422,9 @@ void Application::DrawLightingPanel() {
                 ImGui::EndDisabled();
                 ui::PropertyFloat("満月時の照度", &sky.moonIlluminance, 0.0f, 1.0f, defaults.moonIlluminance,
                     "大気による減衰前の満月の照度（lux）。実際の光量は月相・仰角・大気で減衰します。", "%.3f lux");
-                ui::PropertyFloat("星の明るさ", &sky.starIntensity, 0.0f, 8.0f, defaults.starIntensity,
+                ui::PropertyFloat("星の明るさ", &sky.starIntensity, 0.0f, 100.0f, defaults.starIntensity,
                     "星表（Yale Bright Star Catalog、約 9100 星）の実測等級に対する倍率。1 で実際の明るさです。\n"
-                    "雲に隠れ、露出によって見え方が変わります。", "%.2f");
+                    "雲に隠れ、露出によって見え方が変わります。", "%.2f", ImGuiSliderFlags_Logarithmic);
                 ImGui::BeginDisabled(dateTimeMode);
                 if (ui::PropertyFloat("星空の回転", &rotation, -180.0f, 180.0f, RadiansToDegrees(defaults.starRotation),
                     "地方恒星時に相当する回転。この赤経の星が南中します。緯度は「観測地と日時」で設定します。", "%.1f deg"))
