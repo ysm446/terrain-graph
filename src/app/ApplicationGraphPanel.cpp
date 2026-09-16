@@ -8,6 +8,8 @@
 #include "app/Application.h"
 
 #include "app/ApplicationUiHelpers.h"
+#include "core/FileDialog.h"
+#include "io/SceneComponents.h"
 #include "ui/UiStyle.h"
 
 #include <imgui.h>
@@ -1023,6 +1025,14 @@ void Application::OpenComponentEditor(int component) {
     RequestGraphNodePlacement();
 }
 
+std::filesystem::path Application::SceneAssetDirectory() {
+    if (m_projectPath.extension() == L".tgscene") return m_projectPath.parent_path();
+    const auto directory = m_workspace.Root() / L"Scenes";
+    std::error_code error;
+    std::filesystem::create_directories(directory, error);
+    return error ? m_workspace.Root() : directory;
+}
+
 void Application::DrawSceneHierarchy() {
     if (!ImGui::Begin("シーン階層")) { ImGui::End(); return; }
     const bool components = m_sceneComponents.is_array();
@@ -1049,6 +1059,15 @@ void Application::DrawSceneHierarchy() {
         return (dirty && !previewing) ? ImVec2(ImGui::GetContentRegionAvail().x - controlsWidth - style.ItemSpacing.x, 0.0f)
                                       : ImVec2(0.0f, 0.0f);
     };
+    // 行の左端の目のアイコン。その部品の描画だけを切り替え、グラフやスカイの設定には触れない。
+    // 値はプレビュー設定（雲を描画 / 背景を表示）と同じものなので、シーンに保存される。
+    const float eyeSize = ImGui::GetFrameHeight();
+    const float eyeIndent = eyeSize + style.ItemSpacing.x;  // 目の下の行（ファイル名）を見出しに揃える
+    const auto eye = [&](const char* id, bool* value, const char* tooltip) {
+        if (ui::EyeToggle(id, value, eyeSize)) MarkDocumentChanged(false);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", tooltip);
+        ImGui::SameLine();
+    };
 
     ImGui::TextUnformatted(m_projectPath.empty() ? "新規シーン" : ToUtf8Display(m_projectPath.stem()).c_str());
     unsavedControls(sceneDirty != 0, 3,
@@ -1060,32 +1079,72 @@ void Application::DrawSceneHierarchy() {
     const auto graphEntry = [&](int component) {
         ImGui::PushID(component);
         const bool dirty = components && (m_sceneDirty & (component ? kDirtyCloud : kDirtyTerrain));
+        if (component) eye("##eyeCloud", &m_renderer.ShowClouds(), "雲と雲影の表示。雲グラフの設定は保持する");
+        else eye("##eyeTerrain", &m_renderer.ShowTerrain(), "地形と配置したモデルの表示。影も一緒に消える");
         if (ImGui::Selectable(component ? "雲グラフ" : "地形グラフ", m_editComponent == component,
                               ImGuiSelectableFlags_AllowDoubleClick, rowWidth(dirty)) &&
             ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
             OpenComponentEditor(components ? component : -1);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("ダブルクリックで編集");
-        unsavedControls(dirty, component, "このグラフのファイルだけを保存する");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("ダブルクリックで編集。右クリックで新規作成・入れ替え");
+        std::filesystem::path placed;
         if (components) for (const auto& entry : m_sceneComponents)
-            if (io::ProjectWorkspace::String(entry, "role") == (component ? "cloud" : "terrain")) {
-                const auto path = m_workspace.Resolve(entry.value("asset", nlohmann::json::object()));
-                ImGui::TextDisabled("%s", ToUtf8Display(path.filename()).c_str());
+            if (io::ProjectWorkspace::String(entry, "role") == (component ? "cloud" : "terrain"))
+                placed = m_workspace.Resolve(entry.value("asset", nlohmann::json::object()));
+        // 新規作成と入れ替え。差し替える部品に未保存の編集があれば一時プレビューへ回る。
+        if (components && ImGui::BeginPopupContextItem("componentMenu")) {
+            if (ImGui::MenuItem("新規作成して配置")) {
+                const auto path = io::CreateGraphAsset(m_workspace, SceneAssetDirectory(), component == 1);
+                if (path.empty()) TG_LOG_ERROR("グラフを作成できませんでした");
+                else { m_pendingComponentPlace = path; m_assetRefresh = true; }
             }
+            if (ImGui::MenuItem("入れ替え…")) {
+                const auto selected = component ? ShowOpenFileDialog(L"雲グラフを選ぶ", {{L"雲グラフ", L"*.tgcloud"}})
+                                               : ShowOpenFileDialog(L"地形グラフを選ぶ", {{L"地形グラフ", L"*.tgterrain"}});
+                if (!selected.empty()) m_pendingComponentPlace = selected;
+            }
+            if (ImGui::MenuItem("アセットブラウザで表示", nullptr, false, !placed.empty())) m_pendingAssetReveal = placed;
+            ImGui::EndPopup();
+        }
+        unsavedControls(dirty, component, "このグラフのファイルだけを保存する");
+        if (!placed.empty()) {
+            ImGui::Indent(eyeIndent);
+            ImGui::TextDisabled("%s", ToUtf8Display(placed.filename()).c_str());
+            ImGui::Unindent(eyeIndent);
+        }
         ImGui::PopID();
     };
     ImGui::BeginDisabled(previewing);
     graphEntry(0);
     if (ImGui::TreeNodeEx("空", ImGuiTreeNodeFlags_DefaultOpen)) {
         const bool atmosphereDirty = components && (m_sceneDirty & kDirtyAtmosphere);
+        eye("##eyeSky", &m_renderer.ShowSkybox(), "空の背景の表示。環境光と地形の手前の雲は残る");
         if (ImGui::Selectable("大気散乱スカイ", false, ImGuiSelectableFlags_AllowDoubleClick, rowWidth(atmosphereDirty)) &&
             ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
             m_renderer.AtmosphericMode() = true; m_pendingWorkEnvironmentSave = true; m_focusLighting = true;
         }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("ダブルクリックでライティングへ。右クリックで新規作成・読み込み");
+        const auto path = m_sceneAtmosphere.is_null() ? std::filesystem::path{} : m_workspace.Resolve(m_sceneAtmosphere);
+        if (components && ImGui::BeginPopupContextItem("atmosphereMenu")) {
+            if (ImGui::MenuItem("新規作成して配置")) {
+                auto created = m_workspace.UniquePath(SceneAssetDirectory(), "大気散乱スカイ", ".tgatmosphere");
+                auto body = io::AtmosphereAssetBody(nlohmann::json::object(), "大気散乱スカイ");
+                if (!created.empty() && m_workspace.SaveAsset(created, "atmosphere-sky", body)) {
+                    m_pendingComponentPlace = created; m_assetRefresh = true;
+                } else TG_LOG_ERROR("大気散乱スカイを作成できませんでした");
+            }
+            if (ImGui::MenuItem("読み込む…")) {
+                const auto selected = ShowOpenFileDialog(L"大気散乱スカイを読み込む", {{L"大気散乱スカイ", L"*.tgatmosphere"}});
+                if (!selected.empty()) m_pendingComponentPlace = selected;
+            }
+            if (ImGui::MenuItem("アセットブラウザで表示", nullptr, false, !path.empty())) m_pendingAssetReveal = path;
+            ImGui::EndPopup();
+        }
         unsavedControls(atmosphereDirty, 2, m_sceneAtmosphere.is_null()
                                                 ? "スカイのアセットを作り、シーン本体と一緒に保存する"
                                                 : "大気散乱スカイのファイルだけを保存する");
-        const auto path = m_sceneAtmosphere.is_null() ? std::filesystem::path{} : m_workspace.Resolve(m_sceneAtmosphere);
+        ImGui::Indent(eyeIndent);
         ImGui::TextDisabled("%s", path.empty() ? "シーン保存時にアセットを作成" : ToUtf8Display(path.filename()).c_str());
+        ImGui::Unindent(eyeIndent);
         graphEntry(1);
         ImGui::TreePop();
     }

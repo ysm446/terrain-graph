@@ -418,6 +418,7 @@ void PreviewRenderer::ResetSettings() {
     m_tessellationEnabled = defaults.tessellationEnabled;
     m_tessellationFactor = defaults.tessellationFactor;
     m_showSkybox = defaults.showSkybox;
+    m_showTerrain = defaults.showTerrain;
     m_skyboxBlur = defaults.skyboxBlur;
     m_shadowEnabled = defaults.shadowEnabled;
     m_cascadedShadows = defaults.cascadedShadows;
@@ -819,9 +820,12 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
             commandList->SetGraphicsRootSignature(pipelineCache.GlobalRootSignature());
             commandList->SetPipelineState(shadowPipeline);
             commandList->SetGraphicsRootConstantBufferView(1, shadowCb.gpuAddress);
-            mesh.Draw(commandList, m_tessellationEnabled);
-            CountMeshDraw(m_stats, mesh, m_tessellationEnabled);
-            if (drawInstances) drawInstances(commandList, matrix, true);
+            // 地形を隠しているときは影も落とさない（クリアだけ残す）。
+            if (m_showTerrain) {
+                mesh.Draw(commandList, m_tessellationEnabled);
+                CountMeshDraw(m_stats, mesh, m_tessellationEnabled);
+                if (drawInstances) drawInstances(commandList, matrix, true);
+            }
 
             TransitionIfNeeded(commandList, target,
                                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE |
@@ -887,8 +891,12 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     commandList->SetGraphicsRootSignature(pipelineCache.GlobalRootSignature());
     commandList->SetPipelineState(meshPipeline);
     commandList->SetGraphicsRootConstantBufferView(1, cb.gpuAddress);
-    mesh.Draw(commandList, useTessellation);
-    CountMeshDraw(m_stats, mesh, useTessellation);
+    // 地形を隠しているときはメッシュを描かない。UV バッファは 0 クリアのままなので
+    // ペイントの当たり判定も外れる。
+    if (m_showTerrain) {
+        mesh.Draw(commandList, useTessellation);
+        CountMeshDraw(m_stats, mesh, useTessellation);
+    }
     m_stats.tessellation = useTessellation;
     m_stats.tessellationFactor = m_tessellationFactor;
 
@@ -914,7 +922,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
         m_instanceShadows.indices[0] = constants.shadowIndex;
         m_instanceShadows.biases[0] = constants.shadowBias;
     }
-    if (drawInstances && IsShadedView(m_debugView)) {
+    if (drawInstances && m_showTerrain && IsShadedView(m_debugView)) {
         XMFLOAT4X4 instanceViewProjection;
         XMStoreFloat4x4(&instanceViewProjection, viewProjection);
         drawInstances(commandList, instanceViewProjection, false);

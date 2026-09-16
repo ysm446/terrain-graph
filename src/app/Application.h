@@ -109,6 +109,9 @@ private:
     void DrawGraphPanel();
     void DrawSceneHierarchy();
     void OpenComponentEditor(int component);
+    // シーンの部品（グラフ・スカイ）を新しく作るときの置き場所。シーンと同じフォルダ、
+    // まだ保存していないシーンならルートの Scenes/。
+    std::filesystem::path SceneAssetDirectory();
     void FinishComponentPreview(bool place);
     // エディタのコンテキストを破棄する。Shutdown から呼ぶ。
     void DestroyGraphEditor();
@@ -686,6 +689,11 @@ private:
     graph::NodeGraph m_previewOriginalGraph;
     nlohmann::json m_previewOriginalComponents;
     std::filesystem::path m_componentPreviewPath;
+    // 地形 / 雲グラフか大気散乱スカイのアセットを、現在のシーンへ配置する要求。
+    // 差し替える部品に未保存の編集が無ければ一時プレビューを挟まずに差し替える。
+    std::filesystem::path m_pendingComponentPlace;
+    // 「シーンを作成」の保存先。新規シーンへ切り替えた直後にここへ保存して部品も作る。
+    std::filesystem::path m_pendingSceneCreate;
     std::filesystem::path m_projectPath;  // 現在のプロジェクト。未保存なら空
     io::RecentFiles m_recentProjects;
     io::AppSettings m_settings;

@@ -427,7 +427,7 @@ void Application::DrawSceneSwitchDialog() {
     if (ImGui::Button(m_deferredExit ? "保存せず終了" : "保存せず切り替え")) { ResumeSceneSwitch(); ImGui::CloseCurrentPopup(); }
     ImGui::SameLine();
     if (ImGui::Button("キャンセル")) {
-        m_sceneSwitchDialog = false; m_deferredRoot.clear(); m_deferredScene.clear(); m_deferredNew = false;
+        m_sceneSwitchDialog = false; m_deferredRoot.clear(); m_deferredScene.clear(); m_deferredNew = false; m_pendingSceneCreate.clear();
         m_deferredExit = false;
         ImGui::CloseCurrentPopup();
     }
@@ -599,6 +599,44 @@ void Application::ProcessAssetWork() {
                     m_assetRefresh = true;
                 }
             } else TG_LOG_ERROR("モデルを読み込めませんでした: %s", ToUtf8Display(path).c_str());
+        }
+    }
+    // 現在のシーンへの配置。差し替える部品が保存済みなら、一時プレビューを挟まずに差し替える
+    // （元グラフを失わないので確認は要らない）。未保存の編集があれば従来のプレビューへ回す。
+    if (!m_pendingComponentPlace.empty()) {
+        const auto path = std::exchange(m_pendingComponentPlace, {});
+        const auto ext = Extension(path);
+        if (ext == ".tgatmosphere") m_pendingAssetOpen = path;  // 開く経路がそのまま差し替える
+        else if (ext == ".tgterrain" || ext == ".tgcloud") {
+            const int component = ext == ".tgcloud" ? 1 : 0;
+            const char* name = component ? "雲グラフ" : "地形グラフ";
+            bool placed = false;
+            if (m_sceneComponents.is_array()) for (const auto& entry : m_sceneComponents) {
+                std::error_code error;
+                if (fs::equivalent(path, m_workspace.Resolve(entry.value("asset", nlohmann::json::object())), error)) placed = true;
+            }
+            if (m_componentPreview >= 0) TG_LOG_WARN("先にプレビュー中の編集を保存または終了してください");
+            else if (!m_sceneComponents.is_array()) TG_LOG_WARN("先にシーンを部品へ分離してください");
+            else if (placed) { m_editComponent = -1; OpenComponentEditor(component); }
+            else {
+                RefreshSceneDirty();
+                if (m_sceneDirty & (component ? kDirtyCloud : kDirtyTerrain)) {
+                    TG_LOG_INFO("%sに未保存の編集があるため、一時プレビューとして開きます", name);
+                    m_pendingAssetOpen = path;
+                } else if (!io::LoadSharedAsset(m_workspace, path, m_device, m_pipelineCache, refs)) {
+                    TG_LOG_ERROR("%sを開けませんでした: %s", name, ToUtf8Display(path).c_str());
+                } else {
+                    m_editComponent = -1; OpenComponentEditor(component);
+                    m_compiledGraphRevision = 0; m_graphStack.MarkDirty();
+                    for (auto& slot : m_cloudMasks) slot.graphRevision = 0;
+                    // 別のグラフになるので履歴は捨てる。配置したグラフはファイルから読んだままなので
+                    // 保存済み、シーン本体は参照が変わるので未保存になる。
+                    m_undoHistory.Clear(); m_documentDirty = false; m_committed = CaptureDocument();
+                    MarkSceneSaved(component ? kDirtyCloud : kDirtyTerrain);
+                    m_assetRefresh = true;
+                    TG_LOG_INFO("%sを配置しました: %s", name, ToUtf8Display(path.filename()).c_str());
+                }
+            }
         }
     }
     if (!m_pendingAssetOpen.empty()) {
@@ -913,6 +951,9 @@ void Application::DrawAssetBrowser() {
                     if (folder) { m_assetDirectory = path; m_assetRefresh = true; }
                     else m_pendingAssetOpen = path;
                 }
+                if ((ext == ".tgterrain" || ext == ".tgcloud" || ext == ".tgatmosphere") &&
+                    ImGui::MenuItem(ext == ".tgatmosphere" ? "シーンの空に設定" : "シーンに配置（入れ替え）"))
+                    m_pendingComponentPlace = path;
                 if ((ext == ".tgterrain" || ext == ".tgcloud" || ext == ".tgatmosphere") && ImGui::MenuItem("複製")) {
                     nlohmann::json body;
                     const char* kind = ext == ".tgatmosphere" ? "atmosphere-sky" : ext == ".tgcloud" ? "cloud-graph" : "terrain-graph";
@@ -967,6 +1008,12 @@ void Application::DrawAssetBrowser() {
                     OpenAssetRename(path);
                 }
                 m_assetRefresh = true;
+            }
+            // 空のシーンを作って開く。地形・雲グラフと大気散乱スカイも同じフォルダに一緒に作る。
+            if (ImGui::MenuItem("シーンを作成")) {
+                const auto path = m_workspace.UniquePath(m_assetDirectory, "新規シーン", ".tgscene");
+                if (path.empty()) TG_LOG_ERROR("シーンを作成できませんでした");
+                else { m_pendingSceneCreate = path; m_pendingProjectNew = true; }
             }
             for (const bool cloud : {false, true}) {
                 if (ImGui::MenuItem(cloud ? "雲グラフを作成" : "地形グラフを作成")) {

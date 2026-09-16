@@ -168,6 +168,8 @@ struct PreviewDefaults {
     // 地形の一辺 ÷ 分割数 が 1 マスの大きさ（2048m を 256 分割で 8m）。
     uint32_t meshSubdivisions = 256;
     bool showSkybox = true;
+    // 地形（メッシュと Model Scatter のインスタンス）を描くか。シーン階層の目のアイコン。
+    bool showTerrain = true;
     bool skyboxBlur = false;
     bool shadowEnabled = true;
     bool cascadedShadows = true;
@@ -269,6 +271,8 @@ public:
     DebugView Debug() const { return m_debugView; }
     const Environment& GetEnvironment() const { return m_atmosphericMode && m_atmosphere.IsReady() ? m_atmosphere.GetEnvironment() : m_environment; }
     bool& ShowSkybox() { return m_showSkybox; }
+    // 地形の表示。オフでは本描画も影も描かないので、空と雲だけが残る。
+    bool& ShowTerrain() { return m_showTerrain; }
     // 背景だけをぼかす。**IBL の寄与は変えない。**
     // プリフィルタ済みキューブの粗いミップを引くだけなので、追加のパスは要らない。
     bool& SkyboxBlur() { return m_skyboxBlur; }
@@ -382,6 +386,7 @@ private:
     uint32_t m_requestedMeshSubdivisions = kPreviewDefaults.meshSubdivisions;
     bool m_useMaterialTextures = kPreviewDefaults.useMaterialTextures;
     bool m_showSkybox = kPreviewDefaults.showSkybox;
+    bool m_showTerrain = kPreviewDefaults.showTerrain;
     bool m_skyboxBlur = kPreviewDefaults.skyboxBlur;
     bool m_shadowEnabled = kPreviewDefaults.shadowEnabled;
     bool m_cascadedShadows = kPreviewDefaults.cascadedShadows;

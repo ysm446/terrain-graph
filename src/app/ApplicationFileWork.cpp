@@ -431,7 +431,7 @@ void Application::UpdateWindowTitle() {
 void Application::ProcessPendingFileWork() {
     if (m_pendingPreviewFinish) { FinishComponentPreview(m_pendingPreviewFinish == 1); m_pendingPreviewFinish = 0; }
     if (m_componentPreview >= 0 && (!m_pendingRoot.empty() || !m_pendingProjectOpen.empty() || m_pendingProjectNew)) {
-        m_pendingRoot.clear(); m_pendingProjectOpen.clear(); m_pendingProjectNew = false;
+        m_pendingRoot.clear(); m_pendingProjectOpen.clear(); m_pendingProjectNew = false; m_pendingSceneCreate.clear();
         TG_LOG_WARN("先にグラフの一時プレビューを終了してください");
     }
     if (m_pendingAssetOpen.extension() == L".tgscene" || m_pendingAssetOpen.extension() == L".tgproj" ||
@@ -498,6 +498,12 @@ void Application::ProcessPendingFileWork() {
         m_projectPath.clear();
         m_sceneLoadSeconds = -1.0f;
         UpdateWindowTitle();
+        // 「シーンを作成」は空のシーンをすぐ保存してファイルにする。部品（地形・雲・スカイ）は
+        // まだ無いので、この保存で同じフォルダに作られる。
+        if (!m_pendingSceneCreate.empty()) {
+            m_pendingProjectSave = std::exchange(m_pendingSceneCreate, {});
+            m_pendingAssetReveal = m_pendingProjectSave;
+        }
     }
 
     if (!m_pendingProjectOpen.empty()) {

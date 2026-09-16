@@ -1985,6 +1985,7 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     node["materialResolution"] = renderer.RequestedMaterialResolution();
     node["meshSubdivisions"] = renderer.RequestedMeshSubdivisions();
     node["showSkybox"] = renderer.ShowSkybox();
+    node["showTerrain"] = renderer.ShowTerrain();
     node["skyboxBlur"] = renderer.SkyboxBlur();
     node["shadow"] = renderer.ShadowEnabled();
     node["cascadedShadows"] = renderer.CascadedShadows();
@@ -2161,6 +2162,7 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
     renderer.RequestMeshSubdivisions(
         ReadUInt(node, "meshSubdivisions", previewDefaults.meshSubdivisions));
     renderer.ShowSkybox() = ReadBool(node, "showSkybox", previewDefaults.showSkybox);
+    renderer.ShowTerrain() = ReadBool(node, "showTerrain", previewDefaults.showTerrain);
     renderer.SkyboxBlur() = ReadBool(node, "skyboxBlur", previewDefaults.skyboxBlur);
     renderer.ShadowEnabled() = ReadBool(node, "shadow", previewDefaults.shadowEnabled);
     // 項目のない既存プロジェクトは従来の1枚方式を維持する。
