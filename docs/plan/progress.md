@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-16 13:40
+更新日時: 2026-09-16 14:05
 
 ## シーンと部品の作成・入れ替えの入口
 
@@ -12,6 +12,8 @@
 Debug／Release ビルドと CTest 全 5 件が成功。Release で bernina を開き --screenshot-ui でシーン階層の表示が変わらないことを確認（data/Test/scene-create-qa/ui.png）。「シーンを作成」が通る空シーンの保存は --save-project で data/Test/scene-create-qa/ に実行し、.tgscene と _terrain／_clouds／_sky の 3 部品が同じフォルダに作られることを確認した。右クリックメニューの実操作と、未保存時にプレビューへ回る分岐は実アプリでは未検証。
 
 シーン階層の各行の左に ui::EyeToggle を置いた。地形はレンダラに ShowTerrain を追加し、オフでは本描画のメッシュと Model Scatter のインスタンス、影パスの両方を描かない（UV バッファは 0 クリアのままなのでペイントの当たり判定も外れる）。空は ShowSkybox（背景を表示）、雲は ShowClouds（雲を描画）と同じ値で、いずれも preview に保存する（showTerrain を追加、既定 true）。切り替えは MarkDocumentChanged(false) で文書変更として扱う。Release で bernina と、preview.showTerrain=false にしたコピーを --screenshot-ui で撮り、目の開閉と地形だけが消えて空・雲が残ることを確認した（data/Test/scene-create-qa/eyes.png、hidden.png）。ファイル名行の字下げは Release の exe が使用中で再撮影できず、Debug ビルドのみで確認。
+
+目のアイコンは ui::Scaled(14) に縮め、行の高さは文字のままで縦中央に揃えた。アセットブラウザの「複製」を .tgmat（material-asset）にも広げ、名前が無いアセットはファイル名を元に「コピー」を付ける。
 
 ## シーン階層の未保存表示と項目単位の保存
 

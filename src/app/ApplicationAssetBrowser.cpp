@@ -954,19 +954,23 @@ void Application::DrawAssetBrowser() {
                 if ((ext == ".tgterrain" || ext == ".tgcloud" || ext == ".tgatmosphere") &&
                     ImGui::MenuItem(ext == ".tgatmosphere" ? "シーンの空に設定" : "シーンに配置（入れ替え）"))
                     m_pendingComponentPlace = path;
-                if ((ext == ".tgterrain" || ext == ".tgcloud" || ext == ".tgatmosphere") && ImGui::MenuItem("複製")) {
+                // 複製は同じフォルダに「名前 コピー」で作る。ID は新しく振り直し、元のアセットは触らない。
+                if ((ext == ".tgterrain" || ext == ".tgcloud" || ext == ".tgatmosphere" || ext == ".tgmat") && ImGui::MenuItem("複製")) {
                     nlohmann::json body;
-                    const char* kind = ext == ".tgatmosphere" ? "atmosphere-sky" : ext == ".tgcloud" ? "cloud-graph" : "terrain-graph";
+                    const char* kind = ext == ".tgatmosphere" ? "atmosphere-sky" : ext == ".tgcloud" ? "cloud-graph" :
+                                       ext == ".tgmat" ? "material-asset" : "terrain-graph";
                     if (m_workspace.ReadAsset(path, kind, body)) {
                         body.erase("uid");
-                        const auto name = io::ProjectWorkspace::String(body, "name") + " コピー";
+                        auto name = io::ProjectWorkspace::String(body, "name");
+                        if (name.empty()) name = ToUtf8Display(path.stem());
+                        name += " コピー";
                         body["name"] = name;
                         auto copy = m_workspace.UniquePath(path.parent_path(), name, ext.c_str());
                         if (!copy.empty() && m_workspace.SaveAsset(copy, kind, body)) {
                             m_assetRefresh = true;
-                            TG_LOG_INFO("グラフを複製しました: %s", ToUtf8Display(copy.filename()).c_str());
-                        } else TG_LOG_ERROR("グラフを複製できませんでした");
-                    }
+                            TG_LOG_INFO("アセットを複製しました: %s", ToUtf8Display(copy.filename()).c_str());
+                        } else TG_LOG_ERROR("アセットを複製できませんでした");
+                    } else TG_LOG_ERROR("複製できない形式です: %s", ToUtf8Display(path.filename()).c_str());
                 }
                 if (ImGui::MenuItem("エクスプローラで表示")) RevealFileInExplorer(path);
                 if (path.filename() != L"project.tgproj" && ImGui::MenuItem("名前を変更…", "F2")) OpenAssetRename(path);

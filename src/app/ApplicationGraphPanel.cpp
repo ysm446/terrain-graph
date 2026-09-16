@@ -1061,12 +1061,16 @@ void Application::DrawSceneHierarchy() {
     };
     // 行の左端の目のアイコン。その部品の描画だけを切り替え、グラフやスカイの設定には触れない。
     // 値はプレビュー設定（雲を描画 / 背景を表示）と同じものなので、シーンに保存される。
-    const float eyeSize = ImGui::GetFrameHeight();
+    // 文字より少し小さくし、行の高さは変えない（縦は文字の中心に揃える）。
+    const float eyeSize = ui::Scaled(14.0f);
     const float eyeIndent = eyeSize + style.ItemSpacing.x;  // 目の下の行（ファイル名）を見出しに揃える
     const auto eye = [&](const char* id, bool* value, const char* tooltip) {
+        const float rowY = ImGui::GetCursorPosY();
+        ImGui::SetCursorPosY(rowY + (ImGui::GetTextLineHeight() - eyeSize) * 0.5f);
         if (ui::EyeToggle(id, value, eyeSize)) MarkDocumentChanged(false);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", tooltip);
         ImGui::SameLine();
+        ImGui::SetCursorPosY(rowY);
     };
 
     ImGui::TextUnformatted(m_projectPath.empty() ? "新規シーン" : ToUtf8Display(m_projectPath.stem()).c_str());
