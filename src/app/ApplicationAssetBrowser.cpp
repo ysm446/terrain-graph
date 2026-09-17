@@ -308,11 +308,13 @@ void Application::OpenAssetRename(const fs::path& path) {
     m_assetRenameTarget = path;
     m_assetRenameFocus = true;
     m_assetRenameInTree = false;
+    m_assetRenameInHierarchy = false;
 }
 
 void Application::FinishAssetRename(bool commit) {
     const auto target = m_assetRenameTarget;
     m_assetRenameTarget.clear(); m_assetRenameFocus = false; m_assetRenameInTree = false;
+    m_assetRenameInHierarchy = false;
     if (!commit || target.empty() || m_assetRenameBuffer[0] == '\0') return;
     std::error_code error;
     const auto extension = fs::is_directory(target, error) ? fs::path{} : target.extension();
@@ -874,7 +876,8 @@ void Application::DrawAssetBrowser() {
             else if (ImGui::IsKeyPressed(ImGuiKey_F2, false)) OpenAssetRename(m_selectedAssets.front());
         }
         // 一覧で改名中に別のフォルダへ移ったら、入力欄が描かれなくなるので取り消す。
-        if (!m_assetRenameTarget.empty() && !m_assetRenameInTree && m_assetRenameTarget.parent_path() != m_assetDirectory)
+        if (!m_assetRenameTarget.empty() && !m_assetRenameInTree && !m_assetRenameInHierarchy &&
+            m_assetRenameTarget.parent_path() != m_assetDirectory)
             FinishAssetRename(false);
         const float size = ui::Scaled(84);
         const int columns = std::max(1, int(ImGui::GetContentRegionAvail().x / (size + ImGui::GetStyle().ItemSpacing.x)));
@@ -1011,7 +1014,7 @@ void Application::DrawAssetBrowser() {
                 } else if (path.filename() != L"project.tgproj" && ImGui::MenuItem("削除…", "Del")) QueueAssetDelete();
                 ImGui::EndPopup();
             }
-            if (path == m_assetRenameTarget && !m_assetRenameInTree) {
+            if (path == m_assetRenameTarget && !m_assetRenameInTree && !m_assetRenameInHierarchy) {
                 const auto edit = ui::GridCaptionInput("##rename", m_assetRenameBuffer, sizeof(m_assetRenameBuffer), size, &m_assetRenameFocus);
                 if (edit != ui::CaptionEdit::Editing) FinishAssetRename(edit == ui::CaptionEdit::Commit);
             } else {

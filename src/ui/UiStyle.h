@@ -15,9 +15,10 @@ namespace tg::ui {
 // 参照欄の右に置く、アセットブラウザへ移動するアイコン。
 bool RevealSourceButton(bool enabled, const char* tooltip);
 
-// 未保存の印。行の高さの枠に小さな丸を描く（テーマのアクセント色）。
+// 未保存の印。size 角の枠に小さな丸を描く（テーマのアクセント色）。
+// size を省くとフレームの高さ。文字だけの行に並べるときは文字の高さを渡し、行を太らせない。
 // フォントに無い記号を避けて図形で描く。tooltip はホバー時の説明。
-void UnsavedMark(const char* tooltip);
+void UnsavedMark(const char* tooltip, float size = 0.0f);
 
 // 部品の寸法。96 DPI 基準の値を置き、使うときに Scaled() で現在の DPI へ合わせる。
 // 値の意味と使い分けは design-guide.md にある。種類を勝手に増やさない。
@@ -183,6 +184,10 @@ void WavesIcon(float size);     // 水面: 横に走る 2 本の波
 // 読むだけで、目のような記号の字形を持っていない（design-guide.md の
 // 「記号を使うとき」を参照）。
 bool EyeToggle(const char* id, bool* value, float size);
+
+// 保存のボタン。フロッピーディスクの図形で描く（字形ではなく図形。EyeToggle と同じ理由）。
+// 押したら true。ホバーで色が持ち上がり、tooltip があれば出す。
+bool SaveIconButton(const char* id, float size, const char* tooltip);
 
 // 通知の意味色。ステータスバーで警告とエラーを区別するためだけに使う。
 // グレー基調を崩さないよう彩度は低く抑えてある。配色の一部なので UiStyle.cpp に置く。

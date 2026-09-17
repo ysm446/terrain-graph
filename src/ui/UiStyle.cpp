@@ -443,6 +443,46 @@ bool EyeToggle(const char* id, bool* value, float size) {
     return changed;
 }
 
+bool SaveIconButton(const char* id, float size, const char* tooltip) {
+    const ImVec2 min = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton(id, ImVec2(size, size));
+    const bool hovered = ImGui::IsItemHovered();
+    const bool clicked = ImGui::IsItemClicked();
+    if (hovered && tooltip != nullptr && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+        ImGui::SetTooltip("%s", tooltip);
+    }
+
+    // 普段は補助文字の色、ホバー中は本文の色へ持ち上げて押せることを示す。
+    const ImU32 color = hovered ? ImGui::GetColorU32(ImGuiCol_Text)
+                                : ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const float thickness = Scaled(1.3f);
+    // 当たり判定は size 角。図形は文字の高さに収め、枠の中央に置く
+    //（UnsavedMark と同じ FrameHeight を渡すと、印と図形の中心が揃う）。
+    const float glyph = std::min(size, ImGui::GetTextLineHeight());
+    const float inset = glyph * 0.12f;
+    const ImVec2 center(min.x + size * 0.5f, min.y + size * 0.5f);
+    const ImVec2 a(center.x - glyph * 0.5f + inset, center.y - glyph * 0.5f + inset);
+    const ImVec2 b(center.x + glyph * 0.5f - inset, center.y + glyph * 0.5f - inset);
+    const float w = b.x - a.x;
+    const float h = b.y - a.y;
+    // 外形。右上の角だけ落とす（フロッピーの切り欠き）。
+    const float notch = w * 0.22f;
+    draw->PathClear();
+    draw->PathLineTo(a);
+    draw->PathLineTo(ImVec2(b.x - notch, a.y));
+    draw->PathLineTo(ImVec2(b.x, a.y + notch));
+    draw->PathLineTo(b);
+    draw->PathLineTo(ImVec2(a.x, b.y));
+    draw->PathStroke(color, ImDrawFlags_Closed, thickness);
+    // 上のシャッター（中央上に空いた口）。
+    draw->AddRect(ImVec2(a.x + w * 0.25f, a.y), ImVec2(b.x - w * 0.30f, a.y + h * 0.32f), color, 0.0f,
+                  ImDrawFlags_None, thickness);
+    // 下のラベル。塗りつぶして重心を下に置く。
+    draw->AddRectFilled(ImVec2(a.x + w * 0.20f, b.y - h * 0.36f), ImVec2(b.x - w * 0.20f, b.y), color);
+    return clicked;
+}
+
 ImU32 WarnColor() {
     return ImGui::GetColorU32(kWarn);
 }
@@ -721,12 +761,13 @@ bool RevealSourceButton(bool enabled, const char* tooltip) {
     return clicked;
 }
 
-void UnsavedMark(const char* tooltip) {
-    const float size = ImGui::GetFrameHeight();
+void UnsavedMark(const char* tooltip, float size) {
+    if (size <= 0.0f) size = ImGui::GetFrameHeight();
     ImGui::Dummy(ImVec2(size, size));
     const auto origin = ImGui::GetItemRectMin();
+    // 丸の大きさは枠に関わらず一定（フレームの高さ基準）。枠を小さくしても印が痩せない。
     ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(origin.x + size * 0.5f, origin.y + size * 0.5f),
-                                                size * 0.2f, ImGui::GetColorU32(ImGuiCol_CheckMark));
+                                                ImGui::GetFrameHeight() * 0.2f, ImGui::GetColorU32(ImGuiCol_CheckMark));
     if (tooltip != nullptr && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", tooltip);
 }
 

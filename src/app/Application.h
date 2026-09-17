@@ -613,6 +613,8 @@ private:
     bool m_assetRenameFocus = false;
     // 左のフォルダ階層の行で編集しているとき true（一覧の同じフォルダには欄を出さない）。
     bool m_assetRenameInTree = false;
+    // シーン階層の行で編集しているとき true（アセットブラウザには欄を出さず、取り消しもしない）。
+    bool m_assetRenameInHierarchy = false;
     char m_assetRenameBuffer[256] = {};
     std::filesystem::path m_pendingAssetRename;
     std::string m_pendingAssetRenameName;

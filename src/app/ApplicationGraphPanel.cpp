@@ -1041,17 +1041,19 @@ void Application::DrawSceneHierarchy() {
     // 旧形式のシーンは全部が 1 つのファイル。シーンの行にまとめて印を出す。
     const unsigned sceneDirty = components ? (m_sceneDirty & kDirtyScene) : (m_sceneDirty & ~kDirtyShared);
 
-    // 行の右端に置く「未保存の印 + 保存ボタン」の幅。変更のある行にだけ出す。
+    // 行の右端に置く「未保存の印 + 保存ボタン（フロッピー）」の幅。変更のある行にだけ出す。
     const ImGuiStyle& style = ImGui::GetStyle();
-    const float controlsWidth = ImGui::GetFrameHeight() + style.ItemSpacing.x + ui::TextScaled(ui::kButtonWidth);
+    // 印とアイコンは文字の高さの枠に収める。フレームの高さにすると、印の付いた行だけ
+    // 縦に太り、目のアイコンや文字の位置が他の行とずれる。
+    const float saveSize = ImGui::GetTextLineHeight();
+    const float controlsWidth = saveSize + style.ItemSpacing.x + saveSize;
     const auto unsavedControls = [&](bool dirty, int item, const char* tooltip) {
         if (!dirty || previewing) return;
         ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - controlsWidth);
-        ui::UnsavedMark("未保存の変更があります");
+        ui::UnsavedMark("未保存の変更があります", saveSize);
         ImGui::SameLine();
         ImGui::PushID(item);
-        if (ui::Button("保存")) RequestComponentSave(item);
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", tooltip);
+        if (ui::SaveIconButton("##save", saveSize, tooltip)) RequestComponentSave(item);
         ImGui::PopID();
     };
     // 見出しは Selectable の幅を控えの分だけ縮め、右端の操作を覆わないようにする。
@@ -1079,20 +1081,41 @@ void Application::DrawSceneHierarchy() {
         ui::HintText("旧形式のシーンです。保存済みの元データを残して部品へ分離できます。");
         if (ui::Button("部品へ分離…", ui::kWideButtonWidth)) m_pendingComponentMigration = true;
     }
+    // 行の右クリックに置く改名。ファイルがある行だけ。F2 でも同じ。
+    const auto renameMenuItem = [&](const std::filesystem::path& file) {
+        if (ImGui::MenuItem("名前を変更…", "F2", false, !file.empty())) {
+            OpenAssetRename(file);
+            m_assetRenameInHierarchy = true;
+        }
+    };
 
     // 部品 1 つにつき 1 行。「ファイル名（種類）」で並べ、ファイルがまだ無ければ種類だけ出す。
     // 地形・大気散乱スカイ・雲は「シーンが参照するアセット 1 つ」という同じ立場なので同列に置く。
     // 見出しは空の Selectable を敷いた上に文字を描く（ファイル名と種類で色を分けるため）。
     // 長いファイル名は種類と右端の操作を残して中央を省略する。戻り値はダブルクリックされたか。
+    // 改名中の行は見出しの代わりにその場の入力欄を出す（アセットブラウザの F2 と同じ経路）。
+    // 拡張子は変えられないので、欄には拡張子を除いた名前だけを入れる。
     const auto row = [&](const char* id, const std::filesystem::path& file, const char* kind,
                          bool selected, bool dirty, const char* tooltip) {
         const ImVec2 origin = ImGui::GetCursorScreenPos();
         ImVec2 size = rowWidth(dirty);
         if (size.x <= 0.0f) size.x = ImGui::GetContentRegionAvail().x;
+        if (m_assetRenameInHierarchy && !file.empty() && m_assetRenameTarget == file) {
+            const auto edit = ui::InlineNameInput(id, m_assetRenameBuffer, sizeof(m_assetRenameBuffer),
+                                                  size.x, &m_assetRenameFocus);
+            if (edit != ui::CaptionEdit::Editing) FinishAssetRename(edit == ui::CaptionEdit::Commit);
+            return false;
+        }
         const bool doubleClicked =
             ImGui::Selectable(id, selected, ImGuiSelectableFlags_AllowDoubleClick, size) &&
             ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tooltip);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", tooltip);
+            if (!file.empty() && !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_F2, false)) {
+                OpenAssetRename(file);
+                m_assetRenameInHierarchy = true;
+            }
+        }
         ImDrawList* draw = ImGui::GetWindowDrawList();
         const ImVec2 textPos(origin.x + style.FramePadding.x, origin.y);
         const float innerWidth = size.x - style.FramePadding.x * 2.0f;
@@ -1121,10 +1144,12 @@ void Application::DrawSceneHierarchy() {
             if (io::ProjectWorkspace::String(entry, "role") == (component ? "cloud" : "terrain"))
                 placed = m_workspace.Resolve(entry.value("asset", nlohmann::json::object()));
         if (row("##graphRow", placed, component ? "雲グラフ" : "地形グラフ", m_editComponent == component,
-                dirty, "ダブルクリックで編集。右クリックで新規作成・入れ替え"))
+                dirty, "ダブルクリックで編集。右クリックで改名・新規作成・入れ替え"))
             OpenComponentEditor(components ? component : -1);
         // 新規作成と入れ替え。差し替える部品に未保存の編集があれば一時プレビューへ回る。
         if (components && ImGui::BeginPopupContextItem("componentMenu")) {
+            renameMenuItem(placed);
+            ImGui::Separator();
             if (ImGui::MenuItem("新規作成して配置")) {
                 const auto path = io::CreateGraphAsset(m_workspace, SceneAssetDirectory(), component == 1);
                 if (path.empty()) TG_LOG_ERROR("グラフを作成できませんでした");
@@ -1147,10 +1172,12 @@ void Application::DrawSceneHierarchy() {
         eye("##eyeSky", &m_renderer.ShowSkybox(), "空の背景の表示。環境光と地形の手前の雲は残る");
         const auto path = m_sceneAtmosphere.is_null() ? std::filesystem::path{} : m_workspace.Resolve(m_sceneAtmosphere);
         if (row("##atmosphereRow", path, path.empty() && components ? "大気散乱スカイ（シーン保存時に作成）" : "大気散乱スカイ",
-                false, atmosphereDirty, "ダブルクリックでライティングへ。右クリックで新規作成・読み込み")) {
+                false, atmosphereDirty, "ダブルクリックでライティングへ。右クリックで改名・新規作成・読み込み")) {
             m_renderer.AtmosphericMode() = true; m_pendingWorkEnvironmentSave = true; m_focusLighting = true;
         }
         if (components && ImGui::BeginPopupContextItem("atmosphereMenu")) {
+            renameMenuItem(path);
+            ImGui::Separator();
             if (ImGui::MenuItem("新規作成して配置")) {
                 auto created = m_workspace.UniquePath(SceneAssetDirectory(), "大気散乱スカイ", ".tgatmosphere");
                 auto body = io::AtmosphereAssetBody(nlohmann::json::object(), "大気散乱スカイ");
