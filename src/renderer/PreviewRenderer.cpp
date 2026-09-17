@@ -1170,8 +1170,10 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
 
     PIXEndEvent(commandList);
 
-    // ハイトの範囲の枠。シーンの深度でテストするため、ImGui ではなくここで描く。
+    // ハイトの範囲の枠と、選んだノードのガイド線。シーンの深度でテストするため、
+    // ImGui ではなくここで描く。
     DrawHeightGuideOverlay(device, pipelineCache, commandList);
+    DrawGuideLinesOverlay(device, pipelineCache, commandList);
 
     // ImGui から SRV として読むため、ピクセルシェーダ可視の状態へ移す。
     TransitionIfNeeded(commandList, m_output, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -1188,7 +1190,49 @@ void PreviewRenderer::DrawHeightGuideOverlay(rhi::Device& device,
     if (!m_showHeightGuide) {
         return;
     }
+    std::vector<GuideLine> lines;
+    const float kHalf = m_planeSize * 0.5f;
+    const XMFLOAT2 corners[4] = {{-kHalf, -kHalf}, {kHalf, -kHalf}, {kHalf, kHalf},
+                                 {-kHalf, kHalf}};
 
+    // height 0 / 0.5 / 1 の矩形。0.5（基準面）だけ薄くして区別する。
+    const float levels[3] = {0.0f, 0.5f, 1.0f};
+    const float levelAlphas[3] = {0.78f, 0.43f, 0.78f};
+    for (int level = 0; level < 3; ++level) {
+        const float y = (levels[level] - 0.5f) * m_displacementScale;
+        for (int i = 0; i < 4; ++i) {
+            const XMFLOAT2& a = corners[i];
+            const XMFLOAT2& b = corners[(i + 1) % 4];
+            lines.push_back({XMFLOAT3{a.x, y, a.y}, XMFLOAT3{b.x, y, b.y}, levelAlphas[level]});
+        }
+    }
+    // 四隅の縦の辺（height 0 → 1）。
+    for (const XMFLOAT2& corner : corners) {
+        lines.push_back({XMFLOAT3{corner.x, -0.5f * m_displacementScale, corner.y},
+                         XMFLOAT3{corner.x, 0.5f * m_displacementScale, corner.y}, 0.55f});
+    }
+    // ImGui のギズモと同じ無彩色（表示色）。
+    const float color[3] = {150.0f / 255.0f, 160.0f / 255.0f, 175.0f / 255.0f};
+    DrawOverlayLines(device, pipelineCache, commandList, color, lines, "PreviewHeightGuide");
+}
+
+void PreviewRenderer::DrawGuideLinesOverlay(rhi::Device& device,
+                                            rhi::PipelineCache& pipelineCache,
+                                            ID3D12GraphicsCommandList* commandList) {
+    if (m_guideLines.empty()) {
+        return;
+    }
+    const float color[3] = {m_guideLineColor.x, m_guideLineColor.y, m_guideLineColor.z};
+    DrawOverlayLines(device, pipelineCache, commandList, color, m_guideLines, "PreviewGuideLines");
+}
+
+void PreviewRenderer::DrawOverlayLines(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                       ID3D12GraphicsCommandList* commandList,
+                                       const float color[3], const std::vector<GuideLine>& lines,
+                                       const char* label) {
+    if (lines.empty()) {
+        return;
+    }
     rhi::GraphicsPipelineDesc pipelineDesc;
     pipelineDesc.shaderPath = L"OverlayLines.hlsl";
     pipelineDesc.vertexEntry = L"VsMain";
@@ -1203,54 +1247,11 @@ void PreviewRenderer::DrawHeightGuideOverlay(rhi::Device& device,
     pipelineDesc.alphaBlend = true;
 
     ID3D12PipelineState* pipeline = pipelineCache.GetGraphics(pipelineDesc);
-    const rhi::UploadAllocation cb =
-        device.Upload().Allocate(sizeof(OverlayLineConstants), 256);
-    if (pipeline == nullptr || !cb.IsValid()) {
+    if (pipeline == nullptr) {
         return;
     }
 
-    OverlayLineConstants constants = {};
-    XMStoreFloat4x4(&constants.viewProjection,
-                    XMMatrixMultiply(m_camera.ViewMatrix(), m_camera.ProjectionMatrix()));
-    // ImGui のギズモと同じ無彩色（表示色）。
-    constants.color[0] = 150.0f / 255.0f;
-    constants.color[1] = 160.0f / 255.0f;
-    constants.color[2] = 175.0f / 255.0f;
-    constants.color[3] = 1.0f;
-
-    uint32_t count = 0;
-    const auto addLine = [&](const XMFLOAT3& a, const XMFLOAT3& b, float alpha) {
-        if (count + 2 > kOverlayLineMaxVertices) {
-            return;
-        }
-        constants.positions[count++] = XMFLOAT4{a.x, a.y, a.z, alpha};
-        constants.positions[count++] = XMFLOAT4{b.x, b.y, b.z, alpha};
-    };
-
-    const float kHalf = m_planeSize * 0.5f;
-    const XMFLOAT2 corners[4] = {{-kHalf, -kHalf}, {kHalf, -kHalf}, {kHalf, kHalf},
-                                 {-kHalf, kHalf}};
-
-    // height 0 / 0.5 / 1 の矩形。0.5（基準面）だけ薄くして区別する。
-    const float levels[3] = {0.0f, 0.5f, 1.0f};
-    const float levelAlphas[3] = {0.78f, 0.43f, 0.78f};
-    for (int level = 0; level < 3; ++level) {
-        const float y = (levels[level] - 0.5f) * m_displacementScale;
-        for (int i = 0; i < 4; ++i) {
-            const XMFLOAT2& a = corners[i];
-            const XMFLOAT2& b = corners[(i + 1) % 4];
-            addLine(XMFLOAT3{a.x, y, a.y}, XMFLOAT3{b.x, y, b.y}, levelAlphas[level]);
-        }
-    }
-    // 四隅の縦の辺（height 0 → 1）。
-    for (const XMFLOAT2& corner : corners) {
-        addLine(XMFLOAT3{corner.x, -0.5f * m_displacementScale, corner.y},
-                XMFLOAT3{corner.x, 0.5f * m_displacementScale, corner.y}, 0.55f);
-    }
-
-    std::memcpy(cb.cpu, &constants, sizeof(constants));
-
-    PIXBeginEvent(commandList, PIX_COLOR(160, 170, 190), "PreviewHeightGuide");
+    PIXBeginEvent(commandList, PIX_COLOR(160, 170, 190), label);
 
     TransitionIfNeeded(commandList, m_output, D3D12_RESOURCE_STATE_RENDER_TARGET);
     // DoF が有効なフレームでは深度が SRV になっている。DSV として束ね直す
@@ -1263,13 +1264,38 @@ void PreviewRenderer::DrawHeightGuideOverlay(rhi::Device& device,
 
     commandList->SetGraphicsRootSignature(pipelineCache.GlobalRootSignature());
     commandList->SetPipelineState(pipeline);
-    commandList->SetGraphicsRootConstantBufferView(1, cb.gpuAddress);
     commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_LINELIST);
     commandList->IASetVertexBuffers(0, 0, nullptr);
     commandList->IASetIndexBuffer(nullptr);
-    commandList->DrawInstanced(count, 1, 0, 0);
-    ++m_stats.drawCalls;
-    m_stats.vertices += count;
+
+    // 定数バッファは 128 端点（64 本）まで。超えるぶんは分けて流す。
+    constexpr size_t kLinesPerBatch = kOverlayLineMaxVertices / 2;
+    for (size_t begin = 0; begin < lines.size(); begin += kLinesPerBatch) {
+        const size_t end = std::min(lines.size(), begin + kLinesPerBatch);
+        const rhi::UploadAllocation cb =
+            device.Upload().Allocate(sizeof(OverlayLineConstants), 256);
+        if (!cb.IsValid()) {
+            break;
+        }
+        OverlayLineConstants constants = {};
+        XMStoreFloat4x4(&constants.viewProjection,
+                        XMMatrixMultiply(m_camera.ViewMatrix(), m_camera.ProjectionMatrix()));
+        constants.color[0] = color[0];
+        constants.color[1] = color[1];
+        constants.color[2] = color[2];
+        constants.color[3] = 1.0f;
+        uint32_t count = 0;
+        for (size_t i = begin; i < end; ++i) {
+            const GuideLine& line = lines[i];
+            constants.positions[count++] = XMFLOAT4{line.a.x, line.a.y, line.a.z, line.alpha};
+            constants.positions[count++] = XMFLOAT4{line.b.x, line.b.y, line.b.z, line.alpha};
+        }
+        std::memcpy(cb.cpu, &constants, sizeof(constants));
+        commandList->SetGraphicsRootConstantBufferView(1, cb.gpuAddress);
+        commandList->DrawInstanced(count, 1, 0, 0);
+        ++m_stats.drawCalls;
+        m_stats.vertices += count;
+    }
 
     PIXEndEvent(commandList);
 }

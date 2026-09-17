@@ -318,6 +318,25 @@ void Application::DrawCloudShapeGizmo(const ImVec2& viewportMin, const ImVec2& v
         drawList->PopClipRect();
         return;
     }
+    // 天候層は範囲（幅 × 奥行き）と雲底〜雲底 + 最大厚さの直方体で示す。
+    // 球殻の沈み（遠方で層が下がるぶん）は描かない。設定した値がそのまま読める箱にする。
+    // **ImGui ではなくレンダラのガイド線で描く。** 深度でテストするので地形の向こう側は隠れ、
+    // カメラの後ろに端点がある辺も切れない（雲層は視点を囲む大きさになりがち）。
+    if (const auto* weather=std::get_if<graph::CloudWeatherSettings>(&node->settings)) {
+        const float x=weather->centerX,z=weather->centerZ,w=weather->width*0.5f,d=weather->depth*0.5f;
+        const float bottom=weather->bottomHeight,top=bottom+weather->maxThickness;
+        const XMFLOAT3 corners[]{{x-w,bottom,z-d},{x+w,bottom,z-d},{x+w,bottom,z+d},{x-w,bottom,z+d},
+            {x-w,top,z-d},{x+w,top,z-d},{x+w,top,z+d},{x-w,top,z+d}};
+        const ImVec4 guide=ImGui::GetStyleColorVec4(ImGuiCol_PlotLinesHovered);
+        m_renderer.SetGuideLineColor(guide.x,guide.y,guide.z);
+        for (int i=0;i<4;++i) {
+            m_renderer.AddGuideLine(corners[i],corners[(i+1)%4]);
+            m_renderer.AddGuideLine(corners[i+4],corners[(i+1)%4+4]);
+            m_renderer.AddGuideLine(corners[i],corners[i+4]);
+        }
+        drawList->PopClipRect();
+        return;
+    }
     if (const auto* map=std::get_if<graph::CloudMapSettings>(&node->settings)) {
         if (map->showGuides) {
             const float x=map->centerX,z=map->centerZ,w=map->width*0.5f,d=map->depth*0.5f,y=map->bottomHeight;
@@ -728,6 +747,8 @@ void Application::DrawViewportPanel() {
             // L + 左ドラッグはライトの向き。ブラシや軌道より先に見る。
             const bool lightDragging = HandleLightDrag(itemActive);
             const ImVec2 imageMax(imageOrigin.x + available.x, imageOrigin.y + available.y);
+            // ガイド線は毎フレーム積み直す（選択を外したら消える）。
+            m_renderer.ClearGuideLines();
             DrawCloudShapeGizmo(imageOrigin, imageMax);
             const bool cloudDragging=HandleCloudTransformGizmo(itemActive && !lightDragging,itemHovered && !lightDragging,imageOrigin,imageMax);
 

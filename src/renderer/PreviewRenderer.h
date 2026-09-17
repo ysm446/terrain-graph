@@ -320,6 +320,19 @@ public:
     // ハイトの範囲（height 0 / 0.5 / 1 の枠）を描くか。設定は AppSettings が持ち、
     // Application が毎フレーム写す。深度テストするためレンダラ側で描く。
     bool& ShowHeightGuide() { return m_showHeightGuide; }
+    // ガイド線（選んだノードの範囲など）。ハイトの範囲と同じく、シーンの深度で
+    // テストして地形の向こう側を隠す。Application が毎フレーム積み直す
+    // （描くのは次の Render なので 1 フレーム遅れる）。色は表示色（露出を通さない）。
+    struct GuideLine {
+        DirectX::XMFLOAT3 a;
+        DirectX::XMFLOAT3 b;
+        float alpha = 1.0f;
+    };
+    void ClearGuideLines() { m_guideLines.clear(); }
+    void AddGuideLine(const DirectX::XMFLOAT3& a, const DirectX::XMFLOAT3& b, float alpha = 1.0f) {
+        m_guideLines.push_back({a, b, alpha});
+    }
+    void SetGuideLineColor(float r, float g, float b) { m_guideLineColor = {r, g, b}; }
     // マスクのプレビューで、0 か 1 に張り付いた所へ斜線を引くか（設定）。
     bool& MaskSaturationHatch() { return m_maskSaturationHatch; }
     bool MaskSaturationHatch() const { return m_maskSaturationHatch; }
@@ -364,6 +377,13 @@ private:
     // シーンの深度でテストしながらラインを描く（平面のときだけ）。
     void DrawHeightGuideOverlay(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                                 ID3D12GraphicsCommandList* commandList);
+    // Application が積んだガイド線を同じ方式で描く。
+    void DrawGuideLinesOverlay(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                               ID3D12GraphicsCommandList* commandList);
+    // 線の列を 1 回の描画で流す共通部。128 端点を超えるぶんは複数回に分ける。
+    void DrawOverlayLines(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                          ID3D12GraphicsCommandList* commandList, const float color[3],
+                          const std::vector<GuideLine>& lines, const char* label);
 
     Mesh m_plane;
 
@@ -426,6 +446,8 @@ private:
     bool m_tessellationEnabled = kPreviewDefaults.tessellationEnabled;
     float m_tessellationFactor = kPreviewDefaults.tessellationFactor;
     bool m_showHeightGuide = false;
+    std::vector<GuideLine> m_guideLines;
+    DirectX::XMFLOAT3 m_guideLineColor{150.0f / 255.0f, 160.0f / 255.0f, 175.0f / 255.0f};
     bool m_maskSaturationHatch = kPreviewDefaults.maskSaturationHatch;
     bool m_maskPreviewActive = false;
     bool m_skyRebuildRequested = false;
