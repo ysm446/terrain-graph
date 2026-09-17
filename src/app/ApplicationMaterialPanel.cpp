@@ -236,10 +236,15 @@ bool Application::DrawMaterialProperties(compositor::MaterialAsset& asset) {
     if (ui::BeginPropertyTable("materialBasicRows")) {
         char nameBuffer[128] = {};
         std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", asset.name.c_str());
-        if (ui::PropertyTextInput("名前", nameBuffer, sizeof(nameBuffer))) {
-            asset.name = nameBuffer;
-            // 名前も編集終了時に保存・アンドゥへ反映する。
-            m_materialEditPending = true;
+        if (ui::PropertyTextInput("名前", nameBuffer, sizeof(nameBuffer),
+                                  "ファイル名（拡張子なし）と同じ。変えるとファイルも改名する")) {
+            if (asset.assetPath.empty()) {
+                // まだファイルが無い。初回保存時にこの名前でファイルを作る。
+                asset.name = nameBuffer;
+                m_materialEditPending = true;
+            } else {
+                RequestAssetRename(asset.assetPath, nameBuffer);
+            }
         }
 
         static const compositor::MaterialAsset kDefaultAsset;

@@ -108,8 +108,13 @@ void Application::DrawSkyPreviewWindow() {
     if (ui::BeginPropertyTable("skyBasicRows")) {
         char nameBuffer[128] = {};
         std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", active->name.c_str());
-        if (ui::PropertyTextInput("名前", nameBuffer, sizeof(nameBuffer))) {
-            active->name = nameBuffer; m_pendingWorkEnvironmentSave = true; m_pendingWorkSkySave = true;
+        if (ui::PropertyTextInput("名前", nameBuffer, sizeof(nameBuffer),
+                                  "ファイル名（拡張子なし）と同じ。変えるとファイルも改名する")) {
+            if (active->assetPath.empty()) {
+                active->name = nameBuffer; m_pendingWorkEnvironmentSave = true; m_pendingWorkSkySave = true;
+            } else {
+                RequestAssetRename(active->assetPath, nameBuffer);
+            }
         }
         // 選択中の作業用IBLのファイルと、差し替えの入口を表示する。
         DrawAssetPathRow("ファイル", active->assetPath, m_pendingAssetReveal);

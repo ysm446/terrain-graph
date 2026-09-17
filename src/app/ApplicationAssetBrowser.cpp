@@ -322,6 +322,32 @@ void Application::FinishAssetRename(bool commit) {
     m_pendingAssetRenameName = std::move(name);
 }
 
+// 名前欄からの改名。アセットブラウザの F2 と同じ経路（保留して ProcessAssetWork で処理）に乗せる。
+void Application::RequestAssetRename(const fs::path& assetPath, const std::string& newStem) {
+    if (assetPath.empty() || newStem.empty()) return;
+    auto name = newStem + ToUtf8Portable(assetPath.extension());
+    if (name == ToUtf8Portable(assetPath.filename())) return;
+    m_pendingAssetRename = assetPath;
+    m_pendingAssetRenameName = std::move(name);
+}
+
+void Application::SyncAssetNamesToFiles() {
+    const auto sync = [](const fs::path& assetPath, std::string& name) {
+        if (assetPath.empty()) return;
+        auto stem = ToUtf8Display(assetPath.stem());
+        if (name != stem) name = std::move(stem);
+    };
+    for (const auto& a : m_materialLibrary.Entries()) {
+        auto* asset = m_materialLibrary.FindMutable(a.id);
+        sync(asset->assetPath, asset->name);
+    }
+    for (const auto& a : m_skyLibrary.Entries()) {
+        auto* sky = m_skyLibrary.FindMutable(a.id);
+        sync(sky->assetPath, sky->name);
+    }
+    for (auto& a : m_models) sync(a.assetPath, a.name);
+}
+
 bool Application::IsAssetSelected(const fs::path& path) const {
     return std::find(m_selectedAssets.begin(), m_selectedAssets.end(), path) != m_selectedAssets.end();
 }
@@ -539,6 +565,8 @@ void Application::ProcessAssetWork() {
         }
         m_assetRefresh = true;
     }
+    // 読み込み・保存・改名のどの経路を通っても、ファイルを持つアセットの名前はファイル名に揃える。
+    SyncAssetNamesToFiles();
     // --projectには従来のシーンだけでなくルートと管理ファイルも渡せる。
     if (!m_pendingProjectOpen.empty()) {
         std::error_code error;

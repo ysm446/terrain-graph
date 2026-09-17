@@ -285,9 +285,14 @@ void Application::DrawModelPreviewWindow() {
     if (ui::BeginPropertyTable("modelBasic")) {
         char name[256];
         std::snprintf(name, sizeof(name), "%s", asset.name.c_str());
-        if (ui::PropertyTextInput("名前", name, sizeof(name))) {
-            asset.name = name;
-            changed = true;
+        if (ui::PropertyTextInput("名前", name, sizeof(name),
+                                  "ファイル名（拡張子なし）と同じ。変えるとファイルも改名する")) {
+            if (asset.assetPath.empty()) {
+                asset.name = name;
+                changed = true;
+            } else {
+                RequestAssetRename(asset.assetPath, name);
+            }
         }
         DrawAssetPathRow("ファイル", asset.path, m_pendingAssetReveal);
         if (asset.geometry) {

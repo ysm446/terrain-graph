@@ -616,6 +616,11 @@ private:
     char m_assetRenameBuffer[256] = {};
     std::filesystem::path m_pendingAssetRename;
     std::string m_pendingAssetRenameName;
+    // マテリアル・天球・モデルの名前はファイル名（拡張子なし）と同じにする。
+    // 名前欄の編集はファイルの改名として扱い、ファイルを持つアセットの名前は毎フレーム
+    // ファイル名から引き直す。ファイルがまだ無いものは名前をそのまま持つ。
+    void RequestAssetRename(const std::filesystem::path& assetPath, const std::string& newStem);
+    void SyncAssetNamesToFiles();
     std::filesystem::path m_pendingAssetDeleteInspect;
     io::AssetRelations m_assetDeleteRelations;
     bool m_assetDeleteDialog = false;
