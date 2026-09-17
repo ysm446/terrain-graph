@@ -91,10 +91,12 @@ PathFrame ComputePathFrame(ByteAddressBuffer segments, uint count, float2 positi
         const PathSegmentData segment = LoadSegment(segments, i, sizeMeters);
         const float2 ab = segment.b - segment.a;
         const float lengthSq = dot(ab, ab);
-        const float t = (lengthSq > 1e-8f) ? saturate(dot(position - segment.a, ab) / lengthSq)
-                                           : 0.0f;
-        const float2 offset = position - (segment.a + ab * t);
-        const float distance = length(offset);
+        // 距離（帯の内外の判定）は線分の内側に切り詰めた最寄り点で取る。
+        // 座標（弧長・横距離）は切り詰めない位置で取る。端点の外（丸いキャップ）でも
+        // 線分を延長した向きに弧長が進み、模様が端で止まって伸びない。
+        const float tRaw = (lengthSq > 1e-8f) ? dot(position - segment.a, ab) / lengthSq : 0.0f;
+        const float t = saturate(tRaw);
+        const float distance = length(position - (segment.a + ab * t));
         if (distance >= nearest)
         {
             continue;
@@ -102,10 +104,10 @@ PathFrame ComputePathFrame(ByteAddressBuffer segments, uint count, float2 positi
         nearest = distance;
         const float2 direction = (lengthSq > 1e-8f) ? ab * rsqrt(lengthSq) : float2(1.0f, 0.0f);
         frame.direction = direction;
-        frame.along = lerp(segment.alongA, segment.alongB, t);
+        frame.along = lerp(segment.alongA, segment.alongB, tRaw);
         // 進行方向を V 軸、その右手（direction を -90 度回した向き）を U 軸に取る。
-        // 反転を含まない回転なので、法線マップの向きもこの回転で写せる。
-        frame.across = dot(offset, float2(direction.y, -direction.x));
+        // 横距離は線分を無限に延ばした直線からの符号付き距離。
+        frame.across = dot(position - segment.a, float2(direction.y, -direction.x));
         frame.width = lerp(segment.widthA, segment.widthB, t);
         frame.feather = lerp(segment.featherA, segment.featherB, t);
         frame.coverage = PathDistanceValue(distance, frame.width, frame.feather);
