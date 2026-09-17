@@ -488,6 +488,8 @@ private:
     bool m_paintMode = false;
     // ライトの向きを掴んでいる間。ギズモは離してからも少しの間だけ残す。
     bool m_lightDragActive = false;
+    // 日時モードの L + ドラッグで時刻を変えたか。離したときに 1 段だけアンドゥへ積む。
+    bool m_lightDragChangedTime = false;
     double m_lightGizmoUntil = 0.0;
     // ストローク中の状態。前フレームのカーソル位置から線分としてブラシを積む。
     bool m_strokeActive = false;

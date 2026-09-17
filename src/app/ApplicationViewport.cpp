@@ -189,7 +189,37 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
     }
 }
 
+namespace {
+
+int DaysInMonth(int year, int month) {
+    static constexpr int kDays[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    const bool leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    return (month == 2 && leap) ? 29 : kDays[std::clamp(month, 1, 12) - 1];
+}
+
+// 時刻を 0〜24 時に収め、はみ出したぶんだけ日付を進める / 戻す。
+void NormalizeCelestialTime(renderer::CelestialSettings& c) {
+    while (c.hour >= 24.0f) {
+        c.hour -= 24.0f;
+        if (++c.day > DaysInMonth(c.year, c.month)) {
+            c.day = 1;
+            if (++c.month > 12) { c.month = 1; ++c.year; }
+        }
+    }
+    while (c.hour < 0.0f) {
+        c.hour += 24.0f;
+        if (--c.day < 1) {
+            if (--c.month < 1) { c.month = 12; --c.year; }
+            c.day = DaysInMonth(c.year, c.month);
+        }
+    }
+}
+
+}  // namespace
+
 // L + 左ドラッグでライトの向きを変える。
+// 「緯度経度と日時」のときは向きを直接動かせない（毎フレーム日時から計算される）ので、
+// 横ドラッグで時刻を進める。縦は使わない。
 //
 // 修飾キー（Ctrl / Shift / Alt）は付けない。Alt は軌道、Ctrl は数値の直接入力に
 // 使っているので、それらと重ならないようにする。
@@ -198,12 +228,27 @@ bool Application::HandleLightDrag(bool itemActive) {
     const bool shortcut =
         ImGui::IsKeyDown(ImGuiKey_L) && !io.KeyCtrl && !io.KeyShift && !io.KeyAlt;
     if (!shortcut || !itemActive || !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        // 離したときにまとめて 1 段。ドラッグ中に毎フレーム積むと履歴が埋まる。
+        if (m_lightDragChangedTime) MarkDocumentChanged(false);
+        m_lightDragChangedTime = false;
         m_lightDragActive = false;
         return false;
     }
 
     m_lightDragActive = true;
     m_lightGizmoUntil = ImGui::GetTime() + kLightGizmoFadeSeconds;
+
+    if (m_renderer.AtmosphericMode() && m_renderer.Celestial().mode == 1) {
+        if (io.MouseDelta.x != 0.0f) {
+            auto& celestial = m_renderer.Celestial();
+            celestial.hour += io.MouseDelta.x * kLightMinutesPerPixel / 60.0f;
+            NormalizeCelestialTime(celestial);
+            // 次のフレームを待たず、掴んだまま太陽が動くようにする。
+            ApplyCelestialSettings();
+            m_lightDragChangedTime = true;
+        }
+        return true;
+    }
 
     renderer::LightSettings& light = m_renderer.Light();
     const float step = DegreesToRadians(kLightDegreesPerPixel);
@@ -509,9 +554,18 @@ void Application::DrawLightGizmo(const ImVec2& viewportMin, const ImVec2& viewpo
     }
 
     // いまの値。掴んだまま数字を確かめられるようにする。
-    char text[64] = {};
-    std::snprintf(text, sizeof(text), "方位角 %.0f 度   仰角 %.0f 度",
-                  RadiansToDegrees(light.azimuth), RadiansToDegrees(light.elevation));
+    // 日時モードでは動かしているのが時刻なので、日付と時刻を先頭に出す。
+    char text[96] = {};
+    if (m_renderer.AtmosphericMode() && m_renderer.Celestial().mode == 1) {
+        const auto& c = m_renderer.Celestial();
+        const int minutes = static_cast<int>(std::lround(c.hour * 60.0f));
+        std::snprintf(text, sizeof(text), "%d/%d %02d:%02d   方位角 %.0f 度   仰角 %.0f 度",
+                      c.month, c.day, (minutes / 60) % 24, minutes % 60,
+                      RadiansToDegrees(light.azimuth), RadiansToDegrees(light.elevation));
+    } else {
+        std::snprintf(text, sizeof(text), "方位角 %.0f 度   仰角 %.0f 度",
+                      RadiansToDegrees(light.azimuth), RadiansToDegrees(light.elevation));
+    }
     const ImVec2 textSize = ImGui::CalcTextSize(text);
     const ImVec2 padding(ui::Scaled(8.0f), ui::Scaled(5.0f));
     // 左上には表示モードのボタンがあるので、その下へ置く。

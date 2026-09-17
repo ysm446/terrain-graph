@@ -833,6 +833,9 @@ inline bool DrawMapSlotRow(const char* label, compositor::MapSlot& slot,
 inline constexpr double kLightGizmoFadeSeconds = 0.35;
 // ライトを掴んだときの感度。参考にした terrain-editor と同じ 0.25 度 / ピクセル。
 inline constexpr float kLightDegreesPerPixel = 0.25f;
+// 「緯度経度と日時」のときの L + 左ドラッグ。横 1 ピクセルで進める時刻（分）。
+// 0.25 度/px の方位角と同じ感覚になるよう、1 日（360 度相当）が 720 px になる値。
+inline constexpr float kLightMinutesPerPixel = 2.0f;
 
 // ビューポートに重ねる線を描くための投影。カメラの行列をそのまま使う。
 struct ProjectedPoint {
