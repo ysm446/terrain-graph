@@ -143,7 +143,12 @@ struct Thumbnail {
 //
 // 戻った直後に `BeginDragDropSource()` を置いてよい
 // （枠の描画は最後のアイテムを変えない）。
-Thumbnail ThumbnailButton(const char* id, ImTextureID texture, float size, bool selected);
+//
+// captionLines に GridCaption の行数（2）を渡すと、当たり判定を名前の行まで広げる。
+// 絵と枠は正方形のままで、カーソルもその直下に戻すので、続けて GridCaption を置けばよい。
+// 名前の上に入力欄（GridCaptionInput）を重ねるときは 0 にする。先に置いた当たり判定が
+// 入力欄のホバーを奪ってしまう。
+Thumbnail ThumbnailButton(const char* id, ImTextureID texture, float size, bool selected, int captionLines = 0);
 
 // 一覧の行に置く小さなサムネイル。**選択枠は付けない。**
 // 行そのものが選択を示すので、画像側にも枠を出すと選択が二重に見える。

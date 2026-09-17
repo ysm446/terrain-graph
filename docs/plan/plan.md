@@ -1,7 +1,7 @@
 # plan — 実装方針と優先順位
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-16 20:20
+更新日時: 2026-09-17 16:20
 
 ## 夜空の表示と月明かり
 
@@ -235,7 +235,7 @@ terrain_graph.exe [--project <path>] [--save-project <path>]
                    [--export <dir>]
                    [--screenshot <path>] [--screenshot-ui <path>]
                    [--screenshot-frame <n>] [--select-node <id>]
-                   [--show-unsaved]
+                   [--show-unsaved] [--gpu-validation]
 ```
 
 `--texture` は繰り返し指定でき、起動時にテクスチャライブラリへ読み込む。
@@ -248,6 +248,10 @@ terrain_graph.exe [--project <path>] [--save-project <path>]
 
 `--screenshot` はビューポートの内容を、`--screenshot-ui` は UI 込みの
 ウィンドウ全体を PNG に書き出して終了する。
+
+`--gpu-validation` は Debug のデバッグレイヤーに加えて GPU ベースバリデーションを有効にする
+（2026-09-17 に既定オフへ変更。有効だと最初のフレームが数分経っても終わらないため、
+リソース状態の検証が必要なときだけ付ける）。
 画面キャプチャに頼らず結果を確認できるため、リモート環境や自動確認で使う。
 `--select-node` は読み込んだグラフで指定 ID のノードを選択し、プロパティの画像確認に使う。
 `--show-unsaved` は読み込んだシーンの全項目を未保存扱いにし、シーン階層の印と保存ボタンを画像で確認する。

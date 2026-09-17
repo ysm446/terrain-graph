@@ -172,12 +172,18 @@ void ThumbnailFrame(const ImVec2& min, const ImVec2& max, bool selected, bool ho
                       Scaled(1.0f));
 }
 
-Thumbnail ThumbnailButton(const char* id, ImTextureID texture, float size, bool selected) {
+Thumbnail ThumbnailButton(const char* id, ImTextureID texture, float size, bool selected, int captionLines) {
     const ImVec2 min = ImGui::GetCursorScreenPos();
     const ImVec2 max(min.x + size, min.y + size);
+    const ImVec2 cursor = ImGui::GetCursorPos();
 
     // ID を持つアイテムを先に置く。これが無いとドラッグ元にできない。
-    ImGui::InvisibleButton(id, ImVec2(size, size));
+    // 名前の行まで含めるときは縦に伸ばし、カーソルは正方形の直下へ戻す
+    // （呼び側の GridCaption がこれまでどおりの位置に並ぶ）。
+    const float extra = captionLines > 0
+        ? captionLines * ImGui::GetTextLineHeightWithSpacing() - ImGui::GetStyle().ItemSpacing.y : 0.0f;
+    ImGui::InvisibleButton(id, ImVec2(size, size + extra));
+    if (extra > 0.0f) ImGui::SetCursorPos(ImVec2(cursor.x, cursor.y + size + ImGui::GetStyle().ItemSpacing.y));
 
     Thumbnail state;
     state.hovered = ImGui::IsItemHovered();

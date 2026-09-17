@@ -32,11 +32,11 @@ Device::~Device() {
     Shutdown();
 }
 
-bool Device::Initialize(HWND hwnd, uint32_t width, uint32_t height, bool enableDebugLayer) {
+bool Device::Initialize(HWND hwnd, uint32_t width, uint32_t height, bool enableDebugLayer, bool gpuValidation) {
     m_width = width;
     m_height = height;
 
-    if (!CreateFactoryAndDevice(enableDebugLayer)) {
+    if (!CreateFactoryAndDevice(enableDebugLayer, gpuValidation)) {
         return false;
     }
     if (!CreateCommandObjects()) {
@@ -179,7 +179,7 @@ uint64_t Device::CompletedFenceValue() const {
     return m_fence ? m_fence->GetCompletedValue() : 0;
 }
 
-bool Device::CreateFactoryAndDevice(bool enableDebugLayer) {
+bool Device::CreateFactoryAndDevice(bool enableDebugLayer, bool gpuValidation) {
     UINT factoryFlags = 0;
 
     if (enableDebugLayer) {
@@ -188,8 +188,10 @@ bool Device::CreateFactoryAndDevice(bool enableDebugLayer) {
             debug->EnableDebugLayer();
             TG_LOG_INFO("D3D12 デバッグレイヤーを有効化しました");
 
+            // GPU ベースバリデーションは既定で切る。地形評価や雲の Dispatch に
+            // 検証コードが入って最初のフレームが数分経っても終わらない。
             ComPtr<ID3D12Debug1> debug1;
-            if (SUCCEEDED(debug.As(&debug1))) {
+            if (gpuValidation && SUCCEEDED(debug.As(&debug1))) {
                 debug1->SetEnableGPUBasedValidation(TRUE);
                 TG_LOG_INFO("GPU ベースバリデーションを有効化しました");
             }

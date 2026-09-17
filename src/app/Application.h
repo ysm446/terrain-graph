@@ -71,6 +71,8 @@ struct StartupOptions {
     std::filesystem::path uiScreenshotPath;
     uint32_t benchmarkFrames = 0;
     bool referenceCloudLighting = false;
+    // --gpu-validation。Debug のデバッグレイヤーに加えて GPU ベースバリデーションを有効にする。
+    bool gpuValidation = false;
     bool fullResolutionClouds = false;
     bool disableTemporalClouds = false; // 比較用。時間方向の再投影を無効にする。
     uint32_t screenshotFrame = 8;

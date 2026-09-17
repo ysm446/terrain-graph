@@ -108,7 +108,7 @@ bool Application::Initialize(const StartupOptions& options) {
     }
 
     if (!m_device.Initialize(m_window.Handle(), m_window.Width(), m_window.Height(),
-                             kEnableDebugLayer)) {
+                             kEnableDebugLayer, options.gpuValidation)) {
         return false;
     }
 

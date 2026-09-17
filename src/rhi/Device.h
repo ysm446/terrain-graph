@@ -21,7 +21,9 @@ public:
     Device(const Device&) = delete;
     Device& operator=(const Device&) = delete;
 
-    bool Initialize(HWND hwnd, uint32_t width, uint32_t height, bool enableDebugLayer);
+    // gpuValidation は GPU ベースバリデーション。全シェーダに検証コードが入り
+    // 大きなコンピュート負荷では起動が数分でも終わらないため、明示したときだけ有効にする。
+    bool Initialize(HWND hwnd, uint32_t width, uint32_t height, bool enableDebugLayer, bool gpuValidation = false);
     void Shutdown();
 
     void Resize(uint32_t width, uint32_t height);
@@ -120,7 +122,7 @@ public:
     uint32_t Height() const { return m_height; }
 
 private:
-    bool CreateFactoryAndDevice(bool enableDebugLayer);
+    bool CreateFactoryAndDevice(bool enableDebugLayer, bool gpuValidation);
     bool CreateCommandObjects();
     bool CreateFrameTiming();
     void ReadFrameTiming();

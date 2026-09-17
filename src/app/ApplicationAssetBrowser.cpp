@@ -921,23 +921,27 @@ void Application::DrawAssetBrowser() {
             if (!isLoaded && !folder && ImGui::IsRectVisible(ImVec2(size, size)))
                 handle = static_cast<ImTextureID>(m_assetThumbnails.Request(path).ptr);
             ImGui::PushID(ToUtf8Portable(path).c_str()); ImGui::BeginGroup();
-            const auto thumb = ui::ThumbnailButton("##asset", handle, size, IsAssetSelected(path));
+            // 名前の行もクリック・ドラッグ・右クリックの対象にする。改名中は入力欄が重なるので広げない。
+            const bool renaming = path == m_assetRenameTarget && !m_assetRenameInTree && !m_assetRenameInHierarchy;
+            const auto thumb = ui::ThumbnailButton("##asset", handle, size, IsAssetSelected(path), renaming ? 0 : 2);
+            // 絵とアイコンは正方形の中に描く（当たり判定の矩形は名前の行まで伸びている）。
+            const ImVec2 tileMin = ImGui::GetItemRectMin(), tileMax(tileMin.x + size, tileMin.y + size);
             if (folder) {
-                DrawFolderIcon(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+                DrawFolderIcon(tileMin, tileMax);
             } else if (!handle && (ext == ".tgatmosphere" || ext == ".tgterrain" || ext == ".tgcloud")) {
                 const auto icon = ext == ".tgatmosphere" ? ui::AssetIcon::Atmosphere :
                                   ext == ".tgterrain" ? ui::AssetIcon::Terrain : ui::AssetIcon::Cloud;
-                ui::DrawAssetIcon(icon, ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+                ui::DrawAssetIcon(icon, tileMin, tileMax);
             } else if (!handle) {
                 const char* type = ext == ".tgterrain" ? "地形グラフ" : ext == ".tgatmosphere" ? "大気散乱" : ext == ".tgcloud" ? "雲グラフ" : ext == ".tgscene" ? "シーン" : ext == ".tgmat" ? "マテリアル" :
                     ext == ".tgsky" ? "作業用IBL" : ext == ".tgmodel" || ext == ".fbx" ? "モデル" : IsImage(ext) ? "画像" : "ファイル";
-                const auto min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+                const auto min = tileMin, max = tileMax;
                 const auto text = ImGui::CalcTextSize(type);
                 ImGui::GetWindowDrawList()->AddText(ImVec2((min.x + max.x - text.x) * 0.5f, (min.y + max.y - text.y) * 0.5f),
                                                     ImGui::GetColorU32(ImGuiCol_TextDisabled), type);
             }
             if (!handle && m_assetThumbnails.Failed(path))
-                ui::MissingBadge(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+                ui::MissingBadge(tileMin, tileMax);
             if (thumb.clicked) SelectAsset(path, ImGui::GetIO().KeyCtrl, ImGui::GetIO().KeyShift);
             // どの種類もダブルクリックで開く（モデルも同じ。シングルクリックは選ぶだけ）。
             if (thumb.doubleClicked) {
@@ -1014,7 +1018,7 @@ void Application::DrawAssetBrowser() {
                 } else if (path.filename() != L"project.tgproj" && ImGui::MenuItem("削除…", "Del")) QueueAssetDelete();
                 ImGui::EndPopup();
             }
-            if (path == m_assetRenameTarget && !m_assetRenameInTree && !m_assetRenameInHierarchy) {
+            if (renaming) {
                 const auto edit = ui::GridCaptionInput("##rename", m_assetRenameBuffer, sizeof(m_assetRenameBuffer), size, &m_assetRenameFocus);
                 if (edit != ui::CaptionEdit::Editing) FinishAssetRename(edit == ui::CaptionEdit::Commit);
             } else {

@@ -24,7 +24,7 @@ namespace {
 //                       [--hdri <path>] [--texture <path>]...
 //                       [--export <dir>]
 //                       [--screenshot <path>] [--screenshot-ui <path>]
-//                       [--screenshot-frame <n>]
+//                       [--screenshot-frame <n>] [--gpu-validation]
 tg::StartupOptions ParseCommandLine() {
     tg::StartupOptions options;
 
@@ -83,6 +83,8 @@ tg::StartupOptions ParseCommandLine() {
             options.fullResolutionClouds = true;
         } else if (argument == L"--cloud-no-temporal") {
             options.disableTemporalClouds = true;
+        } else if (argument == L"--gpu-validation") {
+            options.gpuValidation = true;
         } else if (argument == L"--reveal-asset" && i + 1 < argc) {
             options.revealAsset = argv[++i];
         } else if (argument == L"--show-unsaved") {
