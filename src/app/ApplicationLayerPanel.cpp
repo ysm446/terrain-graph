@@ -939,16 +939,26 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                                          defaults.pathUv.repeatMeters,
                                          "進行方向に模様が 1 周する長さ（m）。この間隔でループする",
                                          "%.1f m", ImGuiSliderFlags_Logarithmic);
-            changed |= ui::PropertyFloat("幅方向の枚数", &layer.pathUv.widthRepeat, 0.1f, 8.0f,
+            changed |= ui::PropertyFloat("幅方向の枚数", &layer.pathUv.widthRepeat, 0.01f, 8.0f,
                                          defaults.pathUv.widthRepeat,
-                                         "帯の幅（Path の点の幅）に模様を何枚並べるか。1 で幅いっぱいに 1 枚",
-                                         "%.2f", ImGuiSliderFlags_Logarithmic);
+                                         "帯の幅（Path の点の幅）に模様を何枚並べるか。1 で幅いっぱいに 1 枚、"
+                                         "1 未満で模様の一部だけを幅に広げる",
+                                         "%.3f", ImGuiSliderFlags_Logarithmic);
             changed |= ui::PropertyFloat("進行方向のずれ", &layer.pathUv.offsetMeters, -500.0f,
                                          500.0f, defaults.pathUv.offsetMeters,
                                          "模様を進行方向へずらす距離（m）。継ぎ目の位置を動かす", "%.1f m");
+            static const char* const kAlongAxisLabels[] = {"縦（V）", "横（U）"};
+            int alongAxis = layer.pathUv.alongU ? 1 : 0;
+            if (ui::PropertyCombo("進行方向の軸", &alongAxis, kAlongAxisLabels, 2,
+                                  defaults.pathUv.alongU ? 1 : 0,
+                                  "テクスチャのどの軸をパスの進行方向に当てるか。"
+                                  "縦なら繰り返し長が V、幅方向の枚数が U に効く。横なら逆")) {
+                layer.pathUv.alongU = (alongAxis == 1);
+                changed = true;
+            }
             ui::EndPropertyTable();
         }
-        ui::HintText("UV Path のパスに沿って素材を貼る。進行方向が模様の縦、幅方向が横。"
+        ui::HintText("UV Path のパスに沿って素材を貼る。進行方向が模様の縦（既定）または横。"
                      "幅とフェザーは Path の点が持ち、帯の外には乗らない");
     }
 

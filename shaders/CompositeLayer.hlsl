@@ -56,7 +56,7 @@ struct LayerConstants
     float4 colorAdjust;  // 色相（ラジアン）, 彩度, 明度, 未使用
     // パス UV（Surface の UV Path）。繰り返し長（m）, 幅方向の枚数, 進行方向のずれ（m）, 一辺（m）
     float4 pathUvParams;
-    // 線分バッファの SRV（無ければ kInvalidTextureIndex）, 線分数, 未使用 x2
+    // 線分バッファの SRV（無ければ kInvalidTextureIndex）, 線分数, 進行方向を U に当てる（0 / 1）, 未使用
     uint4 pathUvIndices;
 };
 
@@ -91,7 +91,8 @@ float SampleLayerScalar(uint index, uint channelSlot, float2 uv, float uvPerOutp
 // このレイヤーが素材を引く UV。
 //
 // 通常は地形の UV に UV スケールを掛けたもの。**UV Path に Path を繋いだ Surface は、
-// パスに沿った帯の座標で引く**（進行方向の弧長が V、幅方向が U）。V は繰り返し長（m）
+// パスに沿った帯の座標で引く**（既定では進行方向の弧長が V、幅方向が U。
+// pathUvIndices.z が 1 なら入れ替えて進行方向を U に当てる）。進行方向は繰り返し長（m）
 // ごとに 1 周するので、模様が進行方向にループする。帯の外は coverage が 0 になり、
 // マスクに掛けて乗らないようにする。
 struct LayerUv
@@ -99,7 +100,8 @@ struct LayerUv
     float2 uv;               // サンプルに使う UV
     float uvPerOutputTexel;  // 出力テクセル 1 つが張る UV 幅（ミップ選択用）
     bool path;               // パス UV か
-    float2 direction;        // 進行方向（V 軸）。地形 UV 空間の単位ベクトル
+    float2 xAxis;            // テクスチャの U 軸が向く、地形 UV 空間の単位ベクトル
+    float2 yAxis;            // 同じく V 軸
     float coverage;          // 帯の内側なら 1、フェザーの外で 0
     float2 uvPerMeter;       // U / V それぞれの 1 m あたりの UV 幅（法線の勾配用）
 };
@@ -110,7 +112,8 @@ LayerUv ComputeLayerUv(float2 outputUv, float2 texelSize)
     result.path = false;
     result.uv = outputUv * g_layer.blendParams.z;
     result.uvPerOutputTexel = texelSize.x * g_layer.blendParams.z;
-    result.direction = float2(0.0f, 1.0f);
+    result.xAxis = float2(1.0f, 0.0f);
+    result.yAxis = float2(0.0f, 1.0f);
     result.coverage = 1.0f;
     result.uvPerMeter = float2(0.0f, 0.0f);
     if (g_layer.pathUvIndices.x == kInvalidTextureIndex || g_layer.pathUvIndices.y == 0u)
@@ -125,12 +128,29 @@ LayerUv ComputeLayerUv(float2 outputUv, float2 texelSize)
     const float widthRepeat = max(g_layer.pathUvParams.y, 1e-3f);
     const float widthMeters = max(frame.width, 1e-3f);
     result.path = true;
-    result.direction = frame.direction;
     result.coverage = frame.coverage;
-    result.uvPerMeter = float2(widthRepeat / widthMeters, 1.0f / repeatMeters);
-    // U は中心線で widthRepeat の半分（帯の幅にちょうど widthRepeat 枚が並ぶ）。
-    result.uv = float2(frame.across * result.uvPerMeter.x + 0.5f * widthRepeat,
-                       (frame.along + g_layer.pathUvParams.z) * result.uvPerMeter.y);
+    // 幅方向は中心線で widthRepeat の半分（帯の幅にちょうど widthRepeat 枚が並ぶ）。
+    const float acrossPerMeter = widthRepeat / widthMeters;
+    const float alongPerMeter = 1.0f / repeatMeters;
+    const float acrossUv = frame.across * acrossPerMeter + 0.5f * widthRepeat;
+    const float alongUv = (frame.along + g_layer.pathUvParams.z) * alongPerMeter;
+    // 幅方向の軸は進行方向の右手（direction を -90 度回した向き）。
+    const float2 acrossAxis = float2(frame.direction.y, -frame.direction.x);
+    if (g_layer.pathUvIndices.z != 0u)
+    {
+        // 進行方向をテクスチャの横（U）に当てる。
+        result.uv = float2(alongUv, acrossUv);
+        result.uvPerMeter = float2(alongPerMeter, acrossPerMeter);
+        result.xAxis = frame.direction;
+        result.yAxis = acrossAxis;
+    }
+    else
+    {
+        result.uv = float2(acrossUv, alongUv);
+        result.uvPerMeter = float2(acrossPerMeter, alongPerMeter);
+        result.xAxis = acrossAxis;
+        result.yAxis = frame.direction;
+    }
     const float texelMeters = texelSize.x * sizeMeters;
     result.uvPerOutputTexel = texelMeters * max(result.uvPerMeter.x, result.uvPerMeter.y);
     return result;
@@ -315,10 +335,8 @@ float3 ComputeLayerNormal(LayerUv layerUv, float2 texelSize)
 
     if (layerUv.path)
     {
-        // 帯の座標系から地形の UV 空間へ。U 軸は進行方向の右手、V 軸は進行方向。
-        const float2 direction = layerUv.direction;
-        const float2 uAxis = float2(direction.y, -direction.x);
-        const float2 xy = normal.x * uAxis + normal.y * direction;
+        // 帯の座標系から地形の UV 空間へ。テクスチャの U / V 軸が向く方向で写す。
+        const float2 xy = normal.x * layerUv.xAxis + normal.y * layerUv.yAxis;
         normal = normalize(float3(xy, normal.z));
     }
     return normal;

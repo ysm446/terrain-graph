@@ -78,7 +78,7 @@ struct LayerConstants {
     float colorAdjust[4];  // 色相（ラジアン）, 彩度, 明度, 未使用
     // パス UV（Surface の UV Path）。繰り返し長（m）, 幅方向の枚数, 進行方向のずれ（m）, 一辺（m）
     float pathUvParams[4];
-    // 線分バッファの SRV（無ければ kInvalidTextureIndex）, 線分数, 未使用 x2
+    // 線分バッファの SRV（無ければ kInvalidTextureIndex）, 線分数, 進行方向を U に当てる（0 / 1）, 未使用
     uint32_t pathUvIndices[4];
 };
 
@@ -5204,8 +5204,9 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         // （評価は 1 本ずつなので、書き直すときに前の評価は終わっている）。
         constants.pathUvIndices[0] = kInvalidTextureIndex;
         constants.pathUvIndices[1] = 0;
+        constants.pathUvIndices[2] = layer.pathUv.alongU ? 1u : 0u;
         constants.pathUvParams[0] = std::max(layer.pathUv.repeatMeters, 0.01f);
-        constants.pathUvParams[1] = std::max(layer.pathUv.widthRepeat, 0.01f);
+        constants.pathUvParams[1] = std::max(layer.pathUv.widthRepeat, 0.001f);
         constants.pathUvParams[2] = layer.pathUv.offsetMeters;
         constants.pathUvParams[3] = (stack.SizeMeters() > 0.0f) ? stack.SizeMeters() : 1.0f;
         if (layer.kind == LayerKind::Surface && !layer.pathUvSegments.empty()) {

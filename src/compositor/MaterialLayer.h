@@ -669,6 +669,9 @@ struct MaterialLayer {
         float repeatMeters = 16.0f;   // 進行方向に模様が 1 周する長さ（m）
         float widthRepeat = 1.0f;     // 幅方向に何枚並べるか
         float offsetMeters = 0.0f;    // 進行方向のずらし（m）。継ぎ目の位置を動かす
+        // 進行方向をテクスチャの横（U）に当てる。既定は縦（V）。
+        // 横に流れる模様の素材をそのまま使いたいときに切り替える。
+        bool alongU = false;
     };
     PathUvSettings pathUv;
     // UV Path に繋いだパスの線分列。**保存しない。** グラフの繋ぎ方からコンパイルのたびに決まる。
