@@ -80,6 +80,8 @@ struct LayerConstants {
     float pathUvParams[4];
     // 線分バッファの SRV（無ければ kInvalidTextureIndex）, 線分数, 進行方向を U に当てる（0 / 1）, 未使用
     uint32_t pathUvIndices[4];
+    // 縁のカーブ（ガンマ）, 未使用 x3
+    float pathUvParams2[4];
 };
 
 // GPU 側の SedimentConstants と一致させること。
@@ -5209,6 +5211,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         constants.pathUvParams[1] = std::max(layer.pathUv.widthRepeat, 0.001f);
         constants.pathUvParams[2] = layer.pathUv.offsetMeters;
         constants.pathUvParams[3] = (stack.SizeMeters() > 0.0f) ? stack.SizeMeters() : 1.0f;
+        constants.pathUvParams2[0] = std::clamp(layer.pathUv.edgeGamma, 0.05f, 8.0f);
         if (layer.kind == LayerKind::Surface && !layer.pathUvSegments.empty()) {
             if (m_layerPathBuffers.size() <= layerIndex) {
                 m_layerPathBuffers.resize(layerIndex + 1);

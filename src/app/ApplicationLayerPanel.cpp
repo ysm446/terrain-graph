@@ -947,6 +947,11 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
             changed |= ui::PropertyFloat("進行方向のずれ", &layer.pathUv.offsetMeters, -500.0f,
                                          500.0f, defaults.pathUv.offsetMeters,
                                          "模様を進行方向へずらす距離（m）。継ぎ目の位置を動かす", "%.1f m");
+            changed |= ui::PropertyFloat("縁のカーブ", &layer.pathUv.edgeGamma, 0.05f, 8.0f,
+                                         defaults.pathUv.edgeGamma,
+                                         "帯のフェザーの落ち方。1 未満で外側まで残り、1 より大きいと内側へ締まる"
+                                         "（Mask Path のガンマと同じ）",
+                                         "%.2f", ImGuiSliderFlags_Logarithmic);
             static const char* const kAlongAxisLabels[] = {"縦（V）", "横（U）"};
             int alongAxis = layer.pathUv.alongU ? 1 : 0;
             if (ui::PropertyCombo("進行方向の軸", &alongAxis, kAlongAxisLabels, 2,

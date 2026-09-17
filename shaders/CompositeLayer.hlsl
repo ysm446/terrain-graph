@@ -58,6 +58,8 @@ struct LayerConstants
     float4 pathUvParams;
     // 線分バッファの SRV（無ければ kInvalidTextureIndex）, 線分数, 進行方向を U に当てる（0 / 1）, 未使用
     uint4 pathUvIndices;
+    // 縁のカーブ（ガンマ）, 未使用 x3
+    float4 pathUvParams2;
 };
 
 ConstantBuffer<LayerConstants> g_layer : register(b1);
@@ -128,7 +130,8 @@ LayerUv ComputeLayerUv(float2 outputUv, float2 texelSize)
     const float widthRepeat = max(g_layer.pathUvParams.y, 1e-3f);
     const float widthMeters = max(frame.width, 1e-3f);
     result.path = true;
-    result.coverage = frame.coverage;
+    // 縁のカーブ。Mask Path のガンマと同じ（1 より大きいと内側へ締まる）。
+    result.coverage = pow(saturate(frame.coverage), max(g_layer.pathUvParams2.x, 1e-3f));
     // 幅方向は中心線で widthRepeat の半分（帯の幅にちょうど widthRepeat 枚が並ぶ）。
     const float acrossPerMeter = widthRepeat / widthMeters;
     const float alongPerMeter = 1.0f / repeatMeters;

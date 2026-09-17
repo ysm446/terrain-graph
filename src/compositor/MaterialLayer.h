@@ -672,6 +672,9 @@ struct MaterialLayer {
         // 進行方向をテクスチャの横（U）に当てる。既定は縦（V）。
         // 横に流れる模様の素材をそのまま使いたいときに切り替える。
         bool alongU = false;
+        // 縁のカーブ。帯のフェザーの落ち方（Mask Path のガンマと同じ意味）。
+        // 1 で直線、1 より大きいと内側へ締まり、1 未満で外側まで残る。
+        float edgeGamma = 1.0f;
     };
     PathUvSettings pathUv;
     // UV Path に繋いだパスの線分列。**保存しない。** グラフの繋ぎ方からコンパイルのたびに決まる。

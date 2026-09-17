@@ -1046,6 +1046,7 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     pathUv["widthRepeat"] = layer.pathUv.widthRepeat;
     pathUv["offsetMeters"] = layer.pathUv.offsetMeters;
     pathUv["alongU"] = layer.pathUv.alongU;
+    pathUv["edgeGamma"] = layer.pathUv.edgeGamma;
     node["pathUv"] = std::move(pathUv);
     return node;
 }
@@ -1378,6 +1379,7 @@ compositor::MaterialLayer ReadLayer(
         layer.pathUv.widthRepeat = ReadFloat(*pathUv, "widthRepeat", defaults.pathUv.widthRepeat);
         layer.pathUv.offsetMeters = ReadFloat(*pathUv, "offsetMeters", defaults.pathUv.offsetMeters);
         layer.pathUv.alongU = ReadBool(*pathUv, "alongU", defaults.pathUv.alongU);
+        layer.pathUv.edgeGamma = ReadFloat(*pathUv, "edgeGamma", defaults.pathUv.edgeGamma);
     }
     return layer;
 }
