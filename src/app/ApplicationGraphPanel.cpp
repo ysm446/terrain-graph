@@ -1063,7 +1063,6 @@ void Application::DrawSceneHierarchy() {
     // 値はプレビュー設定（雲を描画 / 背景を表示）と同じものなので、シーンに保存される。
     // 文字より少し小さくし、行の高さは変えない（縦は文字の中心に揃える）。
     const float eyeSize = ui::Scaled(14.0f);
-    const float eyeIndent = eyeSize + style.ItemSpacing.x;  // 目の下の行（ファイル名）を見出しに揃える
     const auto eye = [&](const char* id, bool* value, const char* tooltip) {
         const float rowY = ImGui::GetCursorPosY();
         ImGui::SetCursorPosY(rowY + (ImGui::GetTextLineHeight() - eyeSize) * 0.5f);
@@ -1080,20 +1079,50 @@ void Application::DrawSceneHierarchy() {
         ui::HintText("旧形式のシーンです。保存済みの元データを残して部品へ分離できます。");
         if (ui::Button("部品へ分離…", ui::kWideButtonWidth)) m_pendingComponentMigration = true;
     }
+
+    // 部品 1 つにつき 1 行。「ファイル名（種類）」で並べ、ファイルがまだ無ければ種類だけ出す。
+    // 地形・大気散乱スカイ・雲は「シーンが参照するアセット 1 つ」という同じ立場なので同列に置く。
+    // 見出しは空の Selectable を敷いた上に文字を描く（ファイル名と種類で色を分けるため）。
+    // 長いファイル名は種類と右端の操作を残して中央を省略する。戻り値はダブルクリックされたか。
+    const auto row = [&](const char* id, const std::filesystem::path& file, const char* kind,
+                         bool selected, bool dirty, const char* tooltip) {
+        const ImVec2 origin = ImGui::GetCursorScreenPos();
+        ImVec2 size = rowWidth(dirty);
+        if (size.x <= 0.0f) size.x = ImGui::GetContentRegionAvail().x;
+        const bool doubleClicked =
+            ImGui::Selectable(id, selected, ImGuiSelectableFlags_AllowDoubleClick, size) &&
+            ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tooltip);
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        const ImVec2 textPos(origin.x + style.FramePadding.x, origin.y);
+        const float innerWidth = size.x - style.FramePadding.x * 2.0f;
+        if (file.empty()) {
+            draw->AddText(textPos, ImGui::GetColorU32(ImGuiCol_Text), kind);
+        } else {
+            const std::string suffix = std::string("（") + kind + "）";
+            const float suffixWidth = ImGui::CalcTextSize(suffix.c_str()).x;
+            const std::string name = ui::EllipsizeMiddle(ToUtf8Display(file.filename()).c_str(),
+                                                         innerWidth - suffixWidth);
+            draw->AddText(textPos, ImGui::GetColorU32(ImGuiCol_Text), name.c_str());
+            draw->AddText(ImVec2(textPos.x + ImGui::CalcTextSize(name.c_str()).x, textPos.y),
+                          ImGui::GetColorU32(ImGuiCol_TextDisabled), suffix.c_str());
+        }
+        return doubleClicked;
+    };
+
+    ImGui::BeginDisabled(previewing);
     const auto graphEntry = [&](int component) {
         ImGui::PushID(component);
         const bool dirty = components && (m_sceneDirty & (component ? kDirtyCloud : kDirtyTerrain));
         if (component) eye("##eyeCloud", &m_renderer.ShowClouds(), "雲と雲影の表示。雲グラフの設定は保持する");
         else eye("##eyeTerrain", &m_renderer.ShowTerrain(), "地形と配置したモデルの表示。影も一緒に消える");
-        if (ImGui::Selectable(component ? "雲グラフ" : "地形グラフ", m_editComponent == component,
-                              ImGuiSelectableFlags_AllowDoubleClick, rowWidth(dirty)) &&
-            ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
-            OpenComponentEditor(components ? component : -1);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("ダブルクリックで編集。右クリックで新規作成・入れ替え");
         std::filesystem::path placed;
         if (components) for (const auto& entry : m_sceneComponents)
             if (io::ProjectWorkspace::String(entry, "role") == (component ? "cloud" : "terrain"))
                 placed = m_workspace.Resolve(entry.value("asset", nlohmann::json::object()));
+        if (row("##graphRow", placed, component ? "雲グラフ" : "地形グラフ", m_editComponent == component,
+                dirty, "ダブルクリックで編集。右クリックで新規作成・入れ替え"))
+            OpenComponentEditor(components ? component : -1);
         // 新規作成と入れ替え。差し替える部品に未保存の編集があれば一時プレビューへ回る。
         if (components && ImGui::BeginPopupContextItem("componentMenu")) {
             if (ImGui::MenuItem("新規作成して配置")) {
@@ -1110,24 +1139,17 @@ void Application::DrawSceneHierarchy() {
             ImGui::EndPopup();
         }
         unsavedControls(dirty, component, "このグラフのファイルだけを保存する");
-        if (!placed.empty()) {
-            ImGui::Indent(eyeIndent);
-            ImGui::TextDisabled("%s", ToUtf8Display(placed.filename()).c_str());
-            ImGui::Unindent(eyeIndent);
-        }
         ImGui::PopID();
     };
-    ImGui::BeginDisabled(previewing);
     graphEntry(0);
-    if (ImGui::TreeNodeEx("空", ImGuiTreeNodeFlags_DefaultOpen)) {
+    {
         const bool atmosphereDirty = components && (m_sceneDirty & kDirtyAtmosphere);
         eye("##eyeSky", &m_renderer.ShowSkybox(), "空の背景の表示。環境光と地形の手前の雲は残る");
-        if (ImGui::Selectable("大気散乱スカイ", false, ImGuiSelectableFlags_AllowDoubleClick, rowWidth(atmosphereDirty)) &&
-            ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+        const auto path = m_sceneAtmosphere.is_null() ? std::filesystem::path{} : m_workspace.Resolve(m_sceneAtmosphere);
+        if (row("##atmosphereRow", path, path.empty() && components ? "大気散乱スカイ（シーン保存時に作成）" : "大気散乱スカイ",
+                false, atmosphereDirty, "ダブルクリックでライティングへ。右クリックで新規作成・読み込み")) {
             m_renderer.AtmosphericMode() = true; m_pendingWorkEnvironmentSave = true; m_focusLighting = true;
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("ダブルクリックでライティングへ。右クリックで新規作成・読み込み");
-        const auto path = m_sceneAtmosphere.is_null() ? std::filesystem::path{} : m_workspace.Resolve(m_sceneAtmosphere);
         if (components && ImGui::BeginPopupContextItem("atmosphereMenu")) {
             if (ImGui::MenuItem("新規作成して配置")) {
                 auto created = m_workspace.UniquePath(SceneAssetDirectory(), "大気散乱スカイ", ".tgatmosphere");
@@ -1146,12 +1168,8 @@ void Application::DrawSceneHierarchy() {
         unsavedControls(atmosphereDirty, 2, m_sceneAtmosphere.is_null()
                                                 ? "スカイのアセットを作り、シーン本体と一緒に保存する"
                                                 : "大気散乱スカイのファイルだけを保存する");
-        ImGui::Indent(eyeIndent);
-        ImGui::TextDisabled("%s", path.empty() ? "シーン保存時にアセットを作成" : ToUtf8Display(path.filename()).c_str());
-        ImGui::Unindent(eyeIndent);
-        graphEntry(1);
-        ImGui::TreePop();
     }
+    graphEntry(1);
     ImGui::EndDisabled();
     if ((m_sceneDirty & kDirtyShared) && !previewing) {
         ui::HintText("マテリアル・モデルに未保存の変更があります（Ctrl+S でまとめて保存）。");

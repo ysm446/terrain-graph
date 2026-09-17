@@ -3,6 +3,7 @@
 #include <imgui.h>
 
 #include <cstddef>
+#include <string>
 
 // UI の見た目とプロパティ行の共通部品。
 //
@@ -204,6 +205,9 @@ bool VerticalSplitter(const char* id, float* width, float minWidth, float maxWid
 // 設定の保存のように、ドラッグ中に毎フレームやりたくない処理をここへ吊るす。
 bool HorizontalSplitter(const char* id, float* height, float minHeight, float maxHeight,
                         float width);
+
+// 1 行に収まらない名前の中央を「…」で省き、先頭と末尾を残す。収まるならそのまま返す。
+std::string EllipsizeMiddle(const char* text, float width);
 
 // 一覧のサムネイルの下に置く名前。**幅はサムネイルに合わせて渡すこと。**
 // **常に 2 行**で描く（行数が変わると升目の高さが揃わない）。

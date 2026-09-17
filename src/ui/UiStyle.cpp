@@ -951,6 +951,30 @@ std::array<std::string, 2> SplitCaptionLines(const char* text, float width) {
 
 }  // namespace
 
+std::string EllipsizeMiddle(const char* text, float width) {
+    if (text == nullptr) return {};
+    if (ImGui::CalcTextSize(text).x <= width) return text;
+    std::vector<size_t> starts;
+    for (size_t i = 0; text[i] != 0; ++i) {
+        if ((static_cast<unsigned char>(text[i]) & 0xC0) != 0x80) starts.push_back(i);
+    }
+    starts.push_back(std::strlen(text));
+    const size_t charCount = starts.size() - 1;
+    static const char* const kEllipsis = "…";
+    // 先頭と末尾を交互に伸ばし、入らなくなる直前で止める。
+    size_t head = 0, tail = 0;
+    for (bool growHead = true; head + tail < charCount; growHead = !growHead) {
+        const size_t nextHead = head + (growHead ? 1 : 0);
+        const size_t nextTail = tail + (growHead ? 0 : 1);
+        const std::string candidate = std::string(text, starts[nextHead]) + kEllipsis +
+                                      std::string(text + starts[charCount - nextTail]);
+        if (ImGui::CalcTextSize(candidate.c_str()).x > width) break;
+        head = nextHead;
+        tail = nextTail;
+    }
+    return std::string(text, starts[head]) + kEllipsis + std::string(text + starts[charCount - tail]);
+}
+
 bool VerticalSplitter(const char* id, float* width, float minWidth, float maxWidth, float height) {
     if (width == nullptr || height <= 0.0f) return false;
     ImGui::InvisibleButton(id, ImVec2(Scaled(kSplitterGrabWidth), height));
