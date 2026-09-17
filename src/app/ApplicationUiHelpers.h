@@ -274,8 +274,12 @@ inline const char* const kDebugViewLabels[] = {
     "ラフネス",           "メタルネス",       "AO",             "ハイト",
     "ハイト（ローカル）", "ワイヤーフレーム", "クレイ",
 };
+// ペイントマスクの解像度。
 inline const char* const kResolutionLabels[] = {"512", "1024", "2048", "4096"};
 inline constexpr uint32_t kResolutionValues[] = {512, 1024, 2048, 4096};
+// 合成解像度（プレビューの評価解像度）。書き出しと同じ 8192 まで選べる。
+inline const char* const kMaterialResolutionLabels[] = {"512", "1024", "2048", "4096", "8192"};
+inline constexpr uint32_t kMaterialResolutionValues[] = {512, 1024, 2048, 4096, 8192};
 // 平面メッシュの分割数。形の細かさの上限を決める。
 inline const char* const kMeshSubdivisionLabels[] = {"256", "512", "1024"};
 inline constexpr uint32_t kMeshSubdivisionValues[] = {256, 512, 1024};
@@ -339,6 +343,14 @@ inline constexpr float kDefaultClearColor[3] = {0.09f, 0.09f, 0.11f};
 inline int ResolutionIndex(uint32_t resolution) {
     for (int i = 0; i < IM_ARRAYSIZE(kResolutionValues); ++i) {
         if (kResolutionValues[i] == resolution) {
+            return i;
+        }
+    }
+    return 1;
+}
+inline int MaterialResolutionIndex(uint32_t resolution) {
+    for (int i = 0; i < IM_ARRAYSIZE(kMaterialResolutionValues); ++i) {
+        if (kMaterialResolutionValues[i] == resolution) {
             return i;
         }
     }

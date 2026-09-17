@@ -106,12 +106,13 @@ void Application::DrawMaterialPanel() {
                     m_renderer.RequestMeshSubdivisions(kMeshSubdivisionValues[subdivisions]);
                 }
 
-                int resolution = ResolutionIndex(m_renderer.MaterialResolution());
-                if (ui::PropertyCombo("合成解像度", &resolution, kResolutionLabels,
-                                      IM_ARRAYSIZE(kResolutionLabels),
-                                      ResolutionIndex(defaults.materialResolution),
-                                      "編集中のプレビュー解像度。上げるほど細部が出るが重くなる")) {
-                    m_renderer.RequestMaterialResolution(kResolutionValues[resolution]);
+                int resolution = MaterialResolutionIndex(m_renderer.MaterialResolution());
+                if (ui::PropertyCombo("合成解像度", &resolution, kMaterialResolutionLabels,
+                                      IM_ARRAYSIZE(kMaterialResolutionLabels),
+                                      MaterialResolutionIndex(defaults.materialResolution),
+                                      "編集中のプレビュー解像度。上げるほど細部が出るが重くなる。"
+                                      "8192 は VRAM を多く使う")) {
+                    m_renderer.RequestMaterialResolution(kMaterialResolutionValues[resolution]);
                 }
             } else {
                 renderer::MaterialSettings& material = m_renderer.Material();

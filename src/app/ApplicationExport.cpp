@@ -21,7 +21,7 @@ namespace tg {
 namespace {
 
 const char* const kPackingLabels[] = {"個別", "ORD", "ORM"};
-// 合成解像度の一覧（kResolutionLabels）とは別物。書き出しは 8192 まで選べる。
+// 合成解像度の一覧（kMaterialResolutionLabels）とは別物。書き出しは 512 を持たない。
 const char* const kExportResolutionLabels[] = {"1024", "2048", "4096", "8192"};
 
 // 設定から、書き出されるファイル名を並べる。**押す前に何が出るか見せる。**
