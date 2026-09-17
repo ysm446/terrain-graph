@@ -39,6 +39,9 @@ bool Window::Create(const wchar_t* title, uint32_t width, uint32_t height) {
     wc.hIcon = largeIcon;
     wc.hIconSm = smallIcon;
     wc.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
+    // 最初のフレームを描くまで（シェーダのコンパイル中など）とリサイズ直後の未描画部分は
+    // このブラシで塗られる。既定の白や黒が一瞬出ないよう、UI の背景に近い色にしておく。
+    wc.hbrBackground = ::CreateSolidBrush(RGB(23, 23, 28));
     wc.lpszClassName = kWindowClassName;
     if (::RegisterClassExW(&wc) == 0 && ::GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
         TG_LOG_ERROR("RegisterClassExW に失敗しました (0x%08lX)", ::GetLastError());

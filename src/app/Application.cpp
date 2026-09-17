@@ -112,7 +112,8 @@ bool Application::Initialize(const StartupOptions& options) {
         return false;
     }
 
-    if (!m_shaderCompiler.Create(ResolveShaderRoot())) {
+    // コンパイル済みシェーダは %LOCALAPPDATA% に置き、次回以降の起動で再利用する。
+    if (!m_shaderCompiler.Create(ResolveShaderRoot(), io::AppDataDirectory() / L"shader-cache")) {
         return false;
     }
     if (!m_pipelineCache.Create(m_device.GetDevice(), &m_shaderCompiler)) {
