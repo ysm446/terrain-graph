@@ -27,6 +27,19 @@ struct MaterialTextureSet {
 // 川筋（フロー累積）マスクの作業リソース。**合成解像度とは別のグリッド**で
 // 計算する（反復回数が解像度に比例するので、川筋の形が決まる粗さで足りる）。
 // 使うレイヤーが 1 枚も無ければ作らない。
+// 風の場（Wind Field）の作業用。1 組を順に使い回す。構造化バッファに
+// (k * res + j) * res + i の並びで置く。
+struct WindResources {
+    rhi::GpuBuffer velocity;    // float4（xyz: 速度 m/s、w: 固体フラグ）
+    rhi::GpuBuffer pressureA;   // float（ヤコビの ping-pong）
+    rhi::GpuBuffer pressureB;
+    rhi::GpuBuffer divergence;  // float
+    uint32_t resolution = 0;
+    uint32_t layers = 0;
+
+    bool IsValid() const { return velocity.IsValid(); }
+};
+
 struct FluvialResources {
     // 作業用。**川筋 1 本ずつ順に使い回す**（同時に 2 本は走らない）ので 1 組でよい。
     // 一番大きいグリッドに合わせて作り、小さい川筋はその左上だけを使う。
@@ -298,6 +311,11 @@ private:
                    ID3D12GraphicsCommandList* commandList, const MaskProgram& ops, size_t index,
                    const MaterialStack& stack, const TextureLibrary& textures);
     // 川筋マスクを作る。反復が要るので専用のパイプライン。
+    bool ApplyWindMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                       ID3D12GraphicsCommandList* commandList, const MaskOp& op,
+                       const MaterialStack& stack, rhi::GpuTexture& target);
+    bool EnsureWindResources(rhi::Device& device, uint32_t resolution, uint32_t layers);
+    void ReleaseWindResources(rhi::Device& device);
     bool ApplyFluvialMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                           ID3D12GraphicsCommandList* commandList, const MaskOp& op,
                           const MaterialStack& stack, rhi::GpuTexture& target);
@@ -431,6 +449,7 @@ private:
                          uint32_t maskIndex);
 
     FluvialResources m_fluvial;
+    WindResources m_wind;
     // 標高マスクの「全範囲」用（R32_UINT）。InterlockedMin / Max でためる。
     rhi::GpuTexture m_maskHeightRange;
     SedimentResources m_sediment;

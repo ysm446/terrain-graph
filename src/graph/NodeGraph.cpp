@@ -157,6 +157,20 @@ constexpr std::array<PinDefinition, 1> kOutputNodePins = {{
     {PinKind::Input, ValueType::Material, "Material"},
 }};
 
+// 風の場。Base の地形に一様な風をぶつけて流れを作り、地表の風速と粉雪の発生量を Mask で出す。
+// Wind 出力は 3D の速度場（今は繋ぐ先が無い。Volume Sim が境界条件に読む予定）。
+constexpr std::array<PinDefinition, 4> kWindFieldPins = {{
+    {PinKind::Input, ValueType::Material, "Base"},
+    {PinKind::Output, ValueType::Mask, "Speed"},
+    {PinKind::Output, ValueType::Mask, "Spindrift"},
+    {PinKind::Output, ValueType::Wind, "Wind"},
+}};
+
+// 雲グラフの Terrain。地形グラフの結果を Material として出す（入力なし）。
+constexpr std::array<PinDefinition, 1> kTerrainNodePins = {{
+    {PinKind::Output, ValueType::Material, "Result"},
+}};
+
 // ソースノードのピン。**入力を持たない。**
 constexpr std::array<PinDefinition, 1> kSourceNodePins = {{
     {PinKind::Output, ValueType::Material, "Result"},
@@ -244,7 +258,7 @@ constexpr std::array<PinDefinition, 2> kModelMergePins = {{
 constexpr std::array<PinDefinition, 1> kModelOutputPins = {{
     {PinKind::Input, ValueType::Instances, "Instances"},
 }};
-constexpr std::array<NodeDefinition, 48> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 50> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kSurfacePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -289,6 +303,8 @@ constexpr std::array<NodeDefinition, 48> kNodeDefinitions = {{
     {NodeKind::ModelOutput, "modelOutput", "Model Output", kModelOutputPins},
     {NodeKind::ModelMerge, "modelMerge", "Model Merge", kModelMergePins},
     {NodeKind::Output, "output", "Output", kOutputNodePins},
+    {NodeKind::Terrain, "terrain", "Terrain", kTerrainNodePins},
+    {NodeKind::WindField, "windField", "Wind Field", kWindFieldPins},
     // 追加メニューには出さない。読み込みで定義が見つからなかったノードの受け皿。
     {NodeKind::Missing, "missing", "Missing", {}},
 }};
@@ -336,13 +352,13 @@ bool IsMaskNodeKind(NodeKind kind) {
            kind == NodeKind::MaskSlope || kind == NodeKind::MaskCurvature ||
            kind == NodeKind::MaskLevels || kind == NodeKind::MaskBlur ||
            kind == NodeKind::MaskBlend || kind == NodeKind::MaskPath ||
-           kind == NodeKind::MaskArea;
+           kind == NodeKind::MaskArea || kind == NodeKind::WindField;
 }
 
 // 下地の Height を読むマスクか。**チェーンのどこを読むか**を Base 入力で指す。
 bool IsHeightMaskNodeKind(NodeKind kind) {
     return kind == NodeKind::MaskFlowline || kind == NodeKind::MaskFluvial || kind == NodeKind::MaskHeight ||
-           kind == NodeKind::MaskSlope || kind == NodeKind::MaskCurvature;
+           kind == NodeKind::MaskSlope || kind == NodeKind::MaskCurvature || kind == NodeKind::WindField;
 }
 
 bool IsLayerMaskSourceKind(NodeKind kind) {
@@ -353,8 +369,9 @@ bool IsLayerMaskSourceKind(NodeKind kind) {
 
 bool IsPreviewableNodeKind(NodeKind kind) {
     // マスクは見ながら調整するものなので、どのマスクノードもプレビューできる。
-    // パスは Base に繋いだ地形（沿う面）を出す。
-    return IsLayerNodeKind(kind) || IsMaskNodeKind(kind) || kind == NodeKind::Path;
+    // パスは Base に繋いだ地形（沿う面）を出す。Terrain は地形グラフの結果を出す。
+    return IsLayerNodeKind(kind) || IsMaskNodeKind(kind) || kind == NodeKind::Path ||
+           kind == NodeKind::Terrain;
 }
 
 compositor::LayerKind LayerKindFor(NodeKind kind) {
@@ -452,7 +469,7 @@ Node* NodeGraph::FindMutableNode(GraphId nodeId) {
     return it == m_nodes.end() ? nullptr : &*it;
 }
 
-const Node* NodeGraph::FindUpstreamNodeForPin(GraphId inputPinId) const {
+const Node* NodeGraph::FindLinkedNodeForPin(GraphId inputPinId) const {
     for (const Link& link : m_links) {
         if (link.endPin != inputPinId) {
             continue;
@@ -462,6 +479,16 @@ const Node* NodeGraph::FindUpstreamNodeForPin(GraphId inputPinId) const {
         }
     }
     return nullptr;
+}
+
+const Node* NodeGraph::FindUpstreamNodeForPin(GraphId inputPinId) const {
+    const Node* node = FindLinkedNodeForPin(inputPinId);
+    // Terrain は地形グラフの Output に繋がったチェーンの別名。地形側に何も繋がって
+    // いなければ未接続と同じ（nullptr）。地形グラフは雲グラフへ繋げないので輪はできない。
+    if (node != nullptr && node->kind == NodeKind::Terrain) {
+        return ChainTop();
+    }
+    return node;
 }
 
 // producer の出力から下流を辿り、target に届くか。循環チェックに使う。
@@ -801,6 +828,8 @@ GraphId NodeGraph::CreateNode(NodeKind kind) {
     } else if (kind == NodeKind::Missing) { node.settings = MissingNodeSettings{};
     } else if (kind == NodeKind::Path) {
         node.settings = PathNodeSettings{};
+    } else if (kind == NodeKind::Terrain) {
+        node.settings = TerrainNodeSettings{};
     } else {
         node.settings = OutputNodeSettings{};
     }
@@ -933,6 +962,10 @@ const Node* NodeGraph::PreviewTop(GraphId nodeId) const {
     if (node != nullptr && IsLayerNodeKind(node->kind)) {
         return node;
     }
+    // Terrain を選んだら地形グラフの結果そのもの。
+    if (node != nullptr && node->kind == NodeKind::Terrain) {
+        return ChainTop();
+    }
     // Path とハイト由来のマスクは、自分ではハイトを作らない。入力に繋いだ
     // チェーンだけを見る。未接続のときに Output 側の別チェーンへ落とすと
     // 無関係な地形が見えるので、nullptr を返して中立平面を作らせる。
@@ -995,6 +1028,7 @@ bool NodeGraph::MaskDependsOnHeight(const Node& maskNode, int depth) const {
         case NodeKind::MaskHeight:
         case NodeKind::MaskSlope:
         case NodeKind::MaskCurvature:
+        case NodeKind::WindField:
         case NodeKind::Sediment:
         case NodeKind::Crumbling:
         case NodeKind::Lake:
@@ -1294,6 +1328,12 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
         case NodeKind::MaskCurvature:
             op.kind = compositor::MaskOpKind::Curvature;
             op.curvature = settings->curvature;
+            break;
+        case NodeKind::WindField:
+            op.kind = compositor::MaskOpKind::Wind;
+            op.wind = settings->wind;
+            // 0 番目の Mask 出力が風速、1 番目が粉雪。
+            op.wind.channel = (source.outputIndex == 0) ? 0u : 1u;
             break;
         case NodeKind::MaskLevels:
             op.kind = compositor::MaskOpKind::Levels;

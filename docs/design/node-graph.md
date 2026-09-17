@@ -1,7 +1,7 @@
 # node-graph — ノードグラフの設計
 
 作成日時: 2026-09-02 12:50
-更新日時: 2026-09-10 22:12
+更新日時: 2026-09-18 02:40
 
 `src/graph/` とグラフパネル（`src/app/ApplicationGraphPanel.cpp`）の設計。
 **ノード 1 つずつの役割・ピン・パラメータは
@@ -459,6 +459,16 @@ terrain-editor の Mask Slope / Mask Levels / Mask Blend を移したもの。
 
 マスク生成のノード化や合流（DAG）を持つノードを入れる段階で、
 ノード単位の評価器（terrain-editor の増分ハッシュキャッシュの方式）へ広げる。
+
+## 雲グラフから地形を読む（Terrain ノード）
+
+地形グラフと雲グラフは同じ `NodeGraph` に `Node::component`（0: 地形、1: 雲）で分かれて
+いて、エディタは編集中のコンポーネント以外のノードを隠すので、グラフをまたぐリンクは
+引けない。雲グラフが地形の結果を読むには **Terrain ノード**（`NodeKind::Terrain`、雲グラフ専用、
+入力なし、`Result` を出す）を置く。評価では `FindUpstreamNodeForPin` が Terrain を地形チェーンの
+先頭（`ChainTop()`）に読み替えるので、繋いだ側は地形グラフの Output に繋いだのと同じになる。
+リンクの先のノードそのものが要るとき（エディタの表示）は `FindLinkedNodeForPin` を使う。
+地形グラフは雲グラフへ繋げないので、この読み替えで輪はできない。
 
 ## ノードを 1 種類増やす手順
 

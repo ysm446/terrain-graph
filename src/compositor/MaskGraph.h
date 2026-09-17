@@ -61,6 +61,8 @@ enum class MaskOpKind : uint32_t {
     Lake = 19,
     Flowline = 20,
     MeanderingRivers = 21,
+    // 地形全体の風の場（Wind Field）。出力ピンによって地表の風速か粉雪の発生量になる。
+    Wind = 22,
 };
 
 // 曲率マスクの向き。シェーダの TG_CURVATURE_* と一致させること。
@@ -87,6 +89,22 @@ struct FlowlineParams {
     bool clampSource = true;
     bool showOutflow = true;
     bool normalize = true;
+};
+
+// 地形全体の風の場（Wind Field ノード）。一様な風を地形にぶつけ、発散のない流れに
+// 直した粗い 3D 格子。マスク出力は地表直上の風速から作る。
+struct WindParams {
+    float directionDegrees = 90.0f;   // 風向。0 が +Z、90 が +X（雲の風向と同じ）
+    float speedMetersPerSecond = 15.0f;
+    float heightMeters = 300.0f;      // 地形の最高点からどこまで上を計算するか（m）
+    uint32_t resolution = 128;        // 水平の格子（一辺のセル数）
+    uint32_t layers = 32;             // 鉛直の層数
+    int iterations = 48;              // 圧力の反復回数（偶数に揃えて使う）
+    float spindriftThreshold = 12.0f; // 粉雪が出始める風速（m/s）
+    float spindriftRange = 10.0f;     // しきい値からこれだけ超えたら 1（m/s）
+    float leeSlope = 0.3f;            // 風下とみなす傾き（m/m）。これで 1 になる
+    // 0: 地表の風速（Speed）、1: 粉雪の発生量（Spindrift）。出力ピンからコンパイルが決める。
+    uint32_t channel = 0;
 };
 
 // 曲率マスク。**周りの平均との高さの差**を見る。ラプラシアンではないので、
@@ -251,6 +269,7 @@ struct MaskOp {
     ScatterMaskParams scatterMask;
     PathMaskParams pathMask;
     AreaMaskParams areaMask;
+    WindParams wind;
     // Path / Area のときだけ。コンパイルがパスから作る線分列（正規化 UV）。
     // Area は閉じた鎖だけを多角形として並べたもの（幅などは読まない）。
     std::vector<PathSegment> pathSegments;

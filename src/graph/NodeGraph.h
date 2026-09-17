@@ -46,6 +46,8 @@ enum class ValueType : uint32_t {
     CloudShape = 5,
     Points = 6,
     Instances = 7,
+    // 風の場（Wind Field が出す 3D の速度場）。局所のボリューム計算が境界条件に読む。
+    Wind = 8,
 };
 
 enum class NodeKind : uint32_t {
@@ -124,6 +126,11 @@ enum class NodeKind : uint32_t {
     ModelScatter = 46,
     ModelOutput = 47,
     ModelMerge = 48,
+    // 雲グラフから地形グラフの結果（Output に繋いだチェーン）を取り出す。入力を持たず、
+    // 評価では地形チェーンの先頭の別名として扱う（FindUpstreamNodeForPin が解決する）。
+    Terrain = 49,
+    // 地形全体の風の場。地表の風速と粉雪の発生量を Mask で出す（Wind 出力は今後の Volume Sim 用）。
+    WindField = 50,
 };
 
 struct PinDefinition {
@@ -192,6 +199,7 @@ struct MaskNodeSettings {
     compositor::MaskBlurParams blur;
     compositor::PathMaskParams pathMask;
     compositor::AreaMaskParams areaMask;
+    compositor::WindParams wind;
 };
 
 // パス（Path ノード）。点と向き付きのエッジ。中身は graph/Path.h。
@@ -376,13 +384,16 @@ struct CompiledModelScatter {
     ModelScatterSettings settings;
 };
 struct OutputNodeSettings {};
+// 雲グラフの Terrain ノード。設定は持たない。
+struct TerrainNodeSettings {};
 
 // 読み込み時に定義が見つからなかった種類。保存名をそのまま持ち、保存時にも同じ名前で書き戻す。
 struct MissingNodeSettings { std::string kindName; };
 
 using NodeSettings =
     std::variant<LayerNodeSettings, MaskNodeSettings, OutputNodeSettings, PathNodeSettings, CloudNodeSettings,
-                 CloudMergeSettings, CloudNoiseSettings, CloudTransformSettings, CloudMapSettings, CloudAnimationSettings, CloudShapeGenerateSettings, CloudWeatherSettings, MissingNodeSettings, ModelScatterSettings>;
+                 CloudMergeSettings, CloudNoiseSettings, CloudTransformSettings, CloudMapSettings, CloudAnimationSettings, CloudShapeGenerateSettings, CloudWeatherSettings, MissingNodeSettings, ModelScatterSettings,
+                 TerrainNodeSettings>;
 
 struct Node {
     GraphId id = 0;
@@ -417,7 +428,11 @@ public:
     const Node* FindNode(GraphId nodeId) const;
     Node* FindMutableNode(GraphId nodeId);
     // 入力ピンに繋がっている上流ノード。無ければ nullptr。
+    // **雲グラフの Terrain ノードは地形チェーンの先頭に読み替える**（別名）。
+    // 繋いだ側は地形グラフの結果を Base として受け取ったのと同じになる。
     const Node* FindUpstreamNodeForPin(GraphId inputPinId) const;
+    // リンクの先のノードそのもの（Terrain を読み替えない）。エディタの表示用。
+    const Node* FindLinkedNodeForPin(GraphId inputPinId) const;
 
     // 接続できるか。別ノード・型一致・入出力の組み合わせに加えて、
     // **循環ができる接続は弾く**（評価が回らなくなるため）。

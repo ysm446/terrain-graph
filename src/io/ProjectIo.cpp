@@ -392,6 +392,39 @@ json WriteFluvial(const compositor::FluvialParams& fluvial) {
     return node;
 }
 
+json WriteWind(const compositor::WindParams& wind) {
+    json node;
+    node["direction"] = wind.directionDegrees;
+    node["speed"] = wind.speedMetersPerSecond;
+    node["height"] = wind.heightMeters;
+    node["resolution"] = wind.resolution;
+    node["layers"] = wind.layers;
+    node["iterations"] = wind.iterations;
+    node["spindriftThreshold"] = wind.spindriftThreshold;
+    node["spindriftRange"] = wind.spindriftRange;
+    node["leeSlope"] = wind.leeSlope;
+    return node;
+}
+
+compositor::WindParams ReadWind(const json& parent, const char* key) {
+    const compositor::WindParams defaults;
+    const json* node = FindMember(parent, key);
+    if (node == nullptr || !node->is_object()) {
+        return defaults;
+    }
+    compositor::WindParams wind;
+    wind.directionDegrees = ReadFloat(*node, "direction", defaults.directionDegrees);
+    wind.speedMetersPerSecond = ReadFloat(*node, "speed", defaults.speedMetersPerSecond);
+    wind.heightMeters = ReadFloat(*node, "height", defaults.heightMeters);
+    wind.resolution = static_cast<uint32_t>(std::clamp(ReadInt(*node, "resolution", static_cast<int>(defaults.resolution)), 32, 512));
+    wind.layers = static_cast<uint32_t>(std::clamp(ReadInt(*node, "layers", static_cast<int>(defaults.layers)), 4, 128));
+    wind.iterations = std::clamp(ReadInt(*node, "iterations", defaults.iterations), 2, 512);
+    wind.spindriftThreshold = ReadFloat(*node, "spindriftThreshold", defaults.spindriftThreshold);
+    wind.spindriftRange = ReadFloat(*node, "spindriftRange", defaults.spindriftRange);
+    wind.leeSlope = ReadFloat(*node, "leeSlope", defaults.leeSlope);
+    return wind;
+}
+
 compositor::FluvialParams ReadFluvial(const json& parent, const char* key) {
     const compositor::FluvialParams defaults;
     const json* node = FindMember(parent, key);
@@ -1436,6 +1469,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["noise"] = WriteNoise(mask->noise);
             item["fluvial"] = WriteFluvial(mask->fluvial);
             item["flowline"] = WriteFlowline(mask->flowline);
+            item["wind"] = WriteWind(mask->wind);
             item["height"] = WriteHeightMask(mask->height);
             item["slope"] = WriteSlope(mask->slope);
             item["curvature"] = WriteCurvature(mask->curvature);
@@ -1710,6 +1744,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                 settings.map = ReadMapSlot(item, "map", readTexture);
                 settings.noise = ReadNoise(item, "noise", graph::MaskNodeSettings().noise);
                 settings.fluvial = ReadFluvial(item, "fluvial");
+                settings.wind = ReadWind(item, "wind");
                 settings.flowline = ReadFlowline(item);
                 settings.height = ReadHeightMask(item, "height");
                 settings.slope = ReadSlope(item, "slope");
@@ -1893,6 +1928,8 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                 created.settings = std::move(settings);
             } else if (created.kind == graph::NodeKind::Missing) {
                 created.settings = graph::MissingNodeSettings{kindName};
+            } else if (created.kind == graph::NodeKind::Terrain) {
+                created.settings = graph::TerrainNodeSettings{};
             } else {
                 created.settings = graph::OutputNodeSettings{};
             }

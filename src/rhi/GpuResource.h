@@ -106,6 +106,10 @@ inline uint32_t DispatchCount(uint32_t threads, uint32_t groupSize = 8) {
 void TransitionIfNeeded(ID3D12GraphicsCommandList* commandList, GpuTexture& texture,
                         D3D12_RESOURCE_STATES newState);
 
+// バッファ版。buffer.state を追跡する（UAV を許した構造化バッファは COMMON で始まる）。
+void TransitionIfNeeded(ID3D12GraphicsCommandList* commandList, GpuBuffer& buffer,
+                        D3D12_RESOURCE_STATES newState);
+
 // ミップ mip の全スライスをまとめて遷移させる。texture.state は更新しない
 // （ミップ生成のように、サブリソース単位で状態が分岐している間に使うため）。
 void TransitionMip(ID3D12GraphicsCommandList* commandList, const GpuTexture& texture,

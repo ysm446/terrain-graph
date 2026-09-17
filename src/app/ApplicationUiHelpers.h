@@ -545,6 +545,39 @@ inline bool DrawTextureCombo(const char* id, compositor::TextureId& slot,
 
 // 川筋（フロー累積）マスクの設定行。レイヤーのマスクとマスクノードの両方から使う。
 // **プロパティテーブルの中で呼ぶこと。**
+// Wind Field の行。風・格子・粉雪の判定。
+inline bool DrawWindRows(compositor::WindParams& wind) {
+    const compositor::WindParams defaults;
+    bool changed = false;
+    changed |= ui::PropertyFloat("風向", &wind.directionDegrees, 0.0f, 360.0f, defaults.directionDegrees,
+                                 "風が吹いていく向き。0 で +Z、90 で +X（雲の風向と同じ）", "%.0f °");
+    changed |= ui::PropertyFloat("風速", &wind.speedMetersPerSecond, 0.0f, 60.0f, defaults.speedMetersPerSecond,
+                                 "地形にぶつける一様な風の速さ（m/s）", "%.1f m/s");
+    changed |= ui::PropertyFloat("計算する高さ", &wind.heightMeters, 10.0f, 3000.0f, defaults.heightMeters,
+                                 "地形の最高点からどこまで上を計算するか（m）。低いと稜線の上で流れが詰まる",
+                                 "%.0f m", ImGuiSliderFlags_Logarithmic);
+    int resolution = static_cast<int>(wind.resolution);
+    if (ui::PropertyInt("格子（水平）", &resolution, 32, 512, static_cast<int>(defaults.resolution),
+                        "水平の格子の一辺（セル数）。上げるほど細かい地形に沿うが、反復のコストが増える")) {
+        wind.resolution = static_cast<uint32_t>(resolution); changed = true;
+    }
+    int layers = static_cast<int>(wind.layers);
+    if (ui::PropertyInt("格子（鉛直）", &layers, 4, 128, static_cast<int>(defaults.layers),
+                        "鉛直の層数。計算する高さをこの数で割った厚さが 1 層")) {
+        wind.layers = static_cast<uint32_t>(layers); changed = true;
+    }
+    changed |= ui::PropertyInt("反復", &wind.iterations, 2, 512, defaults.iterations,
+                               "圧力の反復回数。少ないと地形を避けきらず、稜線の吹き上げが弱い");
+    changed |= ui::PropertyFloat("粉雪のしきい値", &wind.spindriftThreshold, 0.0f, 60.0f, defaults.spindriftThreshold,
+                                 "Spindrift が出始める地表の風速（m/s）", "%.1f m/s");
+    changed |= ui::PropertyFloat("粉雪の幅", &wind.spindriftRange, 0.1f, 60.0f, defaults.spindriftRange,
+                                 "しきい値からこれだけ超えたら Spindrift が 1（m/s）", "%.1f m/s");
+    changed |= ui::PropertyFloat("風下の傾き", &wind.leeSlope, 0.01f, 2.0f, defaults.leeSlope,
+                                 "風の向きに地形がこの傾き（高さ / 距離）で下る所を風下とみなし、Spindrift を 1 にする",
+                                 "%.2f", ImGuiSliderFlags_Logarithmic);
+    return changed;
+}
+
 inline bool DrawFluvialRows(compositor::FluvialParams& fluvial) {
     const compositor::FluvialParams defaults;
     bool changed = false;

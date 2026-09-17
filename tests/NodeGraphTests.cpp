@@ -920,6 +920,60 @@ void RunNodeGraphTests() {
         Check(tg::graph::BuildMeanderPoints(path, 1024, 10).empty(), "閉じた Path を川として評価しない");
     }
 
+    Section("ノードグラフ — 雲グラフの Terrain ノード");
+    {
+        NodeGraph graph;
+        const auto baseId = graph.CreateNode(NodeKind::Heightmap);
+        const auto surfaceId = graph.CreateNode(NodeKind::Surface);
+        const auto outputId = graph.CreateNode(NodeKind::Output);
+        Check(graph.CreateLink(graph.FindNode(baseId)->outputs[0].id, graph.FindNode(surfaceId)->inputs[0].id) &&
+            graph.CreateLink(graph.FindNode(surfaceId)->outputs[0].id, graph.FindNode(outputId)->inputs[0].id),
+            "地形グラフを組む");
+        const auto terrainId = graph.CreateNode(NodeKind::Terrain);
+        graph.FindMutableNode(terrainId)->component = 1;
+        const auto slopeId = graph.CreateNode(NodeKind::MaskSlope);
+        graph.FindMutableNode(slopeId)->component = 1;
+        const auto* terrain = graph.FindNode(terrainId);
+        Check(terrain->inputs.empty() && terrain->outputs.size() == 1 &&
+            terrain->outputs[0].valueType == tg::graph::ValueType::Material, "Terrain は入力なし・Result だけ");
+        // Base 未接続のマスクは中立平面の上に白黒を貼るだけ（地形チェーンは入らない）。
+        const size_t unconnectedLayers = graph.CompileLayersTo(slopeId).layers.size();
+        Check(graph.CreateLink(terrain->outputs[0].id, graph.FindNode(slopeId)->inputs[0].id), "Terrain を Mask Slope の Base へ接続");
+        const auto compiled = graph.CompileLayersTo(slopeId);
+        Check(compiled.layers.size() > unconnectedLayers && compiled.layers[0].kind == tg::compositor::LayerKind::Shape,
+            "Terrain 経由で地形チェーン（Heightmap から）がマスクの下地に入る");
+        Check(graph.FindChainScale(slopeId) != nullptr, "Terrain 経由で地形の実寸が引ける");
+        Check(graph.CompileLayersTo(terrainId).layers.size() == 2, "Terrain を選ぶと地形グラフの結果をプレビューする");
+        graph.DeleteNode(outputId);
+        Check(graph.CompileLayersTo(slopeId).layers.size() == unconnectedLayers, "地形グラフの Output が無ければ Terrain は未接続と同じ");
+    }
+
+    Section("ノードグラフ — Wind Field");
+    {
+        NodeGraph graph;
+        const auto baseId = graph.CreateNode(NodeKind::Heightmap);
+        const auto windId = graph.CreateNode(NodeKind::WindField);
+        const auto surfaceId = graph.CreateNode(NodeKind::Surface);
+        const auto* wind = graph.FindNode(windId);
+        Check(wind->inputs.size() == 1 && wind->outputs.size() == 3 &&
+            wind->outputs[0].valueType == tg::graph::ValueType::Mask && wind->outputs[0].label == "Speed" &&
+            wind->outputs[1].valueType == tg::graph::ValueType::Mask && wind->outputs[1].label == "Spindrift" &&
+            wind->outputs[2].valueType == tg::graph::ValueType::Wind, "Base を受け、Speed / Spindrift / Wind を出す");
+        Check(tg::graph::IsMaskNodeKind(NodeKind::WindField) && tg::graph::IsHeightMaskNodeKind(NodeKind::WindField),
+            "Wind Field は下地の Height を読むマスクの出どころ");
+        Check(graph.CreateLink(graph.FindNode(baseId)->outputs[0].id, wind->inputs[0].id) &&
+            graph.CreateLink(graph.FindNode(baseId)->outputs[0].id, graph.FindNode(surfaceId)->inputs[0].id) &&
+            graph.CreateLink(wind->outputs[1].id, graph.FindNode(surfaceId)->inputs[1].id), "Spindrift を Surface の Mask へ");
+        const auto compiled = graph.CompileLayersTo(surfaceId);
+        Check(compiled.maskOps.size() == 1 && compiled.maskOps[0].kind == tg::compositor::MaskOpKind::Wind &&
+            compiled.maskOps[0].wind.channel == 1 && compiled.maskOps[0].heightSourceLayer == 0,
+            "Wind の op が 1 つ焼かれ、Spindrift は channel 1、Height は Heightmap");
+        Check(graph.CreateLink(wind->outputs[0].id, graph.FindNode(surfaceId)->inputs[1].id) &&
+            graph.CompileLayersTo(surfaceId).maskOps[0].wind.channel == 0, "Speed は channel 0");
+        Check(!graph.CanCreateLink(wind->outputs[2].id, graph.FindNode(surfaceId)->inputs[1].id),
+            "Wind 型は Mask 入力に繋げない");
+    }
+
     Section("ノードグラフ — Surface のパス UV");
     {
         NodeGraph graph;

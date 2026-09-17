@@ -69,6 +69,7 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
             return ImVec4(0.68f, 0.72f, 0.62f, 1.0f);
         case graph::NodeKind::MaskFlowline:
         case graph::NodeKind::MaskFluvial:
+        case graph::NodeKind::WindField:
             return ImVec4(0.55f, 0.68f, 0.74f, 1.0f);
         case graph::NodeKind::MaskHeight:
             return ImVec4(0.74f, 0.70f, 0.60f, 1.0f);
@@ -107,6 +108,9 @@ ImVec4 PinTypeColor(graph::ValueType valueType) {
             return ImGui::GetStyleColorVec4(ImGuiCol_Text);
         case graph::ValueType::Mask:
             return ImVec4(0.82f, 0.64f, 0.36f, 1.0f);
+        // 風の場は薄い紫。3D の速度場が流れる。
+        case graph::ValueType::Wind:
+            return ImVec4(0.78f, 0.70f, 0.92f, 1.0f);
         // パスは水色。線（点とエッジ）が流れる。緑 / オレンジと色相が離れていて、
         // 明度は同じくらいなので暗い盤面で同じ強さで読める。
         case graph::ValueType::Path:
@@ -837,7 +841,8 @@ void Application::DrawGraphEditor() {
             const auto* definition = graph::FindNodeDefinition(kind);
             const std::string name = definition ? definition->name : "";
             if (m_editComponent == 0 && name.starts_with("cloud")) return;
-            if (m_editComponent == 1 && !name.starts_with("cloud") && !name.starts_with("mask") && name != "path") return;
+            if (m_editComponent == 1 && !name.starts_with("cloud") && !name.starts_with("mask") && name != "path" &&
+                name != "terrain" && name != "windField") return;
             const bool available = kind != graph::NodeKind::CloudOutput || !m_graph.CompileCloud().hasOutput;
             if (!ImGui::MenuItem(label, nullptr, false, available)) {
                 return;
@@ -906,6 +911,8 @@ void Application::DrawGraphEditor() {
                         "Mask Height — 下地の標高帯（m）をマスクにする");
         addNodeMenuItem(graph::NodeKind::MaskSlope,
                         "Mask Slope — 下地の傾斜（角度）をマスクにする");
+        addNodeMenuItem(graph::NodeKind::WindField,
+                        "Wind Field — 地形全体の風の場。地表の風速と粉雪の発生量をマスクにする");
         addNodeMenuItem(graph::NodeKind::MaskCurvature,
                         "Mask Curvature — 下地の凹凸（尾根 / 谷）をマスクにする");
         addNodeMenuItem(graph::NodeKind::MaskLevels,
@@ -931,6 +938,7 @@ void Application::DrawGraphEditor() {
         addNodeMenuItem(graph::NodeKind::CloudAnimation, "Cloud Animation — 指定範囲で雲を繰り返し移動する");
         addNodeMenuItem(graph::NodeKind::CloudNoise, "Cloud Noise (Experimental) — 輪郭と密度を作る");
         addNodeMenuItem(graph::NodeKind::CloudOutput, "Cloud Output — Volume を繋いで雲を表示する");
+        addNodeMenuItem(graph::NodeKind::Terrain, "Terrain — 地形グラフの結果を取り出す（マスクの Base に繋ぐ）");
         ImGui::Separator();
         addNodeMenuItem(graph::NodeKind::ModelScatter, "Model Scatter — Points にモデルをランダム配置する");
         addNodeMenuItem(graph::NodeKind::ModelMerge, "Model Merge — 複数のモデル配置をまとめる");
@@ -1372,6 +1380,12 @@ void Application::DrawGraphPanel() {
                 hint = "Base の地形に沿って粒子を流し、通った場所をマスクにする。地形の高さは変えない。"
                        "Source は発生範囲と強さ、Outflow は途中で流れを弱める範囲を指定する";
                 break;
+            case graph::NodeKind::WindField:
+                header = "風の場";
+                hint = "Base の地形に一様な風をぶつけ、発散のない流れに直す（稜線の吹き上げ、風下の剥離、"
+                       "谷筋への収束）。Speed は地表直上の風速、Spindrift は風下の稜線で風速がしきい値を"
+                       "超える所。Wind は 3D の速度場で、今は繋ぐ先がない（Volume Sim 用）";
+                break;
             case graph::NodeKind::MaskFluvial:
                 header = "川筋";
                 hint = "下地の高さから水の集まる所（川筋）を作る。"
@@ -1431,6 +1445,9 @@ void Application::DrawGraphPanel() {
                     break;
                 case graph::NodeKind::MaskFluvial:
                     changed |= DrawFluvialRows(mask->fluvial);
+                    break;
+                case graph::NodeKind::WindField:
+                    changed |= DrawWindRows(mask->wind);
                     break;
                 case graph::NodeKind::MaskHeight:
                     changed |= DrawHeightMaskRows(mask->height);
@@ -1900,6 +1917,12 @@ void Application::DrawGraphPanel() {
         ui::HintText("複数のInstancesをまとめます。接続すると入力が増え、各Model Scatterの設定を保持します");
     } else if (selected->kind == graph::NodeKind::ModelOutput) {
         ui::HintText("Model Scatter / Model Merge のInstancesを接続します。ハイトマップとは独立してモデルを描画します");
+    } else if (selected->kind == graph::NodeKind::Terrain) {
+        ui::HintText("地形グラフの Output に繋いだ結果を Result に出します。Mask Slope / Mask Height などの "
+                     "Base に繋ぐと、雲グラフのマスクを実際の地形から作れます");
+        if (m_graph.CompileLayers().layers.empty() || m_graph.FindChainScale(0) == nullptr) {
+            ui::HintText("地形グラフの Output に何も繋がっていないので、Result は空になる");
+        }
     } else if (selected->kind == graph::NodeKind::CloudOutput) {
         ui::HintText("Cloud Noise の Volume を接続して表示します。Cloud Animation を挟むと移動できます。未接続なら雲は表示しません");
         ui::HintText("保存済みの Cloud / Cloud Layer (Legacy) も引き続き表示できます");

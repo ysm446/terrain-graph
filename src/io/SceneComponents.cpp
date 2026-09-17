@@ -121,7 +121,9 @@ bool AssignGraphComponents(json& graph) {
             const auto kind = ProjectWorkspace::String(nodes[index], "kind");
             const bool cloudKind = kind.starts_with("cloud");
             cloud |= cloudKind || nodes[index].value("component", 0) == 1;
-            terrain |= !cloudKind && !kind.starts_with("mask") && kind != "path";
+            // Terrain は雲グラフ専用（地形の結果を取り出す口）なので、マスク / パスと同じく中立。
+            terrain |= !cloudKind && !kind.starts_with("mask") && kind != "path" && kind != "terrain" &&
+                       kind != "windField";
             for (const auto next : neighbors[index]) if (visited.insert(next).second) group.push_back(next);
         }
         if (cloud && terrain) {

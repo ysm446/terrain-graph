@@ -15,6 +15,17 @@ void TransitionIfNeeded(ID3D12GraphicsCommandList* commandList, GpuTexture& text
     texture.state = newState;
 }
 
+void TransitionIfNeeded(ID3D12GraphicsCommandList* commandList, GpuBuffer& buffer,
+                        D3D12_RESOURCE_STATES newState) {
+    if (buffer.state == newState) {
+        return;
+    }
+    const auto barrier =
+        CD3DX12_RESOURCE_BARRIER::Transition(buffer.resource.Get(), buffer.state, newState);
+    commandList->ResourceBarrier(1, &barrier);
+    buffer.state = newState;
+}
+
 void TransitionMip(ID3D12GraphicsCommandList* commandList, const GpuTexture& texture,
                    uint32_t mip, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after) {
     for (uint32_t slice = 0; slice < texture.arraySize; ++slice) {

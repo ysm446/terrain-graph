@@ -146,6 +146,16 @@ struct RiverConstants {
 // パスの線分 1 本ぶんのバイト数（float 12 個）。シェーダの TG_PATH_SEGMENT_BYTES と一致させること。
 constexpr uint32_t kPathSegmentStride = 48;
 
+// GPU 側の WindConstants と一致させること。
+struct WindConstants {
+    uint32_t indices0[4];  // Height SRV, 速度 UAV, 圧力 A UAV, 圧力 B UAV
+    uint32_t indices1[4];  // 発散 UAV, マスク UAV, マスクの一辺, 出力（0: Speed, 1: Spindrift）
+    uint32_t grid[4];      // 水平の一辺, 層数, ヤコビの向き, 未使用
+    float cell[4];         // 水平セル幅（m）, 鉛直セル幅（m）, 標高差（m）, 未使用
+    float wind[4];         // 風向 u, 風向 v, 風速, 粉雪のしきい値
+    float spindrift[4];    // 粉雪の幅, 風下の傾き, 未使用 x2
+};
+
 // GPU 側の PathMaskConstants と一致させること。
 struct PathMaskConstants {
     uint32_t indices[4];  // 出力 UAV, 出力の一辺, 線分数, 線分バッファの SRV
@@ -399,6 +409,8 @@ uint64_t HashMaskOpParams(uint64_t seed, const MaskOp& op) {
         }
         case MaskOpKind::Fluvial:
             return HashBytes(seed, &op.fluvial, sizeof(op.fluvial));
+        case MaskOpKind::Wind:
+            return HashBytes(seed, &op.wind, sizeof(op.wind));
         case MaskOpKind::Slope:
             return HashBytes(seed, &op.slope, sizeof(op.slope));
         case MaskOpKind::Levels:
@@ -613,6 +625,144 @@ void MaterialEvaluator::ReleaseFluvialResources(rhi::Device& device) {
     m_fluvial.workResolution = 0;
 }
 
+void MaterialEvaluator::ReleaseWindResources(rhi::Device& device) {
+    device.DeferRelease(m_wind.velocity);
+    device.DeferRelease(m_wind.pressureA);
+    device.DeferRelease(m_wind.pressureB);
+    device.DeferRelease(m_wind.divergence);
+    m_wind.resolution = 0;
+    m_wind.layers = 0;
+}
+
+// 風の場の作業バッファ。1 組を使い回し、大きさが足りなければ作り直す。
+bool MaterialEvaluator::EnsureWindResources(rhi::Device& device, uint32_t resolution,
+                                            uint32_t layers) {
+    const uint32_t cells = resolution * resolution * layers;
+    if (m_wind.IsValid() && m_wind.resolution * m_wind.resolution * m_wind.layers >= cells) {
+        return true;
+    }
+    ReleaseWindResources(device);
+    const bool ok =
+        device.Allocator().CreateStructuredBuffer(cells, 16, L"WindVelocity", m_wind.velocity, true) &&
+        device.Allocator().CreateStructuredBuffer(cells, 4, L"WindPressureA", m_wind.pressureA, true) &&
+        device.Allocator().CreateStructuredBuffer(cells, 4, L"WindPressureB", m_wind.pressureB, true) &&
+        device.Allocator().CreateStructuredBuffer(cells, 4, L"WindDivergence", m_wind.divergence, true);
+    if (!ok) {
+        TG_LOG_WARN("風の場の作業バッファを作れませんでした（%u^2 x %u）", resolution, layers);
+        ReleaseWindResources(device);
+        return false;
+    }
+    m_wind.resolution = resolution;
+    m_wind.layers = layers;
+    return true;
+}
+
+// 風の場。一様な風を地形にぶつけ、圧力のヤコビ反復で発散のない流れに直してから、
+// 地表直上の風速をマスクにする（CompositeWind.hlsl）。
+bool MaterialEvaluator::ApplyWindMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                      ID3D12GraphicsCommandList* commandList, const MaskOp& op,
+                                      const MaterialStack& stack, rhi::GpuTexture& target) {
+    const WindParams& params = op.wind;
+    const uint32_t resolution = std::clamp(params.resolution, 32u, 512u);
+    const uint32_t layers = std::clamp(params.layers, 4u, 128u);
+    if (!target.IsValid() || !EnsureWindResources(device, resolution, layers)) {
+        return false;
+    }
+    const auto pipeline = [&](const wchar_t* entry) {
+        return pipelineCache.GetCompute(L"CompositeWind.hlsl", entry);
+    };
+    ID3D12PipelineState* initPass = pipeline(L"CsInit");
+    ID3D12PipelineState* divergencePass = pipeline(L"CsDivergence");
+    ID3D12PipelineState* jacobiPass = pipeline(L"CsJacobi");
+    ID3D12PipelineState* projectPass = pipeline(L"CsProject");
+    ID3D12PipelineState* toMaskPass = pipeline(L"CsToMask");
+    if (initPass == nullptr || divergencePass == nullptr || jacobiPass == nullptr ||
+        projectPass == nullptr || toMaskPass == nullptr) {
+        return false;
+    }
+
+    const float sizeMeters = (stack.SizeMeters() > 0.0f) ? stack.SizeMeters() : 1.0f;
+    const float heightMeters = std::max(stack.HeightMeters(), 0.0f);
+    const float top = heightMeters + std::max(params.heightMeters, 1.0f);
+    const float radians = params.directionDegrees * (3.14159265358979f / 180.0f);
+
+    WindConstants constants = {};
+    constants.indices0[0] = m_textures.height.SrvIndex();
+    constants.indices0[1] = m_wind.velocity.uav.index;
+    constants.indices0[2] = m_wind.pressureA.uav.index;
+    constants.indices0[3] = m_wind.pressureB.uav.index;
+    constants.indices1[0] = m_wind.divergence.uav.index;
+    constants.indices1[1] = target.UavIndex();
+    constants.indices1[2] = target.width;
+    constants.indices1[3] = std::min(params.channel, 1u);
+    constants.grid[0] = resolution;
+    constants.grid[1] = layers;
+    constants.cell[0] = sizeMeters / static_cast<float>(resolution);
+    constants.cell[1] = top / static_cast<float>(layers);
+    constants.cell[2] = heightMeters;
+    // 風向は 0 が +Z（v）、90 が +X（u）。雲の風向と同じ。
+    constants.wind[0] = std::sin(radians);
+    constants.wind[1] = std::cos(radians);
+    constants.wind[2] = std::max(params.speedMetersPerSecond, 0.0f);
+    constants.wind[3] = std::max(params.spindriftThreshold, 0.0f);
+    constants.spindrift[0] = std::max(params.spindriftRange, 0.01f);
+    constants.spindrift[1] = std::max(params.leeSlope, 0.01f);
+
+    const auto upload = [&](uint32_t direction, D3D12_GPU_VIRTUAL_ADDRESS& outAddress) {
+        WindConstants copy = constants;
+        copy.grid[2] = direction;
+        const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(WindConstants));
+        if (!cb.IsValid()) {
+            return false;
+        }
+        std::memcpy(cb.cpu, &copy, sizeof(copy));
+        outAddress = cb.gpuAddress;
+        return true;
+    };
+    D3D12_GPU_VIRTUAL_ADDRESS constantsA = 0;
+    D3D12_GPU_VIRTUAL_ADDRESS constantsB = 0;
+    if (!upload(0u, constantsA) || !upload(1u, constantsB)) {
+        return false;
+    }
+
+    PIXBeginEvent(commandList, PIX_COLOR(120, 190, 220), "CompositeWind");
+    TransitionIfNeeded(commandList, m_textures.height,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    for (rhi::GpuBuffer* buffer : {&m_wind.velocity, &m_wind.pressureA, &m_wind.pressureB, &m_wind.divergence}) {
+        TransitionIfNeeded(commandList, *buffer, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
+
+    const uint32_t groups = DispatchCount(resolution);
+    const auto barrier = [&]() {
+        const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+        commandList->ResourceBarrier(1, &uav);
+    };
+    const auto run = [&](ID3D12PipelineState* pipelineState) {
+        commandList->SetPipelineState(pipelineState);
+        commandList->Dispatch(groups, groups, layers);
+        barrier();
+    };
+
+    commandList->SetComputeRootConstantBufferView(1, constantsA);
+    run(initPass);
+    run(divergencePass);
+    // 偶数回まわして結果を A に戻す（CsProject は A を読む）。
+    const int iterations = std::max(2, (std::clamp(params.iterations, 2, 512) + 1) / 2 * 2);
+    for (int i = 0; i < iterations; ++i) {
+        commandList->SetComputeRootConstantBufferView(1, (i % 2 == 0) ? constantsA : constantsB);
+        run(jacobiPass);
+    }
+    commandList->SetComputeRootConstantBufferView(1, constantsA);
+    run(projectPass);
+    commandList->SetPipelineState(toMaskPass);
+    commandList->Dispatch(DispatchCount(target.width), DispatchCount(target.height), 1);
+    barrier();
+
+    PIXEndEvent(commandList);
+    return true;
+}
+
 // 川筋の作業リソースは**使うときだけ**作る。1 組を順に使い回すので、
 // 一番大きいグリッドに合わせて作れば足りる（小さい川筋は左上だけを使う）。
 bool MaterialEvaluator::EnsureFluvialResources(rhi::Device& device, uint32_t workResolution) {
@@ -693,6 +843,7 @@ void MaterialEvaluator::Destroy(rhi::Device& device) {
     m_hasResult = false;
     ReleaseHeightfieldResources(device);
     ReleaseFluvialResources(device);
+    ReleaseWindResources(device);
     device.DeferRelease(m_maskHeightRange);
     ReleaseSedimentResources(device);
     ReleaseCrumblingResources(device);
@@ -1051,6 +1202,10 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
     // 川筋だけは反復が要るので専用のパイプライン。
     if (op.kind == MaskOpKind::Fluvial) {
         return ApplyFluvialMask(device, pipelineCache, commandList, op, stack, target);
+    }
+    // 風の場も反復（圧力の投影）が要る。
+    if (op.kind == MaskOpKind::Wind) {
+        return ApplyWindMask(device, pipelineCache, commandList, op, stack, target);
     }
     // 堆積の厚みは、直前に走った堆積レイヤーの作業用テクスチャから焼く。
     if (op.kind == MaskOpKind::Sediment) {
@@ -4843,7 +4998,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             // レイヤーが走る前の（＝前回の評価の）作業用テクスチャを読む。
             // (2) ハッシュに Height の状態が入らないので、出どころの設定を
             // 触っても焼き直されず、マスクが固まったまま更新されなくなる。
-            if (op.kind == MaskOpKind::Flowline || op.kind == MaskOpKind::Fluvial || op.kind == MaskOpKind::Slope ||
+            if (op.kind == MaskOpKind::Flowline || op.kind == MaskOpKind::Fluvial || op.kind == MaskOpKind::Slope || op.kind == MaskOpKind::Wind ||
                 op.kind == MaskOpKind::Curvature || op.kind == MaskOpKind::Sediment ||
                 op.kind == MaskOpKind::Crumbling || op.kind == MaskOpKind::Snow ||
                 op.kind == MaskOpKind::Height || op.kind == MaskOpKind::River ||
