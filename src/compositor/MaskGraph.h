@@ -195,20 +195,6 @@ struct ScatterMaskParams {
     uint32_t channel = 0;
 };
 
-// パスの線分 1 本。座標は地形平面の正規化 UV（0〜1）、幅 / フェザーは m。
-// 両端で値が違えばエッジ上で補間する。孤立した点は a == b の線分（円）。
-struct PathSegment {
-    float ax = 0.0f;
-    float ay = 0.0f;
-    float bx = 0.0f;
-    float by = 0.0f;
-    float widthA = 0.0f;
-    float widthB = 0.0f;
-    float featherA = 0.0f;
-    float featherB = 0.0f;
-    float intensityA = 1.0f;
-    float intensityB = 1.0f;
-};
 
 // パスをマスクにするときの調整。形（幅 / フェザー / 強さ）は点が持つ。
 struct PathMaskParams {

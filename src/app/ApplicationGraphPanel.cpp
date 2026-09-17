@@ -1318,8 +1318,18 @@ void Application::DrawGraphPanel() {
                     "独立した開いた Path を矢印が揃う向きで接続する（合計 2048 標本まで）。");
             }
         }
+        // Surface の UV Path に Path が繋がっていれば、帯の座標で貼る設定を出す。
+        bool pathUvConnected = false;
+        if (selected->kind == graph::NodeKind::Surface) {
+            for (const graph::Pin& pin : selected->inputs) {
+                if (pin.valueType == graph::ValueType::Path &&
+                    m_graph.FindUpstreamNodeForPin(pin.id) != nullptr) {
+                    pathUvConnected = true;
+                }
+            }
+        }
         changed |= DrawLayerSettings(settings->layer, isBase, isSource, maskFromNode,
-                                     m_graph.MaskSourceResolves(*selected));
+                                     m_graph.MaskSourceResolves(*selected), pathUvConnected);
 
         // 地形の実寸。**ソースだけが持ち、読み込むときに一度だけ決める。**
         // プレビュー設定ではなくここに置くのは、実寸が見え方の設定ではなく

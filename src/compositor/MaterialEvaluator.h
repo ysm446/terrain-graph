@@ -314,6 +314,9 @@ private:
     // 失敗なら kInvalidTextureIndex。
     uint32_t UploadPathSegments(rhi::Device& device, size_t index,
                                 const std::vector<PathSegment>& segments);
+    // 線分列を指定のバッファへ写す（op とレイヤーで共用の実体）。
+    uint32_t UploadPathSegmentsTo(rhi::Device& device, rhi::GpuBuffer& buffer,
+                                  const std::vector<PathSegment>& segments);
     bool ApplyPathMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                        ID3D12GraphicsCommandList* commandList, const MaskOp& op, size_t index,
                        const MaterialStack& stack, rhi::GpuTexture& target);
@@ -507,6 +510,10 @@ private:
     // パスの線分列（Path / Area の op だけ持つ。他は空）。アップロードヒープのバッファに
     // 置き、ByteAddressBuffer として読む。焼き直すときに書き換える。
     std::vector<rhi::GpuBuffer> m_maskOpBuffers;
+    // Surface のパス UV の線分列（レイヤーごと。UV Path を繋いだものだけ持つ）。
+    // 中身のハッシュが変わったときだけ書き直す。
+    std::vector<rhi::GpuBuffer> m_layerPathBuffers;
+    std::vector<uint64_t> m_layerPathHashes;
     std::vector<uint32_t> m_maskOpResolutions;
     // 前回焼いたときの入力ハッシュ。**変わっていない op は焼き直さない。**
     // 川筋のように重い op を、無関係な編集のたびに走らせないための仕組み。

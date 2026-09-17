@@ -242,6 +242,24 @@ struct LayerMask {
     MapSlot texture;
 };
 
+// パスの線分 1 本（評価用）。座標は正規化 UV のまま（実寸への換算は評価器が一辺の長さで行う）。
+// Mask Path / Mask Area の op と、Surface のパス UV が読む。
+// along は鎖の始点からの弧長（正規化 UV 単位）。帯の進行方向の座標（V）になる。
+struct PathSegment {
+    float ax = 0.0f;
+    float ay = 0.0f;
+    float bx = 0.0f;
+    float by = 0.0f;
+    float widthA = 0.0f;
+    float widthB = 0.0f;
+    float featherA = 0.0f;
+    float featherB = 0.0f;
+    float intensityA = 1.0f;
+    float intensityB = 1.0f;
+    float alongA = 0.0f;
+    float alongB = 0.0f;
+};
+
 // 1 レイヤーぶんの設定。
 //
 // 種類でフィールドの解釈が一部変わる。同じ意味の値を 2 か所に置かないため、
@@ -640,6 +658,22 @@ struct MaterialLayer {
 
     // このレイヤーの UV スケール。
     float uvScale = 1.0f;
+
+    // パス UV（Surface の UV Path 入力に Path を繋いだときだけ意味を持つ）。
+    //
+    // 地形の UV で並べる代わりに、パスに沿った帯の座標で貼る。進行方向（弧長）が V、
+    // 幅方向が U。V は repeatMeters ごとに 1 周するので、模様が進行方向にループする。
+    // U は帯の幅（パスの点が持つ幅）に 1 枚ぶんを合わせ、widthRepeat で枚数を変える。
+    // 帯の外（幅 + フェザーの外側）にはマスクが 0 になって乗らない。
+    struct PathUvSettings {
+        float repeatMeters = 16.0f;   // 進行方向に模様が 1 周する長さ（m）
+        float widthRepeat = 1.0f;     // 幅方向に何枚並べるか
+        float offsetMeters = 0.0f;    // 進行方向のずらし（m）。継ぎ目の位置を動かす
+    };
+    PathUvSettings pathUv;
+    // UV Path に繋いだパスの線分列。**保存しない。** グラフの繋ぎ方からコンパイルのたびに決まる。
+    // 空なら通常の UV（uvScale）で貼る。
+    std::vector<PathSegment> pathUvSegments;
 };
 
 }  // namespace tg::compositor

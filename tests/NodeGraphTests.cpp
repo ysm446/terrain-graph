@@ -920,6 +920,38 @@ void RunNodeGraphTests() {
         Check(tg::graph::BuildMeanderPoints(path, 1024, 10).empty(), "閉じた Path を川として評価しない");
     }
 
+    Section("ノードグラフ — Surface のパス UV");
+    {
+        NodeGraph graph;
+        const auto baseId = graph.CreateNode(NodeKind::Heightmap);
+        const auto surfaceId = graph.CreateNode(NodeKind::Surface);
+        const auto pathId = graph.CreateNode(NodeKind::Path);
+        const auto* surface = graph.FindNode(surfaceId);
+        Check(surface->inputs.size() == 3 && surface->inputs[2].valueType == tg::graph::ValueType::Path &&
+            surface->inputs[2].label == "UV Path", "Surface は Base / Mask の後ろに UV Path を持つ");
+        Check(graph.CreateLink(graph.FindNode(baseId)->outputs[0].id, surface->inputs[0].id), "地形を接続");
+        Check(graph.CompileLayersTo(surfaceId).layers.back().pathUvSegments.empty(),
+            "Path を繋がなければ線分列は空（通常の UV）");
+        auto& path = std::get<tg::graph::PathNodeSettings>(graph.FindMutableNode(pathId)->settings).path;
+        const auto a = tg::graph::AddPathPoint(path, 0.1f, 0.5f, 0);
+        const auto b = tg::graph::AddPathPoint(path, 0.4f, 0.5f, a);
+        const auto c = tg::graph::AddPathPoint(path, 0.4f, 0.9f, b);
+        Check(graph.CreateLink(graph.FindNode(pathId)->outputs[0].id, surface->inputs[2].id), "Path を UV Path へ接続");
+        const auto segments = graph.CompileLayersTo(surfaceId).layers.back().pathUvSegments;
+        bool monotonic = !segments.empty() && segments.front().alongA == 0.0f;
+        for (size_t i = 0; i + 1 < segments.size(); ++i) {
+            monotonic &= segments[i].alongB > segments[i].alongA &&
+                         std::abs(segments[i].alongB - segments[i + 1].alongA) < 1e-6f;
+        }
+        Check(monotonic && std::abs(segments.back().alongB - 0.7f) < 1e-3f,
+            "弧長は鎖の始点から単調に積み、全長が折れ線の長さになる");
+        const auto isolated = tg::graph::AddPathPoint(path, 0.8f, 0.2f, 0);
+        (void)isolated; (void)c;
+        const auto withPoint = graph.CompileLayersTo(surfaceId).layers.back().pathUvSegments;
+        Check(withPoint.size() == segments.size() + 1 && withPoint.back().alongA == 0.0f &&
+            withPoint.back().ax == withPoint.back().bx, "孤立した点は長さ 0 の線分として弧長 0 で出す");
+    }
+
     Section("ノードグラフ — Lake の独立した出力");
     {
         NodeGraph graph;

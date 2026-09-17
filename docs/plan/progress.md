@@ -1,7 +1,13 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-16 21:10
+更新日時: 2026-09-17 21:55
+
+## Surface のパス UV（パスに沿って模様を貼る）
+
+ユーザー依頼により Surface ノードに `UV Path` 入力を追加した。Path を繋ぐと、帯メッシュを作らずにテクセルごとに最寄りの線分から (弧長, 横距離, 進行方向) を求め、進行方向を V・幅方向を U とする座標で素材を貼る。V は `繰り返し長`（m）ごとにループする。帯の外はマスク 0、法線は進行方向で回してから RNM。線分の弧長は `BuildPathSegments` が積み、線分の未使用 2 スロットに入れる。線分読み込みは `CompositePath.hlsli` に共通化。設計は [path.md](../design/path.md) の「Surface のパス UV」、パラメータは [nodes.md](../reference/nodes.md) の Surface を参照。
+
+検証: Debug／Release ビルド、DXC 単体コンパイル（CompositeLayer 2 エントリ、CompositeMaskPath 2 エントリ）、Debug テスト（新規 6 件を含め失敗なし）。`data/Test/path-uv-qa/path-uv.tgscene`（矢印模様のテクスチャ + S 字のパス）を Debug で撮影し、矢印が進行方向へ向いてループし、左右の縁色（青 / 緑）が帯の左右に出ることを確認（`data/Test/path-uv-qa/ui.png`）。法線マップ付き素材での陰影の向き、急カーブ内側の折れ、Mask 入力との掛け合わせは目視未確認。
 
 ## 自動露出
 

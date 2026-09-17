@@ -27,7 +27,7 @@ namespace tg {
 // レイヤー 1 枚ぶんのプロパティ行。グラフパネルの下段から使う。
 // 変更の記録（アンドゥ / グラフの再コンパイル）は呼び出し側で行う。
 bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBase, bool isSource,
-                                   bool maskFromNode, bool maskResolves) {
+                                   bool maskFromNode, bool maskResolves, bool pathUv) {
     // **困っていることは一番上に出す。** 設定の行が多いレイヤーだと、
     // マスクの節はスクロールの外へ行ってしまう。
     if (!maskResolves) {
@@ -919,7 +919,7 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
             changed |= ui::PropertyFloat("AO", &layer.ambientOcclusion, 0.0f, 1.0f,
                                          defaults.ambientOcclusion, nullptr, "%.2f");
         }
-        if (!isShape && !isLiquid) {
+        if (!isShape && !isLiquid && !pathUv) {
             changed |= ui::PropertyFloat("UV スケール", &layer.uvScale, 0.25f, 16.0f,
                                          defaults.uvScale,
                                          "このレイヤーの模様を何回並べるか", "%.2f", 0, 0.25f);
@@ -928,6 +928,28 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
     }
     if (!isShape && layer.material != compositor::kNoMaterialAsset) {
         ui::HintText("色とサーフェスの値はマテリアル側で決まる");
+    }
+
+    // パス UV。UV Path に繋いだパスに沿った帯の座標で貼る。地形の UV は使わないので
+    // UV スケールの代わりにここを出す。幅は Path の点が持つ。
+    if (pathUv) {
+        ui::SectionHeader("パス UV");
+        if (ui::BeginPropertyTable("layerPathUvRows")) {
+            changed |= ui::PropertyFloat("繰り返し長", &layer.pathUv.repeatMeters, 0.5f, 20000.0f,
+                                         defaults.pathUv.repeatMeters,
+                                         "進行方向に模様が 1 周する長さ（m）。この間隔でループする",
+                                         "%.1f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat("幅方向の枚数", &layer.pathUv.widthRepeat, 0.1f, 8.0f,
+                                         defaults.pathUv.widthRepeat,
+                                         "帯の幅（Path の点の幅）に模様を何枚並べるか。1 で幅いっぱいに 1 枚",
+                                         "%.2f", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat("進行方向のずれ", &layer.pathUv.offsetMeters, -500.0f,
+                                         500.0f, defaults.pathUv.offsetMeters,
+                                         "模様を進行方向へずらす距離（m）。継ぎ目の位置を動かす", "%.1f m");
+            ui::EndPropertyTable();
+        }
+        ui::HintText("UV Path のパスに沿って素材を貼る。進行方向が模様の縦、幅方向が横。"
+                     "幅とフェザーは Path の点が持ち、帯の外には乗らない");
     }
 
     if (isLiquid) {

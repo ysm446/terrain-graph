@@ -138,9 +138,11 @@ private:
     // ソースと画像の行は出さない（同じ値を 2 か所から編集させない）。
     // maskResolves が偽なら「Mask 入力に繋いだのに効いていない」注意書きを出す
     // （堆積 / 崩落の Mask を、そのチェーンの外から繋いだとき）。
+    // pathUv が真なら Surface の UV Path に Path が繋がっている（帯の座標で貼る）。
+    // UV スケールの代わりにパス UV の行を出す。
     bool DrawLayerSettings(compositor::MaterialLayer& layer, bool isBase, bool isSource = false,
                            bool maskFromNode = false,
-                           bool maskResolves = true);
+                           bool maskResolves = true, bool pathUv = false);
     // グラフの変更をコンパイル結果（m_graphStack）へ反映する。フレームの頭で呼ぶ。
     void SyncGraphStack();
     // 選択中のノードを控える / 貼り付ける（Ctrl+C / Ctrl+V）。

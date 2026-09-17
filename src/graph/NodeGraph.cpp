@@ -33,6 +33,16 @@ constexpr std::array<PinDefinition, 3> kLayerNodePins = {{
     {PinKind::Output, ValueType::Material, "Result"},
 }};
 
+// Surface のピン。**UV Path に Path を繋ぐと、パスに沿った帯の座標で素材を貼る**
+// （進行方向が V、幅方向が U。帯の外には乗らない）。繋がなければ地形の UV で並べる。
+// 古いファイルは入力 2 本で保存されているので、3 本目は末尾に足す（欠けたぶんは採番し直される）。
+constexpr std::array<PinDefinition, 4> kSurfacePins = {{
+    {PinKind::Input, ValueType::Material, "Base"},
+    {PinKind::Input, ValueType::Mask, "Mask"},
+    {PinKind::Input, ValueType::Path, "UV Path"},
+    {PinKind::Output, ValueType::Material, "Result"},
+}};
+
 // マスクを取らない加工（ブラー）のピン。
 // ぼかしのピン。**Mask はどこをぼかすか**（明るい所ほどぼける。繋がなければ全体）。
 constexpr std::array<PinDefinition, 3> kBlurPins = {{
@@ -236,7 +246,7 @@ constexpr std::array<PinDefinition, 1> kModelOutputPins = {{
 }};
 constexpr std::array<NodeDefinition, 48> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
-    {NodeKind::Surface, "surface", "Surface", kLayerNodePins},
+    {NodeKind::Surface, "surface", "Surface", kSurfacePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
     {NodeKind::Liquid, "liquid", "Liquid", kLayerNodePins},
     {NodeKind::Blur, "heightmapBlur", "Heightmap Blur", kBlurPins},
@@ -1509,6 +1519,16 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace) co
                 break;
             }
         }
+    }
+
+    // Surface の UV Path。繋いだパスの線分列をレイヤーへ写す（帯の座標で貼る）。
+    for (size_t i = 0; i < layerNodes.size(); ++i) {
+        if (layerNodes[i]->kind != NodeKind::Surface) continue;
+        auto& layer = compiled.layers[i];
+        layer.pathUvSegments.clear();
+        const Node* pathNode = UpstreamOf(*layerNodes[i], ValueType::Path);
+        const auto* path = pathNode ? std::get_if<PathNodeSettings>(&pathNode->settings) : nullptr;
+        if (path) layer.pathUvSegments = BuildPathSegments(path->path);
     }
 
     // Result 経由とマスクだけの分岐の両方で、接続中の Path から標本を作る。

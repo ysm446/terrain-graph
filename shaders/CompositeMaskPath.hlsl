@@ -13,12 +13,7 @@
 // （曲線の輪は簡単に 256 本を超える）ので、バッファに置いて 1 回で読む。
 
 #include "CompositeCommon.hlsli"
-
-// 線分 1 本は float 12 個（48 バイト）。C++ 側の PathSegmentStride と一致させること。
-//   [0..3]: ax, ay, bx, by（正規化 UV）
-//   [4..7]: widthA, widthB, featherA, featherB（m）
-//   [8..11]: intensityA, intensityB, 未使用, 未使用
-#define TG_PATH_SEGMENT_BYTES 48u
+#include "CompositePath.hlsli"
 
 struct PathMaskConstants
 {
@@ -31,51 +26,6 @@ struct PathMaskConstants
 };
 
 ConstantBuffer<PathMaskConstants> g_path : register(b1);
-
-struct PathSegmentData
-{
-    float2 a;
-    float2 b;
-    float widthA;
-    float widthB;
-    float featherA;
-    float featherB;
-    float intensityA;
-    float intensityB;
-};
-
-PathSegmentData LoadSegment(ByteAddressBuffer buffer, uint index, float sizeMeters)
-{
-    const uint base = index * TG_PATH_SEGMENT_BYTES;
-    const float4 ends = asfloat(buffer.Load4(base));
-    const float4 widths = asfloat(buffer.Load4(base + 16u));
-    const float4 intensities = asfloat(buffer.Load4(base + 32u));
-    PathSegmentData segment;
-    segment.a = ends.xy * sizeMeters;
-    segment.b = ends.zw * sizeMeters;
-    segment.widthA = widths.x;
-    segment.widthB = widths.y;
-    segment.featherA = widths.z;
-    segment.featherB = widths.w;
-    segment.intensityA = intensities.x;
-    segment.intensityB = intensities.y;
-    return segment;
-}
-
-// 中心線からの距離 → 0〜1。幅の半分までは 1、その外側をフェザーで 0 へ。
-float PathDistanceValue(float distance, float width, float feather)
-{
-    const float half = max(width, 0.0f) * 0.5f;
-    if (distance <= half)
-    {
-        return 1.0f;
-    }
-    if (feather <= 1e-4f)
-    {
-        return 0.0f;
-    }
-    return saturate(1.0f - (distance - half) / feather);
-}
 
 // ガンマと反転。両方のエントリの最後で掛ける。
 float FinishPathValue(float value)

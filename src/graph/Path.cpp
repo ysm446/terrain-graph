@@ -1070,6 +1070,8 @@ std::vector<compositor::PathSegment> BuildPathSegments(const PathSettings& path)
     constexpr int kSamplesPerSpan = 12;
     for (const PathStrand& strand : BuildPathStrands(path)) {
         const std::vector<PathCurveSample> samples = SamplePathStrand(path, strand, kSamplesPerSpan);
+        // 弧長は鎖ごとに始点から積む（正規化 UV 単位）。Surface のパス UV が進行方向の座標に使う。
+        float along = 0.0f;
         for (size_t i = 0; i + 1 < samples.size(); ++i) {
             const PathCurveSample& a = samples[i];
             const PathCurveSample& b = samples[i + 1];
@@ -1084,6 +1086,9 @@ std::vector<compositor::PathSegment> BuildPathSegments(const PathSettings& path)
             segment.featherB = b.featherMeters;
             segment.intensityA = a.intensity;
             segment.intensityB = b.intensity;
+            segment.alongA = along;
+            along += std::sqrt((b.u - a.u) * (b.u - a.u) + (b.v - a.v) * (b.v - a.v));
+            segment.alongB = along;
             segments.push_back(segment);
         }
     }

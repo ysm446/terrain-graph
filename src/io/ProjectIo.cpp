@@ -1040,6 +1040,12 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     node["blendRange"] = layer.blendRange;
     node["wrapToUnderlying"] = layer.wrapToUnderlying;
     node["uvScale"] = layer.uvScale;
+    // パス UV（Surface の UV Path）。線分列はグラフから決まるので書かない。
+    json pathUv;
+    pathUv["repeatMeters"] = layer.pathUv.repeatMeters;
+    pathUv["widthRepeat"] = layer.pathUv.widthRepeat;
+    pathUv["offsetMeters"] = layer.pathUv.offsetMeters;
+    node["pathUv"] = std::move(pathUv);
     return node;
 }
 
@@ -1366,6 +1372,11 @@ compositor::MaterialLayer ReadLayer(
     layer.blendRange = ReadFloat(node, "blendRange", defaults.blendRange);
     layer.wrapToUnderlying = ReadBool(node, "wrapToUnderlying", defaults.wrapToUnderlying);
     layer.uvScale = ReadFloat(node, "uvScale", defaults.uvScale);
+    if (const json* pathUv = FindMember(node, "pathUv"); pathUv != nullptr && pathUv->is_object()) {
+        layer.pathUv.repeatMeters = ReadFloat(*pathUv, "repeatMeters", defaults.pathUv.repeatMeters);
+        layer.pathUv.widthRepeat = ReadFloat(*pathUv, "widthRepeat", defaults.pathUv.widthRepeat);
+        layer.pathUv.offsetMeters = ReadFloat(*pathUv, "offsetMeters", defaults.pathUv.offsetMeters);
+    }
     return layer;
 }
 

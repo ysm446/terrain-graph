@@ -1,7 +1,7 @@
 # path — パスと経路探索の設計
 
 作成日時: 2026-09-04 15:00
-更新日時: 2026-09-06 18:00
+更新日時: 2026-09-17 17:30
 
 Path ノード（地形の上に引く向き付きの線）と、その鎖ごとの経路探索についてまとめる。
 ノードの使い方（パラメータ表と操作表）は [reference/nodes.md の Path](../reference/nodes.md#path)、
@@ -254,6 +254,25 @@ Mask、River の Seed、将来の「パスに沿って掘る / 均す」）が�
 routedFrom, routedTo, waypoints }`。`route` が `none` なら経路探索のキーは書かない。
 `routedFrom` / `routedTo` が揃っていなければ未計算として読む（内部点は捨てる）。
 詳細は [reference/file-format.md](../reference/file-format.md)。版は上げていない。
+
+## Surface のパス UV
+
+Surface の `UV Path` 入力に Path を繋ぐと、レイヤーの素材を地形の UV ではなく
+**パスに沿った帯の座標**で貼る。ポリゴンの帯は作らず、Mask Path と同じ線分列を
+レイヤーのシェーダ（`CompositeLayer.hlsl` の `ComputeLayerUv`）が読み、テクセルごとに
+最寄りの線分から (弧長 s, 符号付き横距離 d, 進行方向) を求める（`CompositePath.hlsli` の
+`ComputePathFrame`）。
+
+- `BuildPathSegments` が線分ごとに鎖の始点からの弧長（`alongA` / `alongB`、正規化 UV 単位）を
+  積む。孤立した点は 0。線分の 48 バイトのうち未使用だった 2 スロットに入れる。
+- U = d × 幅方向の枚数 / 幅 + 枚数 / 2、V = (s + ずれ) / 繰り返し長。Wrap サンプラで V がループする。
+- 帯の外は `PathDistanceValue`（Mask Path と同じ幅・フェザー）が 0 になり、レイヤーのマスクに掛ける。
+- 法線は帯の座標系で求めてから進行方向で回す。U 軸は進行方向の右手（`(dir.y, -dir.x)`）で、
+  反転を含まない回転になるよう符号を選んである（反転すると法線マップの向きが裏返る）。
+- 線分列はレイヤーごとのアップロードバッファ（`m_layerPathBuffers`）に置き、中身のハッシュが
+  変わったときだけ書き直す。
+- 最寄り線分が切り替わる所（幅より急なカーブの内側、交差・近接）では s が不連続になり模様が折れる。
+  マスクのように max で重ねることはできない。
 
 ## 今後
 

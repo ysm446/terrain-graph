@@ -76,6 +76,10 @@ struct LayerConstants {
     uint32_t paintParams[4];
     uint32_t mapChannels[4];
     float colorAdjust[4];  // 色相（ラジアン）, 彩度, 明度, 未使用
+    // パス UV（Surface の UV Path）。繰り返し長（m）, 幅方向の枚数, 進行方向のずれ（m）, 一辺（m）
+    float pathUvParams[4];
+    // 線分バッファの SRV（無ければ kInvalidTextureIndex）, 線分数, 未使用 x2
+    uint32_t pathUvIndices[4];
 };
 
 // GPU 側の SedimentConstants と一致させること。
@@ -227,6 +231,9 @@ uint64_t HashHeightState(uint64_t seed, const MaterialLayer& layer) {
     hash = HashBytes(hash, &layer.blendRange, sizeof(layer.blendRange));
     hash = HashBytes(hash, &layer.wrapToUnderlying, sizeof(layer.wrapToUnderlying));
     hash = HashBytes(hash, &layer.uvScale, sizeof(layer.uvScale));
+    hash = HashBytes(hash, &layer.pathUv, sizeof(layer.pathUv));
+    hash = HashBytes(hash, layer.pathUvSegments.data(),
+                     layer.pathUvSegments.size() * sizeof(PathSegment));
     hash = HashBytes(hash, &layer.material, sizeof(layer.material));
     hash = HashBytes(hash, &layer.blur, sizeof(layer.blur));
     hash = HashBytes(hash, &layer.sediment, sizeof(layer.sediment));
@@ -733,6 +740,11 @@ void MaterialEvaluator::Destroy(rhi::Device& device) {
         device.DeferRelease(buffer);
     }
     m_maskOpBuffers.clear();
+    for (rhi::GpuBuffer& buffer : m_layerPathBuffers) {
+        device.DeferRelease(buffer);
+    }
+    m_layerPathBuffers.clear();
+    m_layerPathHashes.clear();
     m_maskOpResolutions.clear();
     m_maskOpHashes.clear();
     ReleaseTextures(device);
@@ -1285,10 +1297,17 @@ bool MaterialEvaluator::EnsureMaskHeightRange(rhi::Device& device) {
 // （評価は 1 本ずつしか走らない）。大きさが足りなければ作り直す（古いのは遅延解放）。
 uint32_t MaterialEvaluator::UploadPathSegments(rhi::Device& device, size_t index,
                                                const std::vector<PathSegment>& segments) {
-    if (index >= m_maskOpBuffers.size() || segments.empty()) {
+    if (index >= m_maskOpBuffers.size()) {
         return kInvalidTextureIndex;
     }
-    rhi::GpuBuffer& buffer = m_maskOpBuffers[index];
+    return UploadPathSegmentsTo(device, m_maskOpBuffers[index], segments);
+}
+
+uint32_t MaterialEvaluator::UploadPathSegmentsTo(rhi::Device& device, rhi::GpuBuffer& buffer,
+                                                 const std::vector<PathSegment>& segments) {
+    if (segments.empty()) {
+        return kInvalidTextureIndex;
+    }
     const uint64_t bytes = static_cast<uint64_t>(segments.size()) * kPathSegmentStride;
     if (!buffer.IsValid() || buffer.sizeInBytes < bytes || !buffer.srv.IsValid()) {
         device.DeferRelease(buffer);
@@ -1331,8 +1350,8 @@ uint32_t MaterialEvaluator::UploadPathSegments(rhi::Device& device, size_t index
         out[7] = segment.featherB;
         out[8] = segment.intensityA;
         out[9] = segment.intensityB;
-        out[10] = 0.0f;
-        out[11] = 0.0f;
+        out[10] = segment.alongA;
+        out[11] = segment.alongB;
         out += kPathSegmentStride / sizeof(float);
     }
     const D3D12_RANGE writtenRange = {0, static_cast<SIZE_T>(bytes)};
@@ -5180,6 +5199,32 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         constants.paintParams[0] = (layer.mask.source == MaskSource::Paint)
                                        ? paintMasks.SrvIndex(layer.mask.paint)
                                        : kInvalidTextureIndex;
+
+        // パス UV。線分列はレイヤーごとのバッファに置き、中身が変わったときだけ書き直す
+        // （評価は 1 本ずつなので、書き直すときに前の評価は終わっている）。
+        constants.pathUvIndices[0] = kInvalidTextureIndex;
+        constants.pathUvIndices[1] = 0;
+        constants.pathUvParams[0] = std::max(layer.pathUv.repeatMeters, 0.01f);
+        constants.pathUvParams[1] = std::max(layer.pathUv.widthRepeat, 0.01f);
+        constants.pathUvParams[2] = layer.pathUv.offsetMeters;
+        constants.pathUvParams[3] = (stack.SizeMeters() > 0.0f) ? stack.SizeMeters() : 1.0f;
+        if (layer.kind == LayerKind::Surface && !layer.pathUvSegments.empty()) {
+            if (m_layerPathBuffers.size() <= layerIndex) {
+                m_layerPathBuffers.resize(layerIndex + 1);
+                m_layerPathHashes.resize(layerIndex + 1, 0);
+            }
+            rhi::GpuBuffer& buffer = m_layerPathBuffers[layerIndex];
+            const uint64_t segmentsHash =
+                HashBytes(layer.pathUvSegments.size(), layer.pathUvSegments.data(),
+                          layer.pathUvSegments.size() * sizeof(PathSegment));
+            uint32_t srv = buffer.srv.IsValid() ? buffer.srv.index : kInvalidTextureIndex;
+            if (srv == kInvalidTextureIndex || segmentsHash != m_layerPathHashes[layerIndex]) {
+                srv = UploadPathSegmentsTo(device, buffer, layer.pathUvSegments);
+                m_layerPathHashes[layerIndex] = (srv != kInvalidTextureIndex) ? segmentsHash : 0;
+            }
+            constants.pathUvIndices[0] = srv;
+            constants.pathUvIndices[1] = static_cast<uint32_t>(layer.pathUvSegments.size());
+        }
 
         // 無効なレイヤーは合成しない。サムネイルだけは一覧のために作る。
         if (layer.enabled) {

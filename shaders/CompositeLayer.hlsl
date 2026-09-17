@@ -6,6 +6,7 @@
 // 出力タイル矩形と解像度を引数に取る形は崩さないこと（エクスポート時のタイル評価に必要）。
 
 #include "CompositeCommon.hlsli"
+#include "CompositePath.hlsli"
 
 #define TG_SOURCE_CONSTANT 0
 #define TG_SOURCE_NOISE    1
@@ -53,6 +54,10 @@ struct LayerConstants
     uint4 mapChannels;  // x にすべて入る。yzw は未使用
     // ベースカラーの調整。マテリアルが持つ（ティントを掛けた**あと**に効く）。
     float4 colorAdjust;  // 色相（ラジアン）, 彩度, 明度, 未使用
+    // パス UV（Surface の UV Path）。繰り返し長（m）, 幅方向の枚数, 進行方向のずれ（m）, 一辺（m）
+    float4 pathUvParams;
+    // 線分バッファの SRV（無ければ kInvalidTextureIndex）, 線分数, 未使用 x2
+    uint4 pathUvIndices;
 };
 
 ConstantBuffer<LayerConstants> g_layer : register(b1);
@@ -81,6 +86,54 @@ float SampleLayerScalar(uint index, uint channelSlot, float2 uv, float uvPerOutp
 {
     const float4 sampled = SampleLayerTexture(index, uv, uvPerOutputTexel);
     return SelectChannel(sampled, UnpackChannel(g_layer.mapChannels.x, channelSlot));
+}
+
+// このレイヤーが素材を引く UV。
+//
+// 通常は地形の UV に UV スケールを掛けたもの。**UV Path に Path を繋いだ Surface は、
+// パスに沿った帯の座標で引く**（進行方向の弧長が V、幅方向が U）。V は繰り返し長（m）
+// ごとに 1 周するので、模様が進行方向にループする。帯の外は coverage が 0 になり、
+// マスクに掛けて乗らないようにする。
+struct LayerUv
+{
+    float2 uv;               // サンプルに使う UV
+    float uvPerOutputTexel;  // 出力テクセル 1 つが張る UV 幅（ミップ選択用）
+    bool path;               // パス UV か
+    float2 direction;        // 進行方向（V 軸）。地形 UV 空間の単位ベクトル
+    float coverage;          // 帯の内側なら 1、フェザーの外で 0
+    float2 uvPerMeter;       // U / V それぞれの 1 m あたりの UV 幅（法線の勾配用）
+};
+
+LayerUv ComputeLayerUv(float2 outputUv, float2 texelSize)
+{
+    LayerUv result;
+    result.path = false;
+    result.uv = outputUv * g_layer.blendParams.z;
+    result.uvPerOutputTexel = texelSize.x * g_layer.blendParams.z;
+    result.direction = float2(0.0f, 1.0f);
+    result.coverage = 1.0f;
+    result.uvPerMeter = float2(0.0f, 0.0f);
+    if (g_layer.pathUvIndices.x == kInvalidTextureIndex || g_layer.pathUvIndices.y == 0u)
+    {
+        return result;
+    }
+    ByteAddressBuffer segments = ResourceDescriptorHeap[g_layer.pathUvIndices.x];
+    const float sizeMeters = max(g_layer.pathUvParams.w, 1e-3f);
+    const PathFrame frame =
+        ComputePathFrame(segments, g_layer.pathUvIndices.y, outputUv * sizeMeters, sizeMeters);
+    const float repeatMeters = max(g_layer.pathUvParams.x, 1e-3f);
+    const float widthRepeat = max(g_layer.pathUvParams.y, 1e-3f);
+    const float widthMeters = max(frame.width, 1e-3f);
+    result.path = true;
+    result.direction = frame.direction;
+    result.coverage = frame.coverage;
+    result.uvPerMeter = float2(widthRepeat / widthMeters, 1.0f / repeatMeters);
+    // U は中心線で widthRepeat の半分（帯の幅にちょうど widthRepeat 枚が並ぶ）。
+    result.uv = float2(frame.across * result.uvPerMeter.x + 0.5f * widthRepeat,
+                       (frame.along + g_layer.pathUvParams.z) * result.uvPerMeter.y);
+    const float texelMeters = texelSize.x * sizeMeters;
+    result.uvPerOutputTexel = texelMeters * max(result.uvPerMeter.x, result.uvPerMeter.y);
+    return result;
 }
 
 // ハイトの基準面。ソースの値がこの値のとき、そのテクセルは基準の高さちょうどになる。
@@ -197,8 +250,15 @@ float SampleLayerMask(float2 uv, float2 paintUv, float2 derivedUv, float uvPerOu
 // ハイト 0〜1 の全幅が標高差（m）、出力 UV 0〜1 が地形の一辺（m）なので、
 // blendParams.y = 標高差 / 一辺 を掛ければ d(高さ m) / d(距離 m) になる。
 // UV スケールで模様を並べたぶんは同じだけ勾配が急になるので uvScale も掛ける。
-float3 ComputeLayerNormal(float2 uv, float2 texelSize, float uvPerOutputTexel)
+//
+// パス UV のときは帯の座標系（U = 幅方向、V = 進行方向）で法線を求めてから、
+// 進行方向の回転で地形の UV 空間へ回す。回さないと、曲がった道の法線の陰影が
+// 地形の X / Y に固定されたままになる。
+float3 ComputeLayerNormal(LayerUv layerUv, float2 texelSize)
 {
+    const float2 uv = layerUv.uv;
+    const float uvPerOutputTexel = layerUv.uvPerOutputTexel;
+    float3 normal = float3(0.0f, 0.0f, 1.0f);
     if (g_layer.textureIndices0.y != kInvalidTextureIndex)
     {
         const float3 sampled =
@@ -213,28 +273,55 @@ float3 ComputeLayerNormal(float2 uv, float2 texelSize, float uvPerOutputTexel)
         {
             tangentNormal.y = -tangentNormal.y;
         }
-        return normalize(tangentNormal);
+        normal = normalize(tangentNormal);
     }
-
-    // 標高差 0 なら地形は平ら。勾配を取るまでもない。
-    const float heightPerSize = g_layer.blendParams.y;
-    if (heightPerSize <= 0.0f)
+    else if (g_layer.blendParams.y <= 0.0f)
     {
-        return float3(0.0f, 0.0f, 1.0f);
+        // 標高差 0 なら地形は平ら。勾配を取るまでもない。
+        normal = float3(0.0f, 0.0f, 1.0f);
+    }
+    else if (!layerUv.path)
+    {
+        const float heightPerSize = g_layer.blendParams.y;
+        const float2 step = texelSize * g_layer.blendParams.z;
+        const float hx0 = SampleLayerHeight(uv - float2(step.x, 0.0f), uvPerOutputTexel);
+        const float hx1 = SampleLayerHeight(uv + float2(step.x, 0.0f), uvPerOutputTexel);
+        const float hy0 = SampleLayerHeight(uv - float2(0.0f, step.y), uvPerOutputTexel);
+        const float hy1 = SampleLayerHeight(uv + float2(0.0f, step.y), uvPerOutputTexel);
+
+        // UV 単位の勾配（合成解像度に依らない）。
+        const float dx = (hx1 - hx0) * 0.5f / max(step.x, 1e-6f);
+        const float dy = (hy1 - hy0) * 0.5f / max(step.y, 1e-6f);
+
+        // 実寸の勾配へ。tan(傾き) がそのまま法線の xy になる。
+        const float scale = heightPerSize * g_layer.blendParams.z;
+        normal = normalize(float3(-dx * scale, -dy * scale, 1.0f));
+    }
+    else
+    {
+        // 帯の座標系で、出力テクセル 1 つぶん（m）だけ離した所の高さから勾配を取る。
+        const float sizeMeters = max(g_layer.pathUvParams.w, 1e-3f);
+        const float heightMeters = g_layer.blendParams.y * sizeMeters;
+        const float texelMeters = max(texelSize.x * sizeMeters, 1e-6f);
+        const float2 step = layerUv.uvPerMeter * texelMeters;
+        const float hx0 = SampleLayerHeight(uv - float2(step.x, 0.0f), uvPerOutputTexel);
+        const float hx1 = SampleLayerHeight(uv + float2(step.x, 0.0f), uvPerOutputTexel);
+        const float hy0 = SampleLayerHeight(uv - float2(0.0f, step.y), uvPerOutputTexel);
+        const float hy1 = SampleLayerHeight(uv + float2(0.0f, step.y), uvPerOutputTexel);
+        const float gx = (hx1 - hx0) * heightMeters * 0.5f / texelMeters;
+        const float gy = (hy1 - hy0) * heightMeters * 0.5f / texelMeters;
+        normal = normalize(float3(-gx, -gy, 1.0f));
     }
 
-    const float hx0 = SampleLayerHeight(uv - float2(texelSize.x, 0.0f), uvPerOutputTexel);
-    const float hx1 = SampleLayerHeight(uv + float2(texelSize.x, 0.0f), uvPerOutputTexel);
-    const float hy0 = SampleLayerHeight(uv - float2(0.0f, texelSize.y), uvPerOutputTexel);
-    const float hy1 = SampleLayerHeight(uv + float2(0.0f, texelSize.y), uvPerOutputTexel);
-
-    // UV 単位の勾配（合成解像度に依らない）。
-    const float dx = (hx1 - hx0) * 0.5f / max(texelSize.x, 1e-6f);
-    const float dy = (hy1 - hy0) * 0.5f / max(texelSize.y, 1e-6f);
-
-    // 実寸の勾配へ。tan(傾き) がそのまま法線の xy になる。
-    const float scale = heightPerSize * g_layer.blendParams.z;
-    return normalize(float3(-dx * scale, -dy * scale, 1.0f));
+    if (layerUv.path)
+    {
+        // 帯の座標系から地形の UV 空間へ。U 軸は進行方向の右手、V 軸は進行方向。
+        const float2 direction = layerUv.direction;
+        const float2 uAxis = float2(direction.y, -direction.x);
+        const float2 xy = normal.x * uAxis + normal.y * direction;
+        normal = normalize(float3(xy, normal.z));
+    }
+    return normal;
 }
 
 [numthreads(8, 8, 1)]
@@ -255,11 +342,10 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     const float2 texelSize = 1.0f / float2(g_layer.resolution);
     // ペイントマスクは出力そのものの座標で引くため、UV スケールを掛ける前を残しておく。
     const float2 outputUv = (float2(texel) + 0.5f) * texelSize;
-    const float2 uv = outputUv * g_layer.blendParams.z;
-    const float2 noiseTexelSize = texelSize * g_layer.blendParams.z;
-
+    const LayerUv layerUv = ComputeLayerUv(outputUv, texelSize);
+    const float2 uv = layerUv.uv;
     // 出力テクセル 1 つが張る UV 幅。テクスチャのミップ選択に使う。
-    const float uvPerOutputTexel = texelSize.x * g_layer.blendParams.z;
+    const float uvPerOutputTexel = layerUv.uvPerOutputTexel;
 
     // --- レイヤーの値 ------------------------------------------------------
     float3 layerBaseColor = g_layer.baseColor.rgb;
@@ -293,7 +379,7 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     }
 
     float layerHeight = SampleLayerHeight(uv, uvPerOutputTexel);
-    const float3 layerNormal = ComputeLayerNormal(uv, noiseTexelSize, uvPerOutputTexel);
+    const float3 layerNormal = ComputeLayerNormal(layerUv, texelSize);
 
     const bool isBaseLayer = (g_layer.flags & TG_FLAG_BASE_LAYER) != 0u;
     const bool isShape = (g_layer.flags & TG_FLAG_KIND_SHAPE) != 0u;
@@ -304,7 +390,9 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     float weight = 1.0f;
     if (!isBaseLayer)
     {
-        const float mask = SampleLayerMask(uv, outputUv, outputUv, uvPerOutputTexel);
+        // パス UV のときは帯の外に乗らない（coverage が 0）。
+        const float mask =
+            SampleLayerMask(uv, outputUv, outputUv, uvPerOutputTexel) * layerUv.coverage;
         const float destinationHeight = heightTarget[texel];
         if (isWrap)
         {
@@ -438,7 +526,6 @@ void CsMaskThumbnail(uint3 dispatchThreadId : SV_DispatchThreadID)
     }
 
     const float2 texelSize = 1.0f / float2(g_layer.resolution);
-    const float uvPerOutputTexel = texelSize.x * g_layer.blendParams.z;
 
     // **1 テクセルにつき 1 回だけ評価すると使いものにならない。**
     // 傾斜や窪みのマスクは合成解像度そのままの細かさを持つので、
@@ -453,8 +540,9 @@ void CsMaskThumbnail(uint3 dispatchThreadId : SV_DispatchThreadID)
             const float2 offset =
                 (float2(x, y) + 0.5f) / float(TG_MASK_THUMBNAIL_TAPS);
             const float2 outputUv = (float2(dispatchThreadId.xy) + offset) * texelSize;
-            sum += SampleLayerMask(outputUv * g_layer.blendParams.z, outputUv, outputUv,
-                                   uvPerOutputTexel);
+            const LayerUv layerUv = ComputeLayerUv(outputUv, texelSize);
+            sum += SampleLayerMask(layerUv.uv, outputUv, outputUv, layerUv.uvPerOutputTexel) *
+                   layerUv.coverage;
         }
     }
 
