@@ -242,6 +242,12 @@ public:
     bool Resize(rhi::Device& device, uint32_t width, uint32_t height);
 
     const SceneShadowData& InstanceShadows() const { return m_instanceShadows; }
+    // 配置モデルに掛ける雲影の入力。本描画の直前に、地形へ渡したものと同じ値を写す。
+    struct InstanceCloudShadow {
+        AtmosphereSettings atmosphere;
+        uint32_t noiseIndex = 0, mode = 0;
+    };
+    const InstanceCloudShadow& InstanceClouds() const { return m_instanceClouds; }
     void RecordInstanceDraw(uint32_t indices, uint32_t count) {
         m_stats.instanceUpperBounds = true;
         ++m_stats.drawCalls; m_stats.vertices += uint64_t(indices)*count;
@@ -415,6 +421,7 @@ private:
     int m_shadowCascadeCount = kPreviewDefaults.shadowCascadeCount;
     DofSettings m_dof;
     SceneShadowData m_instanceShadows;
+    InstanceCloudShadow m_instanceClouds;
     RenderStats m_stats;
     bool m_tessellationEnabled = kPreviewDefaults.tessellationEnabled;
     float m_tessellationFactor = kPreviewDefaults.tessellationFactor;

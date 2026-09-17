@@ -1025,6 +1025,9 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
         m_instanceShadows.indices[0] = constants.shadowIndex;
         m_instanceShadows.biases[0] = constants.shadowBias;
     }
+    m_instanceClouds.atmosphere = constants.atmosphere;
+    m_instanceClouds.noiseIndex = constants.cloudNoiseIndex;
+    m_instanceClouds.mode = constants.atmosphericMode;
     if (drawInstances && m_showTerrain && IsShadedView(m_debugView)) {
         XMFLOAT4X4 instanceViewProjection;
         XMStoreFloat4x4(&instanceViewProjection, viewProjection);

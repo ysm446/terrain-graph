@@ -32,8 +32,10 @@ struct ModelConstants {
     float pivot[3], modelSize;
     float align, offset; uint32_t usePointSize, sceneMode;
     SceneShadowData shadows;
+    AtmosphereSettings atmosphere;
+    uint32_t cloudNoiseIndex, atmosphericMode, cloudPad[2];
 };
-static_assert(sizeof(ModelConstants) == 656);
+static_assert(sizeof(ModelConstants) == 1024);
 
 }  // namespace
 void ModelPreview::Destroy(rhi::Device& device) {
@@ -284,6 +286,9 @@ void ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache
             constants.align = draw.align; constants.offset = draw.offset;
             constants.usePointSize = draw.usePointSize; constants.sceneMode = 1;
             constants.shadows = draw.shadows;
+            constants.atmosphere = draw.atmosphere;
+            constants.cloudNoiseIndex = draw.cloudNoiseIndex;
+            constants.atmosphericMode = draw.atmosphericMode;
             const auto& lo = m_geometry->minimum; const auto& hi = m_geometry->maximum;
             constants.pivot[0] = (lo.x+hi.x)*0.5f; constants.pivot[1] = lo.y;
             constants.pivot[2] = (lo.z+hi.z)*0.5f;

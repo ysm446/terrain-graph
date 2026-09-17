@@ -1,4 +1,5 @@
 #pragma once
+#include "renderer/Atmosphere.h"
 #include "renderer/ShadowCascades.h"
 #include "renderer/MaterialSphere.h"
 #include "renderer/ModelAsset.h"
@@ -11,6 +12,9 @@ struct ModelInstanceDraw {
     bool usePointSize = true, shadow = false;
     float maxDistance = 0;
     SceneShadowData shadows;
+    // 雲影。地形（MeshPbr）と同じ大気設定で CloudShadow を引く。atmosphericMode が 0 なら掛けない。
+    AtmosphereSettings atmosphere;
+    uint32_t cloudNoiseIndex = 0, atmosphericMode = 0;
     DirectX::XMFLOAT4X4 viewProjection;
     DirectX::XMFLOAT3 cameraPosition;
 };

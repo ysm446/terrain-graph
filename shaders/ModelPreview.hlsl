@@ -1,3 +1,4 @@
+#include "AtmosphereCommon.hlsli"
 #include "Brdf.hlsli"
 #include "CompositeCommon.hlsli"
 #include "EnvCommon.hlsli"
@@ -28,6 +29,9 @@ struct ModelConstants
     float3 pivot; float modelSize;
     float align, offset; uint usePointSize, sceneMode;
     SceneShadowData shadows;
+    // 雲影（MeshPbr と同じ CloudShadow）。atmosphericMode が 0 なら使わない。
+    AtmosphericParameters atmosphere;
+    uint cloudNoiseIndex, atmosphericMode, cloudPad0, cloudPad1;
 };
 
 ConstantBuffer<ModelConstants> g_model : register(b1);
@@ -179,9 +183,13 @@ float4 PsMain(PixelInput input):SV_TARGET {
     const float clampedRoughness = clamp(roughness, kMinPerceptualRoughness, 1.0f);
 
     const float3 lightDirection = normalize(g_model.lightDirection);
+    // 直射光にはシャドウマップと雲影の両方を掛ける（地形の MeshPbr と同じ）。
+    float visibility = ModelVisibility(input.position,dot(normal,lightDirection));
+    if (g_model.sceneMode != 0 && g_model.atmosphericMode != 0)
+        visibility *= CloudShadow(input.position, g_model.atmosphere, g_model.cloudNoiseIndex);
     float3 radiance = ShadeDirectionalLight(normal, viewDirection, lightDirection,
                                             g_model.lightColor, g_model.lightIlluminance,
-                                            diffuseColor, f0, clampedRoughness) * ModelVisibility(input.position,dot(normal,lightDirection));
+                                            diffuseColor, f0, clampedRoughness) * visibility;
 
     if (g_model.irradianceIndex != kInvalidTextureIndex)
     {

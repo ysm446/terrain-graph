@@ -92,7 +92,11 @@ void Application::DrawModelScatters(ID3D12GraphicsCommandList* commandList,
             draw.maxDistance=scatter.settings.maxDistance;
             draw.usePointSize=scatter.settings.usePointSize; draw.shadow=shadow;
             draw.viewProjection=viewProjection; draw.cameraPosition=m_renderer.GetCamera().Position();
-            if (!shadow) draw.shadows=m_renderer.InstanceShadows();
+            if (!shadow) {
+                draw.shadows=m_renderer.InstanceShadows();
+                const auto& clouds=m_renderer.InstanceClouds();
+                draw.atmosphere=clouds.atmosphere; draw.cloudNoiseIndex=clouds.noiseIndex; draw.atmosphericMode=clouds.mode;
+            }
             const auto& lod=model->geometry->lods[std::min(scatter.settings.lod,static_cast<int>(model->geometry->lods.size())-1)];
             for (const auto& part : lod.parts)
                 m_renderer.RecordInstanceDraw(static_cast<uint32_t>(part.mesh.indices.size()),draw.count);
