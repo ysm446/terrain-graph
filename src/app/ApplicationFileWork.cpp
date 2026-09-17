@@ -525,8 +525,11 @@ void Application::ProcessPendingFileWork() {
             m_projectPath = path;
             m_assetRefresh = true;
             m_selectedGraphNode = m_graph.FindNode(m_options.selectNode) ? m_options.selectNode : 0;
-            if (m_sceneComponents.is_array() && m_selectedGraphNode)
-                m_editComponent = m_graph.FindNode(m_selectedGraphNode)->component;
+            m_pendingSelectGraphNode = m_selectedGraphNode;
+            if (m_sceneComponents.is_array() && m_selectedGraphNode) {
+                const int component = m_graph.FindNode(m_selectedGraphNode)->component;
+                if (component != m_editComponent) { m_editComponent = -1; OpenComponentEditor(component); }
+            }
             m_previewGraphNode = 0;
             m_previewGraphPin = 0;
             m_compiledGraphRevision = 0;

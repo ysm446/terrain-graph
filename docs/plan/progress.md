@@ -1,13 +1,13 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-18 03:50
+更新日時: 2026-09-18 05:10
 
 ## Wind Field ノード（局所ボリューム計画の第 2 段階）
 
 地形全体の風の場を作る Wind Field ノードを追加した（マスク op `MaskOpKind::Wind`、`CompositeWind.hlsl`）。水平 res²、鉛直 layers 層の絶対高さの格子に一様な風を置き、地形の高さで固体セルを決め、発散 → 圧力のヤコビ反復（偶数回）→ 投影で発散のない流れに直す。速度・圧力・発散は構造化バッファ（1 組を使い回す）。マスクは地表から半セル上を 8 近傍で補間した風速から作る（最初の流体層をそのまま読むと層の境目が等高線状の縞になった）。出力は Speed / Spindrift（Mask）と Wind（3D の速度場。繋ぐ先は次段階の Volume Sim）。パラメータは [nodes.md](../reference/nodes.md) の Wind Field を参照。
 
-検証: Debug ビルド、DXC 5 エントリ、テスト（新規 6 件）。`data/Test/terrain-node-qa` の地形グラフで Speed / Spindrift を赤 / 緑の Surface のマスクにして撮影し、Speed が稜線と山頂で強く谷で弱いこと、Spindrift が山頂付近の風下斜面に出ることを確認（`ui-speed.png` / `ui-spindrift.png`）。流れの向き（風下の剥離）そのものの可視化と、雲グラフ側（Terrain → Wind Field）での実行は未確認。Release は未ビルド。次は Volume Sim（局所格子の密度を雲のレイマーチで描く所から）。
+検証: Debug ビルド、DXC 5 エントリ、テスト（新規 6 件）。`data/Test/terrain-node-qa` の地形グラフで Speed / Spindrift を赤 / 緑の Surface のマスクにして撮影し、Speed が稜線と山頂で強く谷で弱いこと、Spindrift が山頂付近の風下斜面に出ることを確認（`ui-speed.png` / `ui-spindrift.png`）。ノードを選んでいる間は地表の風を橙の矢印（28 × 28、深度付きガイド線、64² の読み戻し）で描く。everest で矢印が風向に揃い、稜線でわずかに傾くことを確認（`ui-wind-arrows.png`）。雲グラフ側（Terrain → Wind Field）での実行は未確認。`--select-node` は部品構成のシーンで結合後の ID を指す。Release は未ビルド。次は Volume Sim（局所格子の密度を雲のレイマーチで描く所から）。
 
 ## 雲グラフの Terrain ノード（局所ボリューム計画の第 1 段階）
 

@@ -414,6 +414,9 @@ private:
     };
     std::vector<GraphMaskOpSources> m_graphMaskOpSources;
     graph::GraphId m_selectedGraphNode = 0;
+    // 次にエディタを描くときに選ぶノード（--select-node）。エディタ側の選択も合わせないと、
+    // 毎フレームの選択同期（未選択 → 0）に消されてしまう。
+    graph::GraphId m_pendingSelectGraphNode = 0;
     // エディタで選ばれているノード全部。コピーはこれを見る
     // （プロパティに出すのは先頭の 1 つ = m_selectedGraphNode）。
     std::vector<graph::GraphId> m_selectedGraphNodes;

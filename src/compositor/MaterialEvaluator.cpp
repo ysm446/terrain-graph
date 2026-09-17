@@ -166,6 +166,8 @@ struct PathMaskConstants {
 // CPU へ写すハイトの一辺。パスの投影と表示に使うだけなので粗くてよい
 // （2048 m の地形で 4 m。点の幅は数十 m）。
 constexpr uint32_t kHeightfieldReadbackResolution = 512;
+// 地表風の読み戻しの一辺。矢印を並べるだけなので粗くてよい。
+constexpr uint32_t kWindReadbackResolution = 64;
 
 // GPU 側の MaskOpConstants と一致させること。
 struct MaskOpConstants {
@@ -632,6 +634,88 @@ void MaterialEvaluator::ReleaseWindResources(rhi::Device& device) {
     device.DeferRelease(m_wind.divergence);
     m_wind.resolution = 0;
     m_wind.layers = 0;
+    device.DeferRelease(m_windSurfaceTexture);
+    device.DeferRelease(m_windReadback);
+    m_windReadbackBytes = 0;
+    m_windRowPitch = 0;
+    m_windPending = false;
+    m_windFence = nullptr;
+    m_windFenceValue = 0;
+}
+
+bool MaterialEvaluator::EnsureWindReadbackResources(rhi::Device& device) {
+    if (m_windSurfaceTexture.IsValid() && m_windReadback.IsValid()) {
+        return true;
+    }
+    device.DeferRelease(m_windSurfaceTexture);
+    device.DeferRelease(m_windReadback);
+    if (!CreateChannelTexture(device, kWindReadbackResolution, DXGI_FORMAT_R32G32B32A32_FLOAT,
+                              L"WindSurface", m_windSurfaceTexture)) {
+        return false;
+    }
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+    UINT64 totalBytes = 0;
+    const D3D12_RESOURCE_DESC desc = m_windSurfaceTexture.resource->GetDesc();
+    device.GetDevice()->GetCopyableFootprints(&desc, 0, 1, 0, &footprint, nullptr, nullptr,
+                                              &totalBytes);
+    if (!device.Allocator().CreateReadbackBuffer(totalBytes, L"WindReadback", m_windReadback)) {
+        device.DeferRelease(m_windSurfaceTexture);
+        return false;
+    }
+    m_windReadbackBytes = totalBytes;
+    m_windRowPitch = footprint.Footprint.RowPitch;
+    return true;
+}
+
+// 地表風のテクスチャを読み戻しバッファへ写す。ApplyWindMask の末尾で呼ぶ
+// （CsSurface が書き終わった直後）。フェンスの扱いはハイトの読み戻しと同じ。
+void MaterialEvaluator::RecordWindReadback(rhi::Device& device,
+                                           ID3D12GraphicsCommandList* commandList,
+                                           float windSpeed) {
+    TransitionIfNeeded(commandList, m_windSurfaceTexture, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+    const D3D12_RESOURCE_DESC desc = m_windSurfaceTexture.resource->GetDesc();
+    device.GetDevice()->GetCopyableFootprints(&desc, 0, 1, 0, &footprint, nullptr, nullptr,
+                                              nullptr);
+    const CD3DX12_TEXTURE_COPY_LOCATION destination(m_windReadback.resource.Get(), footprint);
+    const CD3DX12_TEXTURE_COPY_LOCATION source(m_windSurfaceTexture.resource.Get(), 0);
+    commandList->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+    if (m_recordingAsync) {
+        m_windFence = m_compute.Fence();
+        m_windFenceValue = m_compute.SubmittedValue() + 1;
+    } else {
+        m_windFence = device.FrameFence();
+        m_windFenceValue = device.NextFenceValue();
+    }
+    m_windPending = true;
+    m_windPendingSpeed = windSpeed;
+}
+
+void MaterialEvaluator::CollectWindReadback() {
+    if (!m_windPending || m_windFence == nullptr || !m_windReadback.IsValid()) {
+        return;
+    }
+    if (m_windFence->GetCompletedValue() < m_windFenceValue) {
+        return;
+    }
+    m_windPending = false;
+    void* mapped = nullptr;
+    const D3D12_RANGE readRange = {0, static_cast<SIZE_T>(m_windReadbackBytes)};
+    if (!TG_CHECK_HR(m_windReadback.resource->Map(0, &readRange, &mapped))) {
+        return;
+    }
+    const uint32_t resolution = kWindReadbackResolution;
+    m_windField.resolution = resolution;
+    m_windField.windSpeed = m_windPendingSpeed;
+    m_windField.values.resize(static_cast<size_t>(resolution) * resolution);
+    const auto* base = static_cast<const uint8_t*>(mapped);
+    for (uint32_t y = 0; y < resolution; ++y) {
+        std::memcpy(m_windField.values.data() + static_cast<size_t>(y) * resolution,
+                    base + static_cast<size_t>(y) * m_windRowPitch,
+                    sizeof(DirectX::XMFLOAT4) * resolution);
+    }
+    const D3D12_RANGE writtenRange = {0, 0};
+    m_windReadback.resource->Unmap(0, &writtenRange);
 }
 
 // 風の場の作業バッファ。1 組を使い回し、大きさが足りなければ作り直す。
@@ -676,10 +760,13 @@ bool MaterialEvaluator::ApplyWindMask(rhi::Device& device, rhi::PipelineCache& p
     ID3D12PipelineState* jacobiPass = pipeline(L"CsJacobi");
     ID3D12PipelineState* projectPass = pipeline(L"CsProject");
     ID3D12PipelineState* toMaskPass = pipeline(L"CsToMask");
+    ID3D12PipelineState* surfacePass = pipeline(L"CsSurface");
     if (initPass == nullptr || divergencePass == nullptr || jacobiPass == nullptr ||
-        projectPass == nullptr || toMaskPass == nullptr) {
+        projectPass == nullptr || toMaskPass == nullptr || surfacePass == nullptr) {
         return false;
     }
+    // 読み戻しは無くても評価は成立する（矢印が出ないだけ）。
+    const bool readback = EnsureWindReadbackResources(device);
 
     const float sizeMeters = (stack.SizeMeters() > 0.0f) ? stack.SizeMeters() : 1.0f;
     const float heightMeters = std::max(stack.HeightMeters(), 0.0f);
@@ -707,6 +794,8 @@ bool MaterialEvaluator::ApplyWindMask(rhi::Device& device, rhi::PipelineCache& p
     constants.wind[3] = std::max(params.spindriftThreshold, 0.0f);
     constants.spindrift[0] = std::max(params.spindriftRange, 0.01f);
     constants.spindrift[1] = std::max(params.leeSlope, 0.01f);
+    constants.spindrift[2] = static_cast<float>(kWindReadbackResolution);
+    constants.grid[3] = readback ? m_windSurfaceTexture.UavIndex() : kInvalidTextureIndex;
 
     const auto upload = [&](uint32_t direction, D3D12_GPU_VIRTUAL_ADDRESS& outAddress) {
         WindConstants copy = constants;
@@ -758,6 +847,15 @@ bool MaterialEvaluator::ApplyWindMask(rhi::Device& device, rhi::PipelineCache& p
     commandList->SetPipelineState(toMaskPass);
     commandList->Dispatch(DispatchCount(target.width), DispatchCount(target.height), 1);
     barrier();
+
+    if (readback) {
+        TransitionIfNeeded(commandList, m_windSurfaceTexture, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        commandList->SetPipelineState(surfacePass);
+        commandList->Dispatch(DispatchCount(kWindReadbackResolution),
+                              DispatchCount(kWindReadbackResolution), 1);
+        barrier();
+        RecordWindReadback(device, commandList, constants.wind[2]);
+    }
 
     PIXEndEvent(commandList);
     return true;
@@ -5508,6 +5606,7 @@ void MaterialEvaluator::Update(rhi::Device& device, rhi::PipelineCache& pipeline
     // CPU 側のハイトの読み戻しは、評価の回収とは別に毎フレーム見る
     // （同期評価のときはフレームのフェンスで終わるため）。
     CollectHeightfieldReadback();
+    CollectWindReadback();
     CollectPlacementPointCount();
 
     // --- 回収 -----------------------------------------------------------------

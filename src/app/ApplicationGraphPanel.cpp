@@ -992,13 +992,26 @@ void Application::DrawGraphEditor() {
     // コピーは複数選択（枠で囲む）にも効かせたいので、全部控えておく。
     ed::NodeId selectedNodes[64];
     const int selectedCount = ed::GetSelectedNodes(selectedNodes, IM_ARRAYSIZE(selectedNodes));
+    // 起動引数で指定したノード（--select-node）は、エディタがそのノードを選ぶまで
+    // 毎フレーム選び直す。エディタがまだノードを知らないフレームでは選択が付かない。
+    if (m_pendingSelectGraphNode != 0) {
+        const auto* pending = m_graph.FindNode(m_pendingSelectGraphNode);
+        if (pending == nullptr || (m_editComponent >= 0 && pending->component != m_editComponent)) {
+            m_pendingSelectGraphNode = 0;
+        } else if (selectedCount > 0) {
+            m_pendingSelectGraphNode = 0;
+        } else {
+            ed::SelectNode(ed::NodeId(m_pendingSelectGraphNode));
+            m_selectedGraphNode = m_pendingSelectGraphNode;
+        }
+    }
     if (selectedCount > 0) {
         m_selectedGraphNodes.clear();
         for (int i = 0; i < selectedCount; ++i) {
             m_selectedGraphNodes.push_back(ToGraphId(selectedNodes[i].Get()));
         }
         m_selectedGraphNode = m_selectedGraphNodes.front();
-    } else if (m_graphNodesToPlace.empty()) {
+    } else if (m_graphNodesToPlace.empty() && m_pendingSelectGraphNode == 0) {
         m_selectedGraphNodes.clear();
         m_selectedGraphNode = 0;
     }
@@ -1027,7 +1040,12 @@ void Application::OpenComponentEditor(int component) {
     if (m_editComponent == component && m_nodeEditor) return;
     m_editComponent = component;
     m_graphClipboard.clear();
-    m_selectedGraphNode = 0; m_selectedGraphNodes.clear();
+    // 開くコンポーネントのノードを選んでいれば、その選択は保つ（--select-node や
+    // 読み込み直後の選択がここで消えないように）。別のコンポーネントの選択は外す。
+    const auto* selected = m_graph.FindNode(m_selectedGraphNode);
+    if (selected == nullptr || selected->component != component) {
+        m_selectedGraphNode = 0; m_selectedGraphNodes.clear();
+    }
     m_previewGraphNode = 0; m_previewGraphPin = 0;
     if (m_nodeEditor) { ed::DestroyEditor(m_nodeEditor); m_nodeEditor = nullptr; }
     RequestGraphNodePlacement();
@@ -1384,7 +1402,9 @@ void Application::DrawGraphPanel() {
                 header = "風の場";
                 hint = "Base の地形に一様な風をぶつけ、発散のない流れに直す（稜線の吹き上げ、風下の剥離、"
                        "谷筋への収束）。Speed は地表直上の風速、Spindrift は風下の稜線で風速がしきい値を"
-                       "超える所。Wind は 3D の速度場で、今は繋ぐ先がない（Volume Sim 用）";
+                       "超える所。Wind は 3D の速度場で、今は繋ぐ先がない（Volume Sim 用）。"
+                       "選んでいる間、最後に評価した地表の風をビューポートに矢印で描く"
+                       "（Speed か Spindrift をどこかに繋いで評価したもの）";
                 break;
             case graph::NodeKind::MaskFluvial:
                 header = "川筋";

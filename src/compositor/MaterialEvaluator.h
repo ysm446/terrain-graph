@@ -184,6 +184,18 @@ struct CpuHeightfield {
     float Sample(float u, float v) const;
 };
 
+// Wind Field の地表直上の風を小さな格子で CPU へ写したもの。ビューポートの矢印表示に使う。
+// 最後に走った Wind の op の結果（評価が終わるまでは前回の中身のまま）。
+struct CpuWindField {
+    uint32_t resolution = 0;
+    std::vector<DirectX::XMFLOAT4> values;  // 行優先。xyz: 速度（m/s）、w: 正規化ハイト
+    float windSpeed = 0.0f;                 // 焼いたときの一様風の速さ（矢印の長さの基準）
+
+    bool IsValid() const {
+        return resolution > 0 && values.size() == static_cast<size_t>(resolution) * resolution;
+    }
+};
+
 // 評価する出力領域。全体を 1 回で評価するときは矩形に全体を渡す。
 struct TileRect {
     uint32_t x = 0;
@@ -243,6 +255,7 @@ public:
     // 合成の Height の CPU 側の写し（プレビュー用。書き出し用の評価器は持たない）。
     // 評価が 1 度も終わっていなければ IsValid() が偽。
     const CpuHeightfield& Heightfield() const { return m_heightfield; }
+    const CpuWindField& WindField() const { return m_windField; }
     // 走っている評価の完了を CPU で待つ。
     void WaitForEvaluation();
     // 評価先の Height をその場で CPU へ読み戻す（同期。**フレームの外で呼ぶこと**）。
@@ -316,6 +329,11 @@ private:
                        const MaterialStack& stack, rhi::GpuTexture& target);
     bool EnsureWindResources(rhi::Device& device, uint32_t resolution, uint32_t layers);
     void ReleaseWindResources(rhi::Device& device);
+    // 地表風の読み戻し（ハイトの読み戻しと同じ仕組み）。
+    bool EnsureWindReadbackResources(rhi::Device& device);
+    void RecordWindReadback(rhi::Device& device, ID3D12GraphicsCommandList* commandList,
+                            float windSpeed);
+    void CollectWindReadback();
     bool ApplyFluvialMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                           ID3D12GraphicsCommandList* commandList, const MaskOp& op,
                           const MaterialStack& stack, rhi::GpuTexture& target);
@@ -450,6 +468,15 @@ private:
 
     FluvialResources m_fluvial;
     WindResources m_wind;
+    CpuWindField m_windField;
+    rhi::GpuTexture m_windSurfaceTexture;  // RGBA32_FLOAT 地表風（小さな格子）
+    rhi::GpuBuffer m_windReadback;         // READBACK ヒープ
+    uint64_t m_windReadbackBytes = 0;
+    uint32_t m_windRowPitch = 0;
+    ID3D12Fence* m_windFence = nullptr;
+    uint64_t m_windFenceValue = 0;
+    bool m_windPending = false;
+    float m_windPendingSpeed = 0.0f;
     // 標高マスクの「全範囲」用（R32_UINT）。InterlockedMin / Max でためる。
     rhi::GpuTexture m_maskHeightRange;
     SedimentResources m_sediment;

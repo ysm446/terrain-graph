@@ -25,13 +25,13 @@ struct WindConstants
     uint4 indices0;
     // x: 発散 UAV、y: マスク UAV、z: マスクの一辺、w: 出力（0: Speed、1: Spindrift）
     uint4 indices1;
-    // x: 水平の一辺（セル数）、y: 層数、z: ヤコビの向き（0: A→B、1: B→A）、w: 未使用
+    // x: 水平の一辺（セル数）、y: 層数、z: ヤコビの向き（0: A→B、1: B→A）、w: 地表風の読み戻し UAV
     uint4 grid;
     // x: 水平セル幅（m）、y: 鉛直セル幅（m）、z: 標高差（m。ハイト 1 の高さ）、w: 未使用
     float4 cell;
     // x: 風向 u 成分、y: 風向 v 成分、z: 風速（m/s）、w: 粉雪のしきい値（m/s）
     float4 wind;
-    // x: 粉雪の幅（m/s。しきい値からこれだけ超えたら 1）、y: 風下判定の傾き、zw: 未使用
+    // x: 粉雪の幅（m/s。しきい値からこれだけ超えたら 1）、y: 風下判定の傾き、z: 読み戻しの一辺、w: 未使用
     float4 spindrift;
 };
 
@@ -221,8 +221,8 @@ void CsToMask(uint3 id : SV_DispatchThreadID)
 
     if (g_wind.indices1.w == 0u)
     {
-        // 風速。一様風の 2 倍で 1（稜線での吹き上げが最大 2 倍程度）。
-        mask[id.xy] = saturate(speed / (2.0f * reference));
+        // 風速。一様風の 1.5 倍で 1（稜線での吹き上げが 1.5〜2 倍程度なので、そこが白く飛ぶ）。
+        mask[id.xy] = saturate(speed / (1.5f * reference));
         return;
     }
 
@@ -240,4 +240,18 @@ void CsToMask(uint3 id : SV_DispatchThreadID)
     const float lee = saturate(-slopeAlongWind / max(g_wind.spindrift.y, 1e-3f));
     const float strength = saturate((speed - g_wind.wind.w) / max(g_wind.spindrift.x, 1e-3f));
     mask[id.xy] = strength * lee;
+}
+
+// 地表直上の風を小さな格子で書き出す（CPU へ読み戻してビューポートに矢印で描く）。
+// xyz: 速度（m/s）、w: 地形の正規化ハイト（0〜1）。
+[numthreads(8, 8, 1)]
+void CsSurface(uint3 id : SV_DispatchThreadID)
+{
+    const uint resolution = uint(g_wind.spindrift.z);
+    if (id.x >= resolution || id.y >= resolution) return;
+    RWTexture2D<float4> output = ResourceDescriptorHeap[g_wind.grid.w];
+    Texture2D<float> height = ResourceDescriptorHeap[g_wind.indices0.x];
+    const float2 uv = (float2(id.xy) + 0.5f) / float(resolution);
+    const float3 v = SurfaceWind(uv);
+    output[id.xy] = float4(v, height.SampleLevel(g_samplerLinearClamp, uv, 0.0f));
 }
