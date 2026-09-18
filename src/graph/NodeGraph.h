@@ -129,8 +129,10 @@ enum class NodeKind : uint32_t {
     // 雲グラフから地形グラフの結果（Output に繋いだチェーン）を取り出す。入力を持たず、
     // 評価では地形チェーンの先頭の別名として扱う（FindUpstreamNodeForPin が解決する）。
     Terrain = 49,
-    // 地形全体の風の場。地表の風速と粉雪の発生量を Mask で出す（Wind 出力は今後の Volume Sim 用）。
+    // 地形全体の風の場。地表の風速と粉雪の発生量を Mask で出す（Wind 出力は今は繋ぐ先がない）。
     WindField = 50,
+    // 稜線から風下へ伸びる雪煙。Source のマスクから帯メッシュを生やして描く（出力を持たない終端）。
+    SnowPlume = 51,
 };
 
 struct PinDefinition {
@@ -384,6 +386,36 @@ struct CompiledModelScatter {
     GraphId node = 0, source = 0;
     ModelScatterSettings settings;
 };
+// 雪煙（Snow Plume ノード）。Source のマスクが強い所から、風下へ半透明の帯を伸ばす。
+// 帯は評価器ではなくビューポートの描画で作る（頂点シェーダが格子の種から組み立てる）。
+struct SnowPlumeSettings {
+    int seedsPerSide = 64;        // 地形の一辺あたりの種の数。種 1 つから帯が 1 本出る
+    float threshold = 0.2f;       // Source がこれ以下の種からは出さない
+    float coverage = 0.7f;        // Source が 1 の所で帯が出る割合
+    float lengthMeters = 250.0f;  // 帯の長さ（風下へ）
+    float widthStart = 12.0f;     // 根元の幅（m）
+    float widthEnd = 70.0f;       // 先端の幅（m）
+    float lift = 30.0f;           // 稜線を越えて持ち上がる高さ（m）
+    float sink = 40.0f;           // 先端までに風下へ沈み込む高さ（m）
+    float opacity = 0.6f;
+    float puffSize = 25.0f;       // 雪煙の塊の大きさ（ノイズの基本の波長、m）
+    float turbulence = 0.5f;      // 帯の蛇行と輪郭の崩れ
+    float gust = 0.5f;            // 突風による長さと濃さの揺らぎ
+    float loopSeconds = 12.0f;    // この秒数で動きが完全に一巡する
+    int sheets = 2;               // 1 本の帯に重ねる薄いシートの数
+    float anisotropy = 0.6f;      // 前方散乱の強さ（HG の g）
+    int seed = 1;
+    // 上流に Wind Field が無いときだけ使う風。あればそちらの風向・風速に揃える。
+    float windDirection = 90.0f;  // 度。0 が +Z、90 が +X
+    float windSpeed = 15.0f;      // m/s
+};
+struct CompiledSnowPlume {
+    GraphId node = 0;
+    GraphId maskNode = 0, maskPin = 0;  // Source に繋いだ出力。0 なら未接続
+    SnowPlumeSettings settings;
+    bool fromWindField = false;         // 風を上流の Wind Field から取ったか
+    float windDirection = 90.0f, windSpeed = 15.0f;
+};
 struct OutputNodeSettings {};
 // 雲グラフの Terrain ノード。設定は持たない。
 struct TerrainNodeSettings {};
@@ -394,7 +426,7 @@ struct MissingNodeSettings { std::string kindName; };
 using NodeSettings =
     std::variant<LayerNodeSettings, MaskNodeSettings, OutputNodeSettings, PathNodeSettings, CloudNodeSettings,
                  CloudMergeSettings, CloudNoiseSettings, CloudTransformSettings, CloudMapSettings, CloudAnimationSettings, CloudShapeGenerateSettings, CloudWeatherSettings, MissingNodeSettings, ModelScatterSettings,
-                 TerrainNodeSettings>;
+                 TerrainNodeSettings, SnowPlumeSettings>;
 
 struct Node {
     GraphId id = 0;
@@ -454,6 +486,8 @@ public:
     CompiledGraph CompileLayers() const;
     CompiledCloud CompileCloud() const;
     std::vector<CompiledModelScatter> CompileModelScatters() const;
+    // Snow Plume ノードをすべて集める。Source の上流に Wind Field があればその風を使う。
+    std::vector<CompiledSnowPlume> CompileSnowPlumes() const;
     CompiledCloud CompileCloudShapes(GraphId shapeId) const;
     // 指定したノード**まで**。ノードを選んでプレビューするときに使う。
     // outputPin は**どの出力を見ているか**。0 なら最初の出力（レイヤーなら Result）。

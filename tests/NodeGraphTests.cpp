@@ -974,6 +974,37 @@ void RunNodeGraphTests() {
             "Wind 型は Mask 入力に繋げない");
     }
 
+    Section("ノードグラフ — Snow Plume");
+    {
+        NodeGraph graph;
+        const auto baseId = graph.CreateNode(NodeKind::Heightmap);
+        const auto windId = graph.CreateNode(NodeKind::WindField);
+        const auto levelsId = graph.CreateNode(NodeKind::MaskLevels);
+        const auto plumeId = graph.CreateNode(NodeKind::SnowPlume);
+        const auto* plume = graph.FindNode(plumeId);
+        Check(plume->inputs.size() == 1 && plume->outputs.empty() &&
+            plume->inputs[0].valueType == tg::graph::ValueType::Mask && plume->inputs[0].label == "Source",
+            "Source の Mask だけを受け、出力を持たない");
+        auto compiled = graph.CompileSnowPlumes();
+        Check(compiled.size() == 1 && compiled[0].maskPin == 0 && !compiled[0].fromWindField &&
+            compiled[0].windDirection == tg::graph::SnowPlumeSettings{}.windDirection,
+            "未接続でも集まり、風はノード自身の値");
+        auto& wind = std::get<tg::graph::MaskNodeSettings>(graph.FindMutableNode(windId)->settings).wind;
+        wind.directionDegrees = 200.0f;
+        wind.speedMetersPerSecond = 22.0f;
+        const auto* windNode = graph.FindNode(windId);
+        Check(graph.CreateLink(graph.FindNode(baseId)->outputs[0].id, windNode->inputs[0].id) &&
+            graph.CreateLink(windNode->outputs[1].id, graph.FindNode(levelsId)->inputs[0].id) &&
+            graph.CreateLink(graph.FindNode(levelsId)->outputs[0].id, plume->inputs[0].id),
+            "Spindrift → Mask Levels → Snow Plume");
+        compiled = graph.CompileSnowPlumes();
+        Check(compiled.size() == 1 && compiled[0].maskNode == levelsId &&
+            compiled[0].maskPin == graph.FindNode(levelsId)->outputs[0].id,
+            "Source に繋いだ出力ピンを指す");
+        Check(compiled[0].fromWindField && compiled[0].windDirection == 200.0f && compiled[0].windSpeed == 22.0f,
+            "マスクの加工を挟んでも上流の Wind Field の風に揃う");
+    }
+
     Section("ノードグラフ — Surface のパス UV");
     {
         NodeGraph graph;

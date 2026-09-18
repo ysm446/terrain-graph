@@ -71,6 +71,8 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
         case graph::NodeKind::MaskFluvial:
         case graph::NodeKind::WindField:
             return ImVec4(0.55f, 0.68f, 0.74f, 1.0f);
+        case graph::NodeKind::SnowPlume:
+            return ImVec4(0.72f, 0.76f, 0.82f, 1.0f);
         case graph::NodeKind::MaskHeight:
             return ImVec4(0.74f, 0.70f, 0.60f, 1.0f);
         case graph::NodeKind::MaskSlope:
@@ -913,6 +915,8 @@ void Application::DrawGraphEditor() {
                         "Mask Slope — 下地の傾斜（角度）をマスクにする");
         addNodeMenuItem(graph::NodeKind::WindField,
                         "Wind Field — 地形全体の風の場。地表の風速と粉雪の発生量をマスクにする");
+        addNodeMenuItem(graph::NodeKind::SnowPlume,
+                        "Snow Plume — 稜線から風下へ雪煙をなびかせる（Spindrift を Source に繋ぐ）");
         addNodeMenuItem(graph::NodeKind::MaskCurvature,
                         "Mask Curvature — 下地の凹凸（尾根 / 谷）をマスクにする");
         addNodeMenuItem(graph::NodeKind::MaskLevels,
@@ -1402,7 +1406,7 @@ void Application::DrawGraphPanel() {
                 header = "風の場";
                 hint = "Base の地形に一様な風をぶつけ、発散のない流れに直す（稜線の吹き上げ、風下の剥離、"
                        "谷筋への収束）。Speed は地表直上の風速、Spindrift は風下の稜線で風速がしきい値を"
-                       "超える所。Wind は 3D の速度場で、今は繋ぐ先がない（Volume Sim 用）。"
+                       "超える所。Wind は 3D の速度場で、今は繋ぐ先がない。Spindrift を Snow Plume の Source に繋ぐと雪煙になる。"
                        "選んでいる間、最後に評価した地表の風をビューポートに矢印で描く"
                        "（Speed か Spindrift をどこかに繋いで評価したもの）";
                 break;
@@ -1872,6 +1876,73 @@ void Application::DrawGraphPanel() {
             m_graph.MarkCloudDirty();
             MarkDocumentChanged(false);
         }
+    } else if (auto* plume = std::get_if<graph::SnowPlumeSettings>(&selected->settings)) {
+        const graph::SnowPlumeSettings defaults;
+        bool changed = false;
+        ui::HintText("Source のマスクが強い所から、風下へ半透明の帯を伸ばして雪煙を描く。"
+                     "Wind Field の Spindrift を繋ぐと、稜線の風下から出て Wind Field の風に流れる。"
+                     "ビューポートだけの表示で、合成結果や書き出しには入らない");
+        const auto compiled = m_graph.CompileSnowPlumes();
+        const auto found = std::find_if(compiled.begin(), compiled.end(),
+                                        [&](const auto& c) { return c.node == selected->id; });
+        const bool fromWind = found != compiled.end() && found->fromWindField;
+        if (found != compiled.end() && found->maskPin == 0) ui::HintText("Source が未接続なので何も出ない");
+        ui::SectionHeader("発生");
+        if (ui::BeginPropertyTable("snowPlumeSource")) {
+            changed |= ui::PropertyFloat("しきい値", &plume->threshold, 0.0f, 0.99f, defaults.threshold,
+                                         "Source がこれ以下の所からは出さない。上の値ほど強い所に絞られる", "%.2f");
+            changed |= ui::PropertyFloat("発生の割合", &plume->coverage, 0.0f, 1.0f, defaults.coverage,
+                                         "Source が 1 の所で帯が出る割合。下げると間引かれてまばらになる", "%.2f");
+            changed |= ui::PropertyInt("種の数（一辺）", &plume->seedsPerSide, 4, 256, defaults.seedsPerSide,
+                                       "地形の一辺をこの数に分け、各マスから最大 1 本の帯を出す。多いほど密で重い");
+            changed |= ui::PropertyInt("シード", &plume->seed, 0, 1000000, defaults.seed);
+            ui::EndPropertyTable();
+        }
+        ui::SectionHeader("形");
+        if (ui::BeginPropertyTable("snowPlumeShape")) {
+            changed |= ui::PropertyFloat("長さ", &plume->lengthMeters, 1.0f, 5000.0f, defaults.lengthMeters,
+                                         "風下へ伸びる長さ。帯ごとに ±25% ばらつく", "%.0f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat("根元の幅", &plume->widthStart, 0.1f, 2000.0f, defaults.widthStart,
+                                         nullptr, "%.1f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat("先端の幅", &plume->widthEnd, 0.1f, 2000.0f, defaults.widthEnd,
+                                         "風下へ行くほどこの幅まで広がる", "%.1f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat("持ち上がり", &plume->lift, 0.0f, 1000.0f, defaults.lift,
+                                         "稜線を越えてから浮き上がる高さ", "%.0f m");
+            changed |= ui::PropertyFloat("沈み込み", &plume->sink, 0.0f, 1000.0f, defaults.sink,
+                                         "先端までに風下の斜面側へ下がる高さ。地形の下へは潜らない", "%.0f m");
+            changed |= ui::PropertyInt("シートの数", &plume->sheets, 1, 3, defaults.sheets,
+                                       "1 本の帯に重ねる層の数。2 枚目以降は上に薄く広く重なり、厚みが出る");
+            ui::EndPropertyTable();
+        }
+        ui::SectionHeader("見え方");
+        if (ui::BeginPropertyTable("snowPlumeLook")) {
+            changed |= ui::PropertyFloat("不透明度", &plume->opacity, 0.0f, 1.0f, defaults.opacity, nullptr, "%.2f");
+            changed |= ui::PropertyFloat("塊の大きさ", &plume->puffSize, 1.0f, 1000.0f, defaults.puffSize,
+                                         "雪煙の濃淡の基本の大きさ", "%.0f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat("乱れ", &plume->turbulence, 0.0f, 1.0f, defaults.turbulence,
+                                         "帯の蛇行と、輪郭のちぎれ具合", "%.2f");
+            changed |= ui::PropertyFloat("前方散乱", &plume->anisotropy, 0.0f, 0.95f, defaults.anisotropy,
+                                         "逆光で縁が光る強さ（位相関数の g）", "%.2f");
+            ui::EndPropertyTable();
+        }
+        ui::SectionHeader("動き");
+        if (ui::BeginPropertyTable("snowPlumeMotion")) {
+            changed |= ui::PropertyFloat("突風", &plume->gust, 0.0f, 1.0f, defaults.gust,
+                                         "帯ごとに位相をずらして、長さと濃さを時間で揺らす", "%.2f");
+            changed |= ui::PropertyFloat("ループ長", &plume->loopSeconds, 1.0f, 600.0f, defaults.loopSeconds,
+                                         "この秒数で動きが完全に一巡する（継ぎ目のないループ）", "%.1f 秒");
+            if (fromWind) {
+                ui::PropertyValue("風", "%.0f° / %.1f m/s（Wind Field）", found->windDirection, found->windSpeed);
+            } else {
+                changed |= ui::PropertyFloat("風向", &plume->windDirection, 0.0f, 360.0f, defaults.windDirection,
+                                             "Source の上流に Wind Field が無いときの風向。0 が +Z、90 が +X", "%.0f°");
+                changed |= ui::PropertyFloat("風速", &plume->windSpeed, 0.0f, 100.0f, defaults.windSpeed,
+                                             "雪煙の濃淡が流れる速さ", "%.1f m/s");
+            }
+            ui::EndPropertyTable();
+        }
+        // 評価に効くのは Source の接続だけで、設定は描画の値。グラフの版は上げない。
+        if (changed) MarkDocumentChanged(false);
     } else if (auto* scatter = std::get_if<graph::ModelScatterSettings>(&selected->settings)) {
         bool changed = false;
         ui::HintText("Crumbling の Points を接続し、Instances をModel Outputへ接続します");

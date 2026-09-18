@@ -1533,6 +1533,13 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             values["models"] = json::array();
             for (const auto& choice : scatter->models)
                 values["models"].push_back({{"model",choice.model},{"weight",choice.weight}});
+        } else if (const auto* plume = std::get_if<graph::SnowPlumeSettings>(&node.settings)) {
+            item["snowPlume"] = {{"seedsPerSide",plume->seedsPerSide},{"threshold",plume->threshold},{"coverage",plume->coverage},
+                {"length",plume->lengthMeters},{"widthStart",plume->widthStart},{"widthEnd",plume->widthEnd},
+                {"lift",plume->lift},{"sink",plume->sink},{"opacity",plume->opacity},{"puffSize",plume->puffSize},
+                {"turbulence",plume->turbulence},{"gust",plume->gust},{"loopSeconds",plume->loopSeconds},
+                {"sheets",plume->sheets},{"anisotropy",plume->anisotropy},{"seed",plume->seed},
+                {"windDirection",plume->windDirection},{"windSpeed",plume->windSpeed}};
         } else if (const auto* generate = std::get_if<graph::CloudShapeGenerateSettings>(&node.settings)) {
             item["proceduralCloud"]={{"species",EnumName(kCloudSpeciesNames,static_cast<uint32_t>(generate->species))},
                 {"centerX",generate->centerX},{"centerY",generate->centerY},{"centerZ",generate->centerZ},
@@ -1945,6 +1952,30 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                 created.settings = graph::MissingNodeSettings{kindName};
             } else if (created.kind == graph::NodeKind::Terrain) {
                 created.settings = graph::TerrainNodeSettings{};
+            } else if (created.kind == graph::NodeKind::SnowPlume) {
+                graph::SnowPlumeSettings settings;
+                if (const auto* values = FindMember(item, "snowPlume"); values && values->is_object()) {
+                    const graph::SnowPlumeSettings d;
+                    settings.seedsPerSide = std::clamp(ReadInt(*values,"seedsPerSide",d.seedsPerSide),4,256);
+                    settings.threshold = std::clamp(ReadFloat(*values,"threshold",d.threshold),0.0f,0.99f);
+                    settings.coverage = std::clamp(ReadFloat(*values,"coverage",d.coverage),0.0f,1.0f);
+                    settings.lengthMeters = std::clamp(ReadFloat(*values,"length",d.lengthMeters),1.0f,5000.0f);
+                    settings.widthStart = std::clamp(ReadFloat(*values,"widthStart",d.widthStart),0.1f,2000.0f);
+                    settings.widthEnd = std::clamp(ReadFloat(*values,"widthEnd",d.widthEnd),0.1f,2000.0f);
+                    settings.lift = std::clamp(ReadFloat(*values,"lift",d.lift),0.0f,1000.0f);
+                    settings.sink = std::clamp(ReadFloat(*values,"sink",d.sink),0.0f,1000.0f);
+                    settings.opacity = std::clamp(ReadFloat(*values,"opacity",d.opacity),0.0f,1.0f);
+                    settings.puffSize = std::clamp(ReadFloat(*values,"puffSize",d.puffSize),1.0f,1000.0f);
+                    settings.turbulence = std::clamp(ReadFloat(*values,"turbulence",d.turbulence),0.0f,1.0f);
+                    settings.gust = std::clamp(ReadFloat(*values,"gust",d.gust),0.0f,1.0f);
+                    settings.loopSeconds = std::clamp(ReadFloat(*values,"loopSeconds",d.loopSeconds),1.0f,600.0f);
+                    settings.sheets = std::clamp(ReadInt(*values,"sheets",d.sheets),1,3);
+                    settings.anisotropy = std::clamp(ReadFloat(*values,"anisotropy",d.anisotropy),0.0f,0.95f);
+                    settings.seed = ReadInt(*values,"seed",d.seed);
+                    settings.windDirection = ReadFloat(*values,"windDirection",d.windDirection);
+                    settings.windSpeed = std::clamp(ReadFloat(*values,"windSpeed",d.windSpeed),0.0f,100.0f);
+                }
+                created.settings = settings;
             } else {
                 created.settings = graph::OutputNodeSettings{};
             }

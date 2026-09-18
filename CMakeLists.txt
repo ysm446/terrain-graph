@@ -96,6 +96,8 @@ set(tg_sources
     src/app/ApplicationModelPanel.cpp
     src/renderer/ModelAsset.cpp
     src/renderer/ModelPreview.cpp
+    src/renderer/SnowPlume.cpp
+    src/renderer/SnowPlume.h
     src/app/ApplicationPathEdit.cpp
     src/app/ApplicationPreviewPanels.cpp
     src/app/ApplicationSkyPanel.cpp

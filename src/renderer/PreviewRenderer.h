@@ -10,6 +10,7 @@
 #include "renderer/Ephemeris.h"
 #include "renderer/SkyLibrary.h"
 #include "renderer/Mesh.h"
+#include "renderer/SnowPlume.h"
 #include "rhi/Device.h"
 #include "rhi/PipelineCache.h"
 
@@ -254,6 +255,8 @@ public:
         m_stats.triangles += uint64_t(indices/3)*count;
     }
     std::function<void(ID3D12GraphicsCommandList*, const DirectX::XMFLOAT4X4&, bool)> drawInstances;
+    // 雪煙（Snow Plume ノード）。Application が毎フレーム積み直す。大気の合成の後に重ねる。
+    void SetSnowPlumes(std::vector<SnowPlumeDraw> plumes) { m_snowPlumes = std::move(plumes); }
     void Render(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                 ID3D12GraphicsCommandList* commandList, const compositor::MaterialStack& stack,
                 const compositor::TextureLibrary& textures,
@@ -447,6 +450,9 @@ private:
     float m_tessellationFactor = kPreviewDefaults.tessellationFactor;
     bool m_showHeightGuide = false;
     std::vector<GuideLine> m_guideLines;
+    std::vector<SnowPlumeDraw> m_snowPlumes;
+    // 雪煙の時間の起点。ループ位置はここからの秒をノードのループ長で巻いて決める。
+    std::chrono::steady_clock::time_point m_animationStart = std::chrono::steady_clock::now();
     DirectX::XMFLOAT3 m_guideLineColor{150.0f / 255.0f, 160.0f / 255.0f, 175.0f / 255.0f};
     bool m_maskSaturationHatch = kPreviewDefaults.maskSaturationHatch;
     bool m_maskPreviewActive = false;

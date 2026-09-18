@@ -206,6 +206,9 @@ void Application::Shutdown() {
     for (auto& [id, preview] : m_modelPreviews) preview->Destroy(m_device);
     m_modelPreviews.clear();
     for (auto& [id,slot] : m_modelPoints) slot->evaluator.Destroy(m_device);
+    for (auto& [id, slot] : m_snowPlumeMasks)
+        if (slot->mask.evaluator.Resolution() != 0) slot->mask.evaluator.Destroy(m_device);
+    m_snowPlumeMasks.clear();
     m_modelPoints.clear();
     for (auto& [id,mesh] : m_instanceMeshes) mesh->Destroy(m_device);
     m_instanceMeshes.clear();
@@ -374,6 +377,7 @@ int Application::Run() {
         const graph::CompiledCloud compiledCloud = m_graph.CompileCloud();
         if (!PrepareCloudMask(m_cloudMasks[0], compiledCloud.maskNode, compiledCloud.layer ? compiledCloud.maskPin : 0)) return 1;
         if (!PrepareCloudMask(m_cloudMasks[1], compiledCloud.typeMaskNode, compiledCloud.weather ? compiledCloud.typeMaskPin : 0)) return 1;
+        PrepareSnowPlumes();
         renderer::AtmosphereSettings cloudSettings = m_renderer.AtmosphericSettings();
         if (compiledCloud.hasOutput) {
             const auto& cloud = compiledCloud.cloud;
@@ -527,6 +531,11 @@ int Application::Run() {
             slot->evaluator.Update(m_device,m_pipelineCache,commandList,slot->stack,m_textureLibrary,m_materialLibrary,m_paintMasks);
         m_renderer.SetCloudDistributionMask(m_cloudMasks[0].Srv(), m_cloudMasks[0].Revision());
         m_renderer.SetCloudTypeMask(m_cloudMasks[1].Srv(), m_cloudMasks[1].Revision());
+        for (auto& [id, slot] : m_snowPlumeMasks) {
+            if (slot->mask.pin) slot->mask.evaluator.Update(m_device, m_pipelineCache, commandList, slot->mask.stack,
+                                                            m_textureLibrary, m_materialLibrary, m_paintMasks);
+        }
+        SubmitSnowPlumes();
         m_renderer.Render(m_device, m_pipelineCache, commandList, m_graphStack,
                           m_textureLibrary, m_materialLibrary, m_paintMasks);
 
@@ -561,7 +570,9 @@ int Application::Run() {
         // UI 込みの書き出しは、バックバッファが描き終わったこのフレームで写す。
         // **合成の評価は非同期なので、走っている最中は撮らない**（前回の絵が写る）。
         const bool evaluationIdle = !m_renderer.Evaluator().IsEvaluating() &&
-            m_cloudMasks[0].Idle() && m_cloudMasks[1].Idle();
+            m_cloudMasks[0].Idle() && m_cloudMasks[1].Idle() &&
+            std::all_of(m_snowPlumeMasks.begin(), m_snowPlumeMasks.end(),
+                        [](const auto& entry) { return entry.second->mask.Idle(); });
         const bool captureUi = !m_options.uiScreenshotPath.empty() &&
                                (m_frameCounter + 1) >= m_options.screenshotFrame && evaluationIdle &&
                                !m_assetThumbnails.HasPendingWork();
@@ -633,6 +644,64 @@ bool Application::PrepareCloudMask(CloudMaskSlot& slot, graph::GraphId maskNode,
     }
     slot.pin = maskPin;
     return !maskPin || slot.evaluator.Resolution() != 0 || slot.evaluator.Create(m_device, 512, false);
+}
+
+void Application::PrepareSnowPlumes() {
+    m_snowPlumes = m_graph.CompileSnowPlumes();
+    for (const auto& plume : m_snowPlumes) {
+        auto& slot = m_snowPlumeMasks[plume.node];
+        if (!slot) slot = std::make_unique<SnowPlumeSlot>();
+        // 地形の編集や読み込みで上流が変わったら、マスクをコンパイルし直す（Model Scatter と同じ判定）。
+        if (slot->documentRevision != m_graphStack.Revision()) {
+            slot->mask.graphRevision = 0;
+            slot->documentRevision = m_graphStack.Revision();
+        }
+        if (!PrepareCloudMask(slot->mask, plume.maskNode, plume.maskPin)) {
+            TG_LOG_ERROR("Snow Plume のマスク評価器を作れませんでした");
+            slot->mask.pin = 0;
+            continue;
+        }
+        // Wind Field は地形の実寸（m）で風を解くので、上流の実寸を渡す。
+        if (plume.maskPin) {
+            const auto* scale = m_graph.FindChainScale(plume.maskNode);
+            slot->mask.stack.SetTerrainScale(scale ? scale->sizeMeters : m_renderer.PlaneSize(),
+                                             scale ? scale->heightMeters : m_renderer.DisplacementScale());
+        }
+    }
+    for (auto it = m_snowPlumeMasks.begin(); it != m_snowPlumeMasks.end();) {
+        const bool used = std::any_of(m_snowPlumes.begin(), m_snowPlumes.end(),
+                                      [&](const auto& plume) { return plume.node == it->first; });
+        if (used) { ++it; continue; }
+        if (it->second->mask.evaluator.Resolution() != 0) {
+            m_device.WaitForGpu();
+            it->second->mask.evaluator.Destroy(m_device);
+        }
+        it = m_snowPlumeMasks.erase(it);
+    }
+}
+
+void Application::SubmitSnowPlumes() {
+    std::vector<renderer::SnowPlumeDraw> draws;
+    for (const auto& plume : m_snowPlumes) {
+        const auto found = m_snowPlumeMasks.find(plume.node);
+        if (found == m_snowPlumeMasks.end() || !found->second->mask.pin) continue;
+        // 評価し直している間も、前回の結果で描き続ける（編集中に雪煙が点滅しないように）。
+        const auto& evaluator = found->second->mask.evaluator;
+        if (evaluator.EvaluatedRevision() == 0 || !evaluator.Textures().IsValid()) continue;
+        const auto& s = plume.settings;
+        renderer::SnowPlumeDraw draw;
+        draw.maskIndex = evaluator.Textures().baseColor.SrvIndex();
+        draw.windDirectionDegrees = plume.windDirection;
+        draw.windSpeed = plume.windSpeed;
+        draw.seedsPerSide = s.seedsPerSide; draw.sheets = s.sheets; draw.seed = s.seed;
+        draw.threshold = s.threshold; draw.coverage = s.coverage;
+        draw.lengthMeters = s.lengthMeters; draw.widthStart = s.widthStart; draw.widthEnd = s.widthEnd;
+        draw.lift = s.lift; draw.sink = s.sink; draw.opacity = s.opacity; draw.puffSize = s.puffSize;
+        draw.turbulence = s.turbulence; draw.gust = s.gust; draw.loopSeconds = s.loopSeconds;
+        draw.anisotropy = s.anisotropy;
+        draws.push_back(draw);
+    }
+    m_renderer.SetSnowPlumes(std::move(draws));
 }
 
 // 開発用オプションで動いているか。対話せずに書き出して終わる経路。

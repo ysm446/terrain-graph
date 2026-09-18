@@ -258,7 +258,11 @@ constexpr std::array<PinDefinition, 2> kModelMergePins = {{
 constexpr std::array<PinDefinition, 1> kModelOutputPins = {{
     {PinKind::Input, ValueType::Instances, "Instances"},
 }};
-constexpr std::array<NodeDefinition, 50> kNodeDefinitions = {{
+// 雪煙。Source のマスク（Wind Field の Spindrift を想定）から風下へ帯を伸ばして描く。出力は持たない。
+constexpr std::array<PinDefinition, 1> kSnowPlumePins = {{
+    {PinKind::Input, ValueType::Mask, "Source"},
+}};
+constexpr std::array<NodeDefinition, 51> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kSurfacePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -305,6 +309,7 @@ constexpr std::array<NodeDefinition, 50> kNodeDefinitions = {{
     {NodeKind::Output, "output", "Output", kOutputNodePins},
     {NodeKind::Terrain, "terrain", "Terrain", kTerrainNodePins},
     {NodeKind::WindField, "windField", "Wind Field", kWindFieldPins},
+    {NodeKind::SnowPlume, "snowPlume", "Snow Plume", kSnowPlumePins},
     // 追加メニューには出さない。読み込みで定義が見つからなかったノードの受け皿。
     {NodeKind::Missing, "missing", "Missing", {}},
 }};
@@ -657,6 +662,47 @@ std::vector<CompiledModelScatter> NodeGraph::CompileModelScatters() const {
     return result;
 }
 
+std::vector<CompiledSnowPlume> NodeGraph::CompileSnowPlumes() const {
+    std::vector<CompiledSnowPlume> result;
+    for (const Node& node : m_nodes) {
+        if (node.kind != NodeKind::SnowPlume || node.inputs.empty()) continue;
+        const auto* settings = std::get_if<SnowPlumeSettings>(&node.settings);
+        if (!settings) continue;
+        CompiledSnowPlume plume;
+        plume.node = node.id;
+        plume.settings = *settings;
+        plume.windDirection = settings->windDirection;
+        plume.windSpeed = settings->windSpeed;
+        for (const Link& link : m_links) {
+            if (link.endPin != node.inputs[0].id) continue;
+            if (const Pin* pin = FindPin(link.startPin)) {
+                plume.maskNode = pin->nodeId;
+                plume.maskPin = pin->id;
+            }
+        }
+        // Source の上流を幅優先で辿り、最初に見つかった Wind Field の風に揃える
+        // （Spindrift を Levels や Blend で加工してから繋いでも同じ風で流す）。
+        std::vector<const Node*> pending{plume.maskNode ? FindNode(plume.maskNode) : nullptr};
+        std::unordered_set<GraphId> visited;
+        for (size_t i = 0; i < pending.size(); ++i) {
+            const Node* upstream = pending[i];
+            if (!upstream || !visited.insert(upstream->id).second) continue;
+            if (upstream->kind == NodeKind::WindField) {
+                if (const auto* mask = std::get_if<MaskNodeSettings>(&upstream->settings)) {
+                    plume.fromWindField = true;
+                    plume.windDirection = mask->wind.directionDegrees;
+                    plume.windSpeed = mask->wind.speedMetersPerSecond;
+                }
+                break;
+            }
+            for (const Pin& input : upstream->inputs)
+                if (input.valueType == ValueType::Mask) pending.push_back(FindUpstreamNodeForPin(input.id));
+        }
+        result.push_back(plume);
+    }
+    return result;
+}
+
 CompiledCloud NodeGraph::CompileCloud() const {
     CompiledCloud result;
     for (const Node& node : m_nodes) {
@@ -825,6 +871,7 @@ GraphId NodeGraph::CreateNode(NodeKind kind) {
     } else if (kind == NodeKind::CloudWeatherLayer) { node.settings = CloudWeatherSettings{};
     } else if (kind == NodeKind::CloudTransform) { node.settings = CloudTransformSettings{};
     } else if (kind == NodeKind::ModelScatter) { node.settings = ModelScatterSettings{};
+    } else if (kind == NodeKind::SnowPlume) { node.settings = SnowPlumeSettings{};
     } else if (kind == NodeKind::Missing) { node.settings = MissingNodeSettings{};
     } else if (kind == NodeKind::Path) {
         node.settings = PathNodeSettings{};

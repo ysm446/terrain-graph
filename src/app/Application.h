@@ -159,6 +159,10 @@ private:
     void DrawModelPreviewWindow();
     void ProcessModelWork();
     void PrepareModelScatters();
+    // Snow Plume ノードを集め、Source のマスクを評価するスロットを揃える。フレームの外で呼ぶ。
+    void PrepareSnowPlumes();
+    // 評価済みのマスクと設定をレンダラへ渡す。描く直前に毎フレーム呼ぶ。
+    void SubmitSnowPlumes();
     void DrawModelScatters(ID3D12GraphicsCommandList* commandList, const DirectX::XMFLOAT4X4& viewProjection, bool shadow);
     void RenderModelPreviews(ID3D12GraphicsCommandList* commandList);
 
@@ -397,6 +401,13 @@ private:
     std::vector<graph::CompiledModelScatter> m_modelScatters;
     std::unordered_map<std::string, std::unique_ptr<renderer::ModelPreview>> m_instanceMeshes;
     CloudMaskSlot m_cloudMasks[2]; // 0: 分布／雲量、1: 雲種。
+    // Snow Plume ノードごとの Source マスク（512²）。雲のマスクと同じ評価の仕方。
+    struct SnowPlumeSlot {
+        CloudMaskSlot mask;
+        uint64_t documentRevision = 0;
+    };
+    std::unordered_map<graph::GraphId, std::unique_ptr<SnowPlumeSlot>> m_snowPlumeMasks;
+    std::vector<graph::CompiledSnowPlume> m_snowPlumes;
     // マスクの再コンパイルと評価器の作成。作成に失敗したら偽。
     bool PrepareCloudMask(CloudMaskSlot& slot, graph::GraphId maskNode, graph::GraphId maskPin);
     uint64_t m_compiledGraphRevision = 0;

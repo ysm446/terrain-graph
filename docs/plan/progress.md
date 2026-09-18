@@ -1,7 +1,13 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-18 05:10
+更新日時: 2026-09-19 03:04
+
+## Snow Plume ノード（稜線の雪煙）
+
+ユーザー判断により、稜線の雪煙はボリュームのシミュレーションではなく**帯メッシュで描く方式**へ切り替えた（[plan.md](plan.md)）。Snow Plume ノード（`NodeKind::SnowPlume`、`snowPlume`）を追加した。Source（Mask）だけを受け、出力を持たない。`CompileSnowPlumes` が Source の接続先と、上流の Wind Field の風向・風速を集める。Application はノードごとに Source を 512² で評価し（`SnowPlumeSlot`。雲のマスクと同じ `PrepareCloudMask`）、`SnowPlumeDraw` としてレンダラへ渡す。描画は `renderer/SnowPlume.cpp` と `SnowPlume.hlsl`。頂点バッファを使わず、種の格子 × シートの数だけインスタンス描画し、頂点シェーダが中心線を組み立てる。大気の合成の後に、深度を SRV として読んで重ねる。パラメータは [nodes.md](../reference/nodes.md) の Snow Plume を参照。
+
+検証: Debug ビルド、DXC（VsMain / PsMain）、テスト（新規 5 件、全件成功）。`data/Test/snow-plume-qa`（terrain-node-qa の複製。Spindrift → Snow Plume、Output は地形に戻した）で撮影した。種を 1 点で引くと細い Spindrift をほぼ取りこぼしたため、マスの中を 4 × 4 で探すよう直した。直したあとは主峰と周囲の稜線の風下に雪煙が出ることを確認した（`vp-3.png`）。**未確認**: 動き（撮影は静止画）、ループの継ぎ目、逆光時の見え方、プロパティ欄の表示（`--select-node 1000` では選ばれなかった）、保存と読み込みの往復、Release ビルド。検証シーンの読み込みで「地形と雲をまたぐ接続」のエラーと `volumeSim`（未対応の種類）の警告が出る。これは雲グラフに以前からあるもので、今回の変更とは関係なさそう（元のシーンでは確かめていない）。
 
 ## Wind Field ノード（局所ボリューム計画の第 2 段階）
 

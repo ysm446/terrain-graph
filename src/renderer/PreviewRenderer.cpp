@@ -1098,6 +1098,41 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
                             constants.shadowTexelSize, constants.shadowBias);
     }
 
+    // --- 雪煙 --------------------------------------------------------------
+    // 大気の合成は空の画素を上書きするので、その**後**に重ねる（稜線の上で空を背にした雪煙が主役）。
+    // 深度は SRV として読み、地形との前後とソフトな縁をシェーダで決める。雲とは前後を比べず、
+    // 常に雲の手前に乗る（雪煙は地表近く、雲は多くが上空なので、まずはこれで足りる）。
+    if (!m_snowPlumes.empty() && m_showTerrain && IsShadedView(m_debugView)) {
+        TransitionIfNeeded(commandList, m_depth,
+                           D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        commandList->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+        SnowPlumeFrame frame;
+        XMStoreFloat4x4(&frame.viewProjection, viewProjection);
+        frame.cameraPosition = m_camera.Position();
+        frame.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - m_animationStart).count();
+        frame.lightDirection = light.Direction();
+        frame.lightColor = light.color;
+        frame.lightIlluminance = light.illuminance;
+        frame.iblIntensity = constants.iblIntensity;
+        frame.irradianceIndex = environment.IsReady() ? environment.IrradianceSrvIndex() : UINT32_MAX;
+        frame.heightIndex = useMaterial ? materialTextures.height.SrvIndex() : UINT32_MAX;
+        frame.planeSize = m_planeSize;
+        frame.heightScale = m_displacementScale;
+        frame.depthIndex = m_depth.SrvIndex();
+        frame.nearZ = m_camera.NearZ();
+        frame.farZ = m_camera.FarZ();
+        frame.shadows = m_instanceShadows;
+        frame.atmosphere = m_instanceClouds.atmosphere;
+        frame.cloudNoiseIndex = m_instanceClouds.noiseIndex;
+        frame.atmosphericMode = m_instanceClouds.mode;
+        const uint32_t ribbons = DrawSnowPlumes(pipelineCache, device, commandList, kSceneColorFormat, frame, m_snowPlumes);
+        if (ribbons) {
+            ++m_stats.drawCalls;
+            m_stats.vertices += uint64_t(ribbons) * kSnowPlumeVerticesPerRibbon;
+            m_stats.triangles += uint64_t(ribbons) * kSnowPlumeVerticesPerRibbon / 3;
+        }
+    }
+
     TransitionIfNeeded(commandList, m_sceneColor, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 
     // --- 自動露出の測光 ------------------------------------------------------
