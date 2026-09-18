@@ -961,6 +961,10 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                 layer.pathUv.alongU = (alongAxis == 1);
                 changed = true;
             }
+            changed |= ui::PropertyBool("点の強さ", &layer.pathUv.usePointIntensity,
+                                        defaults.pathUv.usePointIntensity,
+                                        "Path の点が持つ「強さ」を帯の覆い具合に掛ける（Mask Path と同じ効き方）。"
+                                        "強さを下げた点へ向けて、素材の凹凸の高い所から順に欠けて消えていく");
             // マスク画像。帯の座標で貼って覆い具合に掛ける（モレーンの筋、轍、破線）。
             changed |= DrawMapSlotRow("マスク画像", layer.pathUv.mask, m_textureLibrary, m_pendingAssetReveal);
             if (layer.pathUv.mask.texture != compositor::kNoTexture) {

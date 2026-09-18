@@ -56,7 +56,8 @@ struct LayerConstants
     float4 colorAdjust;  // 色相（ラジアン）, 彩度, 明度, 未使用
     // パス UV（Surface の UV Path）。繰り返し長（m）, 幅方向の枚数, 進行方向のずれ（m）, 一辺（m）
     float4 pathUvParams;
-    // 線分バッファの SRV（無ければ kInvalidTextureIndex）, 線分数, 進行方向を U に当てる（0 / 1）,
+    // 線分バッファの SRV（無ければ kInvalidTextureIndex）, 線分数,
+    // フラグ（bit0: 進行方向を U に当てる、bit1: 点の強さを覆い具合に掛ける）,
     // マスク画像の SRV（無ければ kInvalidTextureIndex）
     uint4 pathUvIndices;
     // 縁のカーブ（ガンマ）, マスク画像の繰り返し長（m）, マスク画像の幅方向の枚数, マスク画像を反転（0 / 1）
@@ -95,7 +96,7 @@ float SampleLayerScalar(uint index, uint channelSlot, float2 uv, float uvPerOutp
 //
 // 通常は地形の UV に UV スケールを掛けたもの。**UV Path に Path を繋いだ Surface は、
 // パスに沿った帯の座標で引く**（既定では進行方向の弧長が V、幅方向が U。
-// pathUvIndices.z が 1 なら入れ替えて進行方向を U に当てる）。進行方向は繰り返し長（m）
+// pathUvIndices.z の bit0 が立っていれば入れ替えて進行方向を U に当てる）。進行方向は繰り返し長（m）
 // ごとに 1 周するので、模様が進行方向にループする。帯の外は coverage が 0 になり、
 // マスクに掛けて乗らないようにする。
 struct LayerUv
@@ -133,6 +134,11 @@ LayerUv ComputeLayerUv(float2 outputUv, float2 texelSize)
     result.path = true;
     // 縁のカーブ。Mask Path のガンマと同じ（1 より大きいと内側へ締まる）。
     result.coverage = pow(saturate(frame.coverage), max(g_layer.pathUvParams2.x, 1e-3f));
+    // 点の強さ。Mask Path と同じく帯の値に掛ける（縁のカーブの後。強さはカーブで歪めない）。
+    if ((g_layer.pathUvIndices.z & 2u) != 0u)
+    {
+        result.coverage *= frame.intensity;
+    }
     // 幅方向は中心線で widthRepeat の半分（帯の幅にちょうど widthRepeat 枚が並ぶ）。
     const float acrossPerMeter = widthRepeat / widthMeters;
     const float alongPerMeter = 1.0f / repeatMeters;
@@ -140,7 +146,7 @@ LayerUv ComputeLayerUv(float2 outputUv, float2 texelSize)
     const float alongUv = (frame.along + g_layer.pathUvParams.z) * alongPerMeter;
     // 幅方向の軸は進行方向の右手（direction を -90 度回した向き）。
     const float2 acrossAxis = float2(frame.direction.y, -frame.direction.x);
-    if (g_layer.pathUvIndices.z != 0u)
+    if ((g_layer.pathUvIndices.z & 1u) != 0u)
     {
         // 進行方向をテクスチャの横（U）に当てる。
         result.uv = float2(alongUv, acrossUv);
@@ -167,8 +173,8 @@ LayerUv ComputeLayerUv(float2 outputUv, float2 texelSize)
         const float maskAcrossPerMeter = maskWidthRepeat / widthMeters;
         const float maskAcrossUv = frame.across * maskAcrossPerMeter + 0.5f * maskWidthRepeat;
         const float maskAlongUv = (frame.along + g_layer.pathUvParams.z) * maskAlongPerMeter;
-        const float2 maskUv = (g_layer.pathUvIndices.z != 0u) ? float2(maskAlongUv, maskAcrossUv)
-                                                              : float2(maskAcrossUv, maskAlongUv);
+        const float2 maskUv = ((g_layer.pathUvIndices.z & 1u) != 0u) ? float2(maskAlongUv, maskAcrossUv)
+                                                                     : float2(maskAcrossUv, maskAlongUv);
         const float maskUvPerOutputTexel = texelMeters * max(maskAlongPerMeter, maskAcrossPerMeter);
         float pathMask = saturate(SampleLayerScalar(g_layer.pathUvIndices.w, TG_CHANNEL_SLOT_PATH_MASK,
                                                     maskUv, maskUvPerOutputTexel));

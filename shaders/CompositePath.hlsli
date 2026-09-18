@@ -65,6 +65,7 @@ float PathDistanceValue(float distance, float width, float feather)
 //   across   : 中心線からの符号付き距離（m）。進行方向の右手が正
 //   direction: 進行方向（単位ベクトル）
 //   width / feather / coverage: その位置の幅（m）・フェザー（m）・帯の内側なら 1
+//   intensity: その位置の点の強さ（0〜1）。coverage には掛けていない。使う側が決める
 struct PathFrame
 {
     float along;
@@ -73,6 +74,7 @@ struct PathFrame
     float width;
     float feather;
     float coverage;
+    float intensity;
 };
 
 PathFrame ComputePathFrame(ByteAddressBuffer segments, uint count, float2 position, float sizeMeters)
@@ -84,6 +86,7 @@ PathFrame ComputePathFrame(ByteAddressBuffer segments, uint count, float2 positi
     frame.width = 0.0f;
     frame.feather = 0.0f;
     frame.coverage = 0.0f;
+    frame.intensity = 1.0f;
     float nearest = 1e30f;
     [loop]
     for (uint i = 0; i < count; ++i)
@@ -111,6 +114,7 @@ PathFrame ComputePathFrame(ByteAddressBuffer segments, uint count, float2 positi
         frame.width = lerp(segment.widthA, segment.widthB, t);
         frame.feather = lerp(segment.featherA, segment.featherB, t);
         frame.coverage = PathDistanceValue(distance, frame.width, frame.feather);
+        frame.intensity = saturate(lerp(segment.intensityA, segment.intensityB, t));
     }
     return frame;
 }

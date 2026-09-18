@@ -78,7 +78,8 @@ struct LayerConstants {
     float colorAdjust[4];  // 色相（ラジアン）, 彩度, 明度, 未使用
     // パス UV（Surface の UV Path）。繰り返し長（m）, 幅方向の枚数, 進行方向のずれ（m）, 一辺（m）
     float pathUvParams[4];
-    // 線分バッファの SRV（無ければ kInvalidTextureIndex）, 線分数, 進行方向を U に当てる（0 / 1）,
+    // 線分バッファの SRV（無ければ kInvalidTextureIndex）, 線分数,
+    // フラグ（bit0: 進行方向を U に当てる、bit1: 点の強さを覆い具合に掛ける）,
     // マスク画像の SRV（無ければ kInvalidTextureIndex）
     uint32_t pathUvIndices[4];
     // 縁のカーブ（ガンマ）, マスク画像の繰り返し長（m）, マスク画像の幅方向の枚数, マスク画像を反転（0 / 1）
@@ -5463,7 +5464,8 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         // （評価は 1 本ずつなので、書き直すときに前の評価は終わっている）。
         constants.pathUvIndices[0] = kInvalidTextureIndex;
         constants.pathUvIndices[1] = 0;
-        constants.pathUvIndices[2] = layer.pathUv.alongU ? 1u : 0u;
+        constants.pathUvIndices[2] =
+            (layer.pathUv.alongU ? 1u : 0u) | (layer.pathUv.usePointIntensity ? 2u : 0u);
         // マスク画像は帯の座標で貼る。パス UV が無効なら参照されない。
         constants.pathUvIndices[3] = textures.SrvIndex(layer.pathUv.mask.texture, false);
         constants.pathUvParams2[1] = std::max(layer.pathUv.maskRepeatMeters, 0.01f);

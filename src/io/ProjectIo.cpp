@@ -1084,6 +1084,7 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     pathUv["maskRepeatMeters"] = layer.pathUv.maskRepeatMeters;
     pathUv["maskWidthRepeat"] = layer.pathUv.maskWidthRepeat;
     pathUv["maskInvert"] = layer.pathUv.maskInvert;
+    pathUv["usePointIntensity"] = layer.pathUv.usePointIntensity;
     node["pathUv"] = std::move(pathUv);
     return node;
 }
@@ -1423,6 +1424,8 @@ compositor::MaterialLayer ReadLayer(
         layer.pathUv.maskWidthRepeat =
             ReadFloat(*pathUv, "maskWidthRepeat", defaults.pathUv.maskWidthRepeat);
         layer.pathUv.maskInvert = ReadBool(*pathUv, "maskInvert", defaults.pathUv.maskInvert);
+        layer.pathUv.usePointIntensity =
+            ReadBool(*pathUv, "usePointIntensity", defaults.pathUv.usePointIntensity);
     }
     return layer;
 }
