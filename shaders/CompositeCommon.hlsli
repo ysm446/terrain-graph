@@ -37,6 +37,7 @@ uint UnpackChannel(uint packed, uint slotIndex)
 #define TG_CHANNEL_SLOT_AO        2u
 #define TG_CHANNEL_SLOT_HEIGHT    3u
 #define TG_CHANNEL_SLOT_MASK      4u
+#define TG_CHANNEL_SLOT_PATH_MASK 5u
 
 float3 DecodeTangentNormal(float2 xy)
 {

@@ -175,6 +175,7 @@ void Application::ApplyDocument(const DocumentSnapshot& snapshot) {
         }
         layer.mask.texture.texture = ValidTexture(layer.mask.texture.texture);
         layer.heightTexture.texture = ValidTexture(layer.heightTexture.texture);
+        layer.pathUv.mask.texture = ValidTexture(layer.pathUv.mask.texture);
         if (m_paintMasks.Find(layer.mask.paint) == nullptr) {
             layer.mask.paint = compositor::kNoPaintMask;
         }

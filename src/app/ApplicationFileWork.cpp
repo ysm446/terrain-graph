@@ -701,6 +701,7 @@ void Application::ProcessPendingFileWork() {
             if (auto* settings = std::get_if<graph::LayerNodeSettings>(&node.settings)) {
                 graphChanged |= clearMap(settings->layer.mask.texture);
                 graphChanged |= clearMap(settings->layer.heightTexture);
+                graphChanged |= clearMap(settings->layer.pathUv.mask);
             }
         }
         if (graphChanged) {

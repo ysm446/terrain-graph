@@ -56,9 +56,10 @@ struct LayerConstants
     float4 colorAdjust;  // 色相（ラジアン）, 彩度, 明度, 未使用
     // パス UV（Surface の UV Path）。繰り返し長（m）, 幅方向の枚数, 進行方向のずれ（m）, 一辺（m）
     float4 pathUvParams;
-    // 線分バッファの SRV（無ければ kInvalidTextureIndex）, 線分数, 進行方向を U に当てる（0 / 1）, 未使用
+    // 線分バッファの SRV（無ければ kInvalidTextureIndex）, 線分数, 進行方向を U に当てる（0 / 1）,
+    // マスク画像の SRV（無ければ kInvalidTextureIndex）
     uint4 pathUvIndices;
-    // 縁のカーブ（ガンマ）, 未使用 x3
+    // 縁のカーブ（ガンマ）, マスク画像の繰り返し長（m）, マスク画像の幅方向の枚数, マスク画像を反転（0 / 1）
     float4 pathUvParams2;
 };
 
@@ -156,6 +157,27 @@ LayerUv ComputeLayerUv(float2 outputUv, float2 texelSize)
     }
     const float texelMeters = texelSize.x * sizeMeters;
     result.uvPerOutputTexel = texelMeters * max(result.uvPerMeter.x, result.uvPerMeter.y);
+
+    // マスク画像。素材と同じ帯の座標で、繰り返し長と幅方向の枚数だけ別に持って貼る。
+    // 帯の覆い具合に掛けるので、Mask 入力とも掛け合わさる。
+    if (g_layer.pathUvIndices.w != kInvalidTextureIndex)
+    {
+        const float maskAlongPerMeter = 1.0f / max(g_layer.pathUvParams2.y, 1e-3f);
+        const float maskWidthRepeat = max(g_layer.pathUvParams2.z, 1e-3f);
+        const float maskAcrossPerMeter = maskWidthRepeat / widthMeters;
+        const float maskAcrossUv = frame.across * maskAcrossPerMeter + 0.5f * maskWidthRepeat;
+        const float maskAlongUv = (frame.along + g_layer.pathUvParams.z) * maskAlongPerMeter;
+        const float2 maskUv = (g_layer.pathUvIndices.z != 0u) ? float2(maskAlongUv, maskAcrossUv)
+                                                              : float2(maskAcrossUv, maskAlongUv);
+        const float maskUvPerOutputTexel = texelMeters * max(maskAlongPerMeter, maskAcrossPerMeter);
+        float pathMask = saturate(SampleLayerScalar(g_layer.pathUvIndices.w, TG_CHANNEL_SLOT_PATH_MASK,
+                                                    maskUv, maskUvPerOutputTexel));
+        if (g_layer.pathUvParams2.w != 0.0f)
+        {
+            pathMask = 1.0f - pathMask;
+        }
+        result.coverage *= pathMask;
+    }
     return result;
 }
 

@@ -71,6 +71,9 @@ std::vector<std::string> Application::CollectTextureUsers(compositor::TextureId 
         if (settings->layer.heightTexture.texture == id) {
             users.push_back("ノード「" + settings->layer.name + "」のハイト");
         }
+        if (settings->layer.pathUv.mask.texture == id) {
+            users.push_back("ノード「" + settings->layer.name + "」のパス UV のマスク画像");
+        }
     }
     return users;
 }
@@ -95,6 +98,7 @@ size_t Application::CountTextureUsers(compositor::TextureId id) const {
         }
         count += (settings->layer.mask.texture.texture == id) ? 1 : 0;
         count += (settings->layer.heightTexture.texture == id) ? 1 : 0;
+        count += (settings->layer.pathUv.mask.texture == id) ? 1 : 0;
     }
     return count;
 }

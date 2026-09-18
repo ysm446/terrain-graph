@@ -78,9 +78,10 @@ struct LayerConstants {
     float colorAdjust[4];  // 色相（ラジアン）, 彩度, 明度, 未使用
     // パス UV（Surface の UV Path）。繰り返し長（m）, 幅方向の枚数, 進行方向のずれ（m）, 一辺（m）
     float pathUvParams[4];
-    // 線分バッファの SRV（無ければ kInvalidTextureIndex）, 線分数, 進行方向を U に当てる（0 / 1）, 未使用
+    // 線分バッファの SRV（無ければ kInvalidTextureIndex）, 線分数, 進行方向を U に当てる（0 / 1）,
+    // マスク画像の SRV（無ければ kInvalidTextureIndex）
     uint32_t pathUvIndices[4];
-    // 縁のカーブ（ガンマ）, 未使用 x3
+    // 縁のカーブ（ガンマ）, マスク画像の繰り返し長（m）, マスク画像の幅方向の枚数, マスク画像を反転（0 / 1）
     float pathUvParams2[4];
 };
 
@@ -5067,8 +5068,10 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             {
                 const uint32_t heightSrv = textures.SrvIndex(layer.heightTexture.texture, false);
                 const uint32_t maskSrv = textures.SrvIndex(layer.mask.texture.texture, false);
+                const uint32_t pathMaskSrv = textures.SrvIndex(layer.pathUv.mask.texture, false);
                 hash = HashBytes(hash, &heightSrv, sizeof(heightSrv));
                 hash = HashBytes(hash, &maskSrv, sizeof(maskSrv));
+                hash = HashBytes(hash, &pathMaskSrv, sizeof(pathMaskSrv));
             }
             heightStateHash[layerCount] = hash;
             heightStateDone[layerCount] = 1;
@@ -5434,7 +5437,8 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         constants.mapChannels[0] =
             ((material != nullptr) ? PackMaterialChannels(*material)
                                    : PackChannel(layer.heightTexture.channel, 3)) |
-            PackChannel(layer.mask.texture.channel, 4);
+            PackChannel(layer.mask.texture.channel, 4) |
+            PackChannel(layer.pathUv.mask.channel, 5);
         // マスクのテクスチャ。ノードのマスクは op の結果、
         // 中間結果由来（傾斜 / 曲率 / 窪み）は直前のパスが書いた作業用。
         constants.textureIndices1[3] = kInvalidTextureIndex;
@@ -5460,6 +5464,11 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         constants.pathUvIndices[0] = kInvalidTextureIndex;
         constants.pathUvIndices[1] = 0;
         constants.pathUvIndices[2] = layer.pathUv.alongU ? 1u : 0u;
+        // マスク画像は帯の座標で貼る。パス UV が無効なら参照されない。
+        constants.pathUvIndices[3] = textures.SrvIndex(layer.pathUv.mask.texture, false);
+        constants.pathUvParams2[1] = std::max(layer.pathUv.maskRepeatMeters, 0.01f);
+        constants.pathUvParams2[2] = std::max(layer.pathUv.maskWidthRepeat, 0.001f);
+        constants.pathUvParams2[3] = layer.pathUv.maskInvert ? 1.0f : 0.0f;
         constants.pathUvParams[0] = std::max(layer.pathUv.repeatMeters, 0.01f);
         constants.pathUvParams[1] = std::max(layer.pathUv.widthRepeat, 0.001f);
         constants.pathUvParams[2] = layer.pathUv.offsetMeters;

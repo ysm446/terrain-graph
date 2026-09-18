@@ -1080,6 +1080,10 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     pathUv["offsetMeters"] = layer.pathUv.offsetMeters;
     pathUv["alongU"] = layer.pathUv.alongU;
     pathUv["edgeGamma"] = layer.pathUv.edgeGamma;
+    pathUv["mask"] = WriteMapSlot(layer.pathUv.mask, writeTexture);
+    pathUv["maskRepeatMeters"] = layer.pathUv.maskRepeatMeters;
+    pathUv["maskWidthRepeat"] = layer.pathUv.maskWidthRepeat;
+    pathUv["maskInvert"] = layer.pathUv.maskInvert;
     node["pathUv"] = std::move(pathUv);
     return node;
 }
@@ -1413,6 +1417,12 @@ compositor::MaterialLayer ReadLayer(
         layer.pathUv.offsetMeters = ReadFloat(*pathUv, "offsetMeters", defaults.pathUv.offsetMeters);
         layer.pathUv.alongU = ReadBool(*pathUv, "alongU", defaults.pathUv.alongU);
         layer.pathUv.edgeGamma = ReadFloat(*pathUv, "edgeGamma", defaults.pathUv.edgeGamma);
+        layer.pathUv.mask = ReadMapSlot(*pathUv, "mask", readTexture);
+        layer.pathUv.maskRepeatMeters =
+            ReadFloat(*pathUv, "maskRepeatMeters", defaults.pathUv.maskRepeatMeters);
+        layer.pathUv.maskWidthRepeat =
+            ReadFloat(*pathUv, "maskWidthRepeat", defaults.pathUv.maskWidthRepeat);
+        layer.pathUv.maskInvert = ReadBool(*pathUv, "maskInvert", defaults.pathUv.maskInvert);
     }
     return layer;
 }

@@ -961,6 +961,38 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                 layer.pathUv.alongU = (alongAxis == 1);
                 changed = true;
             }
+            // マスク画像。帯の座標で貼って覆い具合に掛ける（モレーンの筋、轍、破線）。
+            changed |= DrawMapSlotRow("マスク画像", layer.pathUv.mask, m_textureLibrary, m_pendingAssetReveal);
+            if (layer.pathUv.mask.texture != compositor::kNoTexture) {
+                // サムネイル。読むチャンネルだけを灰色で出す（実際に掛かる絵）。
+                // リンク切れは絵が無い。ImGui::Image に 0 を渡すと落ちるので警告のタイルにする。
+                if (const compositor::LibraryTexture* maskTexture =
+                        m_textureLibrary.Find(layer.pathUv.mask.texture); maskTexture != nullptr) {
+                    ui::PropertyLabelEmpty("pathUvMaskThumbnail");
+                    const float thumbnailSize = ui::Scaled(72.0f);
+                    if (maskTexture->missing) {
+                        const ImVec2 min = ImGui::GetCursorScreenPos();
+                        ui::MissingThumbnail(min, ImVec2(min.x + thumbnailSize, min.y + thumbnailSize));
+                        ImGui::Dummy(ImVec2(thumbnailSize, thumbnailSize));
+                    } else {
+                        ImGui::Image(static_cast<ImTextureID>(
+                                         maskTexture->ChannelHandle(static_cast<int>(layer.pathUv.mask.channel)).ptr),
+                                     ImVec2(thumbnailSize, thumbnailSize));
+                    }
+                    ui::PropertyEnd();
+                }
+                changed |= ui::PropertyFloat("マスク周期", &layer.pathUv.maskRepeatMeters, 0.5f,
+                                             20000.0f, defaults.pathUv.maskRepeatMeters,
+                                             "進行方向にマスク画像が 1 周する長さ（m）。素材の繰り返し長とは別に決める",
+                                             "%.1f m", ImGuiSliderFlags_Logarithmic);
+                changed |= ui::PropertyFloat("マスク枚数", &layer.pathUv.maskWidthRepeat, 0.01f,
+                                             8.0f, defaults.pathUv.maskWidthRepeat,
+                                             "帯の幅にマスク画像を何枚並べるか。1 で幅いっぱいに 1 枚",
+                                             "%.3f", ImGuiSliderFlags_Logarithmic);
+                changed |= ui::PropertyBool("マスク反転", &layer.pathUv.maskInvert,
+                                            defaults.pathUv.maskInvert,
+                                            "マスク画像の白黒を反転して掛ける");
+            }
             ui::EndPropertyTable();
         }
         ui::HintText("UV Path のパスに沿って素材を貼る。進行方向が模様の縦（既定）または横。"
