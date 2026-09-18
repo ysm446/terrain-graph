@@ -697,6 +697,7 @@ void Application::SubmitSnowPlumes() {
         draw.threshold = s.threshold; draw.coverage = s.coverage;
         draw.lengthMeters = s.lengthMeters; draw.widthStart = s.widthStart; draw.widthEnd = s.widthEnd;
         draw.lift = s.lift; draw.sink = s.sink; draw.opacity = s.opacity; draw.puffSize = s.puffSize;
+        draw.upwind = s.upwind; draw.slopeFollow = s.slopeFollow;
         draw.turbulence = s.turbulence; draw.gust = s.gust; draw.loopSeconds = s.loopSeconds;
         draw.anisotropy = s.anisotropy;
         draws.push_back(draw);

@@ -1913,6 +1913,12 @@ void Application::DrawGraphPanel() {
                                          "稜線を越えてから浮き上がる高さ", "%.0f m");
             changed |= ui::PropertyFloat("沈み込み", &plume->sink, 0.0f, 1000.0f, defaults.sink,
                                          "先端までに風下の斜面側へ下がる高さ。地形の下へは潜らない", "%.0f m");
+            changed |= ui::PropertyFloat("風上の助走", &plume->upwind, 0.0f, 1000.0f, defaults.upwind,
+                                         "稜線の風上側へ帯を延ばす長さ。斜面を這って立ち上がり、稜線でいちばん濃くなって剥がれる。"
+                                         "0 だと稜線の風下から急に湧いて見える", "%.0f m");
+            changed |= ui::PropertyFloat("斜面に沿う", &plume->slopeFollow, 0.0f, 1.0f, defaults.slopeFollow,
+                                         "風下の斜面が落ちるぶんを追う割合。0 でまっすぐ流れ、1 で斜面に沿って谷へ下りる。"
+                                         "上のシートほど追わないので、谷へ覆いかぶさる楔の形になる", "%.2f");
             changed |= ui::PropertyInt("シートの数", &plume->sheets, 1, 3, defaults.sheets,
                                        "1 本の帯に重ねる層の数。2 枚目以降は上に薄く広く重なり、厚みが出る");
             ui::EndPropertyTable();

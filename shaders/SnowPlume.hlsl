@@ -35,7 +35,7 @@ struct SnowPlumeConstants {
     float anisotropy; uint seed, sheets, useHeight;
     SceneShadowData shadows;
     AtmosphericParameters atmosphere;
-    uint cloudNoiseIndex, atmosphericMode, pad0, pad1;
+    uint cloudNoiseIndex, atmosphericMode; float upwind, slopeFollow;
 };
 ConstantBuffer<SnowPlumeConstants> g_plume : register(b1);
 
@@ -91,6 +91,8 @@ struct Ribbon {
     float phase;            // 帯ごとの位相（ラジアン）
     float widthScale, lift, opacity;
     float gust;             // -1〜1。突風の今の強さ
+    float upwind;           // 風上の助走（m）。root は稜線の点で、帯はそこから風上へこの長さだけ延びる
+    float follow;           // 風下の斜面に沿って下がる割合（0〜1）
     uint hash;
 };
 
@@ -105,23 +107,41 @@ float Width(Ribbon r, float t) {
     return lerp(start, max(g_plume.widthEnd, start), pow(t, 0.8)) * r.widthScale;
 }
 
-// 中心線。t は根元 0〜先端 1。時間は LoopPhase の整数倍でしか入れない（ループを閉じるため）。
-float3 Centerline(Ribbon r, float t) {
+// 帯の上の位置 p（風上の端 0〜先端 1）を、稜線からの距離 s（m。風上が負）に直す。
+float AlongMeters(Ribbon r, float p) { return p * (r.upwind + r.length) - r.upwind; }
+
+// 帯の幅。s は稜線からの距離。助走の区間は設定の幅まで細くする（斜面を這う地吹雪）。
+// 種の間隔で広げた幅のまま地表に貼り付けると、凸凹の地形に切られて細片になり、筋に見える。
+// 隣と重ねるための幅へは、稜線の手前で広げる。
+float WidthAt(Ribbon r, float s) {
+    const float width = Width(r, saturate(s / r.length));
+    const float runUp = min(width, 1.5 * g_plume.widthStart * r.widthScale);
+    return lerp(runUp, width, smoothstep(-0.5 * max(r.upwind, 1e-3), 0.0, s));
+}
+
+// 中心線。p は風上の端 0〜先端 1。時間は LoopPhase の整数倍でしか入れない（ループを閉じるため）。
+// 稜線より風上（助走）は地表に貼り付き、稜線を越えた所で剥がれて、風下の谷へ覆いかぶさる。
+float3 Centerline(Ribbon r, float p) {
     const float loopPhase = LoopPhase();
-    const float s = t * r.length;
+    const float s = AlongMeters(r, p);
+    const float t = saturate(s / r.length);   // 稜線 0〜先端 1。助走の区間は 0
     const float meander = g_plume.turbulence * r.length * t *
         (0.10 * sin(r.phase + t * 4.0 - loopPhase * 2.0) + 0.04 * sin(r.phase + 1.7 + t * 9.0 - loopPhase * 3.0));
     const float2 xz = r.root.xz + r.along * s + r.across * meander;
-    // 稜線を越えて持ち上がり、風下へ行くほど沈む。
+    const float ground = TerrainHeight(xz);
+    // 浮かせる量は設定の幅で決める（種の間隔で広げた幅を使うと、大きな地形で根元が稜線から何十 m も浮く）。
+    const float nominalWidth = lerp(g_plume.widthStart, max(g_plume.widthEnd, g_plume.widthStart), pow(t, 0.8)) * r.widthScale;
+    const float clearance = max(2.0, 1.5 + 0.2 * nominalWidth);
+    if (s <= 0) return float3(xz.x, ground + clearance, xz.y);
+    // 稜線を越えて持ち上がり、風下へ行くほど沈む。風下の斜面が落ちるぶんも、割合を掛けて追う
+    // （追わないと、谷の上にまっすぐ浮いた帯になる）。
     const float rise = r.lift * (1.0 - exp(-t * 5.0));
     const float drop = g_plume.sink * t * t;
+    const float slopeDrop = r.follow * max(r.root.y - ground, 0.0);
     const float bob = g_plume.turbulence * 0.04 * r.length * t * sin(r.phase + 2.3 + t * 6.0 - loopPhase * 2.0);
-    float y = r.root.y + rise - drop + bob;
-    // 風下の斜面へは潜らせない。幅が広がるほど少し浮かせる。浮かせる量は設定の幅で決める
-    // （種の間隔で広げた幅を使うと、大きな地形で根元が稜線から何十 m も浮く）。
-    const float nominalWidth = lerp(g_plume.widthStart, max(g_plume.widthEnd, g_plume.widthStart), pow(t, 0.8)) * r.widthScale;
-    y = max(y, TerrainHeight(xz) + 1.5 + 0.2 * nominalWidth);
-    return float3(xz.x, y, xz.y);
+    const float y = r.root.y + clearance + rise - drop - slopeDrop + bob;
+    // 風下の斜面へは潜らせない。
+    return float3(xz.x, max(y, ground + clearance), xz.y);
 }
 
 bool MakeRibbon(uint instance, out Ribbon r) {
@@ -150,7 +170,8 @@ bool MakeRibbon(uint instance, out Ribbon r) {
         return false;
 
     const float2 rootXz = (uv - 0.5) * g_plume.planeSize;
-    r.root = float3(rootXz.x, TerrainHeight(rootXz) + 2.0, rootXz.y);
+    // root は稜線の地表の点。浮かせる量は Centerline が足す。
+    r.root = float3(rootXz.x, TerrainHeight(rootXz), rootXz.y);
     r.along = g_plume.wind;
     r.across = float2(g_plume.wind.y, -g_plume.wind.x);
     // 位相は稜線に沿った位置で決める。隣どうしが少しずつずれて揃い、揺れが稜線を波のように伝わる。
@@ -169,18 +190,23 @@ bool MakeRibbon(uint instance, out Ribbon r) {
     r.opacity = sheet == 0 ? 1.0 : 0.55 / layer;
     r.phase += layer * 2.1;
     r.length *= 1.0 + 0.2 * layer;
+    // 上の層ほど助走が短く、斜面も追わない（下の層が斜面を覆い、上の層がまっすぐ流れて、楔の形になる）。
+    r.upwind = g_plume.upwind / (1.0 + layer);
+    r.follow = g_plume.slopeFollow / (1.0 + layer);
     return true;
 }
 
 struct VsOutput {
     float4 position : SV_Position;
     float3 world : TEXCOORD0;
-    // x: 根元からの距離（m）、y: 幅の中の位置 -1〜1
+    // x: 稜線からの距離（m。風上の助走は負）、y: 幅の中の位置 -1〜1
     float2 ribbon : TEXCOORD1;
-    // x: t（根元 0〜先端 1）、y: 帯の不透明度、z: 未使用、w: 帯の幅（m）
+    // x: t（稜線 0〜先端 1。助走は負）、y: 帯の不透明度、z: 風上の端からの距離（m）、w: 帯の幅（m）
     float4 params : TEXCOORD2;
-    // x: 太陽の見え具合（地形の影と雲影）、y: 真横から見たときに薄める係数
+    // x: 太陽の見え具合（地形の影と雲影）、y: 帯の軸に沿って覗き込むときに薄める係数
     float2 light : TEXCOORD3;
+    // 濃さのノイズを引く位置。帯を軸に近い向きから見るときだけ、ワールド座標を軸の向きに縮める
+    float3 noisePosition : TEXCOORD4;
 };
 
 VsOutput VsMain(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID) {
@@ -192,9 +218,10 @@ VsOutput VsMain(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID) {
         return output;
     }
     const float2 corner = kCorners[vertexId % 6];
-    const float t = (float(vertexId / 6) + corner.x) / float(kSegments);
-    const float3 center = Centerline(r, t);
-    // 帯の軸（根元→先端）を軸にカメラへ回す。風の向きに沿って覗き込むときだけ横向きの軸に落とす。
+    const float p = (float(vertexId / 6) + corner.x) / float(kSegments);
+    const float s = AlongMeters(r, p);
+    const float3 center = Centerline(r, p);
+    // 帯の軸（風上の端→先端）を軸にカメラへ回す。風の向きに沿って覗き込むときだけ横向きの軸に落とす。
     // **向きは帯 1 本で 1 つに決める。**頂点ごとの接線とカメラの向きで決めると、帯に沿って覗き込む所で
     // 隣の頂点と向きが大きく回り、四角形がねじれて折り重なる（折り目が二重に合成されて筋になり、
     // 折り目は幅の縁ではないので縁のフェードも効かない）。
@@ -205,18 +232,32 @@ VsOutput VsMain(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID) {
     float3 side = cross(axis, toCamera);
     const float sideLength = length(side);
     side = sideLength > 1e-4 ? side / sideLength : float3(r.across.x, 0, r.across.y);
-    const float width = Width(r, t);
+    const float width = WidthAt(r, s);
     const float3 world = center + side * (corner.y * 0.5 * width);
 
     output.position = mul(g_plume.viewProjection, float4(world, 1));
     output.world = world;
-    output.ribbon = float2(t * r.length, corner.y);
+    output.ribbon = float2(s, corner.y);
     const float gustOpacity = 1.0 + 0.4 * g_plume.gust * r.gust;
-    output.params = float4(t, g_plume.opacity * r.strength * r.opacity * gustOpacity, 0.0, width);
-    float visibility = TerrainVisibility(center);
+    output.params = float4(s / r.length, g_plume.opacity * r.strength * r.opacity * gustOpacity, s + r.upwind, width);
+    // 地形の影は、中心線から少し持ち上げた点を幅の向きに 3 つ引いて均す。影は点で引く 0 / 1 なので、
+    // 地表のすぐ上を通る中心線の 1 点だけで決めると、頂点ごとに明暗がばらつき、幅の向きの縞（毛羽）になる。
+    const float3 shadowCenter = center + float3(0, max(0.15 * width, 6.0), 0);
+    float visibility = (TerrainVisibility(shadowCenter) +
+                        TerrainVisibility(shadowCenter + side * (0.3 * width)) +
+                        TerrainVisibility(shadowCenter - side * (0.3 * width))) / 3.0;
     if (g_plume.atmosphericMode != 0)
         visibility *= CloudShadow(center, g_plume.atmosphere, g_plume.cloudNoiseIndex);
-    output.light = float2(visibility, smoothstep(0.15, 0.6, sideLength));
+    output.light = float2(visibility, smoothstep(0.3, 0.7, sideLength));
+    // 帯を軸に近い向きから見ると、板が視線に対して斜めになり、画面の上で模様が軸の向きに押し潰されて
+    // 毛のような筋になる（いちばん粗い層まで潰れるので、細かい層を抜いても消えない）。
+    // ノイズを引く位置を、軸の向きに「見えている角度の sin」だけ縮めておくと、画面の上で等方になる。
+    // 横から見る帯（sin ≈ 1）は変わらないので、重なった帯どうしで模様が続く性質は保たれる。
+    // 縮めすぎると帯の中で模様がほぼ一様になり、帯の輪郭だけがヒレのように並んで見えるので、下限を置く
+    // （それより浅い角度の帯は、上の係数で消える）。
+    const float3 middle = 0.5 * (rootCenter + tipCenter);
+    const float alongAxis = dot(world - middle, axis);
+    output.noisePosition = world - axis * (alongAxis * (1.0 - clamp(sideLength, 0.4, 1.0)));
     return output;
 }
 
@@ -296,10 +337,13 @@ float4 PsMain(VsOutput input) : SV_Target {
     if (input.position.z >= sceneZ) discard;
     const float sceneDistance = sceneZ >= 1.0 ? 1e9 : LinearDepth(sceneZ);
     const float width = input.params.w;
-    const float soft = saturate((sceneDistance - LinearDepth(input.position.z)) / max(0.25 * width, 4.0));
+    // 柔らかく消す距離は、稜線の近くでは短くする。幅に比例させたままだと、幅の広い帯（大きな地形）で
+    // 稜線から何十 m も雪煙が消え、地面と雪煙の間に隙間ができて、空中から湧いたように見える。
+    const float softDistance = max(lerp(0.08, 0.25, smoothstep(0.0, 0.5, input.params.x)) * width, 3.0);
+    const float soft = saturate((sceneDistance - LinearDepth(input.position.z)) / softDistance);
 
-    const float t = input.params.x;
-    const float density = PlumeDensity(input.world);
+    const float t = saturate(input.params.x);
+    const float density = PlumeDensity(input.noisePosition);
     // 輪郭をノイズで崩し、先へ行くほど濃い所だけが残る（ちぎれて消えていく）。
     // 帯の輪郭は重なった隣の帯と揃わないので、弱めに効かせ、形はワールドのノイズに任せる
     // （輪郭が強いと、帯の縁の弧が何本も並んで刷毛目に見える）。
@@ -309,9 +353,13 @@ float4 PsMain(VsOutput input) : SV_Target {
     const float profile = 1.0 - smoothstep(0.3, 1.0, abs(input.ribbon.y));
     const float edge = smoothstep(0.0, 0.6, profile + (density - 0.5) * 1.2 * (0.4 + g_plume.turbulence)) *
                        smoothstep(0.0, 0.35, profile);
-    // 根元も同じ。濃い塊は稜線のすぐ先から、薄い所は少し離れてから立ち上がる。
-    const float fadeIn = smoothstep(0.0, lerp(0.18, 0.06, saturate((density - 0.35) * 3.0)), t);
-    const float fadeOut = 1.0 - smoothstep(0.5, 1.0, t + (density - 0.5) * 0.4);
+    // 風上の端も同じ。助走の区間で立ち上がり、**稜線でいちばん濃くなる**（濃い塊は助走の途中から、
+    // 薄い所は稜線の手前で立ち上がりきる）。助走が無いときは、帯の長さの 1 割ほどで立ち上げる。
+    const float upwind = input.params.z - input.ribbon.x;
+    const float fadeDistance = max(upwind, 0.12 * g_plume.lengthMeters) * lerp(1.0, 0.45, saturate((density - 0.35) * 3.0));
+    const float fadeIn = smoothstep(0.0, fadeDistance, input.params.z);
+    // 稜線を越えたら風下へ薄まり続ける（本物の雪煙は稜線がいちばん濃い）。先端では必ず 0 へ落とす。
+    const float fadeOut = exp(-1.1 * t) * (1.0 - smoothstep(0.6, 1.0, t + (density - 0.5) * 0.4));
     const float puffs = saturate((density - lerp(0.3, 0.52, t)) * 3.0);
     const float alpha = saturate(input.params.y * edge * fadeIn * fadeOut * puffs * soft * input.light.y);
     if (alpha < 0.002) discard;

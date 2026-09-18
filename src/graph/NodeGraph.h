@@ -397,6 +397,8 @@ struct SnowPlumeSettings {
     float widthEnd = 70.0f;       // 先端の幅（m）
     float lift = 30.0f;           // 稜線を越えて持ち上がる高さ（m）
     float sink = 40.0f;           // 先端までに風下へ沈み込む高さ（m）
+    float upwind = 60.0f;         // 風上の助走（m）。稜線の風上側の斜面を這ってから、稜線で剥がれる
+    float slopeFollow = 0.6f;     // 風下の斜面が落ちるぶんを追う割合。0 でまっすぐ、1 で斜面に沿う
     float opacity = 0.6f;
     float puffSize = 25.0f;       // 雪煙の塊の大きさ（ノイズの基本の波長、m）
     float turbulence = 0.5f;      // 帯の蛇行と輪郭の崩れ

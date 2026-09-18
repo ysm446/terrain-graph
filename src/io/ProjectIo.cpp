@@ -1536,7 +1536,8 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
         } else if (const auto* plume = std::get_if<graph::SnowPlumeSettings>(&node.settings)) {
             item["snowPlume"] = {{"seedsPerSide",plume->seedsPerSide},{"threshold",plume->threshold},{"coverage",plume->coverage},
                 {"length",plume->lengthMeters},{"widthStart",plume->widthStart},{"widthEnd",plume->widthEnd},
-                {"lift",plume->lift},{"sink",plume->sink},{"opacity",plume->opacity},{"puffSize",plume->puffSize},
+                {"lift",plume->lift},{"sink",plume->sink},{"upwind",plume->upwind},{"slopeFollow",plume->slopeFollow},
+                {"opacity",plume->opacity},{"puffSize",plume->puffSize},
                 {"turbulence",plume->turbulence},{"gust",plume->gust},{"loopSeconds",plume->loopSeconds},
                 {"sheets",plume->sheets},{"anisotropy",plume->anisotropy},{"seed",plume->seed},
                 {"windDirection",plume->windDirection},{"windSpeed",plume->windSpeed}};
@@ -1964,6 +1965,8 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.widthEnd = std::clamp(ReadFloat(*values,"widthEnd",d.widthEnd),0.1f,2000.0f);
                     settings.lift = std::clamp(ReadFloat(*values,"lift",d.lift),0.0f,1000.0f);
                     settings.sink = std::clamp(ReadFloat(*values,"sink",d.sink),0.0f,1000.0f);
+                    settings.upwind = std::clamp(ReadFloat(*values,"upwind",d.upwind),0.0f,1000.0f);
+                    settings.slopeFollow = std::clamp(ReadFloat(*values,"slopeFollow",d.slopeFollow),0.0f,1.0f);
                     settings.opacity = std::clamp(ReadFloat(*values,"opacity",d.opacity),0.0f,1.0f);
                     settings.puffSize = std::clamp(ReadFloat(*values,"puffSize",d.puffSize),1.0f,1000.0f);
                     settings.turbulence = std::clamp(ReadFloat(*values,"turbulence",d.turbulence),0.0f,1.0f);
