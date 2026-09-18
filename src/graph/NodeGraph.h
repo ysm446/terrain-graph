@@ -391,7 +391,7 @@ struct CompiledModelScatter {
 struct SnowPlumeSettings {
     int seedsPerSide = 64;        // 地形の一辺あたりの種の数。種 1 つから帯が 1 本出る
     float threshold = 0.2f;       // Source がこれ以下の種からは出さない
-    float coverage = 0.7f;        // Source が 1 の所で帯が出る割合
+    float coverage = 1.0f;        // Source が 1 の所で帯が出る割合。下げると稜線が歯抜けになる
     float lengthMeters = 250.0f;  // 帯の長さ（風下へ）
     float widthStart = 12.0f;     // 根元の幅（m）
     float widthEnd = 70.0f;       // 先端の幅（m）

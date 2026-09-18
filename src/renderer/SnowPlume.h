@@ -15,7 +15,7 @@ struct SnowPlumeDraw {
     uint32_t maskIndex = UINT32_MAX;  // Source を評価したマスク（R が 0〜1）
     float windDirectionDegrees = 90.0f, windSpeed = 15.0f;
     int seedsPerSide = 64, sheets = 2, seed = 1;
-    float threshold = 0.2f, coverage = 0.7f;
+    float threshold = 0.2f, coverage = 1.0f;
     float lengthMeters = 250.0f, widthStart = 12.0f, widthEnd = 70.0f;
     float lift = 30.0f, sink = 40.0f, opacity = 0.6f, puffSize = 25.0f;
     float turbulence = 0.5f, gust = 0.5f, loopSeconds = 12.0f, anisotropy = 0.6f;

@@ -1901,11 +1901,14 @@ void Application::DrawGraphPanel() {
         ui::SectionHeader("形");
         if (ui::BeginPropertyTable("snowPlumeShape")) {
             changed |= ui::PropertyFloat("長さ", &plume->lengthMeters, 1.0f, 5000.0f, defaults.lengthMeters,
-                                         "風下へ伸びる長さ。帯ごとに ±25% ばらつく", "%.0f m", ImGuiSliderFlags_Logarithmic);
+                                         "風下へ伸びる長さ。帯ごとに ±10% ばらつく", "%.0f m", ImGuiSliderFlags_Logarithmic);
             changed |= ui::PropertyFloat("根元の幅", &plume->widthStart, 0.1f, 2000.0f, defaults.widthStart,
-                                         nullptr, "%.1f m", ImGuiSliderFlags_Logarithmic);
+                                         "種の間隔（地形の一辺 ÷ 種の数）の 1.3 倍が下限。それより細くしても変わらない"
+                                         "（隣の帯と必ず重ねるため）。細くしたいときは種の数を増やす",
+                                         "%.1f m", ImGuiSliderFlags_Logarithmic);
             changed |= ui::PropertyFloat("先端の幅", &plume->widthEnd, 0.1f, 2000.0f, defaults.widthEnd,
-                                         "風下へ行くほどこの幅まで広がる", "%.1f m", ImGuiSliderFlags_Logarithmic);
+                                         "風下へ行くほどこの幅まで広がる。根元の幅（下限を掛けた後）より細くはならない",
+                                         "%.1f m", ImGuiSliderFlags_Logarithmic);
             changed |= ui::PropertyFloat("持ち上がり", &plume->lift, 0.0f, 1000.0f, defaults.lift,
                                          "稜線を越えてから浮き上がる高さ", "%.0f m");
             changed |= ui::PropertyFloat("沈み込み", &plume->sink, 0.0f, 1000.0f, defaults.sink,

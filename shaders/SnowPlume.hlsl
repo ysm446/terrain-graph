@@ -5,8 +5,8 @@
 // （風下へ伸び、持ち上がってから沈み、地形の下へは潜らない）。幅の向きは「中心線を軸にカメラへ回す」
 // ので、横から見ても板が線に潰れない。
 //
-// 濃さは x（風下への距離）と z（時間）の両方で周期を持つ値ノイズで作る。x を風速で流し、
-// z を時間で進めても、loopSeconds ごとに完全に同じ絵へ戻る（継ぎ目のないループ）。
+// 濃さはワールド座標で引く 4D の値ノイズ（空間 3 軸 + 時間）で作る。風下へ風速で流し、時間の軸を
+// 進めても、loopSeconds ごとに完全に同じ絵へ戻る（継ぎ目のないループ。空間には周期が無い）。
 //
 // 大気の合成の後に、深度を読み比べて描く（深度バッファは束ねない）。雲より常に手前に乗る。
 #include "AtmosphereCommon.hlsli"
@@ -96,8 +96,13 @@ struct Ribbon {
 
 float LoopPhase() { return 6.28318530718 * g_plume.time / g_plume.loopSeconds; }
 
+// 種の間隔（m）。
+float SeedSpacing() { return g_plume.planeSize / float(max(g_plume.seedsPerSide, 1u)); }
+
+// 根元は種の間隔より広くして、隣の帯と必ず重ねる（発生点が点々と離れて見えないように）。
 float Width(Ribbon r, float t) {
-    return lerp(g_plume.widthStart, g_plume.widthEnd, pow(t, 0.8)) * r.widthScale;
+    const float start = max(g_plume.widthStart, 1.3 * SeedSpacing());
+    return lerp(start, max(g_plume.widthEnd, start), pow(t, 0.8)) * r.widthScale;
 }
 
 // 中心線。t は根元 0〜先端 1。時間は LoopPhase の整数倍でしか入れない（ループを閉じるため）。
@@ -112,8 +117,10 @@ float3 Centerline(Ribbon r, float t) {
     const float drop = g_plume.sink * t * t;
     const float bob = g_plume.turbulence * 0.04 * r.length * t * sin(r.phase * 2.3 + t * 6.0 - loopPhase * 2.0);
     float y = r.root.y + rise - drop + bob;
-    // 風下の斜面へは潜らせない。幅が広がるほど少し浮かせる。
-    y = max(y, TerrainHeight(xz) + 1.5 + 0.2 * Width(r, t));
+    // 風下の斜面へは潜らせない。幅が広がるほど少し浮かせる。浮かせる量は設定の幅で決める
+    // （種の間隔で広げた幅を使うと、大きな地形で根元が稜線から何十 m も浮く）。
+    const float nominalWidth = lerp(g_plume.widthStart, max(g_plume.widthEnd, g_plume.widthStart), pow(t, 0.8)) * r.widthScale;
+    y = max(y, TerrainHeight(xz) + 1.5 + 0.2 * nominalWidth);
     return float3(xz.x, y, xz.y);
 }
 
@@ -146,11 +153,13 @@ bool MakeRibbon(uint instance, out Ribbon r) {
     r.root = float3(rootXz.x, TerrainHeight(rootXz) + 2.0, rootXz.y);
     r.along = g_plume.wind;
     r.across = float2(g_plume.wind.y, -g_plume.wind.x);
-    r.phase = HashUnit(hash * 7u + 3u) * 6.28318530718;
+    // 位相は稜線に沿った位置で決める。隣どうしが少しずつずれて揃い、揺れが稜線を波のように伝わる。
+    const float wave = max(6.0 * SeedSpacing(), 4.0 * g_plume.puffSize);
+    r.phase = 6.28318530718 * (dot(rootXz, r.across) / wave + 0.15 * HashUnit(hash * 7u + 3u));
     r.hash = hash;
     const float loopPhase = LoopPhase();
     r.gust = 0.6 * sin(loopPhase + r.phase) + 0.4 * sin(2.0 * loopPhase + r.phase * 1.3);
-    const float lengthJitter = 0.75 + 0.5 * HashUnit(hash * 5u + 2u);
+    const float lengthJitter = 0.9 + 0.2 * HashUnit(hash * 5u + 2u);
     r.length = g_plume.lengthMeters * lengthJitter * (1.0 + 0.3 * g_plume.gust * r.gust);
     // 2 枚目以降は、上に薄く広い層を重ねる（厚みと奥行きを出す）。
     const float layer = float(sheet);
@@ -167,7 +176,7 @@ struct VsOutput {
     float3 world : TEXCOORD0;
     // x: 根元からの距離（m）、y: 幅の中の位置 -1〜1
     float2 ribbon : TEXCOORD1;
-    // x: t（根元 0〜先端 1）、y: 帯の不透明度、z: 帯ごとの乱数、w: 帯の幅（m）
+    // x: t（根元 0〜先端 1）、y: 帯の不透明度、z: 未使用、w: 帯の幅（m）
     float4 params : TEXCOORD2;
     // x: 太陽の見え具合（地形の影と雲影）、y: 真横から見たときに薄める係数
     float2 light : TEXCOORD3;
@@ -197,7 +206,7 @@ VsOutput VsMain(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID) {
     output.world = world;
     output.ribbon = float2(t * r.length, corner.y);
     const float gustOpacity = 1.0 + 0.4 * g_plume.gust * r.gust;
-    output.params = float4(t, g_plume.opacity * r.strength * r.opacity * gustOpacity, HashUnit(r.hash * 11u + 5u), width);
+    output.params = float4(t, g_plume.opacity * r.strength * r.opacity * gustOpacity, 0.0, width);
     float visibility = TerrainVisibility(center);
     if (g_plume.atmosphericMode != 0)
         visibility *= CloudShadow(center, g_plume.atmosphere, g_plume.cloudNoiseIndex);
@@ -205,41 +214,60 @@ VsOutput VsMain(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID) {
     return output;
 }
 
-// --- 周期つきの値ノイズ ----------------------------------------------------
-// x を periodX、z を periodZ（どちらも格子の数）で巻く。y は巻かない（帯ごとのずらしに使う）。
-float LatticeValue(int3 p, int periodX, int periodZ) {
-    p.x = ((p.x % periodX) + periodX) % periodX;
-    p.z = ((p.z % periodZ) + periodZ) % periodZ;
-    return HashUnit(uint(p.x) * 73856093u ^ uint(p.y) * 19349663u ^ uint(p.z) * 83492791u);
+// --- 時間方向に閉じた 4D の値ノイズ ------------------------------------------
+// 空間の 3 軸（x: 風下、y: 横、z: 高さ）と時間の軸 w。w を periodW で巻き、1 周するごとに
+// x を shiftX 格子ぶんずらして同じ値へ戻す：
+//   N(x - shiftX, y, z, w + periodW) = N(x, y, z, w)
+// 風で x を 1 ループに shiftX 格子流し、w を periodW 進めると、ループの終わりが始まりと一致する。
+// 空間には周期が無い（流れた距離ごとに同じ模様が並ぶことがない）。時間を空間の軸に混ぜると、
+// 巻き方のせいで高さ方向が風下方向のずらした写しになり、斜めの筋が出る。
+float LatticeValue(int3 p, int w, int shiftX, int periodW) {
+    const int wraps = w >= 0 ? w / periodW : -((-w + periodW - 1) / periodW);
+    p.x += shiftX * wraps;
+    w -= periodW * wraps;
+    return HashUnit(uint(p.x) * 73856093u ^ uint(p.y) * 19349663u ^ uint(p.z) * 83492791u ^ uint(w) * 2654435761u);
 }
-float PeriodicNoise(float3 p, int periodX, int periodZ) {
+float NoiseSlice(int3 i, float3 u, int w, int shiftX, int periodW) {
+    const float x00 = lerp(LatticeValue(i, w, shiftX, periodW), LatticeValue(i + int3(1, 0, 0), w, shiftX, periodW), u.x);
+    const float x10 = lerp(LatticeValue(i + int3(0, 1, 0), w, shiftX, periodW), LatticeValue(i + int3(1, 1, 0), w, shiftX, periodW), u.x);
+    const float x01 = lerp(LatticeValue(i + int3(0, 0, 1), w, shiftX, periodW), LatticeValue(i + int3(1, 0, 1), w, shiftX, periodW), u.x);
+    const float x11 = lerp(LatticeValue(i + int3(0, 1, 1), w, shiftX, periodW), LatticeValue(i + int3(1, 1, 1), w, shiftX, periodW), u.x);
+    return lerp(lerp(x00, x10, u.y), lerp(x01, x11, u.y), u.z);
+}
+float LoopNoise(float3 p, float w, int shiftX, int periodW) {
     const float3 cell = floor(p);
     const float3 f = p - cell;
     const float3 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    const float wCell = floor(w);
+    const float fw = w - wCell;
+    const float uw = fw * fw * fw * (fw * (fw * 6.0 - 15.0) + 10.0);
     const int3 i = int3(cell);
-    const float x00 = lerp(LatticeValue(i, periodX, periodZ), LatticeValue(i + int3(1, 0, 0), periodX, periodZ), u.x);
-    const float x10 = lerp(LatticeValue(i + int3(0, 1, 0), periodX, periodZ), LatticeValue(i + int3(1, 1, 0), periodX, periodZ), u.x);
-    const float x01 = lerp(LatticeValue(i + int3(0, 0, 1), periodX, periodZ), LatticeValue(i + int3(1, 0, 1), periodX, periodZ), u.x);
-    const float x11 = lerp(LatticeValue(i + int3(0, 1, 1), periodX, periodZ), LatticeValue(i + int3(1, 1, 1), periodX, periodZ), u.x);
-    return lerp(lerp(x00, x10, u.y), lerp(x01, x11, u.y), u.z);
+    const int iw = int(wCell);
+    return lerp(NoiseSlice(i, u, iw, shiftX, periodW), NoiseSlice(i, u, iw + 1, shiftX, periodW), uw);
 }
 
-// 雪煙の濃さ（0〜1）。x を風速で流し、z を時間で進める。細かい層ほど z が速く進む（ちぎれて変わる）。
-float PlumeDensity(float along, float across, float width, float seedOffset) {
+// 雪煙の濃さ（0〜1）。**ワールド座標の 3 軸（風下・横・高さ）で引く**ので、重なった帯どうしで
+// 模様が続き、1 枚のつながった雪煙に見える。x を風速で流し、w を時間で進める。
+// 細かい層ほど w が速く進む（ちぎれて変わる）。
+float PlumeDensity(float3 world) {
     const float phase = g_plume.time / g_plume.loopSeconds;
     // 1 ループで流れる距離を格子の整数個に丸める。風速はわずかにずれるが、ループが閉じる。
-    const int periodX = max(1, int(round(g_plume.windSpeed * g_plume.loopSeconds / g_plume.puffSize)));
-    const int periodZ = 3;
-    float3 p = float3(along / g_plume.puffSize - float(periodX) * phase,
-                      across * 0.5 * width / g_plume.puffSize + seedOffset * 97.0,
-                      float(periodZ) * phase);
-    // 大きな塊で位置をゆがめ、帯に沿った縞に見えないようにする。
-    const float warp = PeriodicNoise(p * float3(1.0, 0.5, 1.0) + float3(0, 31.7, 0), periodX, periodZ);
-    p.x += (warp - 0.5) * 1.5 * g_plume.turbulence;
+    // 0 でもよい（無風なら流さず、時間の軸だけで変わる）。
+    const int shiftX = max(0, int(round(g_plume.windSpeed * g_plume.loopSeconds / g_plume.puffSize)));
+    const int periodW = 3;
+    const float along = dot(world.xz, g_plume.wind);
+    const float across = dot(world.xz, float2(g_plume.wind.y, -g_plume.wind.x));
+    float3 p = float3(along / g_plume.puffSize - float(shiftX) * phase,
+                      across / g_plume.puffSize,
+                      world.y / g_plume.puffSize);
+    const float w = float(periodW) * phase;
+    // 大きな塊で位置をゆがめ、格子に沿った筋に見えないようにする。
+    const float warp = LoopNoise(p + float3(0, 31.7, 0), w, shiftX, periodW);
+    p.xz += (warp - 0.5) * float2(1.5, 0.8) * g_plume.turbulence;
     float sum = 0, amplitude = 0.55, norm = 0;
     [unroll] for (int octave = 0; octave < 4; ++octave) {
         const float frequency = float(1u << uint(octave));
-        sum += amplitude * PeriodicNoise(p * frequency, periodX << octave, periodZ << octave);
+        sum += amplitude * LoopNoise(p * frequency, w * frequency, shiftX << octave, periodW << octave);
         norm += amplitude;
         amplitude *= 0.5;
     }
@@ -265,10 +293,12 @@ float4 PsMain(VsOutput input) : SV_Target {
     const float soft = saturate((sceneDistance - LinearDepth(input.position.z)) / max(0.25 * width, 4.0));
 
     const float t = input.params.x;
-    const float density = PlumeDensity(input.ribbon.x, input.ribbon.y, width, input.params.z);
+    const float density = PlumeDensity(input.world);
     // 輪郭をノイズで崩し、先へ行くほど濃い所だけが残る（ちぎれて消えていく）。
-    const float edge = 1.0 - smoothstep(0.3, 1.0, abs(input.ribbon.y) + (density - 0.5) * 0.9 * (0.4 + g_plume.turbulence));
-    const float fadeIn = smoothstep(0.0, 0.08, t);
+    // 帯の輪郭は重なった隣の帯と揃わないので、弱めに効かせ、形はワールドのノイズに任せる
+    // （輪郭が強いと、帯の縁の弧が何本も並んで刷毛目に見える）。
+    const float edge = 1.0 - smoothstep(0.0, 1.0, 0.75 * abs(input.ribbon.y) + (density - 0.5) * 1.6 * (0.4 + g_plume.turbulence));
+    const float fadeIn = smoothstep(0.0, 0.03, t);
     const float fadeOut = 1.0 - smoothstep(0.5, 1.0, t + (density - 0.5) * 0.4);
     const float puffs = saturate((density - lerp(0.3, 0.52, t)) * 3.0);
     const float alpha = saturate(input.params.y * edge * fadeIn * fadeOut * puffs * soft * input.light.y);
