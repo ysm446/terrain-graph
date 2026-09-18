@@ -110,12 +110,12 @@ float3 Centerline(Ribbon r, float t) {
     const float loopPhase = LoopPhase();
     const float s = t * r.length;
     const float meander = g_plume.turbulence * r.length * t *
-        (0.10 * sin(r.phase + t * 4.0 - loopPhase * 2.0) + 0.04 * sin(r.phase * 1.7 + t * 9.0 - loopPhase * 3.0));
+        (0.10 * sin(r.phase + t * 4.0 - loopPhase * 2.0) + 0.04 * sin(r.phase + 1.7 + t * 9.0 - loopPhase * 3.0));
     const float2 xz = r.root.xz + r.along * s + r.across * meander;
     // 稜線を越えて持ち上がり、風下へ行くほど沈む。
     const float rise = r.lift * (1.0 - exp(-t * 5.0));
     const float drop = g_plume.sink * t * t;
-    const float bob = g_plume.turbulence * 0.04 * r.length * t * sin(r.phase * 2.3 + t * 6.0 - loopPhase * 2.0);
+    const float bob = g_plume.turbulence * 0.04 * r.length * t * sin(r.phase + 2.3 + t * 6.0 - loopPhase * 2.0);
     float y = r.root.y + rise - drop + bob;
     // 風下の斜面へは潜らせない。幅が広がるほど少し浮かせる。浮かせる量は設定の幅で決める
     // （種の間隔で広げた幅を使うと、大きな地形で根元が稜線から何十 m も浮く）。
@@ -154,11 +154,12 @@ bool MakeRibbon(uint instance, out Ribbon r) {
     r.along = g_plume.wind;
     r.across = float2(g_plume.wind.y, -g_plume.wind.x);
     // 位相は稜線に沿った位置で決める。隣どうしが少しずつずれて揃い、揺れが稜線を波のように伝わる。
+    // 使う側は位相に倍率を掛けず、定数を足してずらす（掛けると隣との差も倍になり、波が崩れる）。
     const float wave = max(6.0 * SeedSpacing(), 4.0 * g_plume.puffSize);
     r.phase = 6.28318530718 * (dot(rootXz, r.across) / wave + 0.15 * HashUnit(hash * 7u + 3u));
     r.hash = hash;
     const float loopPhase = LoopPhase();
-    r.gust = 0.6 * sin(loopPhase + r.phase) + 0.4 * sin(2.0 * loopPhase + r.phase * 1.3);
+    r.gust = 0.6 * sin(loopPhase + r.phase) + 0.4 * sin(2.0 * loopPhase + r.phase + 1.3);
     const float lengthJitter = 0.9 + 0.2 * HashUnit(hash * 5u + 2u);
     r.length = g_plume.lengthMeters * lengthJitter * (1.0 + 0.3 * g_plume.gust * r.gust);
     // 2 枚目以降は、上に薄く広い層を重ねる（厚みと奥行きを出す）。
@@ -193,10 +194,15 @@ VsOutput VsMain(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID) {
     const float2 corner = kCorners[vertexId % 6];
     const float t = (float(vertexId / 6) + corner.x) / float(kSegments);
     const float3 center = Centerline(r, t);
-    const float3 tangent = normalize(Centerline(r, min(t + 0.02, 1.0)) - Centerline(r, max(t - 0.02, 0.0)));
-    const float3 toCamera = normalize(g_plume.cameraPosition - center);
-    // 中心線を軸にカメラへ回す。風の向きに沿って覗き込むときだけ横向きの軸に落とす。
-    float3 side = cross(tangent, toCamera);
+    // 帯の軸（根元→先端）を軸にカメラへ回す。風の向きに沿って覗き込むときだけ横向きの軸に落とす。
+    // **向きは帯 1 本で 1 つに決める。**頂点ごとの接線とカメラの向きで決めると、帯に沿って覗き込む所で
+    // 隣の頂点と向きが大きく回り、四角形がねじれて折り重なる（折り目が二重に合成されて筋になり、
+    // 折り目は幅の縁ではないので縁のフェードも効かない）。
+    const float3 rootCenter = Centerline(r, 0.0);
+    const float3 tipCenter = Centerline(r, 1.0);
+    const float3 axis = normalize(tipCenter - rootCenter);
+    const float3 toCamera = normalize(g_plume.cameraPosition - 0.5 * (rootCenter + tipCenter));
+    float3 side = cross(axis, toCamera);
     const float sideLength = length(side);
     side = sideLength > 1e-4 ? side / sideLength : float3(r.across.x, 0, r.across.y);
     const float width = Width(r, t);
@@ -297,8 +303,14 @@ float4 PsMain(VsOutput input) : SV_Target {
     // 輪郭をノイズで崩し、先へ行くほど濃い所だけが残る（ちぎれて消えていく）。
     // 帯の輪郭は重なった隣の帯と揃わないので、弱めに効かせ、形はワールドのノイズに任せる
     // （輪郭が強いと、帯の縁の弧が何本も並んで刷毛目に見える）。
-    const float edge = 1.0 - smoothstep(0.0, 1.0, 0.75 * abs(input.ribbon.y) + (density - 0.5) * 1.6 * (0.4 + g_plume.turbulence));
-    const float fadeIn = smoothstep(0.0, 0.03, t);
+    // 板の端（幅の縁と根元）へは、濃さに関わらず広く滑らかに 0 へ落とす。ノイズはその途中を崩すだけ
+    // （濃い塊が高いアルファのまま板の端に届くと、板の直線の切れ目が見える）。
+    // 濃い所ほど外まで残り、薄い所ほど内へ削れる（puffs と同じ向き）。
+    const float profile = 1.0 - smoothstep(0.3, 1.0, abs(input.ribbon.y));
+    const float edge = smoothstep(0.0, 0.6, profile + (density - 0.5) * 1.2 * (0.4 + g_plume.turbulence)) *
+                       smoothstep(0.0, 0.35, profile);
+    // 根元も同じ。濃い塊は稜線のすぐ先から、薄い所は少し離れてから立ち上がる。
+    const float fadeIn = smoothstep(0.0, lerp(0.18, 0.06, saturate((density - 0.35) * 3.0)), t);
     const float fadeOut = 1.0 - smoothstep(0.5, 1.0, t + (density - 0.5) * 0.4);
     const float puffs = saturate((density - lerp(0.3, 0.52, t)) * 3.0);
     const float alpha = saturate(input.params.y * edge * fadeIn * fadeOut * puffs * soft * input.light.y);
