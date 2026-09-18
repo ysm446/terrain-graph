@@ -413,6 +413,9 @@ void Application::DrawCloudShapeGizmo(const ImVec2& viewportMin, const ImVec2& v
         drawList->PopClipRect();
         return;
     }
+    // Cloud Shape Generate / Cloud Transform は「配置ガイド」を切れる（オフでも軸ギズモは残る）。
+    if (const auto* generate=std::get_if<graph::CloudShapeGenerateSettings>(&node->settings); generate && !generate->showGuides) { drawList->PopClipRect(); return; }
+    if (const auto* transform=std::get_if<graph::CloudTransformSettings>(&node->settings); transform && !transform->showGuides) { drawList->PopClipRect(); return; }
     const auto shapes=m_graph.CompileCloudShapes(node->id);
     // 配置ガイドだけを間引く。生成・ベイクには全形状を使う。
     const size_t stride=std::max(size_t(1),(shapes.primitives.size()+255)/256);

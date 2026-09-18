@@ -1529,14 +1529,14 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
                 {"randomScale",generate->randomScale},{"scaleMin",generate->scaleMin},{"scaleMax",generate->scaleMax},
                 {"secondaryShapes",generate->secondaryShapes},{"iterations",generate->iterations},
                 {"displacement",generate->displacement},{"spread",generate->spread},
-                {"smoothnessRatio",generate->smoothnessRatio},{"seed",generate->seed}};
+                {"smoothnessRatio",generate->smoothnessRatio},{"seed",generate->seed},{"showGuides",generate->showGuides}};
         } else if (const auto* animation = std::get_if<graph::CloudAnimationSettings>(&node.settings)) {
             item["cloudAnimation"]={{"centerX",animation->centerX},{"centerZ",animation->centerZ},
                 {"width",animation->width},{"depth",animation->depth},{"speed",animation->speed},
                 {"direction",animation->direction},{"playing",animation->playing},
                 {"evolveNoise",animation->evolveNoise},{"noiseSpeedRatio",animation->noiseSpeedRatio}};
         } else if (const auto* transform = std::get_if<graph::CloudTransformSettings>(&node.settings)) {
-            item["proceduralCloud"]={{"translateX",transform->translateX},{"translateY",transform->translateY},{"translateZ",transform->translateZ}};
+            item["proceduralCloud"]={{"translateX",transform->translateX},{"translateY",transform->translateY},{"translateZ",transform->translateZ},{"showGuides",transform->showGuides}};
         } else if (const auto* cloudNoise = std::get_if<graph::CloudNoiseSettings>(&node.settings)) {
             item["proceduralCloud"]["noiseType"] = EnumName(kProceduralCloudNoiseNames, static_cast<uint32_t>(cloudNoise->noiseType));
             item["proceduralCloud"]["scale"] = cloudNoise->scale;
@@ -1847,6 +1847,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     const float legacyRatio=ReadFloat(*shape,"smoothness",settings.smoothnessRatio*sphereRadius)/sphereRadius;
                     settings.smoothnessRatio=std::clamp(ReadFloat(*shape,"smoothnessRatio",legacyRatio),0.0f,3.0f);
                     settings.seed=std::clamp(ReadInt(*shape,"seed",settings.seed),0,10000);
+                    settings.showGuides=ReadBool(*shape,"showGuides",settings.showGuides);
                 }
                 created.settings=settings;
             } else if (created.kind == graph::NodeKind::CloudAnimation) {
@@ -1869,6 +1870,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.translateX=std::clamp(ReadFloat(*shape,"translateX",0),-10000.0f,10000.0f);
                     settings.translateY=std::clamp(ReadFloat(*shape,"translateY",0),-10000.0f,10000.0f);
                     settings.translateZ=std::clamp(ReadFloat(*shape,"translateZ",0),-10000.0f,10000.0f);
+                    settings.showGuides=ReadBool(*shape,"showGuides",settings.showGuides);
                 }
                 created.settings=settings;
             } else if (created.kind == graph::NodeKind::CloudNoise) {

@@ -275,6 +275,7 @@ struct CloudShapeGenerateSettings {
     int iterations=1; // 二次形状の繰り返し（1〜3）。
     float displacement=0.3f, spread=0.5f;
     float smoothnessRatio=1.0f; // つなぎの滑らかさ（球の半径に対する比率）。
+    bool showGuides=true; // 選択中に元形状の球をビューポートへ描くか。
     int seed=1;
     bool operator==(const CloudShapeGenerateSettings&) const = default;
 };
@@ -324,7 +325,7 @@ struct CloudAnimationSettings {
     float noiseSpeedRatio=0.75f;
     bool playing=true;
 };
-struct CloudTransformSettings { float translateX=0, translateY=0, translateZ=0; };
+struct CloudTransformSettings { float translateX=0, translateY=0, translateZ=0; bool showGuides=true; };
 struct CloudMergeSettings { float smoothness=80; };
 struct CloudNoiseSettings {
     int noiseType=0; // 0: Perlin（従来）、1: Perlin fBM、2: Perlin-Worley。

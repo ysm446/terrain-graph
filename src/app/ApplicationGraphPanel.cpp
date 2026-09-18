@@ -1645,6 +1645,7 @@ void Application::DrawGraphPanel() {
             ui::PropertyValue("実際の滑らかさ",text);
             std::snprintf(text,sizeof(text),"%zu 個",generated.primitives.size());
             ui::PropertyValue("合計形状数",text);
+            changed |= ui::PropertyBool("配置ガイド", &generate->showGuides, defaults.showGuides, "選択中に元形状の球を大円で表示します。多数の場合は表示のみ間引きます。");
             ui::EndPropertyTable();
             if (generated.shapeOverflow) ui::HintText("作業メモリ予算を超えました。球の間隔を大きくするか二次形状の繰り返しを減らしてください。");
         }
@@ -1721,6 +1722,7 @@ void Application::DrawGraphPanel() {
             changed |= ui::PropertyFloat("移動 X", &transform->translateX, -10000, 10000, defaults.translateX, "元形状からの移動量。", "%.1f m");
             changed |= ui::PropertyFloat("移動 Y", &transform->translateY, -10000, 10000, defaults.translateY, "元形状からの移動量。", "%.1f m");
             changed |= ui::PropertyFloat("移動 Z", &transform->translateZ, -10000, 10000, defaults.translateZ, "元形状からの移動量。", "%.1f m");
+            changed |= ui::PropertyBool("配置ガイド", &transform->showGuides, defaults.showGuides, "選択中に移動後の球を大円で表示します。軸ギズモは残ります。");
             ui::EndPropertyTable();
         }
         if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }

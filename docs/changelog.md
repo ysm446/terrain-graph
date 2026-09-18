@@ -1,7 +1,11 @@
 # Changelog
 
 作成日時: 2026-08-31 06:18
-更新日時: 2026-09-18 05:10
+更新日時: 2026-09-18 12:30
+
+## 未リリース — 雲形状ノードの配置ガイドの切り替え
+
+- Cloud Shape Generate と Cloud Transform に「配置ガイド」（既定オン、保存名 `showGuides`）を追加。オフにすると、ノードを選んでいてもビューポートに球の大円を描かない。Cloud Transform の軸ギズモは残る。Cloud Map Generate の「分布ガイド」と同じ扱い。
 
 ## 未リリース — Wind Field ノード
 
