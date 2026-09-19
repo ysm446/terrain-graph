@@ -41,6 +41,8 @@ struct SnowPlumeFrame {
     // 無効（UINT32_MAX）なら前後を比べず、常に雲の手前に乗る。
     uint32_t cloudIndex = UINT32_MAX, cloudDepthIndex = UINT32_MAX;
     float cloudFarDistance = 0;
+    // 環境光を雲あり / 雲なしで混ぜる値（地形と同じ）。
+    Atmosphere::AmbientBlend ambient;
 };
 
 // シーンカラー（RTV を束ねた状態）へ半透明で重ねる。深度は SRV として読める状態にしておくこと。

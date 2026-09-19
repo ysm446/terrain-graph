@@ -1,9 +1,17 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-19 03:40
+更新日時: 2026-09-19 11:32
+
+## 雲と環境光（継続課題）
+
+環境マップは原点（高さ 0）から 1 回だけ撮るので、雲海の上の山頂まで雲の下の環境光で照らされていた。雲を抜いた空の環境（irradiance だけ）をもう 1 つ持ち、地点の高さで混ぜる第 1 段階を入れた。地形・配置モデル・雪煙が `SampleAmbientIrradiance()` を使う。調整は「プレビュー設定 > 雲と環境光」。**今後も改善を続ける課題**で、方針・現在の実装・残っている課題（雲海からの照り返し、水平方向の違い、鏡面、撮る位置など）は [cloud-ambient-light.md](../reference/cloud-ambient-light.md) にまとめてある。
+
+検証: Debug ビルド、DXC（MeshPbr / ModelPreview / SnowPlume の PsMain ほか）、テスト。`data/Scenes/everest` を読み込みだけで開き、雲ありの環境だけの絵と撮り比べた（`data/Test/snow-plume-qa/vp-20-ambient-compare.png`）。**未確認**: UI の表示（`--screenshot-ui` 未実施）、保存と読み込みの往復、配置モデルでの見え方、単独の雲（楕円体・プリミティブ）のシーン、太陽を動かしたとき（日時モード）の作り直しの重さ、Release ビルド。
 
 ## Snow Plume ノード（稜線の雪煙）
+
+2026-09-19 の追加: 板の向きを帯 1 本で 1 つに決めてねじれの筋を消し、板の端へ必ず透明に落とした。稜線の風上から立ち上がり、稜線でいちばん濃くなって風下の谷へ覆いかぶさる形にした（「風上の助走」「斜面に沿う」）。帯を軸に近い向きから見るときの毛羽を、ノイズを引く位置を軸の向きに縮めて消した。雲の向こう側にある雪煙を、大気の合成が残した雲の透過率で薄めるようにした。詳細は [nodes.md](../reference/nodes.md) の Snow Plume。動きとループの継ぎ目は引き続き未確認。
 
 ユーザー判断により、稜線の雪煙はボリュームのシミュレーションではなく**帯メッシュで描く方式**へ切り替えた（[plan.md](plan.md)）。Snow Plume ノード（`NodeKind::SnowPlume`、`snowPlume`）を追加した。Source（Mask）だけを受け、出力を持たない。`CompileSnowPlumes` が Source の接続先と、上流の Wind Field の風向・風速を集める。Application はノードごとに Source を 512² で評価し（`SnowPlumeSlot`。雲のマスクと同じ `PrepareCloudMask`）、`SnowPlumeDraw` としてレンダラへ渡す。描画は `renderer/SnowPlume.cpp` と `SnowPlume.hlsl`。頂点バッファを使わず、種の格子 × シートの数だけインスタンス描画し、頂点シェーダが中心線を組み立てる。大気の合成の後に、深度を SRV として読んで重ねる。パラメータは [nodes.md](../reference/nodes.md) の Snow Plume を参照。
 

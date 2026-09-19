@@ -30,6 +30,21 @@ struct AtmosphericParameters {
     uint nightEnabled; float moonAzimuth; float moonElevation; float moonIlluminance;
     float moonPhase; float starIntensity; float starRotation; float starLatitude;
 };
+// 環境光（IBL の拡散）を、雲ありの環境と雲なしの環境から高さで混ぜて引く。
+// 環境マップは原点から 1 回だけ撮るので、そのままだと雲海の上の山頂まで雲の下の環境光で照らされる。
+// low〜high は雲層の高さ（C++ の Atmosphere::CurrentAmbientBlend が決める）。それより下は雲あり、
+// 上は雲なし。occlusion は遮蔽の強さで、0 なら常に雲なし。clearIndex が無効なら雲ありだけを引く。
+// 設計と残っている課題は docs/reference/cloud-ambient-light.md。
+float3 SampleAmbientIrradiance(uint cloudyIndex, uint clearIndex, float3 direction, float height,
+                               float low, float high, float occlusion) {
+    TextureCube<float4> cloudyMap = ResourceDescriptorHeap[cloudyIndex];
+    const float3 cloudy = cloudyMap.SampleLevel(g_samplerLinearClamp, direction, 0).rgb;
+    if (clearIndex == 0xffffffffu) return cloudy;
+    TextureCube<float4> clearMap = ResourceDescriptorHeap[clearIndex];
+    const float3 clear = clearMap.SampleLevel(g_samplerLinearClamp, direction, 0).rgb;
+    const float above = smoothstep(low, max(high, low + 1e-3), height);
+    return lerp(cloudy, clear, lerp(1.0, above, saturate(occlusion)));
+}
 float3 AtmosphereSun(AtmosphericParameters p) {
     return float3(cos(p.elevation) * sin(p.azimuth), sin(p.elevation), cos(p.elevation) * cos(p.azimuth));
 }

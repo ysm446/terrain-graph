@@ -180,7 +180,7 @@ bool Environment::CreateTargets(rhi::Device& device, uint32_t equirectWidth,
 }
 
 bool Environment::BuildFromEquirect(rhi::Device& device, rhi::PipelineCache& pipelineCache,
-                                    float luminanceScale) {
+                                    float luminanceScale, bool irradianceOnly) {
     ID3D12PipelineState* toCubePipeline =
         pipelineCache.GetCompute(L"EnvEquirectToCube.hlsl", L"CsMain");
     ID3D12PipelineState* downsamplePipeline =
@@ -288,6 +288,11 @@ bool Environment::BuildFromEquirect(rhi::Device& device, rhi::PipelineCache& pip
         PIXEndEvent(commandList);
 
         // --- プリフィルタ済み鏡面 ------------------------------------------
+        // 拡散だけを使う環境では作らない。状態だけは読み取りへ揃えておく。
+        if (irradianceOnly) {
+            TransitionIfNeeded(commandList, m_prefiltered, kShaderReadState);
+            return;
+        }
         PIXBeginEvent(commandList, PIX_COLOR(120, 180, 255), "EnvPrefilter");
         commandList->SetPipelineState(prefilterPipeline);
 
@@ -330,7 +335,8 @@ bool Environment::BuildFromEquirect(rhi::Device& device, rhi::PipelineCache& pip
 }
 
 bool Environment::BuildFromAtmosphere(rhi::Device& device, rhi::PipelineCache& pipelineCache,
-                                       const AtmosphereSettings& settings, uint32_t lutIndex, uint32_t noiseIndex, uint32_t skyOutputIndex, uint32_t cloudLightingIndex) {
+                                       const AtmosphereSettings& settings, uint32_t lutIndex, uint32_t noiseIndex, uint32_t skyOutputIndex, uint32_t cloudLightingIndex,
+                                       bool irradianceOnly) {
     auto* pipeline = pipelineCache.GetCompute(L"AtmosphereEnvironment.hlsl", L"CsMain");
     if (!pipeline) return false;
     // アニメーション更新では同じターゲットを再使用する。毎秒の再確保・ディスクリプタ再利用を避ける。
@@ -351,7 +357,7 @@ bool Environment::BuildFromAtmosphere(rhi::Device& device, rhi::PipelineCache& p
         PIXEndEvent(commands);
     })) return false;
     m_sourceName = "大気散乱スカイ";
-    return BuildFromEquirect(device, pipelineCache, 1.0f);
+    return BuildFromEquirect(device, pipelineCache, 1.0f, irradianceOnly);
 }
 
 bool Environment::BuildFromSky(rhi::Device& device, rhi::PipelineCache& pipelineCache,

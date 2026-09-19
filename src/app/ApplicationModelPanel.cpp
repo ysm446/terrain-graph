@@ -96,6 +96,7 @@ void Application::DrawModelScatters(ID3D12GraphicsCommandList* commandList,
                 draw.shadows=m_renderer.InstanceShadows();
                 const auto& clouds=m_renderer.InstanceClouds();
                 draw.atmosphere=clouds.atmosphere; draw.cloudNoiseIndex=clouds.noiseIndex; draw.atmosphericMode=clouds.mode;
+                draw.ambient=m_renderer.InstanceAmbient();
             }
             const auto& lod=model->geometry->lods[std::min(scatter.settings.lod,static_cast<int>(model->geometry->lods.size())-1)];
             for (const auto& part : lod.parts)

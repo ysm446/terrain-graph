@@ -2143,6 +2143,9 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     atmosphereNode["godRays"] = renderer.GodRays().enabled;
     atmosphereNode["godRayDensity"] = renderer.GodRays().density;
     atmosphereNode["godRayDistance"] = renderer.GodRays().distance;
+    atmosphereNode["cloudAmbientOcclusion"] = renderer.CloudAmbient().occlusion;
+    atmosphereNode["cloudAmbientTransition"] = renderer.CloudAmbient().transition;
+    atmosphereNode["cloudAmbientHeightOffset"] = renderer.CloudAmbient().heightOffset;
     atmosphereNode["fullResolutionClouds"] = renderer.FullResolutionClouds();
     atmosphereNode["temporalClouds"] = renderer.TemporalClouds();
     atmosphereNode["cloudLightingCache"] = renderer.CloudLightingCache();
@@ -2273,6 +2276,11 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
         rays.enabled = ReadBool(source, "godRays", rayDefaults.enabled);
         rays.density = std::clamp(ReadFloat(source, "godRayDensity", rayDefaults.density), 0.0f, 0.0002f);
         rays.distance = std::clamp(ReadFloat(source, "godRayDistance", rayDefaults.distance), 100.0f, 20000.0f);
+        const renderer::CloudAmbientSettings ambientDefaults;
+        auto& ambient = renderer.CloudAmbient();
+        ambient.occlusion = std::clamp(ReadFloat(source, "cloudAmbientOcclusion", ambientDefaults.occlusion), 0.0f, 1.0f);
+        ambient.transition = std::clamp(ReadFloat(source, "cloudAmbientTransition", ambientDefaults.transition), 0.05f, 4.0f);
+        ambient.heightOffset = std::clamp(ReadFloat(source, "cloudAmbientHeightOffset", ambientDefaults.heightOffset), -10000.0f, 10000.0f);
         renderer.FullResolutionClouds() = ReadBool(source, "fullResolutionClouds", false);
         renderer.TemporalClouds() = ReadBool(source, "temporalClouds", true);
         renderer.CloudLightingCache() = ReadBool(source, "cloudLightingCache", true);

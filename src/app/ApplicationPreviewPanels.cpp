@@ -169,6 +169,20 @@ void Application::DrawMaterialPanel() {
             ui::EndPropertyTable();
         }
 
+        ui::SectionHeader("雲と環境光");
+        if (ui::BeginPropertyTable("cloudAmbientRows")) {
+            auto& ambient = m_renderer.CloudAmbient();
+            const renderer::CloudAmbientSettings defaults;
+            ui::PropertyFloat("遮蔽の強さ", &ambient.occlusion, 0.0f, 1.0f, defaults.occlusion,
+                "雲が環境光を遮る強さ。環境マップは原点から 1 回だけ撮るので、雲層より上の地形は雲を抜いた空の環境で照らします。"
+                "1 で雲底より下は雲ありの環境、0 で高さに関わらず雲なしの環境。大気散乱スカイで雲があるときだけ効きます", "%.2f");
+            ui::PropertyFloat("遷移の幅", &ambient.transition, 0.05f, 4.0f, defaults.transition,
+                "雲あり / 雲なしの環境が入れ替わる高さの幅。雲層の厚さに対する倍率で、1 なら雲底から雲頂までで入れ替わります", "%.2f");
+            ui::PropertyFloat("高さのオフセット", &ambient.heightOffset, -10000.0f, 10000.0f, defaults.heightOffset,
+                "入れ替わる高さを上下にずらします。雲海の見た目の上面に合わせたいときに使います", "%.0f m");
+            ui::EndPropertyTable();
+        }
+
         ui::SectionHeader("ボリューム雲");
         if (ui::BeginPropertyTable("volumeCloudQuality", "レイマーチ品質")) {
             ui::PropertyBool("雲を描画", &m_renderer.ShowClouds(), renderer::kPreviewDefaults.showClouds,

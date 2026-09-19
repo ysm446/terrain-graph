@@ -115,9 +115,9 @@ struct MeshConstants {
 
     uint32_t debugView;
     float displacementScale;
-    // float4 の区切りを守るための詰め物。**HLSL 側と必ず同じ数だけ置くこと。**
-    float pad3;
-    float pad4;
+    // 環境光を雲あり / 雲なしで混ぜる高さの範囲（m）。**HLSL 側と同じ並びにすること。**
+    float ambientLow;
+    float ambientHigh;
 
     XMFLOAT4X4 lightViewProjection;
 
@@ -148,7 +148,8 @@ struct MeshConstants {
     AtmosphereSettings atmosphere;
     uint32_t cloudNoiseIndex;
     uint32_t atmosphericMode;
-    float atmospherePad[2];
+    uint32_t clearIrradianceIndex;
+    float ambientOcclusion;
 };
 
 // GPU 側の SkyboxConstants と一致させること。
@@ -504,6 +505,7 @@ void PreviewRenderer::ResetSettings() {
     m_atmosphericEnvironmentIntensity = DefaultSkylightIntensity;
     m_atmosphereSettings = AtmosphereSettings{};
     GodRays() = GodRaySettings{};
+    CloudAmbient() = CloudAmbientSettings{};
     FullResolutionClouds() = false;
     TemporalClouds() = true;
     m_cloudLightingCache = true;
@@ -843,6 +845,14 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     constants.irradianceIndex = environment.IrradianceSrvIndex();
     constants.prefilteredIndex = environment.PrefilteredSrvIndex();
     constants.brdfLutIndex = environment.BrdfLutSrvIndex();
+    // 雲の上の地形は、雲なしの環境で照らす（大気モードで雲があるときだけ。それ以外は混ぜない）。
+    const Atmosphere::AmbientBlend ambient =
+        m_atmosphericMode ? m_atmosphere.CurrentAmbientBlend() : Atmosphere::AmbientBlend{};
+    constants.clearIrradianceIndex = ambient.clearIrradianceIndex;
+    constants.ambientLow = ambient.low;
+    constants.ambientHigh = ambient.high;
+    constants.ambientOcclusion = ambient.occlusion;
+    m_instanceAmbient = ambient;
 
     const compositor::MaterialTextureSet& materialTextures = m_evaluator.Textures();
     const bool useMaterial = m_useMaterialTextures && materialTextures.IsValid();
@@ -1133,6 +1143,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
             frame.cloudDepthIndex = clouds.depthIndex;
             frame.cloudFarDistance = clouds.farDistance;
         }
+        frame.ambient = m_instanceAmbient;
         const uint32_t ribbons = DrawSnowPlumes(pipelineCache, device, commandList, kSceneColorFormat, frame, m_snowPlumes);
         if (ribbons) {
             ++m_stats.drawCalls;

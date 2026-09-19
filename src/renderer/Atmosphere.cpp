@@ -332,6 +332,21 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
         TG_LOG_WARN("大気散乱の環境マップを生成できませんでした");
         return false;
     }
+    // 雲を抜いた空の環境（拡散だけ）。雲の編集では変わらないので、空が変わったときだけ作り直す。
+    // m_skyView へも同じ空を書き直すが、中身は上の生成と同じ。
+    if (skyChanged) m_clearEnvironmentValid = false;
+    if (settings.clouds && !m_clearEnvironmentValid) {
+        if (!m_clearEnvironmentInitialized)
+            m_clearEnvironmentInitialized = m_clearEnvironment.Initialize(device, pipelines, false);
+        if (m_clearEnvironmentInitialized) {
+            AtmosphereSettings clear = settings;
+            clear.clouds = 0;
+            m_clearEnvironmentValid = m_clearEnvironment.BuildFromAtmosphere(
+                device, pipelines, clear, m_multiScatter.SrvIndex(), m_noise.SrvIndex(), m_skyView.UavIndex(),
+                m_cloudLighting.SrvIndex(), true);
+        }
+        if (!m_clearEnvironmentValid) TG_LOG_WARN("雲なしの環境マップを生成できませんでした（環境光は雲ありの環境だけで照らします）");
+    }
     if (!device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commands) {
         TransitionIfNeeded(commands, m_skyView, ReadState);
     })) return false;
@@ -343,8 +358,26 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
     m_ready = true;
     return true;
 }
+Atmosphere::AmbientBlend Atmosphere::CurrentAmbientBlend() const {
+    AmbientBlend blend;
+    if (!m_ready || !m_applied.clouds || !m_clearEnvironmentValid || !m_clearEnvironment.IsReady()) return blend;
+    // 天候層の cloudBottom は沈み分だけ下へ広げた包囲箱なので、球殻の雲底と厚さを使う。
+    const bool weather = m_applied.localCloud == 4;
+    const float bottom = weather ? m_applied.weatherBottom : m_applied.cloudBottom;
+    const float thickness = std::max(weather ? m_applied.weatherThickness : m_applied.cloudThickness, 1.0f);
+    const float middle = bottom + 0.5f * thickness + m_cloudAmbient.heightOffset;
+    const float halfWidth = 0.5f * thickness * std::max(m_cloudAmbient.transition, 0.01f);
+    blend.clearIrradianceIndex = m_clearEnvironment.IrradianceSrvIndex();
+    blend.low = middle - halfWidth;
+    blend.high = middle + halfWidth;
+    blend.occlusion = std::clamp(m_cloudAmbient.occlusion, 0.0f, 1.0f);
+    return blend;
+}
 void Atmosphere::Shutdown(rhi::Device& device) {
     m_environment.Shutdown(device);
+    m_clearEnvironment.Shutdown(device);
+    m_clearEnvironmentInitialized = false;
+    m_clearEnvironmentValid = false;
     device.DeferRelease(m_primitiveBuffer);
     device.DeferRelease(m_primitiveBvhBuffer);
     m_geometryDirty=true;

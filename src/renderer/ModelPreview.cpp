@@ -19,7 +19,7 @@ struct ModelConstants {
     float baseColorTint[3];
     float roughnessValue;
     float metallicValue, aoValue, colorAdjust[2];
-    float brightness, pad0[3];
+    float brightness, ambientLow, ambientHigh, pad0;
     float cameraPosition[3];
     float exposure;
     float lightDirection[3];
@@ -33,7 +33,8 @@ struct ModelConstants {
     float align, offset; uint32_t usePointSize, sceneMode;
     SceneShadowData shadows;
     AtmosphereSettings atmosphere;
-    uint32_t cloudNoiseIndex, atmosphericMode, cloudPad[2];
+    uint32_t cloudNoiseIndex, atmosphericMode, clearIrradianceIndex;
+    float ambientOcclusion;
 };
 static_assert(sizeof(ModelConstants) == 1024);
 
@@ -289,6 +290,10 @@ void ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache
             constants.atmosphere = draw.atmosphere;
             constants.cloudNoiseIndex = draw.cloudNoiseIndex;
             constants.atmosphericMode = draw.atmosphericMode;
+            constants.clearIrradianceIndex = draw.ambient.clearIrradianceIndex;
+            constants.ambientLow = draw.ambient.low;
+            constants.ambientHigh = draw.ambient.high;
+            constants.ambientOcclusion = draw.ambient.occlusion;
             const auto& lo = m_geometry->minimum; const auto& hi = m_geometry->maximum;
             constants.pivot[0] = (lo.x+hi.x)*0.5f; constants.pivot[1] = lo.y;
             constants.pivot[2] = (lo.z+hi.z)*0.5f;

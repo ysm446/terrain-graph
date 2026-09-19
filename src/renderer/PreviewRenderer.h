@@ -249,6 +249,9 @@ public:
         uint32_t noiseIndex = 0, mode = 0;
     };
     const InstanceCloudShadow& InstanceClouds() const { return m_instanceClouds; }
+    // 配置モデルと雪煙に掛ける、環境光の雲あり / 雲なしの混ぜ方。地形へ渡したものと同じ値。
+    const Atmosphere::AmbientBlend& InstanceAmbient() const { return m_instanceAmbient; }
+    CloudAmbientSettings& CloudAmbient() { return m_atmosphere.CloudAmbient(); }
     void RecordInstanceDraw(uint32_t indices, uint32_t count) {
         m_stats.instanceUpperBounds = true;
         ++m_stats.drawCalls; m_stats.vertices += uint64_t(indices)*count;
@@ -445,6 +448,7 @@ private:
     DofSettings m_dof;
     SceneShadowData m_instanceShadows;
     InstanceCloudShadow m_instanceClouds;
+    Atmosphere::AmbientBlend m_instanceAmbient;
     RenderStats m_stats;
     bool m_tessellationEnabled = kPreviewDefaults.tessellationEnabled;
     float m_tessellationFactor = kPreviewDefaults.tessellationFactor;

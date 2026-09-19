@@ -41,9 +41,11 @@ public:
     bool Initialize(rhi::Device& device, rhi::PipelineCache& pipelineCache, bool buildDefaultSky = true);
     void Shutdown(rhi::Device& device);
 
-    // 手続き的な空から作り直す。
+    // 手続き的な空から作り直す。irradianceOnly なら鏡面（プリフィルタ）を作らない
+    // （拡散だけを使う補助の環境用。PrefilteredSrvIndex の中身は不定になる）。
     bool BuildFromAtmosphere(rhi::Device& device, rhi::PipelineCache& pipelineCache,
-                             const AtmosphereSettings& settings, uint32_t lutIndex, uint32_t noiseIndex, uint32_t skyOutputIndex, uint32_t cloudLightingIndex);
+                             const AtmosphereSettings& settings, uint32_t lutIndex, uint32_t noiseIndex, uint32_t skyOutputIndex, uint32_t cloudLightingIndex,
+                             bool irradianceOnly = false);
     bool BuildFromSky(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                       const SkySettings& sky);
 
@@ -84,7 +86,7 @@ public:
 private:
     // equirect からキューブ以降を作り直す。luminanceScale はそのとき掛ける倍率。
     bool BuildFromEquirect(rhi::Device& device, rhi::PipelineCache& pipelineCache,
-                           float luminanceScale);
+                           float luminanceScale, bool irradianceOnly = false);
     bool CreateTargets(rhi::Device& device, uint32_t equirectWidth, uint32_t equirectHeight);
     void ReleaseTargets(rhi::Device& device);
     bool BuildBrdfLut(rhi::Device& device, rhi::PipelineCache& pipelineCache);

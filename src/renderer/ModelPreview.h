@@ -15,6 +15,8 @@ struct ModelInstanceDraw {
     // 雲影。地形（MeshPbr）と同じ大気設定で CloudShadow を引く。atmosphericMode が 0 なら掛けない。
     AtmosphereSettings atmosphere;
     uint32_t cloudNoiseIndex = 0, atmosphericMode = 0;
+    // 環境光を雲あり / 雲なしで混ぜる値（地形と同じ。Atmosphere::CurrentAmbientBlend）。
+    Atmosphere::AmbientBlend ambient;
     DirectX::XMFLOAT4X4 viewProjection;
     DirectX::XMFLOAT3 cameraPosition;
 };

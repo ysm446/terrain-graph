@@ -101,8 +101,28 @@ struct GodRaySettings {
     float distance = 5000.0f;
 };
 
+// 雲が環境光（IBL の拡散）を遮る具合。環境マップは原点から 1 回だけ撮るので、そのままだと雲海の上の
+// 山頂まで雲の下の暗い環境光で照らされる。雲を抜いた環境をもう 1 つ持ち、地点の高さで混ぜる。
+// AtmosphereSettings に入れないのは、値を動かすたびに環境マップの作り直しが走るのを避けるため
+// （設計と残っている課題は docs/reference/cloud-ambient-light.md）。
+struct CloudAmbientSettings {
+    float occlusion = 1.0f;     // 遮蔽の強さ。0 で常に雲なしの環境、1 で雲底より下は雲ありの環境
+    float transition = 1.0f;    // 遷移の幅。雲層の厚さに対する倍率（1 で雲底〜雲頂）
+    float heightOffset = 0.0f;  // 切り替わる高さをずらす量（m）
+};
+
 class Atmosphere {
 public:
+    CloudAmbientSettings& CloudAmbient() { return m_cloudAmbient; }
+    const CloudAmbientSettings& CloudAmbient() const { return m_cloudAmbient; }
+    // 雲なしの環境（irradiance だけが有効）と、地点の高さから混ぜる重みを決める値。
+    // シェーダは saturate で 0〜1 に収めた smoothstep(low, high, 高さ) を occlusion で 1 へ寄せて重みにする。
+    // 雲が無効、または雲なしの環境がまだ無いときは clearIrradianceIndex が UINT32_MAX。
+    struct AmbientBlend {
+        uint32_t clearIrradianceIndex = UINT32_MAX;
+        float low = 0.0f, high = 1.0f, occlusion = 0.0f;
+    };
+    AmbientBlend CurrentAmbientBlend() const;
     void SetCloudPrimitives(std::span<const AtmosphereSettings::Primitive> primitives);
     void SetDistributionMask(uint32_t index, uint64_t revision) {
         m_applied.distributionMask = index;
@@ -166,6 +186,11 @@ private:
     uint32_t m_geometryRevision=0;
     bool m_geometryDirty=false;
     Environment m_environment;
+    // 雲を抜いた空の環境。irradiance だけを作る。空が変わったときだけ作り直す（雲の編集では変わらない）。
+    Environment m_clearEnvironment;
+    bool m_clearEnvironmentInitialized = false;
+    bool m_clearEnvironmentValid = false;
+    CloudAmbientSettings m_cloudAmbient;
     rhi::GpuTexture m_multiScatter;
     rhi::GpuTexture m_noise;
     rhi::GpuTexture m_skyView;

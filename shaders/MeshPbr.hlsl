@@ -50,8 +50,9 @@ struct MeshConstants
     uint debugView;
     // ハイトを形状に反映する量。0 なら押し出さない。
     float displacementScale;
-    float pad3;
-    float pad4;
+    // 環境光を雲あり / 雲なしで混ぜる高さの範囲（m）。SampleAmbientIrradiance を参照。
+    float ambientLow;
+    float ambientHigh;
 
     float4x4 lightViewProjection;
 
@@ -86,7 +87,8 @@ struct MeshConstants
     AtmosphericParameters atmosphere;
     uint cloudNoiseIndex;
     uint atmosphericMode;
-    float2 atmospherePad;
+    uint clearIrradianceIndex;  // 雲なしの環境の irradiance。0xFFFFFFFF なら混ぜない
+    float ambientOcclusion;     // 雲が環境光を遮る強さ（0〜1）
 };
 
 // 「ハイト（ローカル）」で周りの平均を取る半径（合成テクセル）と、
@@ -562,13 +564,14 @@ PsOutput PsMain(VsOutput input)
     // pow(1 - nDotV, 5) が負の底で NaN になる。clamp で上限も守る。
     const float nDotV = clamp(dot(normal, viewDirection), 1e-4f, 1.0f);
 
-    TextureCube<float4> irradianceMap = ResourceDescriptorHeap[g_mesh.irradianceIndex];
     TextureCube<float4> prefilteredMap = ResourceDescriptorHeap[g_mesh.prefilteredIndex];
     Texture2D<float2> brdfLut = ResourceDescriptorHeap[g_mesh.brdfLutIndex];
 
     // irradiance マップには E / pi（平均放射輝度）が入っているので、
-    // diffuseColor を掛けるだけでよい。
-    const float3 irradiance = irradianceMap.SampleLevel(g_samplerLinearClamp, normal, 0.0f).rgb;
+    // diffuseColor を掛けるだけでよい。雲の上の地形は、雲なしの環境で照らす。
+    const float3 irradiance = SampleAmbientIrradiance(g_mesh.irradianceIndex, g_mesh.clearIrradianceIndex, normal,
+                                                      input.worldPosition.y, g_mesh.ambientLow, g_mesh.ambientHigh,
+                                                      g_mesh.ambientOcclusion);
 
     const float3 fresnel = FresnelSchlickRoughness(f0, nDotV, roughness);
     const float3 kD = 1.0f - fresnel;

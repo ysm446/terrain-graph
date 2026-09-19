@@ -19,7 +19,8 @@ struct ModelConstants
     uint prefilteredIndex, brdfLutIndex, prefilteredMipCount, tonemapMode;
     float3 baseColorTint; float roughnessValue;
     float metallicValue, aoValue; float2 colorAdjust;
-    float brightness; float3 pad0;
+    // ambientLow / High: 環境光を雲あり / 雲なしで混ぜる高さの範囲（m）。SampleAmbientIrradiance を参照。
+    float brightness, ambientLow, ambientHigh, pad0;
     float3 cameraPosition; float exposure;
     float3 lightDirection; float lightIlluminance;
     float3 lightColor; float iblIntensity;
@@ -31,7 +32,8 @@ struct ModelConstants
     SceneShadowData shadows;
     // 雲影（MeshPbr と同じ CloudShadow）。atmosphericMode が 0 なら使わない。
     AtmosphericParameters atmosphere;
-    uint cloudNoiseIndex, atmosphericMode, cloudPad0, cloudPad1;
+    // clearIrradianceIndex: 雲なしの環境の irradiance（0xFFFFFFFF なら混ぜない）。ambientOcclusion: 遮蔽の強さ。
+    uint cloudNoiseIndex, atmosphericMode, clearIrradianceIndex; float ambientOcclusion;
 };
 
 ConstantBuffer<ModelConstants> g_model : register(b1);
@@ -196,12 +198,14 @@ float4 PsMain(PixelInput input):SV_TARGET {
         // MeshPbr と同じ分割和近似。nDotV は 1 を超えると NaN になるので clamp で守る。
         const float nDotV = clamp(dot(normal, viewDirection), 1e-4f, 1.0f);
 
-        TextureCube<float4> irradianceMap = ResourceDescriptorHeap[g_model.irradianceIndex];
         TextureCube<float4> prefilteredMap = ResourceDescriptorHeap[g_model.prefilteredIndex];
         Texture2D<float2> brdfLut = ResourceDescriptorHeap[g_model.brdfLutIndex];
 
-        const float3 irradiance =
-            irradianceMap.SampleLevel(g_samplerLinearClamp, normal, 0.0f).rgb;
+        // 雲の上に置かれたモデルは、雲なしの環境で照らす（地形の MeshPbr と同じ）。
+        const bool blendAmbient = g_model.sceneMode != 0 && g_model.atmosphericMode != 0;
+        const float3 irradiance = SampleAmbientIrradiance(
+            g_model.irradianceIndex, blendAmbient ? g_model.clearIrradianceIndex : 0xffffffffu, normal,
+            input.position.y, g_model.ambientLow, g_model.ambientHigh, g_model.ambientOcclusion);
         const float3 fresnel = FresnelSchlickRoughness(f0, nDotV, clampedRoughness);
         const float3 diffuseIbl = (1.0f - fresnel) * diffuseColor * irradiance;
 

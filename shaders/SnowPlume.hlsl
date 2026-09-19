@@ -38,7 +38,10 @@ struct SnowPlumeConstants {
     AtmosphericParameters atmosphere;
     uint cloudNoiseIndex, atmosphericMode; float upwind, slopeFollow;
     // 雲との前後。大気の合成が残した半解像度の雲（a: 透過率）と距離（y: 雲の平均距離）。無効なら比べない。
-    uint cloudIndex, cloudDepthIndex; float cloudFarDistance, pad0;
+    uint cloudIndex, cloudDepthIndex; float cloudFarDistance;
+    // 環境光を雲あり / 雲なしで混ぜる値（地形と同じ。SampleAmbientIrradiance を参照）。
+    uint clearIrradianceIndex;
+    float ambientLow, ambientHigh, ambientOcclusion, pad0;
 };
 ConstantBuffer<SnowPlumeConstants> g_plume : register(b1);
 
@@ -402,8 +405,10 @@ float4 PsMain(VsOutput input) : SV_Target {
     const float selfShadow = lerp(1.0, 0.7, puffs);
     float3 radiance = g_plume.lightColor * g_plume.lightIlluminance * input.light.x * 4.0 * phase * selfShadow;
     if (g_plume.irradianceIndex != kInvalidIndex) {
-        TextureCube<float4> irradiance = ResourceDescriptorHeap[g_plume.irradianceIndex];
-        radiance += irradiance.SampleLevel(g_samplerLinearClamp, float3(0, 1, 0), 0).rgb * g_plume.iblIntensity;
+        // 雲海の上の稜線の雪煙は、雲なしの環境で照らす。
+        radiance += SampleAmbientIrradiance(g_plume.irradianceIndex, g_plume.clearIrradianceIndex, float3(0, 1, 0),
+                                            input.world.y, g_plume.ambientLow, g_plume.ambientHigh,
+                                            g_plume.ambientOcclusion) * g_plume.iblIntensity;
     }
     return float4(min(radiance * albedo, 65000.0), alpha);
 }
