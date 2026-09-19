@@ -169,14 +169,16 @@ void CsProject(uint3 id : SV_DispatchThreadID)
 
 // 地表直上の風速。地表から半セル上の位置を 8 近傍で補間する（固体セルは重みから外す）。
 // 最初の流体層をそのまま読むと層の境目が等高線状の縞になるので、鉛直にも補間する。
-float3 SurfaceWind(float2 uv)
+float3 SurfaceWind(float2 uv, out float sampleHeight)
 {
     RWStructuredBuffer<float4> velocity = ResourceDescriptorHeap[g_wind.indices0.y];
     Texture2D<float> height = ResourceDescriptorHeap[g_wind.indices0.x];
     const float terrain = height.SampleLevel(g_samplerLinearClamp, uv, 0.0f) * g_wind.cell.z;
     const int res = int(g_wind.grid.x);
     const int layers = int(g_wind.grid.y);
-    const float3 cellPos = float3(uv.x * float(res) - 0.5f, (terrain + 0.5f * g_wind.cell.y) / g_wind.cell.y - 0.5f,
+    sampleHeight = clamp(terrain + 0.5f * g_wind.cell.y, 0.5f * g_wind.cell.y,
+                         (float(layers) - 0.5f) * g_wind.cell.y);
+    const float3 cellPos = float3(uv.x * float(res) - 0.5f, sampleHeight / g_wind.cell.y - 0.5f,
                                   uv.y * float(res) - 0.5f);
     const int3 base = int3(floor(cellPos));
     const float3 t = cellPos - float3(base);
@@ -203,6 +205,7 @@ float3 SurfaceWind(float2 uv)
     const uint j = uint(clamp(int(uv.y * float(res)), 0, res - 1));
     const int first = int(floor(terrain / g_wind.cell.y - 0.5f)) + 1;
     const uint k = uint(clamp(first, 0, layers - 1));
+    sampleHeight = CellCenterY(k);
     return velocity[CellIndex(i, j, k)].xyz;
 }
 
@@ -215,7 +218,8 @@ void CsToMask(uint3 id : SV_DispatchThreadID)
     Texture2D<float> height = ResourceDescriptorHeap[g_wind.indices0.x];
     const float2 texel = 1.0f / float(resolution);
     const float2 uv = (float2(id.xy) + 0.5f) * texel;
-    const float3 v = SurfaceWind(uv);
+    float sampleHeight;
+    const float3 v = SurfaceWind(uv, sampleHeight);
     const float speed = length(v);
     const float reference = max(g_wind.wind.z, 1e-3f);
 
@@ -243,7 +247,7 @@ void CsToMask(uint3 id : SV_DispatchThreadID)
 }
 
 // 地表直上の風を小さな格子で書き出す（CPU へ読み戻してビューポートに矢印で描く）。
-// xyz: 速度（m/s）、w: 地形の正規化ハイト（0〜1）。
+// xyz: 速度（m/s）、w: 風を取得した高さ（ハイト 0 を基準とする m）。
 [numthreads(8, 8, 1)]
 void CsSurface(uint3 id : SV_DispatchThreadID)
 {
@@ -252,6 +256,7 @@ void CsSurface(uint3 id : SV_DispatchThreadID)
     RWTexture2D<float4> output = ResourceDescriptorHeap[g_wind.grid.w];
     Texture2D<float> height = ResourceDescriptorHeap[g_wind.indices0.x];
     const float2 uv = (float2(id.xy) + 0.5f) / float(resolution);
-    const float3 v = SurfaceWind(uv);
-    output[id.xy] = float4(v, height.SampleLevel(g_samplerLinearClamp, uv, 0.0f));
+    float sampleHeight;
+    const float3 v = SurfaceWind(uv, sampleHeight);
+    output[id.xy] = float4(v, sampleHeight);
 }

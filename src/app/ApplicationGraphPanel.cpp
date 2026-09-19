@@ -1404,11 +1404,12 @@ void Application::DrawGraphPanel() {
                 break;
             case graph::NodeKind::WindField:
                 header = "風の場";
-                hint = "Base の地形に一様な風をぶつけ、発散のない流れに直す（稜線の吹き上げ、風下の剥離、"
-                       "谷筋への収束）。Speed は地表直上の風速、Spindrift は風下の稜線で風速がしきい値を"
+                hint = "Base の地形の周囲の風を粗い 3D 格子で近似する。Speed は地表から鉛直半セル上の風速、"
+                       "Spindrift は風下の稜線で風速がしきい値を"
                        "超える所。Wind は 3D の速度場で、今は繋ぐ先がない。Spindrift を Snow Plume の Source に繋ぐと雪煙になる。"
-                       "選んでいる間、最後に評価した地表の風をビューポートに矢印で描く"
-                       "（Speed か Spindrift をどこかに繋いで評価したもの）";
+                       "矢印の根元は風を取得した位置、向きは空中の風向、長さは風速（入力風速の 2 倍で頭打ち）。"
+                       "斜面に沿う流れや粒子の軌跡ではない。最後に評価した風を表示する"
+                       "（Speed か Spindrift の接続が必要）";
                 break;
             case graph::NodeKind::MaskFluvial:
                 header = "川筋";

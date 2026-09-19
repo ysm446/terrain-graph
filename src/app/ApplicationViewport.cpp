@@ -329,13 +329,19 @@ void Application::DrawCloudShapeGizmo(const ImVec2& viewportMin, const ImVec2& v
             if (candidate->IsValid()) { field=candidate; break; }
         }
         if (settings && field) {
-            // 色は雪面や岩と混ざらない橙。座標軸やライトのギズモと同じく意味を持つ固定色。
-            m_renderer.SetGuideLineColor(1.0f,0.62f,0.2f);
+            const char* legend="空中の風（最後の評価）\n根元：取得位置 / 向き：風向 / 長さ：風速（上限あり）";
+            const ImVec2 legendMin(viewportMin.x+ui::Scaled(12.0f),
+                                   viewportMin.y+ImGui::GetFrameHeight()+ui::Scaled(20.0f));
+            const ImVec2 legendSize=ImGui::CalcTextSize(legend);
+            const float padding=ui::Scaled(6.0f);
+            drawList->AddRectFilled(ImVec2(legendMin.x-padding,legendMin.y-padding),
+                                    ImVec2(legendMin.x+legendSize.x+padding,legendMin.y+legendSize.y+padding),
+                                    ImGui::GetColorU32(ImGuiCol_WindowBg),ui::Scaled(4.0f));
+            drawList->AddText(legendMin,ImGui::GetColorU32(ImGuiCol_Text),legend);
+            const ImVec4 guideColor=ImGui::GetStyleColorVec4(ImGuiCol_PlotLinesHovered);
+            m_renderer.SetGuideLineColor(guideColor.x,guideColor.y,guideColor.z);
             const float planeSize=std::max(m_renderer.PlaneSize(),1e-3f);
             const float displacement=m_renderer.DisplacementScale();
-            // 高さは CPU のハイト（512²）があればそちらを使う。読み戻しの 64² では
-            // 山頂の間に埋まって地形の下に隠れる。
-            const compositor::CpuHeightfield& heightfield=m_renderer.Evaluator().Heightfield();
             constexpr int kArrows=28;
             const float cell=planeSize/float(kArrows);
             const float reference=std::max(field->windSpeed,1e-3f);
@@ -346,23 +352,26 @@ void Application::DrawCloudShapeGizmo(const ImVec2& viewportMin, const ImVec2& v
                 const XMFLOAT4 sample=field->values[size_t(sy)*field->resolution+sx];
                 const float speed=std::sqrt(sample.x*sample.x+sample.y*sample.y+sample.z*sample.z);
                 if (speed<1e-3f) continue;
-                // 長さは風速に比例（一様風で格子の 0.8 倍）、地形から少し浮かせる。
+                // 長さは風速に比例（一様風で格子の 0.8 倍、2 倍で頭打ち）。
                 const float length=cell*0.8f*std::min(speed/reference,2.0f);
                 const XMFLOAT3 direction{sample.x/speed,sample.y/speed,sample.z/speed};
-                const float terrain=heightfield.IsValid() ? heightfield.Sample(u,v) : sample.w;
-                const XMFLOAT3 origin{(u-0.5f)*planeSize,(terrain-0.5f)*displacement+cell*0.12f,(v-0.5f)*planeSize};
+                // 取得した格子点の位置と高さに描く。地面へ移すと別の高さの風に見えてしまう。
+                const float sampleU=(float(sx)+0.5f)/float(field->resolution);
+                const float sampleV=(float(sy)+0.5f)/float(field->resolution);
+                const XMFLOAT3 origin{(sampleU-0.5f)*planeSize,sample.w-0.5f*displacement,(sampleV-0.5f)*planeSize};
                 const XMFLOAT3 tip{origin.x+direction.x*length,origin.y+direction.y*length,origin.z+direction.z*length};
                 m_renderer.AddGuideLine(origin,tip,1.0f);
-                // 矢じり。進行方向を水平面内で ±150 度回した短い線。
-                const float hx=direction.x, hz=direction.z;
-                const float horizontal=std::sqrt(hx*hx+hz*hz);
-                if (horizontal>1e-4f) {
-                    const float nx=hx/horizontal, nz=hz/horizontal, head=length*0.3f;
-                    const float c=std::cos(2.6f), s=std::sin(2.6f);
-                    const XMFLOAT3 left{tip.x+(nx*c-nz*s)*head,tip.y,tip.z+(nx*s+nz*c)*head};
-                    const XMFLOAT3 right{tip.x+(nx*c+nz*s)*head,tip.y,tip.z+(-nx*s+nz*c)*head};
-                    m_renderer.AddGuideLine(tip,left,1.0f);
-                    m_renderer.AddGuideLine(tip,right,1.0f);
+                // 進行方向に直交する 2 軸で立体の矢じりを作る。鉛直の風でも消えない。
+                const XMVECTOR forward=XMLoadFloat3(&direction);
+                const XMVECTOR referenceAxis=std::abs(direction.y)<0.9f ? XMVectorSet(0,1,0,0) : XMVectorSet(1,0,0,0);
+                const XMVECTOR side=XMVector3Normalize(XMVector3Cross(forward,referenceAxis));
+                const XMVECTOR up=XMVector3Cross(forward,side);
+                const XMVECTOR headBase=XMVectorSubtract(XMLoadFloat3(&tip),XMVectorScale(forward,length*0.25f));
+                for (int wing=0;wing<4;++wing) {
+                    const XMVECTOR axis=wing<2 ? side : up;
+                    XMFLOAT3 end;
+                    XMStoreFloat3(&end,XMVectorAdd(headBase,XMVectorScale(axis,(wing%2==0 ? 1.0f : -1.0f)*length*0.12f)));
+                    m_renderer.AddGuideLine(tip,end,1.0f);
                 }
             }
         }

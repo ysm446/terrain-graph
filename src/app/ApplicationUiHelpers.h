@@ -563,7 +563,7 @@ inline bool DrawWindRows(compositor::WindParams& wind) {
     }
     int layers = static_cast<int>(wind.layers);
     if (ui::PropertyInt("格子（鉛直）", &layers, 4, 128, static_cast<int>(defaults.layers),
-                        "鉛直の層数。計算する高さをこの数で割った厚さが 1 層")) {
+                        "鉛直の層数。標高差と計算する高さの合計をこの数で割った厚さが 1 層。矢印は地表から半層上の風")) {
         wind.layers = static_cast<uint32_t>(layers); changed = true;
     }
     changed |= ui::PropertyInt("反復", &wind.iterations, 2, 512, defaults.iterations,

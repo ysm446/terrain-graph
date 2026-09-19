@@ -188,7 +188,7 @@ struct CpuHeightfield {
 // 最後に走った Wind の op の結果（評価が終わるまでは前回の中身のまま）。
 struct CpuWindField {
     uint32_t resolution = 0;
-    std::vector<DirectX::XMFLOAT4> values;  // 行優先。xyz: 速度（m/s）、w: 正規化ハイト
+    std::vector<DirectX::XMFLOAT4> values;  // 行優先。xyz: 速度（m/s）、w: 取得高さ（ハイト 0 基準の m）
     float windSpeed = 0.0f;                 // 焼いたときの一様風の速さ（矢印の長さの基準）
 
     bool IsValid() const {
