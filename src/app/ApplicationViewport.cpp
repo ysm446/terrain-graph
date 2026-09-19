@@ -133,22 +133,22 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
         char text[96] = {};
         const double gpuMilliseconds = m_device.GpuFrameMilliseconds();
         if (gpuMilliseconds >= 0.0) {
-            std::snprintf(text, sizeof(text), "GPU 処理 %.2f ms", gpuMilliseconds);
+            std::snprintf(text, sizeof(text), "GPU %.2f ms", gpuMilliseconds);
         } else {
-            std::snprintf(text, sizeof(text), "GPU 処理 -- ms");
+            std::snprintf(text, sizeof(text), "GPU -- ms");
         }
         lines.emplace_back(text);
-        std::snprintf(text, sizeof(text), "ドローコール %u", stats.drawCalls);
+        std::snprintf(text, sizeof(text), "Draw calls %u", stats.drawCalls);
         lines.emplace_back(text);
-        std::snprintf(text, sizeof(text), "頂点%s %s", stats.instanceUpperBounds ? "（上限）" : "", GroupDigits(stats.vertices).c_str());
+        std::snprintf(text, sizeof(text), "Vertices%s %s", stats.instanceUpperBounds ? " (max)" : "", GroupDigits(stats.vertices).c_str());
         lines.emplace_back(text);
         // テセレーション中は、三角形はドメインシェーダが決めるので CPU では分からない。
         // **数えられないものを数えたふりをしない。** 投入したパッチ数と上限を出す。
         if (stats.tessellation) {
-            std::snprintf(text, sizeof(text), "パッチ %s (x%.0f まで)",
+            std::snprintf(text, sizeof(text), "Patches %s (up to x%.0f)",
                           GroupDigits(stats.patches).c_str(), stats.tessellationFactor);
         } else {
-            std::snprintf(text, sizeof(text), "三角形%s %s", stats.instanceUpperBounds ? "（上限）" : "", GroupDigits(stats.triangles).c_str());
+            std::snprintf(text, sizeof(text), "Triangles%s %s", stats.instanceUpperBounds ? " (max)" : "", GroupDigits(stats.triangles).c_str());
         }
         lines.emplace_back(text);
         // VRAM はプロセス全体の使用量とバジェット。合成の解像度を上げたときに
