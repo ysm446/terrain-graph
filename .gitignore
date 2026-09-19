@@ -18,4 +18,5 @@ vcpkg_installed/
 # **コミットするアセットは assets/ へ置く**（同梱するフォントやアイコンなど）。
 # 置き場所で扱いが決まるようにして、都度 .gitignore を書き足さなくて済むようにする。
 data/
-docs/reference/
+docs/reference/*
+!docs/reference/overhang-editing.md
