@@ -90,7 +90,7 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
     // FPS / 統計 / ハイトの範囲。どれもビューポートに重ねて出すものなので、
     // トップメニューではなくここに置く。切り替えたその場で設定に覚える。
     ImGui::SameLine();
-    if (ImGui::Button("表示")) {
+    if (ImGui::Button("Display")) {
         ImGui::OpenPopup("##viewportDisplayMenu");
     }
     if (ImGui::IsItemHovered()) {
@@ -100,8 +100,8 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
         io::DisplaySettings& settings = m_settings.Display();
         bool changed = false;
         changed |= ImGui::MenuItem("FPS", nullptr, &settings.showFps);
-        changed |= ImGui::MenuItem("統計", nullptr, &settings.showStats);
-        changed |= ImGui::MenuItem("ハイトの範囲", nullptr, &settings.showHeightGuide);
+        changed |= ImGui::MenuItem("Stats", nullptr, &settings.showStats);
+        changed |= ImGui::MenuItem("Height Range", nullptr, &settings.showHeightGuide);
         if (changed) {
             m_settings.Save();
         }

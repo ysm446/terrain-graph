@@ -270,9 +270,9 @@ inline const char* const kChannelLabels[] = {"BaseColor", "Normal", "Surface", "
 
 // ビューポートの表示モード。renderer::DebugView と並びを合わせること。
 inline const char* const kDebugViewLabels[] = {
-    "シェーディング",     "ベースカラー",     "法線（カメラ）", "法線（ワールド）",
-    "ラフネス",           "メタルネス",       "AO",             "ハイト",
-    "ハイト（ローカル）", "ワイヤーフレーム", "クレイ",
+    "Shaded",           "Base Color", "Normal (Camera)", "Normal (World)",
+    "Roughness",        "Metalness",  "AO",              "Height",
+    "Height (Local)",   "Wireframe",  "Clay",
 };
 // ペイントマスクの解像度。
 inline const char* const kResolutionLabels[] = {"512", "1024", "2048", "4096"};
