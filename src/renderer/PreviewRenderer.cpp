@@ -1100,8 +1100,9 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
 
     // --- 雪煙 --------------------------------------------------------------
     // 大気の合成は空の画素を上書きするので、その**後**に重ねる（稜線の上で空を背にした雪煙が主役）。
-    // 深度は SRV として読み、地形との前後とソフトな縁をシェーダで決める。雲とは前後を比べず、
-    // 常に雲の手前に乗る（雪煙は地表近く、雲は多くが上空なので、まずはこれで足りる）。
+    // 深度は SRV として読み、地形との前後とソフトな縁をシェーダで決める。雲との前後は、大気の合成が
+    // 残した半解像度の雲（透過率と平均距離）で決める（雲海の向こうの稜線の雪煙が、雲を突き抜けないように）。
+    // 全解像度の雲では半解像度のバッファが無いので比べず、常に雲の手前に乗る。
     if (!m_snowPlumes.empty() && m_showTerrain && IsShadedView(m_debugView)) {
         TransitionIfNeeded(commandList, m_depth,
                            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -1125,6 +1126,13 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
         frame.atmosphere = m_instanceClouds.atmosphere;
         frame.cloudNoiseIndex = m_instanceClouds.noiseIndex;
         frame.atmosphericMode = m_instanceClouds.mode;
+        // 雲との前後。このフレームで大気の合成を走らせたときだけ、その雲を渡す。
+        if (m_atmosphericMode) {
+            const Atmosphere::CloudOcclusion& clouds = m_atmosphere.LastCloudOcclusion();
+            frame.cloudIndex = clouds.cloudIndex;
+            frame.cloudDepthIndex = clouds.depthIndex;
+            frame.cloudFarDistance = clouds.farDistance;
+        }
         const uint32_t ribbons = DrawSnowPlumes(pipelineCache, device, commandList, kSceneColorFormat, frame, m_snowPlumes);
         if (ribbons) {
             ++m_stats.drawCalls;

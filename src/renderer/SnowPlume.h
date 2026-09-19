@@ -37,6 +37,10 @@ struct SnowPlumeFrame {
     SceneShadowData shadows;
     AtmosphereSettings atmosphere;
     uint32_t cloudNoiseIndex = 0, atmosphericMode = 0;
+    // 雲との前後。大気の合成が残した半解像度の雲（a が透過率）と距離（y が雲の平均距離）。
+    // 無効（UINT32_MAX）なら前後を比べず、常に雲の手前に乗る。
+    uint32_t cloudIndex = UINT32_MAX, cloudDepthIndex = UINT32_MAX;
+    float cloudFarDistance = 0;
 };
 
 // シーンカラー（RTV を束ねた状態）へ半透明で重ねる。深度は SRV として読める状態にしておくこと。

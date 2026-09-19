@@ -32,6 +32,8 @@ struct SnowPlumeConstants {
     AtmosphereSettings atmosphere;
     uint32_t cloudNoiseIndex, atmosphericMode;
     float upwind, slopeFollow;
+    uint32_t cloudIndex, cloudDepthIndex;
+    float cloudFarDistance, pad;
 };
 static_assert(sizeof(SnowPlumeConstants) % 16 == 0);
 
@@ -112,6 +114,9 @@ uint32_t DrawSnowPlumes(rhi::PipelineCache& pipelineCache, rhi::Device& device,
         c.atmosphere = frame.atmosphere;
         c.cloudNoiseIndex = frame.cloudNoiseIndex;
         c.atmosphericMode = frame.atmosphericMode;
+        c.cloudIndex = frame.cloudIndex;
+        c.cloudDepthIndex = frame.cloudDepthIndex;
+        c.cloudFarDistance = frame.cloudFarDistance;
         std::memcpy(allocation.cpu, &c, sizeof(c));
 
         const uint32_t instances = c.seedsPerSide * c.seedsPerSide * c.sheets;

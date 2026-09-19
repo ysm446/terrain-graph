@@ -442,6 +442,7 @@ void Atmosphere::Render(rhi::Device& device, rhi::PipelineCache& pipelines,
                         const DirectX::XMFLOAT4X4& inverseViewProjection, DirectX::XMFLOAT3 camera, bool showSky,
                 const DirectX::XMFLOAT4X4& lightViewProjection, uint32_t shadowIndex,
                 float shadowTexelSize, float shadowBias) {
+    m_cloudOcclusion = {};
     if (!m_ready) return;
     rhi::GraphicsPipelineDesc desc;
     desc.shaderPath = L"AtmosphereComposite.hlsl";
@@ -582,6 +583,11 @@ void Atmosphere::Render(rhi::Device& device, rhi::PipelineCache& pipelines,
         }
     }
     if (!temporal) m_historyValid = false;
+    // 合成の後に重ねる半透明のもの（雪煙）が、雲との前後を決めるのに読む。雲が無ければ渡さない
+    // （ゴッドレイだけのときも a が 1 未満になるが、あれは雲ではない）。
+    if (m_applied.clouds && constants.halfCloud != UINT32_MAX && constants.halfDepth != UINT32_MAX)
+        m_cloudOcclusion = {constants.halfCloud, constants.halfDepth,
+                            constants.farCloud != UINT32_MAX ? m_applied.weatherFar : 0.0f};
     // 次フレームの再投影に使う今フレームの視点。
     DirectX::XMStoreFloat4x4(&m_previousViewProjection,
         DirectX::XMMatrixInverse(nullptr, DirectX::XMLoadFloat4x4(&inverseViewProjection)));

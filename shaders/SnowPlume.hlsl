@@ -8,7 +8,8 @@
 // 濃さはワールド座標で引く 4D の値ノイズ（空間 3 軸 + 時間）で作る。風下へ風速で流し、時間の軸を
 // 進めても、loopSeconds ごとに完全に同じ絵へ戻る（継ぎ目のないループ。空間には周期が無い）。
 //
-// 大気の合成の後に、深度を読み比べて描く（深度バッファは束ねない）。雲より常に手前に乗る。
+// 大気の合成の後に、深度を読み比べて描く（深度バッファは束ねない）。雲との前後は、合成が残した
+// 半解像度の雲（透過率と平均距離）を読み、雲の向こう側にあるぶんを透過率で薄めて決める。
 #include "AtmosphereCommon.hlsli"
 
 // ModelPreview.hlsl と同じ並び（C++ の SceneShadowData）。
@@ -36,6 +37,8 @@ struct SnowPlumeConstants {
     SceneShadowData shadows;
     AtmosphericParameters atmosphere;
     uint cloudNoiseIndex, atmosphericMode; float upwind, slopeFollow;
+    // 雲との前後。大気の合成が残した半解像度の雲（a: 透過率）と距離（y: 雲の平均距離）。無効なら比べない。
+    uint cloudIndex, cloudDepthIndex; float cloudFarDistance, pad0;
 };
 ConstantBuffer<SnowPlumeConstants> g_plume : register(b1);
 
@@ -330,6 +333,28 @@ float LinearDepth(float z) {
     return g_plume.nearZ * g_plume.farZ / (g_plume.farZ - z * (g_plume.farZ - g_plume.nearZ));
 }
 
+// 雲の向こう側にある雪煙を、雲の透過率で薄める係数（1 で手前、雲の透過率で奥）。
+// 雪煙は大気の合成の後に重ねるので、何もしないと雲の向こうの稜線の雪煙が雲を突き抜けて見える。
+// 雲は体積なので面の深度は無い。合成が残した「雲の平均距離」を境に、幅を持たせて切り替える。
+// 雲は地形の深度までしか積分されていないが、雪煙は地形より手前にしか描かないので、間の雲は必ず入っている。
+float CloudOcclusion(float2 pixel, float2 screenSize, float plumeDistance) {
+    if (g_plume.cloudIndex == kInvalidIndex || g_plume.cloudDepthIndex == kInvalidIndex) return 1;
+    Texture2D<float4> clouds = ResourceDescriptorHeap[g_plume.cloudIndex];
+    Texture2D<float2> distances = ResourceDescriptorHeap[g_plume.cloudDepthIndex];
+    const float2 uv = pixel / screenSize;
+    const float transmittance = saturate(clouds.SampleLevel(g_samplerLinearClamp, uv, 0).a);
+    // 平均距離は補間しない（寄与なしの 0 と混ざると、雲の縁で距離が手前へ寄る）。
+    uint2 halfSize;
+    distances.GetDimensions(halfSize.x, halfSize.y);
+    float cloudDistance = distances.Load(int3(min(uint2(pixel * 0.5), halfSize - 1), 0)).y;
+    // 手前の積分に寄与が無く、遠景パスの雲だけが掛かっているとき。
+    if (cloudDistance <= 0) cloudDistance = g_plume.cloudFarDistance;
+    if (cloudDistance <= 0) return 1;
+    const float band = max(0.2 * cloudDistance, 200.0);
+    const float behind = smoothstep(cloudDistance - band, cloudDistance + band, plumeDistance);
+    return lerp(1.0, transmittance, behind);
+}
+
 float4 PsMain(VsOutput input) : SV_Target {
     // 地形より奥なら捨て、手前でも近い所は柔らかく消す（地面に刺さった板の縁を見せない）。
     Texture2D<float> depth = ResourceDescriptorHeap[g_plume.depthIndex];
@@ -361,7 +386,10 @@ float4 PsMain(VsOutput input) : SV_Target {
     // 稜線を越えたら風下へ薄まり続ける（本物の雪煙は稜線がいちばん濃い）。先端では必ず 0 へ落とす。
     const float fadeOut = exp(-1.1 * t) * (1.0 - smoothstep(0.6, 1.0, t + (density - 0.5) * 0.4));
     const float puffs = saturate((density - lerp(0.3, 0.52, t)) * 3.0);
-    const float alpha = saturate(input.params.y * edge * fadeIn * fadeOut * puffs * soft * input.light.y);
+    uint2 screenSize;
+    depth.GetDimensions(screenSize.x, screenSize.y);
+    const float occlusion = CloudOcclusion(input.position.xy, float2(screenSize), length(input.world - g_plume.cameraPosition));
+    const float alpha = saturate(input.params.y * edge * fadeIn * fadeOut * puffs * soft * input.light.y * occlusion);
     if (alpha < 0.002) discard;
 
     // 太陽は前方散乱寄り（逆光で縁が光る）と弱い後方散乱の 2 つの山。

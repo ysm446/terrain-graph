@@ -140,6 +140,15 @@ public:
     bool IsReady() const { return m_ready; }
     uint32_t NoiseIndex() const { return m_noise.SrvIndex(); }
     const AtmosphereSettings& AppliedSettings() const { return m_applied; }
+    // 直前の Render が作った半解像度の雲。大気の合成の後に半透明のもの（雪煙）を重ねるとき、
+    // 雲の向こう側にあるぶんを雲の透過率で薄めるのに使う。どちらも SRV として読める状態で残っている。
+    // 全解像度の雲（半解像度のバッファを作らない）や雲なしのときは無効（UINT32_MAX）。
+    struct CloudOcclusion {
+        uint32_t cloudIndex = UINT32_MAX;  // rgb: 散乱光、a: 透過率
+        uint32_t depthIndex = UINT32_MAX;  // x: 地形までの距離、y: 雲の平均距離（寄与がなければ 0）
+        float farDistance = 0.0f;          // 遠景パスの開始距離。遠景パスが無ければ 0
+    };
+    const CloudOcclusion& LastCloudOcclusion() const { return m_cloudOcclusion; }
     void Render(rhi::Device& device, rhi::PipelineCache& pipelines,
                 ID3D12GraphicsCommandList* commands, rhi::GpuTexture& scene, rhi::GpuTexture& depth,
                 const DirectX::XMFLOAT4X4& inverseViewProjection, DirectX::XMFLOAT3 camera, bool showSky,
@@ -166,6 +175,7 @@ private:
     rhi::GpuTexture m_halfDepth;
     rhi::GpuTexture m_farCloud; // 天候層の遠景（1/4 解像度）。
     rhi::GpuTexture m_resolvedCloud[2]; // 時間方向に蓄積した半解像度の雲。前フレームと今フレームで入れ替える。
+    CloudOcclusion m_cloudOcclusion;
     uint32_t m_historySlot = 0;
     bool m_historyValid = false;
     bool m_temporalClouds = true;
