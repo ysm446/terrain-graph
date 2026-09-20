@@ -341,6 +341,7 @@ int Application::Run() {
             m_assetSelections.request = {};
         ProcessPendingFileWork();
         ProcessAssetSelections();
+        ProcessSelectedAssetSave();
         ProcessModelWork();
         // 経路探索用の地形（Path ノードの Base）の焼き直しも GPU 待機を伴うため、フレームの外で。
         ProcessPendingPathRoutes();
@@ -721,6 +722,7 @@ bool Application::Headless() const {
 }
 
 void Application::DrawUi() {
+    RememberAssetStates();
     m_assetSelections.root = m_workspace.Root();
     m_assetSelections.owner = static_cast<uint64_t>(m_selectedGraphNode) ^
         (static_cast<uint64_t>(m_selectedMaterial + 1) << 32) ^ (static_cast<uint64_t>(m_selectedModel) << 16);

@@ -2620,7 +2620,7 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
     const fs::path baseDir = savePath.parent_path();
 
     if (workspace && (savePath.extension() != L".tgscene" || !workspace->Contains(savePath) ||
-                      !SaveSharedAssets(*workspace, refs))) return false;
+                      (refs.saveSharedAssets && !SaveSharedAssets(*workspace, refs)))) return false;
     json document;
     document["format"] = kProjectFormat;
     document["version"] = kProjectFormatVersion;
@@ -2765,7 +2765,7 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
         if (refs.componentOnly >= 0) document["_componentOnly"] = refs.componentOnly;
         document["_componentWrite"] = refs.componentWrite;
         if (refs.atmosphereAsset) document["_atmosphereAsset"] = *refs.atmosphereAsset;
-        if (!workspace->SaveScene(savePath, document)) return false;
+        if (!workspace->SaveScene(savePath, document, refs.saveSharedAssets)) return false;
         if (refs.components && refs.componentOnly < 0 && document.contains("components")) *refs.components = document["components"];
         if (refs.atmosphereAsset && refs.componentOnly < 0 && document.contains("atmosphere")) *refs.atmosphereAsset = document["atmosphere"];
         RemoveStalePaintMasks(paintDir, writtenPaintFiles);
@@ -3121,7 +3121,7 @@ bool SaveAtmosphereAsset(ProjectWorkspace& workspace, const ProjectRefs& refs, c
     return !refs.atmosphereAsset->is_null();
 }
 
-bool SaveSharedAssets(ProjectWorkspace& workspace, const ProjectRefs& refs) {
+bool SaveSharedAssets(ProjectWorkspace& workspace, const ProjectRefs& refs, const fs::path* only) {
     if (!workspace.Scan()) return false;
     bool valid = true;
     // **まだファイルを持たないアセットの保存先。** 同じ中身のファイルが既にあれば
@@ -3154,6 +3154,10 @@ bool SaveSharedAssets(ProjectWorkspace& workspace, const ProjectRefs& refs) {
     for (int pass = 0; pass < 2; ++pass) for (const auto& entry : refs.materials.Entries()) {
         if (entry.layerMaterial.has_value() != (pass == 1)) continue;
         auto* asset = refs.materials.FindMutable(entry.id);
+        if (only && (only->empty() ? !asset->assetUid.empty() : asset->assetPath != *only)) {
+            materials[asset->id] = workspace.Reference(asset->assetPath);
+            continue;
+        }
         json body = WriteMaterialBody(*asset, texture);
         if (asset->layerMaterial) MapLayerMaterials(body, [&](const json& value) -> json {
             const auto found = materials.find(value.is_number_integer() ? value.get<uint32_t>() : 0);
@@ -3169,6 +3173,7 @@ bool SaveSharedAssets(ProjectWorkspace& workspace, const ProjectRefs& refs) {
         materials[asset->id] = workspace.Reference(path);
     }
     if (refs.models) for (auto& asset : *refs.models) {
+        if (only && (only->empty() ? !asset.assetUid.empty() : asset.assetPath != *only)) continue;
         json slots = json::array();
         for (const auto id : asset.materials) {
             const auto found = materials.find(id);
@@ -3180,6 +3185,10 @@ bool SaveSharedAssets(ProjectWorkspace& workspace, const ProjectRefs& refs) {
         if (path.empty()) path = destination(body, "model-asset", L"Models", asset.name.c_str(), ".tgmodel");
         if (!valid || !workspace.SaveAsset(path, "model-asset", body)) return false;
         asset.assetPath = path; asset.assetUid = ReadString(body, "uid");
+    }
+    if (only) {
+        const auto* sky = refs.skies.Active();
+        return valid && (!sky || (only->empty() ? !sky->assetUid.empty() : sky->assetPath != *only) || SaveWorkEnvironment(workspace, refs));
     }
     return valid && SaveWorkEnvironment(workspace, refs);
 }
@@ -3420,6 +3429,19 @@ compositor::MaterialAssetId LoadMaterial(const std::filesystem::path& path, rhi:
 // 保存するときと同じ書き出し関数を通し、部品ごとに分けてからハッシュを取る。
 // 参照は通し番号へ置き換えずに実行中の ID のまま書く（ファイルに書くわけではなく、
 // 同じ状態から同じ値が出れば足りる）。ファイルに書く順序や番号とは一致しない。
+std::map<fs::path, size_t> FingerprintAssets(const ProjectRefs& refs) {
+    std::map<fs::path, size_t> result;
+    const auto add = [&](const fs::path& path, const json& body) {
+        if (!path.empty()) result[path] = std::hash<std::string>{}(body.dump());
+    };
+    for (const auto& asset : refs.materials.Entries())
+        add(asset.assetPath, WriteMaterialBody(asset, [](compositor::TextureId id) { return json(id); }));
+    if (refs.models) for (const auto& asset : *refs.models)
+        add(asset.assetPath, {{"source", ToUtf8Portable(asset.path)}, {"materials", asset.materials}, {"name", asset.name}});
+    for (const auto& asset : refs.skies.Entries()) add(asset.assetPath, WriteSky(asset, {}));
+    return result;
+}
+
 SceneFingerprint FingerprintScene(const ProjectRefs& refs) {
     const auto hash = [](const json& value) { return std::hash<std::string>{}(value.dump()); };
     const TextureWriter texture = [](compositor::TextureId id) { return json(id); };

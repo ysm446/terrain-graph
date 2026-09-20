@@ -35,7 +35,7 @@ public:
     std::filesystem::path FindIdenticalAsset(const char* kind, const nlohmann::json& body,
                                              std::string& uid) const;
     bool ReadAsset(const std::filesystem::path& path, const char* kind, nlohmann::json& body) const;
-    bool SaveScene(const std::filesystem::path& path, nlohmann::json& document);
+    bool SaveScene(const std::filesystem::path& path, nlohmann::json& document, bool saveSharedAssets = true);
     bool ReadScene(const std::filesystem::path& path, nlohmann::json& document);
     // 単体アセットを既存の読み込み器が扱う文書へ展開する。
     bool Expand(nlohmann::json& document);

@@ -261,6 +261,13 @@ private:
     void DrawRecentMenu();
     // saveAs が偽でも、まだ保存先が決まっていなければダイアログを出す。
     void RequestSaveProject(bool saveAs);
+    void RequestSaveSelection();
+    void ProcessSelectedAssetSave();
+    bool IsAssetDirty(const std::filesystem::path& path) const;
+    void RememberAssetStates(bool saved = false);
+    std::map<std::filesystem::path, size_t> m_savedAssetStates;
+    std::map<std::filesystem::path, size_t> m_assetStates;
+    std::vector<std::filesystem::path> m_pendingSelectedAssetSave;
     // シーン階層の項目 1 つだけを保存する要求（0 地形 / 1 雲 / 2 大気散乱スカイ / 3 シーン本体）。
     // シーン本体は変更の無い部品を書き直さず、まだ無い部品だけ作る。
     // まだ保存先の無いシーンでは、通常の保存（保存先の問い合わせ）へ回す。
@@ -714,6 +721,8 @@ private:
     static constexpr unsigned kDirtyShared = 16;
     // 最後に保存 / 読み込みした内容の指紋。現在の内容と比べて未保存の印を出す。
     io::SceneFingerprint m_savedFingerprint;
+    io::SceneFingerprint m_previewSavedFingerprint;
+    io::SceneFingerprint m_currentFingerprint;
     // 未保存の項目（kDirty* のビット）。
     unsigned m_sceneDirty = 0;
     // ペイントの筆跡は指紋に映らないので、塗ったグラフを別に覚える（bit0 地形 / bit1 雲）。

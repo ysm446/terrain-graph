@@ -281,7 +281,7 @@ bool ProjectWorkspace::ReadAsset(const fs::path& path, const char* kind, json& b
            body.contains("version") && body["version"] == 1;
 }
 
-bool ProjectWorkspace::SaveScene(const fs::path& path, json& document) {
+bool ProjectWorkspace::SaveScene(const fs::path& path, json& document, bool saveSharedAssets) {
     if (path.extension() != L".tgscene" || !Contains(path) || !Scan()) return false;
     const auto baseDir = Absolute(path).parent_path();
     std::unordered_map<int, json> textures, materials;
@@ -300,7 +300,7 @@ bool ProjectWorkspace::SaveScene(const fs::path& path, json& document) {
         const json id = entry.contains("id") ? entry["id"] : json();
         fs::path assetPath = FromUtf8(String(entry, "_assetPath"));
         if (assetPath.empty()) assetPath = UniquePath(m_root / folder, String(entry, "name"), ext);
-        if (!SaveAsset(assetPath, kind, entry)) return false;
+        if ((saveSharedAssets || String(entry, "uid").empty()) && !SaveAsset(assetPath, kind, entry)) return false;
         entry = {{"id", id}, {"asset", Reference(assetPath)}};
         return !entry["asset"].is_null();
     };

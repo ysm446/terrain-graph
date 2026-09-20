@@ -55,7 +55,7 @@ ThumbnailRecord AssetThumbnailRecord(ProjectWorkspace& workspace, const fs::path
     const auto directory = workspace.Root() / L".terrain-graph" / L"thumbnails";
     const auto key = std::to_wstring(Hash(relative));
     // 形式・描画条件の変更時に版を上げて古いキャッシュを無効化する。
-    uint64_t stamp = Hash("thumbnail-v1");
+    uint64_t stamp = Hash(path.extension() == L".tglayer" ? "thumbnail-layer-quarter-v2" : "thumbnail-v1");
     std::unordered_set<std::string> visited;
     std::function<void(const fs::path&)> visit;
     visit = [&](const fs::path& file) {

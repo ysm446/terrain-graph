@@ -12,6 +12,7 @@
 #include "rhi/PipelineCache.h"
 
 #include <filesystem>
+#include <map>
 
 // プロジェクトとマテリアルのファイル入出力。
 //
@@ -35,6 +36,7 @@ struct ProjectRefs {
     // シーン全体の保存で書き直す部品（kWriteTerrain などのビット）。
     // ビットの無い部品は、まだファイルが無いときだけ作る。既定は全部。
     int componentWrite = 7;
+    bool saveSharedAssets = true;
 };
 
 // componentWrite のビット。
@@ -56,13 +58,15 @@ struct SceneFingerprint {
     size_t shared = 0;
 };
 SceneFingerprint FingerprintScene(const ProjectRefs& refs);
+std::map<std::filesystem::path, size_t> FingerprintAssets(const ProjectRefs& refs);
 
 bool SaveWorkEnvironment(ProjectWorkspace& workspace, const ProjectRefs& refs, bool saveAsset = true);
 bool LoadWorkEnvironment(ProjectWorkspace& workspace, rhi::Device& device,
                          rhi::PipelineCache& pipelineCache, const ProjectRefs& refs);
 bool SaveAtmosphereAsset(ProjectWorkspace& workspace, const ProjectRefs& refs,
                          const std::filesystem::path& directory);
-bool SaveSharedAssets(ProjectWorkspace& workspace, const ProjectRefs& refs);
+bool SaveSharedAssets(ProjectWorkspace& workspace, const ProjectRefs& refs,
+                      const std::filesystem::path* only = nullptr);
 // シーンが持つ天球は 1 つ。適用中の天球だけを残し、ほかは破棄する（フレームの外で呼ぶこと）。
 void KeepOnlyActiveSky(rhi::Device& device, renderer::SkyLibrary& skies);
 bool LoadSharedAsset(ProjectWorkspace& workspace, const std::filesystem::path& path,

@@ -1,6 +1,6 @@
 // マテリアル一覧に出すサムネイルを描く。
 //
-// メッシュは使わず、正面を向いた球を解析的に解く。マップは円板の UV でそのまま引く。
+// 通常素材は球、レイヤー素材は斜め上から見た平面を解析的に描く。
 // 見た目を比べるためのものなので、プレビュー本体と厳密に一致させる必要はない。
 //
 // **円の外はアルファ 0 で抜く。背景色を焼き込まない。**
@@ -76,11 +76,15 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     // 少し余白を取って球を収める。
     const float sphereRadius = 0.92f;
     const bool layered = g_thumbnail.layerMaterial.count > 0;
-    const float radius = layered ? max(abs(disc.x), abs(disc.y)) : sqrt(radiusSq);
+    // 方位45度・仰角35.3度の正投影。平面の四隅が菱形に収まる。
+    // カメラの右=(1,0,-1)/sqrt(2)、上=(-1,2,-1)/sqrt(6)。
+    const float2 planePoint = float2(disc.x - disc.y * 1.732051f,
+                                     -disc.x - disc.y * 1.732051f);
+    const float radius = layered ? max(abs(planePoint.x), abs(planePoint.y)) : sqrt(radiusSq);
 
     // 輪郭のジャギーを消すための幅。disc は size テクセルで [-1, 1] を張るので、
     // 1 テクセル = 2 / size。その 1.5 倍を半値幅にする（合わせて 3 テクセル）。
-    const float aa = 1.5f / float(g_thumbnail.size);
+    const float aa = (layered ? 3.0f : 1.5f) / float(g_thumbnail.size);
 
     if (radius > sphereRadius + aa)
     {
@@ -88,8 +92,8 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
         return;
     }
 
-    const float2 spherePoint = disc / sphereRadius;
-    const float3 geometricNormal = layered ? float3(0,0,1) :
+    const float2 spherePoint = (layered ? planePoint : disc) / sphereRadius;
+    const float3 geometricNormal = layered ? float3(0,1,0) :
         float3(spherePoint, sqrt(saturate(1.0f - dot(spherePoint, spherePoint))));
 
     // マップは円板の座標でそのまま引く。球へ厳密に貼るのではなく、
@@ -140,11 +144,9 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     }
 
     if (g_thumbnail.layerMaterial.count > 0) {
-        const LayerMaterialSample material = EvaluateLayerMaterial(g_thumbnail.layerMaterial, uv, uv, g_thumbnail.uvScale / g_thumbnail.size, float2(1,1), float2(1,0), float2(0,1));
+        const LayerMaterialSample material = EvaluateLayerMaterial(g_thumbnail.layerMaterial, uv, uv, 1.732051f * g_thumbnail.uvScale / g_thumbnail.size, float2(1,1), float2(1,0), float2(0,1));
         baseColor = material.color; roughness = material.surface.x; metallic = material.surface.y; ambientOcclusion = material.surface.z;
-        const float3 axis = abs(geometricNormal.x) < 0.999f ? float3(1,0,0) : float3(0,1,0);
-        const float3 t = normalize(axis - geometricNormal * dot(geometricNormal, axis));
-        normal = normalize(t * material.normal.x + cross(geometricNormal, t) * material.normal.y + geometricNormal * material.normal.z);
+        normal = normalize(float3(material.normal.x, material.normal.z, material.normal.y));
     }
 
     float3 diffuseColor;
@@ -154,7 +156,7 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     // 下限はビューポート（MeshPbr）と揃える。ずれていると、同じマテリアルが
     // サムネイルと本描画で違う粗さに見える。
     const float clampedRoughness = clamp(roughness, kMinPerceptualRoughness, 1.0f);
-    const float3 viewDirection = float3(0.0f, 0.0f, 1.0f);
+    const float3 viewDirection = layered ? normalize(float3(1,1,1)) : float3(0.0f, 0.0f, 1.0f);
 
     // サムネイル専用の固定スタジオ光。横から凹凸を拾い、正面下部に陰を残す。
     // 左上の暖色キーと右上の弱い中性色フィル。強い青いリムは作らない。

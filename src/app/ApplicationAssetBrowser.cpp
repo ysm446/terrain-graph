@@ -412,6 +412,9 @@ void Application::RelinkAssetPaths(const fs::path& from, const fs::path& to) {
         std::error_code error;
         if (!fs::is_directory(to, error)) m_recentProjects.Remove(m_workspace.Root(), from);
     }
+    std::map<fs::path, size_t> movedStates;
+    for (const auto& [path, state] : m_savedAssetStates) { auto target = path; remap(target); movedStates[target] = state; }
+    m_savedAssetStates = std::move(movedStates);
     for (auto& path : m_selectedAssets) remap(path);
     remap(m_assetSelectionAnchor);
     remap(m_assetDirectory);
@@ -511,7 +514,7 @@ void Application::ProcessAssetWork() {
                          m_skyLibrary, m_renderer, m_graph, &m_models, &m_sceneComponents, -1, &m_sceneAtmosphere};
     if (m_pendingWorkEnvironmentSave && !ImGui::IsAnyItemActive()) {
         m_pendingWorkEnvironmentSave = false;
-        if (!io::SaveWorkEnvironment(m_workspace, refs, m_pendingWorkSkySave)) TG_LOG_ERROR("作業用IBLの設定を保存できませんでした");
+        if (!io::SaveWorkEnvironment(m_workspace, refs, false)) TG_LOG_ERROR("作業用IBLの設定を保存できませんでした");
         m_pendingWorkSkySave = false;
     }
     if (m_pendingAtmosphereSave) {
@@ -635,7 +638,9 @@ void Application::ProcessAssetWork() {
     if (m_pendingAssetsSave) {
         m_pendingAssetsSave = false;
         CommitMaterialEdit();
-        if (!io::SaveSharedAssets(m_workspace, refs)) TG_LOG_ERROR("共有アセットを保存できませんでした");
+        // 新規作成だけを保存し、既存アセットの変更を巻き込まない。
+        const fs::path newAssets;
+        if (!io::SaveSharedAssets(m_workspace, refs, &newAssets)) TG_LOG_ERROR("共有アセットを保存できませんでした");
         m_assetRefresh = true;
         m_assetThumbnails.Invalidate();
     }
@@ -711,6 +716,8 @@ void Application::ProcessAssetWork() {
                     TG_LOG_ERROR("グラフアセットを開けませんでした"); return;
                 }
                 m_componentPreview = component; m_componentPreviewPath = path;
+                m_previewSavedFingerprint = io::FingerprintScene(refs);
+                RefreshSceneDirty();
                 m_undoHistory.Clear(); m_committed = CaptureDocument();
             }
             m_editComponent = -1; OpenComponentEditor(component);
@@ -720,6 +727,7 @@ void Application::ProcessAssetWork() {
         }
         if (ext == ".tgatmosphere") {
             if (io::LoadSharedAsset(m_workspace, path, m_device, m_pipelineCache, refs)) {
+                MarkSceneSaved(kDirtyAtmosphere);
                 m_focusLighting = true; m_pendingWorkEnvironmentSave = true;
                 MarkDocumentChanged();
             } else TG_LOG_ERROR("大気散乱スカイを開けませんでした");
@@ -965,6 +973,12 @@ void Application::DrawAssetBrowser() {
             }
             if (!handle && m_assetThumbnails.Failed(path))
                 ui::MissingBadge(tileMin, tileMax);
+            if (IsAssetDirty(path)) {
+                const float radius = ui::Scaled(5);
+                const ImVec2 center(tileMax.x - radius * 1.8f, tileMax.y - radius * 1.8f);
+                ImGui::GetWindowDrawList()->AddCircleFilled(center, radius + ui::Scaled(2), ImGui::GetColorU32(ImGuiCol_WindowBg));
+                ImGui::GetWindowDrawList()->AddCircleFilled(center, radius, ImGui::GetColorU32(ImGuiCol_CheckMark));
+            }
             if (thumb.clicked) SelectAsset(path, ImGui::GetIO().KeyCtrl, ImGui::GetIO().KeyShift);
             // どの種類もダブルクリックで開く（モデルも同じ。シングルクリックは選ぶだけ）。
             if (thumb.doubleClicked) {
@@ -1002,13 +1016,14 @@ void Application::DrawAssetBrowser() {
             if (folder) AssetFolderDropTarget(path);
             // ドラッグ中は移動先を示すツールチップの邪魔になるので出さない。
             if (thumb.hovered && ImGui::GetDragDropPayload() == nullptr)
-                ImGui::SetTooltip("%s\nダブルクリックで開く\nCtrl / Shift + クリックで複数選択", ToUtf8Display(path).c_str());
+                ImGui::SetTooltip("%s\n%s\nダブルクリックで開く\nCtrl / Shift + クリックで複数選択", ToUtf8Display(path).c_str(), IsAssetDirty(path) ? "未保存の変更あり（選択して Ctrl+S で保存）" : "選択して Ctrl+S で保存");
             if (ImGui::BeginPopupContextItem("assetMenu")) {
                 if (!IsAssetSelected(path)) SelectAsset(path, false, false);
                 if (ImGui::MenuItem("開く")) {
                     if (folder) { m_assetDirectory = path; m_assetRefresh = true; }
                     else m_pendingAssetOpen = path;
                 }
+                if (!folder && ImGui::MenuItem("保存", "Ctrl+S", false, IsAssetDirty(path))) RequestSaveSelection();
                 if ((ext == ".tgterrain" || ext == ".tgcloud" || ext == ".tgatmosphere") &&
                     ImGui::MenuItem(ext == ".tgatmosphere" ? "シーンの空に設定" : "シーンに配置（入れ替え）"))
                     m_pendingComponentPlace = path;
@@ -1054,6 +1069,10 @@ void Application::DrawAssetBrowser() {
                 if (visible) m_assetRevealTarget.clear();
             }
             if (++index % columns && index < int(m_assetEntries.size())) ImGui::SameLine();
+        }
+        if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+            !ImGui::IsAnyItemHovered() && !ImGui::IsAnyItemActive()) {
+            m_selectedAssets.clear(); m_assetSelectionAnchor.clear();
         }
         if (ImGui::BeginPopupContextWindow("createAsset", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
             if (ImGui::MenuItem("フォルダを作成")) {

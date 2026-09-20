@@ -83,12 +83,15 @@ void Application::RefreshSceneDirty() {
     io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
                          m_skyLibrary,     m_renderer,       m_graph, &m_models, &m_sceneComponents, -1, &m_sceneAtmosphere};
     const io::SceneFingerprint now = io::FingerprintScene(refs);
+    m_currentFingerprint = now;
     unsigned dirty = 0;
     if (now.terrain != m_savedFingerprint.terrain || (m_paintDirty & 1u)) dirty |= kDirtyTerrain;
     if (now.cloud != m_savedFingerprint.cloud || (m_paintDirty & 2u)) dirty |= kDirtyCloud;
     if (now.atmosphere != m_savedFingerprint.atmosphere) dirty |= kDirtyAtmosphere;
     if (now.scene != m_savedFingerprint.scene) dirty |= kDirtyScene;
-    if (now.shared != m_savedFingerprint.shared) dirty |= kDirtyShared;
+    RememberAssetStates();
+    for (const auto& [path, state] : m_assetStates)
+        if (m_savedAssetStates.at(path) != state) { dirty |= kDirtyShared; break; }
     if (dirty != m_sceneDirty) {
         m_sceneDirty = dirty;
         UpdateWindowTitle();
@@ -103,7 +106,7 @@ void Application::MarkSceneSaved(unsigned mask) {
     if (mask & kDirtyCloud) { m_savedFingerprint.cloud = now.cloud; m_paintDirty &= ~2u; }
     if (mask & kDirtyAtmosphere) m_savedFingerprint.atmosphere = now.atmosphere;
     if (mask & kDirtyScene) m_savedFingerprint.scene = now.scene;
-    if (mask & kDirtyShared) m_savedFingerprint.shared = now.shared;
+    if (mask & kDirtyShared) { m_savedFingerprint.shared = now.shared; RememberAssetStates(true); }
     RefreshSceneDirty();
 }
 
@@ -122,7 +125,7 @@ std::string Application::UnsavedItemNames() const {
         if (m_sceneDirty & kDirtyCloud) add("雲グラフ");
         if (m_sceneDirty & kDirtyAtmosphere) add("大気散乱スカイ");
     }
-    if (m_sceneDirty & kDirtyShared) add("マテリアル・モデル");
+    if (m_sceneDirty & kDirtyShared) add("マテリアル・モデル・作業用IBL");
     return names;
 }
 
@@ -166,7 +169,8 @@ void Application::HandleShortcuts() {
         RequestOpenProject();
     } else if (ImGui::IsKeyPressed(ImGuiKey_S, false)) {
         // Ctrl + Shift + S は「名前を付けて保存」。
-        RequestSaveProject(io.KeyShift);
+        if (io.KeyShift) RequestSaveProject(true);
+        else RequestSaveSelection();
     } else if (ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
         // テキスト入力中は InputText 内部のアンドゥに任せる。
         // 文書のアンドゥまで同時に走ると、無関係な編集が巻き戻る。
@@ -262,7 +266,7 @@ void Application::DrawFileMenu() {
                         m_projectPath.extension() == L".tgscene" && !m_sceneComponents.is_array()))
         m_pendingComponentMigration = true;
     if (ImGui::MenuItem("保存", "Ctrl+S")) {
-        RequestSaveProject(false);
+        RequestSaveSelection();
     }
     if (ImGui::MenuItem("名前を付けて保存…", "Ctrl+Shift+S")) {
         RequestSaveProject(true);
@@ -360,6 +364,8 @@ void Application::FinishComponentPreview(bool place) {
 }
 
 void Application::ResetProject() {
+    m_savedAssetStates.clear(); m_assetStates.clear();
+    m_selectedAssets.clear(); m_pendingSelectedAssetSave.clear();
     m_componentPreview = -1; m_componentPreviewPath.clear();
     m_previewOriginalGraph = graph::NodeGraph{}; m_previewOriginalComponents = nullptr;
     m_sceneComponents = nlohmann::json::array();
@@ -581,6 +587,8 @@ void Application::ProcessPendingFileWork() {
         if (io::SaveProject(path, m_device, refs, &m_workspace)) {
             if (m_componentPreview >= 0) {
                 m_assetRefresh = true;
+                m_previewSavedFingerprint = io::FingerprintScene(refs);
+                RememberAssetStates(true);
                 TG_LOG_INFO("グラフアセットを保存しました: %s", ToUtf8Display(m_componentPreviewPath).c_str());
                 return;
             }

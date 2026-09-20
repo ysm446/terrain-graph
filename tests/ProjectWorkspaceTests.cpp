@@ -60,6 +60,21 @@ int main() {
     json loaded;
     check(workspace.ReadScene(scene, loaded) && loaded["textures"][0]["path"] == tg::ToUtf8Portable(movedImage), "scene roundtrip");
     check(workspace.StartupScene() == scene, "startup scene");
+    // 部品やシーンだけの保存で、無関係な共有素材の編集を書き込まない。
+    auto isolated = legacy;
+    isolated["textures"] = json::array({{{"id", 1}, {"path", tg::ToUtf8Portable(movedImage)}}});
+    auto unsavedMaterial = changed;
+    unsavedMaterial["id"] = 1;
+    unsavedMaterial["_assetPath"] = tg::ToUtf8Portable(target);
+    unsavedMaterial["roughness"] = 0.125;
+    unsavedMaterial["maps"] = json::object();
+    isolated["materials"] = json::array({unsavedMaterial});
+    check(workspace.SaveScene(scene, isolated, false), "save scene without shared edits");
+    json stillSaved;
+    check(workspace.ReadAsset(target, "material-asset", stillSaved) && stillSaved["roughness"] == 0.75,
+          "unselected material retains saved values");
+    check(isolated["materials"][0]["asset"]["uid"] == changed["uid"], "isolated save preserves material reference");
+
     json broken = {{"materials", json::array({{{"id", 1}, {"asset", {{"uid", "missing"}, {"path", "existing.tgmat"}}}}})}};
     check(!workspace.Expand(broken), "missing ID fails instead of redirecting");
     const auto duplicate = workspace.UniquePath(root, "duplicate", ".tgmat");
