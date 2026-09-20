@@ -14,6 +14,7 @@
 #include "renderer/Camera.h"
 #include "renderer/PreviewRenderer.h"
 #include "ui/UiStyle.h"
+#include "app/AssetSelectionContext.h"
 
 #include <imgui.h>
 
@@ -410,10 +411,51 @@ inline void DrawAssetPathRow(const char* label, const std::filesystem::path& pat
     ui::PropertyEnd();
 }
 
+// 未読み込みの候補をルートから表示。GPUロードは次のフレームの外で行う。
+inline bool AssetSlotPathMatches(const std::filesystem::path& a, const std::filesystem::path& b) {
+    return !a.empty() && !b.empty() && _wcsicmp(a.lexically_normal().c_str(), b.lexically_normal().c_str()) == 0;
+}
+inline void DrawUnloadedAssetChoices(uint32_t widget, uint32_t previous, bool texture, bool allowLayers,
+                                    const std::function<bool(const std::filesystem::path&)>& loaded) {
+    auto* context = g_assetSelectionContext;
+    if (!context) return;
+    if (ImGui::IsWindowAppearing()) context->Scan();
+    for (const auto& path : context->candidates) {
+        const auto kind = io::KindOfAsset(path);
+        const bool accepted = texture ? kind == io::AssetKind::Image :
+            kind == io::AssetKind::Material || (allowLayers && kind == io::AssetKind::LayerMaterial);
+        if (!accepted || loaded(path)) continue;
+        const auto relative = ToUtf8Display(path.lexically_relative(context->root));
+        ImGui::PushID(relative.c_str());
+        const float side = ImGui::GetFrameHeight();
+        // ラベルをSelectable自身に持たせ、ポップアップの幅も名前に合わせる。
+        if (ImGui::Selectable(relative.c_str(), false, 0, ImVec2(0, side))) context->Queue(path, widget, previous);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", relative.c_str());
+        ImGui::PopID();
+    }
+}
+inline bool AcceptAssetSlotDrop(uint32_t widget, uint32_t& value, bool texture, bool allowLayers) {
+    auto* context = g_assetSelectionContext;
+    if (!context || !ImGui::BeginDragDropTarget()) return false;
+    if (const auto* payload = ImGui::AcceptDragDropPayload(kAssetPathDragDropType)) {
+        const std::string utf8(static_cast<const char*>(payload->Data), static_cast<size_t>(payload->DataSize));
+        // 複数選択のペイロードは割り当て対象を一意に決められないので受けない。
+        if (utf8.find('\n') == std::string::npos && utf8.find('\0') == std::string::npos) {
+            const auto path = FromUtf8(utf8);
+            const auto kind = io::KindOfAsset(path);
+            if (texture ? kind == io::AssetKind::Image : kind == io::AssetKind::Material || (allowLayers && kind == io::AssetKind::LayerMaterial))
+                context->Queue(path, widget, value);
+        }
+    }
+    ImGui::EndDragDropTarget();
+    return false;
+}
+
 // マテリアルを選ぶ行。サムネイル付きの一覧から選ぶ。
 inline bool DrawMaterialSlotRow(const char* label, compositor::MaterialAssetId& slot,
                          const compositor::MaterialLibrary& library, std::filesystem::path& revealRequest, bool allowLayerMaterials = true, bool showThumbnail = false) {
     ui::PropertyLabel(label, "「なし」ならレイヤーの定数値だけで塗る");
+    const uint32_t widget = ImGui::GetID("##value");
 
     std::string preview = "なし";
     if (const compositor::MaterialAsset* current = library.Find(slot); current != nullptr) {
@@ -421,7 +463,7 @@ inline bool DrawMaterialSlotRow(const char* label, compositor::MaterialAssetId& 
     }
 
     const float thumbnailSize = showThumbnail ? ui::Scaled(40) : ImGui::GetFrameHeight();
-    bool changed = false;
+    bool changed = g_assetSelectionContext && g_assetSelectionContext->Consume(widget, slot);
     const auto acceptDrop = [&]() {
         bool accepted = false;
         if (ImGui::BeginDragDropTarget()) {
@@ -439,6 +481,7 @@ inline bool DrawMaterialSlotRow(const char* label, compositor::MaterialAssetId& 
         const float rowY = ImGui::GetCursorPosY();
         ui::ThumbnailButton("##assignedMaterial", static_cast<ImTextureID>(library.ThumbnailHandle(slot).ptr), thumbnailSize, false);
         changed |= acceptDrop();
+        AcceptAssetSlotDrop(widget, slot, false, allowLayerMaterials);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("マテリアルをここへドロップして割り当て");
         ImGui::SameLine();
         ImGui::SetCursorPosY(rowY + (thumbnailSize - ImGui::GetFrameHeight()) * 0.5f);
@@ -478,6 +521,11 @@ inline bool DrawMaterialSlotRow(const char* label, compositor::MaterialAssetId& 
             }
             ImGui::PopID();
         }
+        ImGui::Dummy(ImVec2(0, 0)); // SetCursorPosで戻した最終行の領域を確定。
+        DrawUnloadedAssetChoices(widget, slot, false, allowLayerMaterials, [&](const auto& path) {
+            for (const auto& asset : library.Entries()) if (AssetSlotPathMatches(asset.assetPath, path)) return true;
+            return false;
+        });
         ImGui::EndCombo();
     }
     // マテリアル一覧からドラッグしてきたものを受ける。テクスチャのコンボと同じ作りで、
@@ -493,6 +541,7 @@ inline bool DrawMaterialSlotRow(const char* label, compositor::MaterialAssetId& 
         }
         ImGui::EndDragDropTarget();
     }
+    AcceptAssetSlotDrop(widget, slot, false, allowLayerMaterials);
     const auto* source = library.Find(slot);
     DrawAssetSourceButton(source ? source->assetPath : std::filesystem::path{}, revealRequest);
     ui::PropertyEnd();
@@ -502,6 +551,7 @@ inline bool DrawMaterialSlotRow(const char* label, compositor::MaterialAssetId& 
 // テクスチャを選ぶコンボ。行の中に置く部品。
 inline bool DrawTextureCombo(const char* id, compositor::TextureId& slot,
                       const compositor::TextureLibrary& library, float width, std::filesystem::path& revealRequest) {
+    const uint32_t widget = ImGui::GetID(id);
     std::string preview = "なし";
     bool missing = false;
     if (const compositor::LibraryTexture* current = library.Find(slot); current != nullptr) {
@@ -509,7 +559,7 @@ inline bool DrawTextureCombo(const char* id, compositor::TextureId& slot,
         missing = current->missing;
     }
 
-    bool changed = false;
+    bool changed = g_assetSelectionContext && g_assetSelectionContext->Consume(widget, slot);
     ImGui::SetNextItemWidth(AssetReferenceWidth(width));
     // リンク切れの画像を指しているときは、名前を警告色で出す。
     // 割り当ては保ってあるので「なし」とは違い、繋ぎ直せば戻る。
@@ -539,6 +589,10 @@ inline bool DrawTextureCombo(const char* id, compositor::TextureId& slot,
             }
             ImGui::PopID();
         }
+        DrawUnloadedAssetChoices(widget, slot, true, false, [&](const auto& path) {
+            for (const auto& entry : library.Entries()) if (AssetSlotPathMatches(entry.path, path)) return true;
+            return false;
+        });
         ImGui::EndCombo();
     }
 
@@ -560,6 +614,7 @@ inline bool DrawTextureCombo(const char* id, compositor::TextureId& slot,
     // 先に呼ぶと BeginDragDropTarget が見る「直前のアイテム」が変わってしまう。
     // ドラッグ中は ImGui 自身がプレビューを出すので、重ねない。
     // 遅延はプロパティ行のツールチップと揃える（即座には出さない）。
+    AcceptAssetSlotDrop(widget, slot, true, false);
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort) &&
         ImGui::GetDragDropPayload() == nullptr) {
         if (const compositor::LibraryTexture* current = library.Find(slot); current != nullptr) {

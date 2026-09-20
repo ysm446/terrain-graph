@@ -65,6 +65,8 @@ bool Application::DrawLayerMaterialProperties(compositor::MaterialAsset& asset) 
     int moveFrom = -1, moveTo = -1;
     for (int i = static_cast<int>(layers.size()) - 1; i >= 0; --i) {
         auto& layer = layers[i]; ImGui::PushID(i);
+        const auto rowWidget = ImGui::GetID("##layer");
+        if (g_assetSelectionContext) layersChanged |= g_assetSelectionContext->Consume(rowWidget, layer.material);
         const auto* source = m_materialLibrary.Find(layer.material);
         const char* name = source ? source->name.c_str() : "定数マテリアル";
         const float side = ui::Scaled(40), gap = ui::Scaled(12), eye = ui::Scaled(20);
@@ -72,6 +74,7 @@ bool Application::DrawLayerMaterialProperties(compositor::MaterialAsset& asset) 
         const float width = ImGui::GetContentRegionAvail().x;
         if (ImGui::Selectable("##layer", i == m_selectedPresetLayer, ImGuiSelectableFlags_AllowOverlap, ImVec2(0, side))) m_selectedPresetLayer = i;
         const auto next = ImGui::GetCursorScreenPos();
+        AcceptAssetSlotDrop(rowWidget, layer.material, false, false);
         if (ImGui::BeginDragDropSource()) {
             ImGui::SetDragDropPayload("TG_MATERIAL_LAYER", &i, sizeof(i)); ImGui::TextUnformatted(name); ImGui::EndDragDropSource();
         }
@@ -118,6 +121,7 @@ bool Application::DrawLayerMaterialProperties(compositor::MaterialAsset& asset) 
     auto& p = layers[m_selectedPresetLayer];
     ui::SectionHeader(m_selectedPresetLayer == 0 ? "下地の設定" : "選択レイヤーの設定");
     ui::HintText("マテリアルを選択、またはアセットから下の欄へドロップして割り当て");
+    ImGui::PushID(m_selectedPresetLayer);
     if (ui::BeginPropertyTable("layerAssetLayer", "高さのしきい値")) {
         layersChanged |= ui::PropertyBool("表示", &p.enabled, true, "下地を隠すと定数マテリアルを表示します");
         layersChanged |= DrawMaterialSlotRow("マテリアル", p.material, m_materialLibrary, m_pendingAssetReveal, false, true);
@@ -167,6 +171,7 @@ bool Application::DrawLayerMaterialProperties(compositor::MaterialAsset& asset) 
         }
         ui::EndPropertyTable();
     }
+    ImGui::PopID();
     ImGui::EndDisabled();
     if (layersChanged && !readOnly) { material.materials = std::move(layers); changed = true; }
     if (const auto* source = m_materialLibrary.Find(asset.id); source && !source->layerError.empty()) ui::HintText(source->layerError.c_str());

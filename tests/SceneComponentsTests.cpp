@@ -1,4 +1,5 @@
 #include "io/SceneComponents.h"
+#include "app/AssetSelectionContext.h"
 #include "io/AssetRelations.h"
 #include <fstream>
 #include <iostream>
@@ -12,6 +13,30 @@ int main() {
     int failures = 0;
     const auto check = [&](bool ok, const char* name) { if (!ok) { ++failures; std::cerr << name << '\n'; } };
     check(workspace.Open(root), "open root");
+    // カタログは開いていない画像（meta未生成）と素材も列挙し、内部キャッシュは除く。
+    tg::AssetSelectionContext selections;
+    selections.root = fs::current_path() / "selection-catalog-test-data";
+    std::error_code catalogError;
+    fs::create_directories(selections.root / "nested", catalogError);
+    fs::create_directories(selections.root / ".cache", catalogError);
+    for (const auto* name : {"nested/unopened.png", "nested/unopened.tgmat", "nested/layer.tglayer", ".cache/hidden.png", "nested/image.png.meta"})
+        std::ofstream(selections.root / name).put('x');
+    selections.Scan();
+    check(selections.candidates.size() == 3, "catalog includes unopened nested files without parsing or GPU loading");
+    uint32_t slot = 8;
+    selections.owner = 12;
+    selections.Queue(selections.root / "nested/unopened.png", 42, slot);
+    selections.request.ready = true; selections.request.result = 9;
+    check(!selections.Consume(43, slot) && slot == 8, "different widget cannot consume deferred assignment");
+    selections.owner = 13;
+    check(!selections.Consume(42, slot), "different owner cannot consume deferred assignment");
+    selections.owner = 12;
+    check(selections.Consume(42, slot) && slot == 9, "same field receives loaded ID");
+    selections.Queue(selections.root / "missing.png", 42, slot); selections.request.ready = true;
+    check(!selections.Consume(42, slot) && slot == 9, "failed load preserves assignment");
+    selections.Queue(selections.root / "nested/unopened.png", 42, slot);
+    selections.request.ready = true; selections.request.result = 10; slot = 11;
+    check(!selections.Consume(42, slot) && slot == 11, "changed assignment rejects stale result");
     // 新規グラフは独立IDと有効な出力ノードを持ち、同名でも上書きしない。
     for (const bool cloud : {false, true}) {
         const auto asset = CreateGraphAsset(workspace, root, cloud);

@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "io/ProjectWorkspace.h"
 #include "app/AssetThumbnailCache.h"
+#include "app/AssetSelectionContext.h"
 #include "io/AssetRelations.h"
 
 #include "compositor/MaterialLibrary.h"
@@ -188,6 +189,8 @@ private:
     void DrawAssetBrowser();
     void RefreshAssetBrowser();
     void ProcessAssetWork();
+    void ProcessAssetSelections();
+    AssetSelectionContext m_assetSelections;
     void DrawSceneSwitchDialog();
     void DrawAssetDeleteDialog();
     bool IsAssetLoaded(const std::filesystem::path& path) const;

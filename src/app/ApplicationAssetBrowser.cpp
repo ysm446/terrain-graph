@@ -483,6 +483,29 @@ void Application::RefreshAssetBrowser() {
     m_assetRefresh = false;
 }
 
+void Application::ProcessAssetSelections() {
+    auto& request = m_assetSelections.request;
+    if (request.path.empty() || request.ready) return;
+    request.ready = true;
+    if (!m_workspace.Contains(request.path)) return;
+    const auto kind = io::KindOfAsset(request.path);
+    if (kind == io::AssetKind::Image) {
+        request.result = m_textureLibrary.Load(m_device, m_pipelineCache, request.path);
+    } else if (kind == io::AssetKind::Material || kind == io::AssetKind::LayerMaterial) {
+        io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
+            m_skyLibrary, m_renderer, m_graph, &m_models, &m_sceneComponents, -1, &m_sceneAtmosphere};
+        if (io::LoadSharedAsset(m_workspace, request.path, m_device, m_pipelineCache, refs)) {
+            for (const auto& material : m_materialLibrary.Entries()) {
+                std::error_code error;
+                if (!material.assetPath.empty() && fs::equivalent(material.assetPath, request.path, error)) {
+                    request.result = material.id; break;
+                }
+            }
+        }
+    }
+    if (!request.result) TG_LOG_ERROR("割り当てるアセットを読み込めません: %s", ToUtf8Display(request.path).c_str());
+}
+
 void Application::ProcessAssetWork() {
     io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
                          m_skyLibrary, m_renderer, m_graph, &m_models, &m_sceneComponents, -1, &m_sceneAtmosphere};

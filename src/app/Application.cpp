@@ -337,7 +337,10 @@ int Application::Run() {
         // プロジェクトとマテリアルの読み書きも GPU 待機を伴うため、フレームの外で。
         // 他の保留処理より先に行う（読み込みが中身を丸ごと入れ替えるため）。
         if (m_frameCounter == 2 && !m_options.openGraph.empty()) m_pendingAssetOpen = m_options.openGraph;
+        if (!m_pendingProjectOpen.empty() || !m_pendingRoot.empty() || m_pendingHistoryStep != 0)
+            m_assetSelections.request = {};
         ProcessPendingFileWork();
+        ProcessAssetSelections();
         ProcessModelWork();
         // 経路探索用の地形（Path ノードの Base）の焼き直しも GPU 待機を伴うため、フレームの外で。
         ProcessPendingPathRoutes();
@@ -718,6 +721,11 @@ bool Application::Headless() const {
 }
 
 void Application::DrawUi() {
+    m_assetSelections.root = m_workspace.Root();
+    m_assetSelections.owner = static_cast<uint64_t>(m_selectedGraphNode) ^
+        (static_cast<uint64_t>(m_selectedMaterial + 1) << 32) ^ (static_cast<uint64_t>(m_selectedModel) << 16);
+    AssetSelectionFrame selectionFrame(m_assetSelections);
+    m_assetThumbnails.BeginRequests();
     // ショートカットはメニューを開いていなくても効かせたいので、先に見る。
     HandleShortcuts();
 
@@ -791,7 +799,6 @@ void Application::DrawUi() {
     DrawGraphPanel();
     // アセットの帯は畳める。出さなければドックノードが空になり、中央（ビューポート）が
     // その高さをもらう。ウィンドウはドック先を覚えているので、戻せば同じ所へ入る。
-    m_assetThumbnails.BeginRequests();
     if (m_settings.Display().showAssetBand) {
         DrawAssetBrowser();
     }
