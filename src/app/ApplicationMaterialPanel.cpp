@@ -469,6 +469,10 @@ void Application::DrawMaterialSphereWindow() {
             ui::PropertyFloat("変位量", &m_materialSphere.DisplacementMeters(), 0.0f, 1.0f, 0.1f,
                 "ハイト0〜1の高低差。0.5を基準に表面を変位させる。プレビュー専用", "%.3f m");
         else ui::HintText("凹凸の高さは右側の「変位量」で調整");
+        ImGui::BeginDisabled(!m_materialSphere.ShowDisplacement());
+        ui::PropertyBool("影を落とす", &m_materialSphere.CastShadow(), true,
+                         "凹凸が自分に落とす影を出す。太陽光にだけ効く。プレビュー専用");
+        ImGui::EndDisabled();
         ui::EndPropertyTable();
     }
     if (ui::Button("視点を戻す", ui::kWideButtonWidth)) {

@@ -82,6 +82,10 @@ struct SphereConstants {
     uint32_t shape;
     float displacementMeters;
     uint32_t heightIndex, heightFieldIndex, heightOutputIndex;
+
+    uint32_t castShadow;
+    uint32_t shadowPad[3];
+
     compositor::LayerMaterialGpu layerMaterial;
 };
 
@@ -170,6 +174,7 @@ void MaterialSphere::Render(rhi::Device& device, rhi::PipelineCache& pipelineCac
     }
     SphereConstants constants = {};
     constants.displacementMeters = m_showDisplacement ? (asset.layerMaterial ? asset.layerGpu.displacementMeters : m_displacementMeters) : 0.0f;
+    constants.castShadow = (m_showDisplacement && m_castShadow) ? 1u : 0u;
     constants.heightIndex = textures.SrvIndex(asset.height.texture, false);
     constants.heightFieldIndex = m_heightField.SrvIndex();
     constants.heightOutputIndex = m_heightField.UavIndex();

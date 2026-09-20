@@ -61,6 +61,10 @@ struct SphereConstants
     uint heightIndex;
     uint heightFieldIndex;
     uint heightOutputIndex;
+
+    uint castShadow;     // 0 以外なら、変位した面が自分に落とす影を出す
+    uint3 shadowPad;
+
     LayerMaterialData layerMaterial;
 };
 
@@ -144,18 +148,25 @@ float SurfaceDistance(float3 p) {
     const float displacement = (HeightAt(p) - 0.5f) * g_sphere.displacementMeters * 2 / g_sphere.lengthMeters;
     return g_sphere.shape == 1 ? p.y - displacement : length(p) - 1 - displacement;
 }
-// 有限の領域内で最初の交差を探す。球と平面の輪郭にもハイトを反映する。
-bool TraceHeight(float3 origin, float3 direction, out float3 position) {
+// ハイトが収まる範囲（平面は薄い板、球は殻の外接箱）と、レイが通る区間。
+// **この外では遮蔽も交差も起きない**ので、探索はこの区間だけでよい。
+bool HeightFieldRange(float3 origin, float3 direction, out float begin, out float end) {
     const float amplitude = g_sphere.displacementMeters / g_sphere.lengthMeters;
     const float3 extent = g_sphere.shape == 1 ? float3(1, max(amplitude, 1e-5f), 1) : (1 + amplitude).xxx;
     const float3 safeDirection = float3(abs(direction.x) < 1e-6f ? 1e-6f : direction.x,
         abs(direction.y) < 1e-6f ? 1e-6f : direction.y, abs(direction.z) < 1e-6f ? 1e-6f : direction.z);
     const float3 a = (-extent - origin) / safeDirection, b = (extent - origin) / safeDirection;
     const float3 nearT = min(a,b), farT = max(a,b);
-    float begin = max(max(nearT.x, nearT.y), max(nearT.z, 0));
-    float end = min(farT.x, min(farT.y, farT.z));
+    begin = max(max(nearT.x, nearT.y), max(nearT.z, 0));
+    end = min(farT.x, min(farT.y, farT.z));
+    return end > begin;
+}
+
+// 有限の領域内で最初の交差を探す。球と平面の輪郭にもハイトを反映する。
+bool TraceHeight(float3 origin, float3 direction, out float3 position) {
+    float begin, end;
     position = 0;
-    if (end <= begin) return false;
+    if (!HeightFieldRange(origin, direction, begin, end)) return false;
     float previousT = begin;
     float previous = SurfaceDistance(origin + direction * begin);
     [loop] for (uint i = 1; i <= 192; ++i) {
@@ -174,6 +185,27 @@ bool TraceHeight(float3 origin, float3 direction, out float3 position) {
     }
     return false;
 }
+
+// 変位した面が自分に落とす影。**太陽（平行光）にだけ掛ける。**
+// 環境光の遮蔽は素材の AO が受け持つので、ここでは触らない。
+// 戻り値は 0（完全な影）〜1（日なた）。
+float TraceHeightShadow(float3 position, float3 normal, float3 lightDirection) {
+    // 面からテクセル 1 つぶん浮かせて始める（自分自身を遮蔽と読まないため）。
+    const float3 origin = position + normal * (2.0f / g_sphere.size);
+    float begin, end;
+    if (!HeightFieldRange(origin, lightDirection, begin, end)) return 1;
+    // 交差の位置までは要らないので、二分探索はせず粗く歩く。
+    // かすめただけの所は半影として薄める（真の距離場ではないので目安の式）。
+    float shadow = 1;
+    [loop] for (uint i = 1; i <= 48; ++i) {
+        const float t = lerp(begin, end, i / 48.0f);
+        const float value = SurfaceDistance(origin + lightDirection * t);
+        if (value <= 0) return 0;
+        shadow = min(shadow, value * 16.0f / max(t, 1e-4f));
+    }
+    return saturate(shadow);
+}
+
 [numthreads(8, 8, 1)]
 void CsHeight(uint3 id : SV_DispatchThreadID) {
     if (any(id.xy >= g_sphere.size)) return;
@@ -368,9 +400,15 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     const float clampedRoughness = clamp(roughness, kMinPerceptualRoughness, 1.0f);
 
     const float3 lightDirection = normalize(g_sphere.lightDirection);
+    // 影は変位した面があってこそ。裏を向いている所はそもそも当たらないので歩かない。
+    const float shadow = (displaced && g_sphere.castShadow != 0 &&
+                          dot(normalGeometric, lightDirection) > 0)
+                             ? TraceHeightShadow(position, normalGeometric, lightDirection)
+                             : 1.0f;
     float3 radiance = ShadeDirectionalLight(normal, viewDirection, lightDirection,
                                             g_sphere.lightColor, g_sphere.lightIlluminance,
-                                            diffuseColor, f0, clampedRoughness);
+                                            diffuseColor, f0, clampedRoughness) *
+                      shadow;
 
     if (g_sphere.irradianceIndex != kInvalidTextureIndex)
     {
