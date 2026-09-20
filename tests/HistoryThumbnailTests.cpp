@@ -8,7 +8,7 @@
 namespace fs = std::filesystem;
 namespace tg::io { fs::path AppDataDirectory() { return {}; } }
 int main() {
-    const auto directory = fs::current_path() / ("history-thumbnail-tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto directory = fs::path(TG_TEST_DATA_DIR) / ("history-thumbnail-tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     std::error_code error;
     fs::create_directories(directory, error);
     int failures = 0;

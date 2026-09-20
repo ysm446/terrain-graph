@@ -9,7 +9,7 @@ using nlohmann::json;
 using tg::io::ProjectWorkspace;
 int main() {
     // テスト用の独立ルート。実データへ触れない。
-    const auto root = fs::current_path() / "workspace-test-data";
+    const auto root = fs::path(TG_TEST_DATA_DIR) / "workspace-test-data";
     std::error_code error;
     fs::create_directories(root, error);
     ProjectWorkspace workspace;

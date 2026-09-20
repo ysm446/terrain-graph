@@ -1,7 +1,5 @@
 #include "compositor/MaterialStack.h"
 
-#include <utility>
-
 namespace tg::compositor {
 
 MaterialLayer MaterialStack::MakeBaseLayer() {
@@ -29,43 +27,6 @@ void MaterialStack::SetTerrainScale(float sizeMeters, float heightMeters) {
     m_sizeMeters = sizeMeters;
     m_heightMeters = heightMeters;
     // 法線が実寸に依るので、実寸が動いたら合成し直す。
-    MarkDirty();
-}
-
-MaterialLayer& MaterialStack::Add(const MaterialLayer& layer) {
-    m_layers.push_back(layer);
-    MarkDirty();
-    return m_layers.back();
-}
-
-void MaterialStack::Remove(size_t index) {
-    if (index >= m_layers.size()) {
-        return;
-    }
-    m_layers.erase(m_layers.begin() + static_cast<ptrdiff_t>(index));
-    MarkDirty();
-}
-
-void MaterialStack::Move(size_t index, int delta) {
-    if (index >= m_layers.size() || delta == 0) {
-        return;
-    }
-    const auto target = static_cast<ptrdiff_t>(index) + delta;
-    if (target < 0 || target >= static_cast<ptrdiff_t>(m_layers.size())) {
-        return;
-    }
-    std::swap(m_layers[index], m_layers[static_cast<size_t>(target)]);
-    MarkDirty();
-}
-
-void MaterialStack::MoveTo(size_t from, size_t to) {
-    if (from >= m_layers.size() || to >= m_layers.size() || from == to) {
-        return;
-    }
-    // 入れ替えではなく「抜いて差し込む」。間のレイヤーの順序を保つ。
-    MaterialLayer moved = std::move(m_layers[from]);
-    m_layers.erase(m_layers.begin() + static_cast<ptrdiff_t>(from));
-    m_layers.insert(m_layers.begin() + static_cast<ptrdiff_t>(to), std::move(moved));
     MarkDirty();
 }
 

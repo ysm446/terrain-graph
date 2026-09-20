@@ -53,7 +53,7 @@ int main() {
     check(tg::io::ReadLayerMaterial(stackBody, restored, error) && tg::io::WriteLayerMaterial(restored) == stackBody, "hidden layer stack roundtrip");
 
     namespace fs = std::filesystem;
-    const auto root = fs::current_path() / "layer-material-test-data";
+    const auto root = fs::path(TG_TEST_DATA_DIR) / "layer-material-test-data";
     tg::io::ProjectWorkspace workspace;
     check(workspace.Open(root), "open workspace");
     auto sourcePath = workspace.UniquePath(root, "source", ".tgmat");

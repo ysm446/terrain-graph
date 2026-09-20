@@ -342,28 +342,31 @@ target_compile_options(model_import_tests PRIVATE /W4 /permissive- /utf-8)
 target_link_libraries(model_import_tests PRIVATE ufbx::ufbx)
 add_test(NAME model-import COMMAND model_import_tests)
 
-add_executable(project_workspace_tests tests/ProjectWorkspaceTests.cpp src/io/LayerMaterialIo.cpp src/graph/SurfacePresetGraph.cpp src/io/ProjectWorkspace.cpp src/io/SceneComponents.cpp src/core/Log.cpp)
-target_include_directories(project_workspace_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_compile_options(project_workspace_tests PRIVATE /W4 /permissive- /utf-8)
-target_link_libraries(project_workspace_tests PRIVATE nlohmann_json::nlohmann_json ole32)
-add_test(NAME project-workspace COMMAND project_workspace_tests)
+# ファイル入出力のテストで共通の実装は一度だけコンパイルする。
+add_library(terrain_graph_test_io STATIC
+    src/io/LayerMaterialIo.cpp
+    src/graph/SurfacePresetGraph.cpp
+    src/io/ProjectWorkspace.cpp
+    src/io/SceneComponents.cpp
+    src/core/Log.cpp
+)
+target_include_directories(terrain_graph_test_io PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_compile_options(terrain_graph_test_io PRIVATE /W4 /permissive- /utf-8)
+target_link_libraries(terrain_graph_test_io PUBLIC nlohmann_json::nlohmann_json ole32)
 
-add_executable(history_thumbnail_tests tests/HistoryThumbnailTests.cpp
-    src/io/RecentFiles.cpp src/io/ThumbnailStore.cpp src/io/AssetRelations.cpp src/io/LayerMaterialIo.cpp src/graph/SurfacePresetGraph.cpp src/io/ProjectWorkspace.cpp src/io/SceneComponents.cpp src/core/Log.cpp)
-target_include_directories(history_thumbnail_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_compile_options(history_thumbnail_tests PRIVATE /W4 /permissive- /utf-8)
-target_link_libraries(history_thumbnail_tests PRIVATE nlohmann_json::nlohmann_json ole32)
-add_test(NAME history-thumbnail COMMAND history_thumbnail_tests)
+function(tg_add_io_test target name)
+    add_executable(${target} ${ARGN})
+    target_compile_options(${target} PRIVATE /W4 /permissive- /utf-8)
+    target_link_libraries(${target} PRIVATE terrain_graph_test_io)
+    # 直接 exe を実行した場合も、生成物はソースツリー直下へ置かない。
+    target_compile_definitions(${target} PRIVATE
+        TG_TEST_DATA_DIR="${CMAKE_BINARY_DIR}/test-data/$<CONFIG>/${target}")
+    add_test(NAME ${name} COMMAND ${target})
+endfunction()
 
-add_executable(scene_components_tests tests/SceneComponentsTests.cpp src/io/SceneComponents.cpp src/io/LayerMaterialIo.cpp src/graph/SurfacePresetGraph.cpp src/io/ProjectWorkspace.cpp src/io/AssetRelations.cpp src/io/ThumbnailStore.cpp src/core/Log.cpp)
-target_include_directories(scene_components_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_compile_options(scene_components_tests PRIVATE /W4 /permissive- /utf-8)
-target_link_libraries(scene_components_tests PRIVATE nlohmann_json::nlohmann_json ole32)
-add_test(NAME scene-components COMMAND scene_components_tests)
-
-add_executable(layer_material_tests tests/LayerMaterialTests.cpp src/graph/SurfacePresetGraph.cpp
-    src/io/LayerMaterialIo.cpp src/io/ProjectWorkspace.cpp src/io/SceneComponents.cpp src/core/Log.cpp)
-target_include_directories(layer_material_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_compile_options(layer_material_tests PRIVATE /W4 /permissive- /utf-8)
-target_link_libraries(layer_material_tests PRIVATE nlohmann_json::nlohmann_json ole32)
-add_test(NAME layer-material COMMAND layer_material_tests)
+tg_add_io_test(project_workspace_tests project-workspace tests/ProjectWorkspaceTests.cpp)
+tg_add_io_test(history_thumbnail_tests history-thumbnail tests/HistoryThumbnailTests.cpp
+    src/io/RecentFiles.cpp src/io/ThumbnailStore.cpp src/io/AssetRelations.cpp)
+tg_add_io_test(scene_components_tests scene-components tests/SceneComponentsTests.cpp
+    src/io/AssetRelations.cpp src/io/ThumbnailStore.cpp)
+tg_add_io_test(layer_material_tests layer-material tests/LayerMaterialTests.cpp)

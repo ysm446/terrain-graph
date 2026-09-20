@@ -9,13 +9,13 @@ int main() {
     using nlohmann::json;
     using namespace tg::io;
     ProjectWorkspace workspace;
-    const auto root = fs::current_path() / "component-test-data";
+    const auto root = fs::path(TG_TEST_DATA_DIR) / "component-test-data";
     int failures = 0;
     const auto check = [&](bool ok, const char* name) { if (!ok) { ++failures; std::cerr << name << '\n'; } };
     check(workspace.Open(root), "open root");
     // カタログは開いていない画像（meta未生成）と素材も列挙し、内部キャッシュは除く。
     tg::AssetSelectionContext selections;
-    selections.root = fs::current_path() / "selection-catalog-test-data";
+    selections.root = fs::path(TG_TEST_DATA_DIR) / "selection-catalog-test-data";
     std::error_code catalogError;
     fs::create_directories(selections.root / "nested", catalogError);
     fs::create_directories(selections.root / ".cache", catalogError);

@@ -7,7 +7,7 @@
 
 namespace tg::compositor {
 
-// レイヤーを下から上へ積んだもの。index 0 が一番下（下地）。
+// ノードグラフを評価用にコンパイルしたレイヤー列。index 0 が一番下（下地）。
 class MaterialStack {
 public:
     MaterialStack();
@@ -25,12 +25,6 @@ public:
     // マスクのノードグラフを落とした op の列。レイヤーは添字で参照する。
     MaskProgram& MaskOps() { return m_maskOps; }
     const MaskProgram& MaskOps() const { return m_maskOps; }
-
-    MaterialLayer& Add(const MaterialLayer& layer);
-    void Remove(size_t index);
-    void Move(size_t index, int delta);
-    // from の位置のレイヤーを抜いて to の位置へ差し込む。一覧のドラッグ移動で使う。
-    void MoveTo(size_t from, size_t to);
 
     // 地形の実寸（m）。法線を実寸の勾配として作るために評価器が使う。
     // 出どころはグラフの Heightmap ノード（graph::TerrainScale）で、
