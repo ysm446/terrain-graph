@@ -319,7 +319,7 @@ void Application::DrawModelPreviewWindow() {
             for (size_t i = 0; i < asset.geometry->slots.size(); ++i) {
                 ImGui::PushID(static_cast<int>(i));
                 const std::string label = "スロット " + std::to_string(i + 1);
-                changed |= DrawMaterialSlotRow(label.c_str(), asset.materials[i], m_materialLibrary, m_pendingAssetReveal);
+                changed |= DrawMaterialSlotRow(label.c_str(), asset.materials[i], m_materialLibrary, m_pendingAssetReveal, false);
                 ImGui::PopID();
             }
             ui::EndPropertyTable();

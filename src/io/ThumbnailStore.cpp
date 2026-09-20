@@ -68,7 +68,7 @@ ThumbnailRecord AssetThumbnailRecord(ProjectWorkspace& workspace, const fs::path
         const auto size = fs::file_size(file, error);
         if (!error) stamp = Hash(std::to_string(size), stamp);
         const auto extension = file.extension().wstring();
-        if (_wcsicmp(extension.c_str(), L".tgmat") && _wcsicmp(extension.c_str(), L".tgsky") && _wcsicmp(extension.c_str(), L".tgmodel")) return;
+        if (_wcsicmp(extension.c_str(), L".tgmat") && _wcsicmp(extension.c_str(), L".tglayer") && _wcsicmp(extension.c_str(), L".tgsky") && _wcsicmp(extension.c_str(), L".tgmodel")) return;
         nlohmann::json document;
         if (!ProjectWorkspace::ReadJson(file, document)) return;
         const auto refs = [&](auto&& self, const nlohmann::json& value) -> void {

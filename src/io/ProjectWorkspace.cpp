@@ -1,4 +1,5 @@
 #include "io/ProjectWorkspace.h"
+#include "io/LayerMaterialIo.h"
 #include "io/SceneComponents.h"
 #include "core/PathUtf8.h"
 #include "core/Log.h"
@@ -31,7 +32,7 @@ fs::path Absolute(const fs::path& path) {
 }
 bool IsNative(const fs::path& path) {
     const auto ext = path.extension();
-    return ext == L".tgmat" || ext == L".tgsky" || ext == L".tgmodel" || ext == L".tgterrain" || ext == L".tgcloud" || ext == L".tgatmosphere";
+    return ext == L".tgmat" || ext == L".tglayer" || ext == L".tgsky" || ext == L".tgmodel" || ext == L".tgterrain" || ext == L".tgcloud" || ext == L".tgatmosphere";
 }
 void MapTextures(json& material, const std::function<json(const json&)>& convert) {
     auto maps = material.find("maps");
@@ -303,14 +304,20 @@ bool ProjectWorkspace::SaveScene(const fs::path& path, json& document) {
         entry = {{"id", id}, {"asset", Reference(assetPath)}};
         return !entry["asset"].is_null();
     };
-    for (auto& entry : document["materials"]) {
+    for (int pass = 0; pass < 2; ++pass) for (auto& entry : document["materials"]) {
+        const bool layered = entry.contains("_layerMaterial");
+        if (layered != (pass == 1) || !entry.contains("name")) continue;
+        if (layered) {
+            MapLayerMaterials(entry, [&](const json& value) -> json { const auto found = materials.find(value.is_number_integer() ? value.get<int>() : 0); return found == materials.end() ? json(nullptr) : found->second; });
+            entry.erase("_layerMaterial");
+        }
         const int id = entry["id"].get<int>();
         MapTextures(entry, [&](const json& value) -> json {
             if (!value.is_number_integer()) return nullptr;
             const auto found = textures.find(value.get<int>());
             return found == textures.end() ? json() : found->second;
         });
-        if (!save(entry, "material-asset", "Materials", ".tgmat")) return false;
+        if (!save(entry, layered ? "layer-material-asset" : "material-asset", "Materials", layered ? ".tglayer" : ".tgmat")) return false;
         materials[id] = entry["asset"];
     }
     for (auto& entry : document["models"]) {
@@ -419,9 +426,26 @@ bool ProjectWorkspace::Expand(json& document) {
         if (!entry["materials"].is_array()) return false;
         for (auto& slot : entry["materials"]) slot = materialId(slot);
     }
-    for (auto& entry : materials) {
-        if (!read(entry, "material-asset")) return false;
-        MapTextures(entry, textureId);
+    // 依存素材を追加するため、vector の参照を保持せずコピーを処理する。
+    for (size_t i = 0; i < materials.size(); ++i) {
+        if (materials.size() > 4096) return false;
+        json entry = materials[i];
+        const auto path = Resolve(entry.value("asset", json::object()));
+        const bool layered = path.extension() == L".tglayer";
+        if (!read(entry, layered ? "layer-material-asset" : "material-asset")) return false;
+        if (layered) {
+            bool valid = true;
+            MapLayerMaterials(entry, [&](const json& ref) -> json {
+                if (ref == 0 || ref.is_null()) return 0;
+                const auto source = Resolve(ref);
+                if (source.extension() != L".tgmat") { valid = false; return 0; }
+                return materialId(ref);
+            });
+            graph::LayerMaterial parsed; std::string error;
+            if (!valid || !ReadLayerMaterial(entry, parsed, error)) { TG_LOG_ERROR("レイヤーマテリアルを読み込めません: %s", error.c_str()); return false; }
+            entry["_layerMaterial"] = true;
+        } else MapTextures(entry, textureId);
+        materials[i] = std::move(entry);
     }
     for (auto& entry : textures) {
         const auto source = Resolve(entry["source"]);
@@ -437,7 +461,7 @@ bool ProjectWorkspace::Expand(json& document) {
         }
     }
     document["format"] = "terrain-graph.project";
-    document["version"] = 4;
+    document["version"] = 5;
     return true;
 }
 }  // namespace tg::io

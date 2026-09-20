@@ -60,6 +60,7 @@ DocumentSnapshot Application::CaptureDocument() const {
         MaterialSnapshot material;
         material.id = asset.id;
         material.name = asset.name;
+        material.layerMaterial = asset.layerMaterial;
         material.assetPath = asset.assetPath;
         material.assetUid = asset.assetUid;
         material.baseColor = asset.baseColor;
@@ -136,6 +137,7 @@ void Application::ApplyDocument(const DocumentSnapshot& snapshot) {
         compositor::MaterialAsset& asset =
             m_materialLibrary.RestoreAsset(material.id, material.name);
         asset.name = material.name;
+        asset.layerMaterial = material.layerMaterial;
         // 初回保存で付いた永続IDは、保存前に作った編集履歴へ戻っても保持する。
         if (!material.assetUid.empty() || asset.assetUid.empty()) {
             asset.assetPath = material.assetPath;

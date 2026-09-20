@@ -412,7 +412,7 @@ inline void DrawAssetPathRow(const char* label, const std::filesystem::path& pat
 
 // マテリアルを選ぶ行。サムネイル付きの一覧から選ぶ。
 inline bool DrawMaterialSlotRow(const char* label, compositor::MaterialAssetId& slot,
-                         const compositor::MaterialLibrary& library, std::filesystem::path& revealRequest) {
+                         const compositor::MaterialLibrary& library, std::filesystem::path& revealRequest, bool allowLayerMaterials = true) {
     ui::PropertyLabel(label, "「なし」ならレイヤーの定数値だけで塗る");
 
     std::string preview = "なし";
@@ -430,6 +430,7 @@ inline bool DrawMaterialSlotRow(const char* label, compositor::MaterialAssetId& 
             changed = true;
         }
         for (const compositor::MaterialAsset& asset : library.Entries()) {
+            if (!allowLayerMaterials && asset.layerMaterial) continue;
             ImGui::PushID(static_cast<int>(asset.id));
             if (asset.thumbnail.IsValid()) {
                 ImGui::Image(static_cast<ImTextureID>(asset.thumbnail.srv.gpu.ptr),
@@ -449,8 +450,11 @@ inline bool DrawMaterialSlotRow(const char* label, compositor::MaterialAssetId& 
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kMaterialDragDropType);
             payload != nullptr) {
-            slot = *static_cast<const compositor::MaterialAssetId*>(payload->Data);
-            changed = true;
+            if (payload->DataSize == sizeof(compositor::MaterialAssetId)) {
+                const auto id = *static_cast<const compositor::MaterialAssetId*>(payload->Data);
+                const auto* asset = library.Find(id);
+                if (asset && (allowLayerMaterials || !asset->layerMaterial)) { slot = id; changed = true; }
+            }
         }
         ImGui::EndDragDropTarget();
     }

@@ -10,6 +10,7 @@
 
 #include "Brdf.hlsli"
 #include "CompositeCommon.hlsli"
+#include "LayerMaterial.hlsli"
 #include "Tonemap.hlsli"
 
 struct ThumbnailConstants
@@ -37,9 +38,10 @@ struct ThumbnailConstants
     float2 colorAdjust;  // 色相（ラジアン）, 彩度
     float brightness;    // 明度（倍率）
     float pad0;
+    LayerMaterialData layerMaterial;
 };
 
-ConstantBuffer<ThumbnailConstants> g_thumbnail : register(b0);
+ConstantBuffer<ThumbnailConstants> g_thumbnail : register(b1);
 
 
 float4 SampleMap(uint index, float2 uv)
@@ -73,7 +75,8 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     // 少し余白を取って球を収める。
     const float sphereRadius = 0.92f;
-    const float radius = sqrt(radiusSq);
+    const bool layered = g_thumbnail.layerMaterial.count > 0;
+    const float radius = layered ? max(abs(disc.x), abs(disc.y)) : sqrt(radiusSq);
 
     // 輪郭のジャギーを消すための幅。disc は size テクセルで [-1, 1] を張るので、
     // 1 テクセル = 2 / size。その 1.5 倍を半値幅にする（合わせて 3 テクセル）。
@@ -86,7 +89,7 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     }
 
     const float2 spherePoint = disc / sphereRadius;
-    const float3 geometricNormal =
+    const float3 geometricNormal = layered ? float3(0,0,1) :
         float3(spherePoint, sqrt(saturate(1.0f - dot(spherePoint, spherePoint))));
 
     // マップは円板の座標でそのまま引く。球へ厳密に貼るのではなく、
@@ -134,6 +137,14 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
         const float3 bitangent = cross(geometricNormal, tangent);
         normal = normalize(tangent * sampled.x + bitangent * sampled.y +
                            geometricNormal * sampled.z);
+    }
+
+    if (g_thumbnail.layerMaterial.count > 0) {
+        const LayerMaterialSample material = EvaluateLayerMaterial(g_thumbnail.layerMaterial, uv, uv, g_thumbnail.uvScale / g_thumbnail.size, float2(1,1), float2(1,0), float2(0,1));
+        baseColor = material.color; roughness = material.surface.x; metallic = material.surface.y; ambientOcclusion = material.surface.z;
+        const float3 axis = abs(geometricNormal.x) < 0.999f ? float3(1,0,0) : float3(0,1,0);
+        const float3 t = normalize(axis - geometricNormal * dot(geometricNormal, axis));
+        normal = normalize(t * material.normal.x + cross(geometricNormal, t) * material.normal.y + geometricNormal * material.normal.z);
     }
 
     float3 diffuseColor;

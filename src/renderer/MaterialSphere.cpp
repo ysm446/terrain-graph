@@ -80,6 +80,7 @@ struct SphereConstants {
     float colorAdjust[2];  // 色相（ラジアン）, 彩度
     float brightness;      // 明度（倍率）
     float pad0;
+    compositor::LayerMaterialGpu layerMaterial;
 };
 
 }  // namespace
@@ -133,6 +134,7 @@ void MaterialSphere::Render(rhi::Device& device, rhi::PipelineCache& pipelineCac
     }
 
     SphereConstants constants = {};
+    constants.layerMaterial = asset.layerGpu;
     constants.outputIndex = m_output.UavIndex();
     constants.size = kOutputSize;
     // ベースカラーだけ sRGB として読む。それ以外はリニア（サムネイルと同じ）。

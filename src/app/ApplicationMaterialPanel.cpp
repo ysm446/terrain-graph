@@ -28,6 +28,8 @@ namespace {
 void CopyMaterialValues(const compositor::MaterialAsset& source, compositor::MaterialAsset& target) {
     target.id = source.id;
     target.name = source.name;
+    target.assetPath = source.assetPath; target.assetUid = source.assetUid;
+    target.layerMaterial = source.layerMaterial;
     target.baseColor = source.baseColor;
     target.normal = source.normal;
     target.roughness = source.roughness;
@@ -216,7 +218,7 @@ void Application::DrawMaterialContextMenu(compositor::MaterialAssetId target) {
             m_pendingMaterialImport = path;
         }
     }
-    if (asset != nullptr && ImGui::MenuItem("書き出し…")) {
+    if (asset != nullptr && !asset->layerMaterial && ImGui::MenuItem("書き出し…")) {
         const std::filesystem::path path = ShowSaveFileDialog(
             L"マテリアルを書き出す", MaterialFileFilters(), L"tgmat", FromUtf8(asset->name));
         if (!path.empty()) {
@@ -230,6 +232,7 @@ void Application::DrawMaterialContextMenu(compositor::MaterialAssetId target) {
 // 一覧はサムネイルだけを出し、値の調整は球を見ながらやる。
 // 窓の描画から切り出してあるのは、球の操作と行の並びを読み分けられるようにするため。
 bool Application::DrawMaterialProperties(compositor::MaterialAsset& asset) {
+    if (asset.layerMaterial) return DrawLayerMaterialProperties(asset);
     bool changed = false;
 
     ui::SectionHeader("基本");
@@ -357,7 +360,7 @@ void Application::DrawMaterialSphereWindow() {
     // --- 上下 2 区画 ----------------------------------------------------------
     // 上が球、下がプロパティ。**スクロールするのは下だけ。**
     // 上は**幅に合わせた正方形**なので、窓を広げれば球も大きくなり、余白が残らない。
-    const float paneSize = PreviewPaneSize();
+    const float paneSize = asset.layerMaterial ? std::min(PreviewPaneSize(), ui::Scaled(112.0f)) : PreviewPaneSize();
 
     // --- 球 ------------------------------------------------------------------
     ImGui::BeginChild("materialSpherePane", ImVec2(0.0f, paneSize), ImGuiChildFlags_None,

@@ -25,7 +25,7 @@ std::string Extension(const fs::path& path) {
 bool AssetThumbnailCache::Supports(const fs::path& path) {
     const auto ext = Extension(path);
     return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".tga" || ext == ".bmp" ||
-           ext == ".exr" || ext == ".hdr" || ext == ".tgmat" || ext == ".tgsky" ||
+           ext == ".exr" || ext == ".hdr" || ext == ".tgmat" || ext == ".tglayer" || ext == ".tgsky" ||
            ext == ".tgmodel" || ext == ".fbx" || ext == ".tgscene";
 }
 void AssetThumbnailCache::BeginRequests() { m_requests.clear(); ++m_frame; }
@@ -189,7 +189,7 @@ void AssetThumbnailCache::Process(rhi::Device& device, rhi::PipelineCache& pipel
         }
         device.DeferRelease(thumbnail);
     }
-    if (extension != ".tgmat" && extension != ".tgsky" && extension != ".tgmodel" && extension != ".fbx") {
+    if (extension != ".tgmat" && extension != ".tglayer" && extension != ".tgsky" && extension != ".tgmodel" && extension != ".fbx") {
         if (!BuildImage(device, path, thumbnail)) device.DeferRelease(thumbnail);
         Store(device, path, std::move(thumbnail));
         return;

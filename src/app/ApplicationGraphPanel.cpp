@@ -216,6 +216,7 @@ bool IsValidNodePosition(float x, float y) {
 }  // namespace
 
 void Application::DestroyGraphEditor() {
+    if (m_presetNodeEditor) { ed::DestroyEditor(m_presetNodeEditor); m_presetNodeEditor = nullptr; }
     if (m_nodeEditor != nullptr) {
         ed::DestroyEditor(m_nodeEditor);
         m_nodeEditor = nullptr;
@@ -1051,6 +1052,7 @@ void Application::OpenComponentEditor(int component) {
         m_selectedGraphNode = 0; m_selectedGraphNodes.clear();
     }
     m_previewGraphNode = 0; m_previewGraphPin = 0;
+    if (m_presetNodeEditor) { ed::DestroyEditor(m_presetNodeEditor); m_presetNodeEditor = nullptr; }
     if (m_nodeEditor) { ed::DestroyEditor(m_nodeEditor); m_nodeEditor = nullptr; }
     RequestGraphNodePlacement();
 }

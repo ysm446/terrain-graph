@@ -470,7 +470,7 @@ void Application::RefreshAssetBrowser() {
         if (entry.is_symlink(error) || entry.path().filename().wstring().starts_with(L".")) continue;
         const auto ext = Extension(entry.path());
         if (!entry.is_directory(error) && !IsImage(ext) && ext != ".fbx" && ext != ".hdr" &&
-            ext != ".tgmat" && ext != ".tgsky" && ext != ".tgmodel" &&
+            ext != ".tgmat" && ext != ".tglayer" && ext != ".tgsky" && ext != ".tgmodel" &&
             ext != ".tgterrain" && ext != ".tgcloud" && ext != ".tgatmosphere" && ext != ".tgscene" && ext != ".tgproj" && ext != ".mmproj") continue;
         m_assetEntries.push_back(entry);
     }
@@ -702,7 +702,7 @@ void Application::ProcessAssetWork() {
             } else TG_LOG_ERROR("大気散乱スカイを開けませんでした");
             return;
         }
-        if (ext == ".tgmat" || ext == ".tgsky" || ext == ".tgmodel") {
+        if (ext == ".tgmat" || ext == ".tglayer" || ext == ".tgsky" || ext == ".tgmodel") {
             nlohmann::json assetHeader;
             if (ext == ".tgmat" && io::ProjectWorkspace::ReadJson(path, assetHeader) &&
                 io::ProjectWorkspace::String(assetHeader, "format") == "terrain-graph.material") {
@@ -710,7 +710,7 @@ void Application::ProcessAssetWork() {
                 return;
             }
             if (io::LoadSharedAsset(m_workspace, path, m_device, m_pipelineCache, refs)) {
-                if (ext == ".tgmat") {
+                if (ext == ".tgmat" || ext == ".tglayer") {
                     for (size_t i = 0; i < m_materialLibrary.Entries().size(); ++i)
                         if (m_materialLibrary.Entries()[i].assetPath == path) m_selectedMaterial = static_cast<int>(i);
                     m_showMaterialSphere = true;
@@ -933,7 +933,7 @@ void Application::DrawAssetBrowser() {
                                   ext == ".tgterrain" ? ui::AssetIcon::Terrain : ui::AssetIcon::Cloud;
                 ui::DrawAssetIcon(icon, tileMin, tileMax);
             } else if (!handle) {
-                const char* type = ext == ".tgterrain" ? "地形グラフ" : ext == ".tgatmosphere" ? "大気散乱" : ext == ".tgcloud" ? "雲グラフ" : ext == ".tgscene" ? "シーン" : ext == ".tgmat" ? "マテリアル" :
+                const char* type = ext == ".tgterrain" ? "地形グラフ" : ext == ".tgatmosphere" ? "大気散乱" : ext == ".tgcloud" ? "雲グラフ" : ext == ".tgscene" ? "シーン" : ext == ".tglayer" ? "レイヤーマテリアル" : ext == ".tgmat" ? "マテリアル" :
                     ext == ".tgsky" ? "作業用IBL" : ext == ".tgmodel" || ext == ".fbx" ? "モデル" : IsImage(ext) ? "画像" : "ファイル";
                 const auto min = tileMin, max = tileMax;
                 const auto text = ImGui::CalcTextSize(type);
@@ -990,10 +990,10 @@ void Application::DrawAssetBrowser() {
                     ImGui::MenuItem(ext == ".tgatmosphere" ? "シーンの空に設定" : "シーンに配置（入れ替え）"))
                     m_pendingComponentPlace = path;
                 // 複製は同じフォルダに「名前 コピー」で作る。ID は新しく振り直し、元のアセットは触らない。
-                if ((ext == ".tgterrain" || ext == ".tgcloud" || ext == ".tgatmosphere" || ext == ".tgmat") && ImGui::MenuItem("複製")) {
+                if ((ext == ".tgterrain" || ext == ".tgcloud" || ext == ".tgatmosphere" || ext == ".tgmat" || ext == ".tglayer") && ImGui::MenuItem("複製")) {
                     nlohmann::json body;
                     const char* kind = ext == ".tgatmosphere" ? "atmosphere-sky" : ext == ".tgcloud" ? "cloud-graph" :
-                                       ext == ".tgmat" ? "material-asset" : "terrain-graph";
+                                       ext == ".tglayer" ? "layer-material-asset" : ext == ".tgmat" ? "material-asset" : "terrain-graph";
                     if (m_workspace.ReadAsset(path, kind, body)) {
                         body.erase("uid");
                         auto name = io::ProjectWorkspace::String(body, "name");
@@ -1061,6 +1061,15 @@ void Application::DrawAssetBrowser() {
                     else { m_pendingAssetReveal = path; m_assetRefresh = true; }
                 }
             }
+            if (ImGui::MenuItem("レイヤーマテリアルを作成")) {
+                const auto id = m_materialLibrary.Add("新規レイヤーマテリアル");
+                auto* asset = m_materialLibrary.FindMutable(id);
+                asset->layerMaterial.emplace(); asset->layerMaterial->name = asset->name;
+                asset->layerMaterial->materials.emplace_back();
+                asset->assetPath = m_workspace.UniquePath(m_assetDirectory, asset->name, ".tglayer");
+                m_selectedMaterial = static_cast<int>(m_materialLibrary.Entries().size()) - 1;
+                m_showMaterialSphere = true; m_pendingAssetsSave = true; MarkDocumentChanged();
+            }
             if (ImGui::MenuItem("マテリアルを作成")) {
                 const auto id = m_materialLibrary.Add("新規マテリアル");
                 auto* asset = m_materialLibrary.FindMutable(id);
@@ -1084,7 +1093,7 @@ void Application::DrawAssetBrowser() {
                 m_showSkyPreview = true; m_pendingAssetsSave = true; m_renderer.AtmosphericMode() = false;
             }
             if (ImGui::MenuItem("ファイルを読み込む…")) {
-                const auto paths = ShowOpenFilesDialog(L"アセットを読み込む", {{L"画像 / モデル / マテリアル", L"*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.exr;*.hdr;*.fbx;*.tgmat"}});
+                const auto paths = ShowOpenFilesDialog(L"アセットを読み込む", {{L"画像 / モデル / マテリアル", L"*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.exr;*.hdr;*.fbx;*.tgmat;*.tglayer"}});
                 HandleDroppedFiles(paths);
             }
             ImGui::EndPopup();

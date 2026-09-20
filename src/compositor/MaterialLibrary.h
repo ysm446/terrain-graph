@@ -1,4 +1,6 @@
 #pragma once
+#include "graph/LayerMaterial.h"
+#include "compositor/LayerMaterialGpu.h"
 
 #include "compositor/MaterialLayer.h"
 #include "compositor/TextureLibrary.h"
@@ -19,6 +21,9 @@ struct MaterialAsset {
     MaterialAssetId id = kNoMaterialAsset;
     std::filesystem::path assetPath;
     std::string assetUid;
+    std::optional<graph::LayerMaterial> layerMaterial;
+    LayerMaterialGpu layerGpu;
+    std::string layerError;
     std::string name;
 
     // 未指定のスロットは下の定数を使う。
@@ -81,6 +86,7 @@ class MaterialLibrary {
 public:
     void Destroy(rhi::Device& device);
 
+    LayerMaterialGpu CompileLayerMaterial(const MaterialAsset& asset, const TextureLibrary& textures, std::string& error) const;
     MaterialAssetId Add(const std::string& name);
     // ID を保ったまま作り直す。**アンドゥで削除を取り消すときに使う。**
     // Add で作ると新しい ID が振られ、レイヤーからの参照が切れてしまう。

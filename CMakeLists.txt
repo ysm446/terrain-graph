@@ -92,6 +92,7 @@ set(tg_sources
     src/app/ApplicationFileWork.cpp
     src/app/ApplicationGraphPanel.cpp
     src/app/ApplicationLayerPanel.cpp
+    src/app/ApplicationLayerMaterial.cpp
     src/app/ApplicationMaterialPanel.cpp
     src/app/ApplicationModelPanel.cpp
     src/renderer/ModelAsset.cpp
@@ -108,6 +109,7 @@ set(tg_sources
     src/app/UndoHistory.h
     src/core/Log.cpp
     src/core/Log.h
+    src/graph/SurfacePresetGraph.cpp
     src/graph/NodeGraph.cpp
     src/graph/NodeGraph.h
     src/graph/Path.cpp
@@ -146,6 +148,7 @@ set(tg_sources
     src/io/ProjectWorkspace.cpp src/io/SceneComponents.cpp
     src/app/ApplicationAssetBrowser.cpp
     src/app/AssetThumbnailCache.cpp
+    src/io/LayerMaterialIo.cpp
     src/io/ProjectIo.cpp
     src/io/ProjectIo.h
     src/io/RecentFiles.cpp
@@ -312,6 +315,7 @@ add_executable(terrain_graph_tests
     src/compositor/MultiScaleBreaching.h
     src/compositor/MaterialStack.cpp
     src/compositor/MaterialStack.h
+    src/graph/SurfacePresetGraph.cpp
     src/graph/NodeGraph.cpp
     src/graph/NodeGraph.h
     src/graph/Path.cpp
@@ -337,21 +341,28 @@ target_compile_options(model_import_tests PRIVATE /W4 /permissive- /utf-8)
 target_link_libraries(model_import_tests PRIVATE ufbx::ufbx)
 add_test(NAME model-import COMMAND model_import_tests)
 
-add_executable(project_workspace_tests tests/ProjectWorkspaceTests.cpp src/io/ProjectWorkspace.cpp src/io/SceneComponents.cpp src/core/Log.cpp)
+add_executable(project_workspace_tests tests/ProjectWorkspaceTests.cpp src/io/LayerMaterialIo.cpp src/graph/SurfacePresetGraph.cpp src/io/ProjectWorkspace.cpp src/io/SceneComponents.cpp src/core/Log.cpp)
 target_include_directories(project_workspace_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_options(project_workspace_tests PRIVATE /W4 /permissive- /utf-8)
 target_link_libraries(project_workspace_tests PRIVATE nlohmann_json::nlohmann_json ole32)
 add_test(NAME project-workspace COMMAND project_workspace_tests)
 
 add_executable(history_thumbnail_tests tests/HistoryThumbnailTests.cpp
-    src/io/RecentFiles.cpp src/io/ThumbnailStore.cpp src/io/AssetRelations.cpp src/io/ProjectWorkspace.cpp src/io/SceneComponents.cpp src/core/Log.cpp)
+    src/io/RecentFiles.cpp src/io/ThumbnailStore.cpp src/io/AssetRelations.cpp src/io/LayerMaterialIo.cpp src/graph/SurfacePresetGraph.cpp src/io/ProjectWorkspace.cpp src/io/SceneComponents.cpp src/core/Log.cpp)
 target_include_directories(history_thumbnail_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_options(history_thumbnail_tests PRIVATE /W4 /permissive- /utf-8)
 target_link_libraries(history_thumbnail_tests PRIVATE nlohmann_json::nlohmann_json ole32)
 add_test(NAME history-thumbnail COMMAND history_thumbnail_tests)
 
-add_executable(scene_components_tests tests/SceneComponentsTests.cpp src/io/SceneComponents.cpp src/io/ProjectWorkspace.cpp src/io/AssetRelations.cpp src/io/ThumbnailStore.cpp src/core/Log.cpp)
+add_executable(scene_components_tests tests/SceneComponentsTests.cpp src/io/SceneComponents.cpp src/io/LayerMaterialIo.cpp src/graph/SurfacePresetGraph.cpp src/io/ProjectWorkspace.cpp src/io/AssetRelations.cpp src/io/ThumbnailStore.cpp src/core/Log.cpp)
 target_include_directories(scene_components_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_options(scene_components_tests PRIVATE /W4 /permissive- /utf-8)
 target_link_libraries(scene_components_tests PRIVATE nlohmann_json::nlohmann_json ole32)
 add_test(NAME scene-components COMMAND scene_components_tests)
+
+add_executable(layer_material_tests tests/LayerMaterialTests.cpp src/graph/SurfacePresetGraph.cpp
+    src/io/LayerMaterialIo.cpp src/io/ProjectWorkspace.cpp src/io/SceneComponents.cpp src/core/Log.cpp)
+target_include_directories(layer_material_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_compile_options(layer_material_tests PRIVATE /W4 /permissive- /utf-8)
+target_link_libraries(layer_material_tests PRIVATE nlohmann_json::nlohmann_json ole32)
+add_test(NAME layer-material COMMAND layer_material_tests)

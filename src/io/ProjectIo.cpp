@@ -1,4 +1,5 @@
 #include "io/ProjectIo.h"
+#include "io/LayerMaterialIo.h"
 #include "io/SceneComponents.h"
 #include <set>
 #include <map>
@@ -38,7 +39,8 @@ constexpr const char* kMaterialFormat = "terrain-graph.material";
 //    kind の無い旧ファイルは全レイヤーをサーフェスとして読む。
 // プロジェクトの版。4 で `layers` 節を廃止し、グラフ (`graph`) を唯一の合成にした
 // （旧ファイルの layers はグラフへ移行して読む）。
-constexpr int kProjectFormatVersion = 4;
+// 5: 再利用可能な合成材質を materials 内へ保存する。旧版の白い材質への誤読を防ぐ。
+constexpr int kProjectFormatVersion = 5;
 // マテリアル単体 (.tgmat) の版。中身は変わっていないので 3 のまま。
 constexpr int kMaterialFormatVersion = 3;
 
@@ -254,6 +256,7 @@ compositor::NoiseParams ReadNoise(const json& node, const char* key,
 // プロジェクトへの埋め込みと .tgmat で同じ形を使う。違うのはテクスチャ参照の書き方だけ。
 
 json WriteMaterialBody(const compositor::MaterialAsset& asset, const TextureWriter& writeTexture) {
+    if (asset.layerMaterial) { auto body = WriteLayerMaterial(*asset.layerMaterial); body["name"] = asset.name; body["_layerMaterial"] = true; return body; }
     json node;
     node["name"] = asset.name;
     node["baseColorTint"] = WriteFloat3(asset.baseColorTint);
@@ -279,6 +282,13 @@ json WriteMaterialBody(const compositor::MaterialAsset& asset, const TextureWrit
 
 void ReadMaterialBody(const json& node, compositor::MaterialAsset& asset,
                       const TextureReader& readTexture) {
+    asset.layerMaterial.reset();
+    if (node.contains("materials")) {
+        graph::LayerMaterial layer; std::string error;
+        if (ReadLayerMaterial(node, layer, error)) { asset.name = layer.name; asset.layerMaterial = std::move(layer); }
+        else TG_LOG_ERROR("%s", error.c_str());
+        return;
+    }
     const compositor::MaterialAsset defaults;
     asset.name = ReadString(node, "name", defaults.name);
     asset.baseColorTint = ReadFloat3(node, "baseColorTint", defaults.baseColorTint);
@@ -2650,6 +2660,10 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
         if (workspace) { node["_assetPath"] = ToUtf8Portable(asset.assetPath); node["uid"] = asset.assetUid; }
         materials.push_back(std::move(node));
     }
+    for (auto& node : materials) if (node.contains("_layerMaterial")) MapLayerMaterials(node, [&](const json& value) -> json {
+        const auto found = materialIndex.find(value.is_number_unsigned() || value.is_number_integer() ? value.get<uint32_t>() : 0);
+        return found == materialIndex.end() ? json(0) : json(found->second);
+    });
     document["materials"] = std::move(materials);
     // FBXは参照パスを保存し、マテリアルIDは文書内の番号へ変換する。
     if (refs.models != nullptr) {
@@ -2774,6 +2788,12 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
         return false;
     }
 
+    if (const auto* entries = FindMember(document, "materials"); entries && entries->is_array()) {
+        for (const auto& entry : *entries) if (entry.is_object() && entry.contains("materials")) {
+            graph::LayerMaterial candidate; std::string error;
+            if (!ReadLayerMaterial(entry, candidate, error)) { TG_LOG_ERROR("%s", error.c_str()); return false; }
+        }
+    }
     if (refs.components) *refs.components = document.value("_components", json());
     if (refs.atmosphereAsset) *refs.atmosphereAsset = document.value("_atmosphereAsset", json());
     const fs::path baseDir = path.parent_path();
@@ -2851,6 +2871,12 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
         }
     }
 
+    for (const auto& entry : refs.materials.Entries()) if (entry.layerMaterial) {
+        auto* asset = refs.materials.FindMutable(entry.id);
+        const auto remap = [&](graph::PresetMaterial& layer) { const auto found = materialIds.find(static_cast<int>(layer.material)); layer.material = found == materialIds.end() ? 0 : found->second; };
+        for (auto& layer : asset->layerMaterial->materials) remap(layer);
+        if (asset->layerMaterial->materialGraph) for (auto& node : asset->layerMaterial->materialGraph->nodes) remap(node.settings);
+    }
     // 欠けたFBXも参照を残す。別の場所へ保存し直しても割り当てを失わない。
     if (refs.models != nullptr) {
         refs.models->clear();
@@ -3125,13 +3151,20 @@ bool SaveSharedAssets(ProjectWorkspace& workspace, const ProjectRefs& refs) {
         return entry ? source(entry->path) : json();
     };
     std::unordered_map<compositor::MaterialAssetId, json> materials;
-    for (const auto& entry : refs.materials.Entries()) {
+    for (int pass = 0; pass < 2; ++pass) for (const auto& entry : refs.materials.Entries()) {
+        if (entry.layerMaterial.has_value() != (pass == 1)) continue;
         auto* asset = refs.materials.FindMutable(entry.id);
         json body = WriteMaterialBody(*asset, texture);
+        if (asset->layerMaterial) MapLayerMaterials(body, [&](const json& value) -> json {
+            const auto found = materials.find(value.is_number_integer() ? value.get<uint32_t>() : 0);
+            if (found == materials.end()) { if (value != 0) valid = false; return nullptr; } return found->second;
+        });
+        body.erase("_layerMaterial");
+        const char* kind = asset->layerMaterial ? "layer-material-asset" : "material-asset";
         body["uid"] = asset->assetUid;
         auto path = asset->assetPath;
-        if (path.empty()) path = destination(body, "material-asset", L"Materials", asset->name.c_str(), ".tgmat");
-        if (!valid || !workspace.SaveAsset(path, "material-asset", body)) return false;
+        if (path.empty()) path = destination(body, kind, L"Materials", asset->name.c_str(), asset->layerMaterial ? ".tglayer" : ".tgmat");
+        if (!valid || !workspace.SaveAsset(path, kind, body)) return false;
         asset->assetPath = path; asset->assetUid = ReadString(body, "uid");
         materials[asset->id] = workspace.Reference(path);
     }
@@ -3170,7 +3203,7 @@ bool LoadSharedAsset(ProjectWorkspace& workspace, const fs::path& path,
     }
     const bool graphAsset = ext == L".tgterrain" || ext == L".tgcloud";
     const int graphComponent = ext == L".tgcloud" ? 1 : 0;
-    const char* key = _wcsicmp(ext.c_str(), L".tgmat") == 0 ? "materials" :
+    const char* key = (_wcsicmp(ext.c_str(), L".tgmat") == 0 || _wcsicmp(ext.c_str(), L".tglayer") == 0) ? "materials" :
                       _wcsicmp(ext.c_str(), L".tgmodel") == 0 ? "models" : "skies";
     json document;
     if (graphAsset) {
@@ -3190,6 +3223,7 @@ bool LoadSharedAsset(ProjectWorkspace& workspace, const fs::path& path,
         return found == textures.end() ? compositor::kNoTexture : found->second;
     };
     std::unordered_map<int, compositor::MaterialAssetId> materials;
+    std::vector<compositor::MaterialAssetId> loadedLayers;
     for (const auto& node : document["materials"]) {
         auto uid = ReadString(node, "uid");
         auto existing = std::find_if(refs.materials.Entries().begin(), refs.materials.Entries().end(),
@@ -3200,9 +3234,16 @@ bool LoadSharedAsset(ProjectWorkspace& workspace, const fs::path& path,
             id = refs.materials.Add(ReadString(node, "name"));
             auto* asset = refs.materials.FindMutable(id);
             ReadMaterialBody(node, *asset, texture);
+            if (asset->layerMaterial) loadedLayers.push_back(id);
             asset->assetUid = uid; asset->assetPath = FromUtf8(ReadString(node, "_assetPath"));
         }
         materials[ReadInt(node, "id", 0)] = id;
+    }
+    for (const auto id : loadedLayers) {
+        auto& layer = *refs.materials.FindMutable(id)->layerMaterial;
+        const auto remap = [&](graph::PresetMaterial& m) { const auto found = materials.find(static_cast<int>(m.material)); m.material = found == materials.end() ? 0 : found->second; };
+        for (auto& m : layer.materials) remap(m);
+        if (layer.materialGraph) for (auto& n : layer.materialGraph->nodes) remap(n.settings);
     }
     if (refs.models) for (const auto& node : document["models"]) {
         const auto uid = ReadString(node, "uid");
@@ -3305,6 +3346,7 @@ void KeepOnlyActiveSky(rhi::Device& device, renderer::SkyLibrary& skies) {
 
 bool SaveMaterial(const std::filesystem::path& path, const compositor::MaterialAsset& asset,
                   const compositor::TextureLibrary& textures) {
+    if (asset.layerMaterial) { TG_LOG_ERROR("レイヤーマテリアルは共有アセット（.tglayer）として保存してください"); return false; }
     // SaveProject と同じく、裸のファイル名でも相対パスが作れるよう絶対化する。
     std::error_code absoluteError;
     const fs::path absolutePath = fs::absolute(path, absoluteError);

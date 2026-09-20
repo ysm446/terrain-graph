@@ -171,6 +171,8 @@ private:
     void DrawMaterialContextMenu(compositor::MaterialAssetId target);
     // マテリアル 1 つのプロパティ（基本 + マップ）。変更があれば真を返す。
     // **置き場所はプレビューの窓だけ**（一覧はサムネイルだけを出す）。
+    bool DrawLayerMaterialProperties(compositor::MaterialAsset& asset);
+    bool DrawSurfacePresetGraph(graph::LayerMaterial& preset);
     bool DrawMaterialProperties(compositor::MaterialAsset& asset);
     void CommitMaterialEdit();
     // マテリアルプレビューの窓（回せる球 + プロパティ）。
@@ -467,6 +469,11 @@ private:
     graph::GraphId m_graphPressedPin = 0;
     ImVec2 m_graphPressedPinPos{};
     ax::NodeEditor::EditorContext* m_nodeEditor = nullptr;
+    ax::NodeEditor::EditorContext* m_presetNodeEditor = nullptr;
+    uint32_t m_presetEditorId = 0;
+    int m_presetNavigateFrames = 0;
+    uint32_t m_selectedPresetNode = 0;
+    std::string m_surfacePresetError;
     // グラフパネル内の「エディタ / プロパティ」境界の高さ（96 DPI 基準）。
     float m_graphEditorHeight = 380.0f;
     // 位置をエディタへ流し込むべきノード。作成・読み込みのときに積む。

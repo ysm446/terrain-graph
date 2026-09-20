@@ -20,7 +20,7 @@ bool SamePath(const fs::path& a, const fs::path& b) {
 }
 bool IsDocument(const fs::path& path) {
     const auto ext = path.extension().wstring();
-    for (const auto* value : {L".tgterrain", L".tgcloud", L".tgatmosphere", L".tgscene", L".tgmat", L".tgsky", L".tgmodel", L".tgproj", L".mmproj", L".mmmat"})
+    for (const auto* value : {L".tgterrain", L".tgcloud", L".tgatmosphere", L".tgscene", L".tgmat", L".tglayer", L".tgsky", L".tgmodel", L".tgproj", L".mmproj", L".mmmat"})
         if (_wcsicmp(ext.c_str(), value) == 0) return true;
     return false;
 }
@@ -60,6 +60,7 @@ AssetKind KindOfAsset(const fs::path& path) {
     if (ext == L".png" || ext == L".jpg" || ext == L".jpeg" || ext == L".tga" || ext == L".bmp" || ext == L".exr" || ext == L".hdr")
         return AssetKind::Image;
     if (ext == L".tgmat") return AssetKind::Material;
+    if (ext == L".tglayer") return AssetKind::LayerMaterial;
     if (ext == L".tgsky") return AssetKind::Sky;
     if (ext == L".tgmodel" || ext == L".fbx") return AssetKind::Model;
     return AssetKind::Other;

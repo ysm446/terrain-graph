@@ -10,6 +10,7 @@
 
 #include "Brdf.hlsli"
 #include "CompositeCommon.hlsli"
+#include "LayerMaterial.hlsli"
 #include "EnvCommon.hlsli"
 #include "Tonemap.hlsli"
 
@@ -56,6 +57,7 @@ struct SphereConstants
     float2 colorAdjust;  // 色相（ラジアン）, 彩度
     float brightness;    // 明度（倍率）
     float pad0;
+    LayerMaterialData layerMaterial;
 };
 
 ConstantBuffer<SphereConstants> g_sphere : register(b1);
@@ -249,6 +251,16 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     }
 
     // --- 陰影（ビューポートと同じ式）---------------------------------------
+    if (g_sphere.layerMaterial.count > 0) {
+        const LayerMaterialSample material = EvaluateLayerMaterial(g_sphere.layerMaterial, uv, uv, g_sphere.uvScale / g_sphere.size, float2(1,1), float2(1,0), float2(0,1));
+        baseColor = material.color; roughness = material.surface.x; metallic = material.surface.y; ambientOcclusion = material.surface.z;
+        if (length(normalGeometric.xz) > 1e-3f) {
+            const float3 t = normalize(float3(-normalGeometric.z, 0, normalGeometric.x));
+            const float3 b = cross(normalGeometric, t);
+            normal = normalize(t * material.normal.x + b * material.normal.y + normalGeometric * material.normal.z);
+        }
+    }
+
     float3 diffuseColor;
     float3 f0;
     SplitBaseColor(baseColor, metallic, diffuseColor, f0);

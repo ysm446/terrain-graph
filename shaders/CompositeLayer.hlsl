@@ -7,6 +7,7 @@
 
 #include "CompositeCommon.hlsli"
 #include "CompositePath.hlsli"
+#include "LayerMaterial.hlsli"
 
 #define TG_SOURCE_CONSTANT 0
 #define TG_SOURCE_NOISE    1
@@ -62,6 +63,7 @@ struct LayerConstants
     uint4 pathUvIndices;
     // 縁のカーブ（ガンマ）, マスク画像の繰り返し長（m）, マスク画像の幅方向の枚数, マスク画像を反転（0 / 1）
     float4 pathUvParams2;
+    LayerMaterialData layerMaterial;
 };
 
 ConstantBuffer<LayerConstants> g_layer : register(b1);
@@ -428,7 +430,16 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     }
 
     float layerHeight = SampleLayerHeight(uv, uvPerOutputTexel);
-    const float3 layerNormal = ComputeLayerNormal(layerUv, texelSize);
+    float3 layerNormal = ComputeLayerNormal(layerUv, texelSize);
+    if (g_layer.layerMaterial.count > 0) {
+        const float sizeMeters = max(g_layer.pathUvParams.w, 0.001f);
+        // UV一周を1mとしてSurfaceのスケールを掛ける。worldUvは配置側の拡縮に依存しない。
+        const LayerMaterialSample material = EvaluateLayerMaterial(g_layer.layerMaterial, uv, (outputUv - 0.5f) * sizeMeters, float2(uvPerOutputTexel, texelSize.x * sizeMeters), layerUv.path ? layerUv.uvPerMeter : g_layer.blendParams.zz / sizeMeters, layerUv.xAxis, layerUv.yAxis);
+        layerBaseColor = material.color; layerRoughness = material.surface.x; layerMetallic = material.surface.y; layerAo = material.surface.z;
+        layerHeight = g_layer.surfaceParams.w + (material.height - 0.5f) * g_layer.layerMaterial.displacementMeters / max(g_layer.blendParams.y * sizeMeters, 0.001f);
+        layerNormal = material.normal;
+        if (layerUv.path) layerNormal = normalize(float3(layerNormal.x * layerUv.xAxis + layerNormal.y * layerUv.yAxis, layerNormal.z));
+    }
 
     const bool isBaseLayer = (g_layer.flags & TG_FLAG_BASE_LAYER) != 0u;
     const bool isShape = (g_layer.flags & TG_FLAG_KIND_SHAPE) != 0u;

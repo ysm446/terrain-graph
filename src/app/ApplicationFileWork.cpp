@@ -304,7 +304,7 @@ void Application::HandleDroppedFiles(const std::vector<std::filesystem::path>& p
             m_pendingProjectOpen = path;
         } else if (extension == ".tgsky" || extension == ".tgmodel" || extension == ".tgatmosphere") {
             m_pendingAssetOpen = path;
-        } else if (extension == ".tgmat" || extension == ".mmmat") {
+        } else if (extension == ".tgmat" || extension == ".tglayer" || extension == ".mmmat") {
             m_pendingMaterialImport = path;
         } else if (extension == ".fbx") {
             m_pendingModels.push_back(path);
@@ -650,7 +650,8 @@ void Application::ProcessPendingFileWork() {
 
         nlohmann::json assetDocument;
         if (io::ProjectWorkspace::ReadJson(path, assetDocument) &&
-            io::ProjectWorkspace::String(assetDocument, "format") == "terrain-graph.material-asset") {
+            (io::ProjectWorkspace::String(assetDocument, "format") == "terrain-graph.material-asset" ||
+             io::ProjectWorkspace::String(assetDocument, "format") == "terrain-graph.layer-material-asset")) {
             m_pendingAssetOpen = path;
             return;
         }
@@ -717,6 +718,13 @@ void Application::ProcessPendingFileWork() {
     if (m_pendingMaterialRemove != compositor::kNoMaterialAsset) {
         const compositor::MaterialAssetId removed = m_pendingMaterialRemove;
         m_pendingMaterialRemove = compositor::kNoMaterialAsset;
+        for (const auto& entry : m_materialLibrary.Entries()) if (entry.layerMaterial) {
+            auto& material = *m_materialLibrary.FindMutable(entry.id)->layerMaterial;
+            const auto clear = [&](graph::PresetMaterial& layer) { if (layer.material == removed) layer.material = 0; };
+            for (auto& layer : material.materials) clear(layer);
+            if (material.materialGraph) for (auto& node : material.materialGraph->nodes) clear(node.settings);
+            m_materialLibrary.MarkThumbnailDirty(entry.id);
+        }
 
         if (m_materialLibrary.Find(removed) != nullptr) {
             m_materialLibrary.Remove(m_device, removed);

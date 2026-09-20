@@ -84,6 +84,7 @@ struct LayerConstants {
     uint32_t pathUvIndices[4];
     // 縁のカーブ（ガンマ）, マスク画像の繰り返し長（m）, マスク画像の幅方向の枚数, マスク画像を反転（0 / 1）
     float pathUvParams2[4];
+    LayerMaterialGpu layerMaterial;
 };
 
 // GPU 側の SedimentConstants と一致させること。
@@ -4947,6 +4948,16 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                                  const MaterialLibrary& materials,
                                  const PaintMaskStore& paintMasks,
                                  const std::vector<TileRect>& tiles) {
+    std::vector<LayerMaterialGpu> compiledMaterials(stack.Layers().size());
+    for (size_t i = 0; i < stack.Layers().size(); ++i) {
+        const auto& layer = stack.Layers()[i];
+        const auto* asset = materials.Find(layer.material);
+        if (layer.enabled && asset && asset->layerMaterial) {
+            std::string error;
+            compiledMaterials[i] = materials.CompileLayerMaterial(*asset, textures, error);
+            if (!error.empty() || compiledMaterials[i].count == 0) return false;
+        }
+    }
     m_postprocessPending = false;
     if (m_postprocessRevision != stack.Revision()) {
         for (auto& cache : m_breachCaches) {
@@ -5048,6 +5059,20 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             heightStateDone[layerCount] = 2;
             const MaterialLayer& layer = stack.Layers()[layerCount - 1];
             uint64_t hash = HashHeightState(heightStateUpTo(layerCount - 1), layer);
+            const auto& materialData = compiledMaterials[layerCount - 1];
+            if (materialData.count) {
+                hash = HashBytes(hash, &materialData.count, sizeof(uint32_t));
+                hash = HashBytes(hash, &materialData.blendRange, sizeof(float) * 2);
+                for (uint32_t i = 0; i < materialData.count; ++i) {
+                    const auto& slot = materialData.slots[i];
+                    hash = HashBytes(hash, slot.textures1 + 1, sizeof(uint32_t) * 3);
+                    hash = HashBytes(hash, slot.color + 3, sizeof(float));
+                    hash = HashBytes(hash, slot.surface + 3, sizeof(float));
+                    hash = HashBytes(hash, slot.mask, sizeof(slot.mask));
+                    hash = HashBytes(hash, slot.breakup, sizeof(slot.breakup));
+                    hash = HashBytes(hash, slot.blend, sizeof(slot.blend));
+                }
+            }
             // ペイントは ID が同じまま中身が変わる。塗ったら世代が進むので、それを混ぜる。
             if (layer.mask.source == MaskSource::Paint) {
                 const uint64_t paintRevision = paintMasks.Revision();
@@ -5352,6 +5377,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         }
         // マップはレイヤーが参照するマテリアルから引く。
         const MaterialAsset* material = materials.Find(layer.material);
+        constants.layerMaterial = compiledMaterials[layerIndex];
 
         // 法線マップの規約はマテリアルごと。マップが無ければ関係ない。
         if (material != nullptr && material->flipNormalGreen) {

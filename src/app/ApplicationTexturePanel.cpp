@@ -428,6 +428,16 @@ void Application::RequestTextureRelinkFolder() {
 }
 
 bool Application::MaterialHasMissingTexture(const compositor::MaterialAsset& asset) const {
+    if (asset.layerMaterial) {
+        const auto missingSource = [&](const graph::PresetMaterial& layer) {
+            if (!layer.material) return false;
+            const auto* source = m_materialLibrary.Find(layer.material);
+            return !source || source->layerMaterial || MaterialHasMissingTexture(*source);
+        };
+        for (const auto& layer : asset.layerMaterial->materials) if (missingSource(layer)) return true;
+        if (asset.layerMaterial->materialGraph) for (const auto& node : asset.layerMaterial->materialGraph->nodes) if (missingSource(node.settings)) return true;
+        return !asset.layerError.empty();
+    }
     const auto missing = [this](compositor::TextureId id) {
         const compositor::LibraryTexture* entry = m_textureLibrary.Find(id);
         return entry != nullptr && entry->missing;

@@ -1,4 +1,5 @@
 #pragma once
+#include "graph/LayerMaterial.h"
 
 // MaterialLibrary.h は含めない。あちらは rhi（D3D12）を引き込むため、
 // GPU の無いテストから使えなくなる。ID と MapSlot は MaterialLayer.h にある。
@@ -28,6 +29,7 @@ struct MaterialSnapshot {
     std::string name;
     std::filesystem::path assetPath;
     std::string assetUid;
+    std::optional<graph::LayerMaterial> layerMaterial;
     compositor::TextureId baseColor = compositor::kNoTexture;
     compositor::TextureId normal = compositor::kNoTexture;
     compositor::MapSlot roughness;

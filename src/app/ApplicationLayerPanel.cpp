@@ -39,6 +39,9 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
     const bool isShape = (layer.kind == compositor::LayerKind::Shape);
     const bool isLiquid = (layer.kind == compositor::LayerKind::Liquid);
     bool changed = false;
+    const auto* assignedMaterial = m_materialLibrary.Find(layer.material);
+    const bool layeredMaterial = assignedMaterial && assignedMaterial->layerMaterial;
+    if (layeredMaterial && !assignedMaterial->layerError.empty()) ui::HintText(assignedMaterial->layerError.c_str());
 
     // 堆積は合成レイヤーではなく「下地のハイトを土砂で作り替える加工」。
     if (layer.kind == compositor::LayerKind::Sediment) {
@@ -1016,6 +1019,14 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                                          "汀線の柔らかさ。0 に近いほど硬い水際になる", "%.3f");
             ui::EndPropertyTable();
         }
+    } else if (layeredMaterial) {
+        ui::SectionHeader("ハイト");
+        if (ui::BeginPropertyTable("layerHeightRows")) {
+            changed |= ui::PropertyFloat("基準の高さ", &layer.heightBase, -2.0f, 2.0f, defaults.heightBase,
+                                         "合成材質を置く基準の高さ。起伏の実寸は材質側の変位量で決まる");
+            ui::EndPropertyTable();
+        }
+        ui::HintText("ハイトと法線はレイヤーマテリアル内部で合成する。変位量は材質側で設定する");
     } else {
         ui::SectionHeader("ハイト");
         if (ui::BeginPropertyTable("layerHeightRows")) {
