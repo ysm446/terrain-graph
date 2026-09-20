@@ -107,6 +107,31 @@ ImTextureID Application::AssetThumbnailHandle(const fs::path& path) {
     return static_cast<ImTextureID>(m_assetThumbnails.Request(path).ptr);
 }
 
+// 未保存のアセットを、保存されている内容へ戻す確認。
+void Application::DrawAssetRevertDialog() {
+    const char* title = "変更前に戻す";
+    if (m_assetRevertDialog && !ImGui::IsPopupOpen(title)) ImGui::OpenPopup(title);
+    if (!ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    const auto& path = m_assetRevertTarget;
+    const float thumb = ui::Scaled(64);
+    ui::ThumbnailImage(AssetThumbnailHandle(path), thumb);
+    ImGui::SameLine();
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (thumb - ImGui::GetTextLineHeight()) * 0.5f);
+    ImGui::TextUnformatted(ToUtf8Display(path.lexically_relative(m_workspace.Root())).c_str());
+    ui::HintText("このアセットの未保存の変更を捨て、保存されている内容へ戻します。");
+    ImGui::Separator();
+    const bool dirty = IsAssetDirty(path);
+    ImGui::BeginDisabled(!dirty);
+    if (ImGui::Button("戻す")) {
+        m_pendingAssetRevert = path; m_assetRevertDialog = false; ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndDisabled(); ImGui::SameLine();
+    if (ImGui::Button("キャンセル") || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+        m_assetRevertDialog = false; ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
 void Application::DrawAssetDeleteDialog() {
     if (m_assetDeleteDialog && !ImGui::IsPopupOpen("アセットファイルの削除")) ImGui::OpenPopup("アセットファイルの削除");
     if (!ImGui::BeginPopupModal("アセットファイルの削除", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
@@ -697,6 +722,7 @@ void Application::ProcessAssetWork() {
             }
         }
     }
+    if (!m_pendingAssetRevert.empty()) RevertAsset(std::exchange(m_pendingAssetRevert, {}));
     if (!m_pendingAssetOpen.empty()) {
         const auto path = m_pendingAssetOpen; m_pendingAssetOpen.clear();
         const auto ext = Extension(path);
@@ -1024,6 +1050,10 @@ void Application::DrawAssetBrowser() {
                     else m_pendingAssetOpen = path;
                 }
                 if (!folder && ImGui::MenuItem("保存", "Ctrl+S", false, IsAssetDirty(path))) RequestSaveSelection();
+                // 未保存の編集を捨ててファイルの内容へ戻す。捨てるものがあるので確認を挟む。
+                if (!folder && ImGui::MenuItem("変更前に戻す", nullptr, false, IsAssetDirty(path))) {
+                    m_assetRevertTarget = path; m_assetRevertDialog = true;
+                }
                 if ((ext == ".tgterrain" || ext == ".tgcloud" || ext == ".tgatmosphere") &&
                     ImGui::MenuItem(ext == ".tgatmosphere" ? "シーンの空に設定" : "シーンに配置（入れ替え）"))
                     m_pendingComponentPlace = path;

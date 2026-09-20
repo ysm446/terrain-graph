@@ -3194,7 +3194,8 @@ bool SaveSharedAssets(ProjectWorkspace& workspace, const ProjectRefs& refs, cons
 }
 
 bool LoadSharedAsset(ProjectWorkspace& workspace, const fs::path& path,
-                     rhi::Device& device, rhi::PipelineCache& pipelineCache, const ProjectRefs& refs) {
+                     rhi::Device& device, rhi::PipelineCache& pipelineCache, const ProjectRefs& refs,
+                     bool reload) {
     if (!workspace.Scan()) return false;
     // 読み込み・サムネイル表示でアセットの原本を書き換えない。
     json header;
@@ -3238,8 +3239,21 @@ bool LoadSharedAsset(ProjectWorkspace& workspace, const fs::path& path,
         auto existing = std::find_if(refs.materials.Entries().begin(), refs.materials.Entries().end(),
                                      [&](const auto& a) { return a.assetUid == uid; });
         compositor::MaterialAssetId id;
-        if (existing != refs.materials.Entries().end()) id = existing->id;
-        else {
+        if (existing != refs.materials.Entries().end()) {
+            id = existing->id;
+            // 戻す場合だけ、ID（＝レイヤーやグラフからの参照）を保ったまま中身を読み直す。
+            if (auto* asset = reload ? refs.materials.FindMutable(id) : nullptr) {
+                // maps 節の無いアセットでは読み手が触らないので、先に既定へ戻しておく。
+                const compositor::MaterialAsset defaults;
+                asset->baseColor = defaults.baseColor; asset->normal = defaults.normal;
+                asset->roughness = defaults.roughness; asset->metallic = defaults.metallic;
+                asset->ambientOcclusion = defaults.ambientOcclusion; asset->height = defaults.height;
+                asset->flipNormalGreen = defaults.flipNormalGreen;
+                ReadMaterialBody(node, *asset, texture);
+                if (asset->layerMaterial) loadedLayers.push_back(id);
+                refs.materials.MarkThumbnailDirty(id);
+            }
+        } else {
             id = refs.materials.Add(ReadString(node, "name"));
             auto* asset = refs.materials.FindMutable(id);
             ReadMaterialBody(node, *asset, texture);
@@ -3256,7 +3270,21 @@ bool LoadSharedAsset(ProjectWorkspace& workspace, const fs::path& path,
     }
     if (refs.models) for (const auto& node : document["models"]) {
         const auto uid = ReadString(node, "uid");
-        if (std::any_of(refs.models->begin(), refs.models->end(), [&](const auto& a) { return a.assetUid == uid; })) continue;
+        const auto loaded = std::find_if(refs.models->begin(), refs.models->end(), [&](const auto& a) { return a.assetUid == uid; });
+        if (loaded != refs.models->end()) {
+            if (!reload) continue;
+            // ID を保ったまま名前・参照元・素材の割り当てをファイルの内容へ戻す。
+            loaded->name = ReadString(node, "name");
+            const auto source = FromUtf8(ReadString(node, "path"));
+            if (!loaded->geometry || loaded->path != source) { loaded->path = source; renderer::LoadModel(source, *loaded); }
+            loaded->materials.resize(std::max(loaded->materials.size(), node["materials"].size()), compositor::kNoMaterialAsset);
+            size_t slot = 0;
+            for (const auto& value : node["materials"]) {
+                const auto material = materials.find(value.is_number_integer() ? value.get<int>() : 0);
+                loaded->materials[slot++] = material == materials.end() ? compositor::kNoMaterialAsset : material->second;
+            }
+            continue;
+        }
         renderer::ModelAsset asset;
         asset.id = 1;
         for (const auto& a : *refs.models) asset.id = std::max(asset.id, a.id + 1);
@@ -3274,7 +3302,8 @@ bool LoadSharedAsset(ProjectWorkspace& workspace, const fs::path& path,
     for (const auto& node : document["skies"]) {
         const auto uid = ReadString(node, "uid");
         const auto existing = std::find_if(refs.skies.Entries().begin(), refs.skies.Entries().end(), [&](const auto& a) { return a.assetUid == uid; });
-        if (existing == refs.skies.Entries().end()) refs.skies.SetActive(ReadSky(node, refs.skies, workspace.Root()));
+        // 戻す場合は、編集した天球を残さずファイルから作り直したものへ差し替える。
+        if (reload || existing == refs.skies.Entries().end()) refs.skies.SetActive(ReadSky(node, refs.skies, workspace.Root()));
         else refs.skies.SetActive(existing->id);
         // 天球を開く＝シーンの天球を差し替える。前の天球は残さない。
         KeepOnlyActiveSky(device, refs.skies);

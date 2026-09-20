@@ -69,8 +69,11 @@ bool SaveSharedAssets(ProjectWorkspace& workspace, const ProjectRefs& refs,
                       const std::filesystem::path* only = nullptr);
 // シーンが持つ天球は 1 つ。適用中の天球だけを残し、ほかは破棄する（フレームの外で呼ぶこと）。
 void KeepOnlyActiveSky(rhi::Device& device, renderer::SkyLibrary& skies);
+// reload が真なら、同じ uid の素材・モデル・天球が既にあっても、ID と参照を保ったまま
+// 中身をファイルの内容で上書きする（未保存の編集を捨てて戻すときに使う）。
 bool LoadSharedAsset(ProjectWorkspace& workspace, const std::filesystem::path& path,
-                     rhi::Device& device, rhi::PipelineCache& pipelineCache, const ProjectRefs& refs);
+                     rhi::Device& device, rhi::PipelineCache& pipelineCache, const ProjectRefs& refs,
+                     bool reload = false);
 
 // --- プロジェクト (.tgproj) -----------------------------------------------
 //

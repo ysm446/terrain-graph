@@ -193,6 +193,10 @@ private:
     AssetSelectionContext m_assetSelections;
     void DrawSceneSwitchDialog();
     void DrawAssetDeleteDialog();
+    // 未保存のアセットを、保存されている内容へ戻す確認。
+    void DrawAssetRevertDialog();
+    // アセット 1 つを、ファイルの内容へ戻す。**読み込みを伴うのでフレームの外で呼ぶ。**
+    void RevertAsset(const std::filesystem::path& path);
     bool IsAssetLoaded(const std::filesystem::path& path) const;
     // 一覧のサムネイルを受け取るドロップ先。フォルダ階層と一覧のフォルダに置く。
     void AssetFolderDropTarget(const std::filesystem::path& directory);
@@ -667,6 +671,10 @@ private:
     io::AssetRelations m_assetDeleteRelations;
     bool m_assetDeleteDialog = false;
     bool m_pendingAssetDelete = false;
+    // 「変更前に戻す」。確認の対象と、確定した戻す要求（フレームの外で処理する）。
+    std::filesystem::path m_assetRevertTarget;
+    bool m_assetRevertDialog = false;
+    std::filesystem::path m_pendingAssetRevert;
     // 削除対象の代わりに参照元へ割り当てるアセット。空なら参照切れのまま削除する。
     std::filesystem::path m_assetReplacement;
     // 代わりを選ぶピッカー。候補は開いたときに集め、絞り込みの条件が変わったら集め直す。
