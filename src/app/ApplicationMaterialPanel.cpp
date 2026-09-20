@@ -52,6 +52,11 @@ void Application::CommitMaterialEdit() {
     if (auto* asset = m_materialLibrary.FindMutable(m_materialEditDraft.id)) {
         CopyMaterialValues(m_materialEditDraft, *asset);
         if (m_materialEditAppearanceChanged) {
+            // **ここで組み直す。** 描画用の合成結果はフレームの前でしか作り直さないので、
+            // 確定だけして帰ると、このフレームは編集前の見た目に戻って 1 枚ちらつく。
+            // 組み直しは CPU だけの処理なので、フレームの中で呼んでよい。
+            if (asset->layerMaterial)
+                asset->layerGpu = m_materialLibrary.CompileLayerMaterial(*asset, m_textureLibrary, asset->layerError);
             m_materialLibrary.MarkThumbnailDirty(asset->id);
             MarkDocumentChanged();
         } else {

@@ -106,16 +106,30 @@ public:
     // Megascans の `_ORD` の並びに合わせてある。
     void AssignOrdTexture(MaterialAssetId id, TextureId texture);
 
-    // 予約されたサムネイルを作る。GPU 待機を伴うため、フレームの外で呼ぶ。
+    // 予約された合成材質を組み直し、サムネイルを作る。**フレームの外で呼ぶこと。**
+    // buildThumbnails を偽にすると組み直しだけを行い、サムネイルの要求は残す
+    // （フレームの中で RenderPendingThumbnails に作らせるため）。
     void ProcessPendingWork(rhi::Device& device, rhi::PipelineCache& pipelineCache,
-                            const TextureLibrary& textures);
+                            const TextureLibrary& textures, bool buildThumbnails = true);
+
+    // 予約されたサムネイルを、いま記録中のコマンドリストへ積む。**フレームの中で呼ぶ。**
+    // GPU 待機を挟まないので、スライダーを離した拍子に画が止まらない。
+    void RenderPendingThumbnails(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                 ID3D12GraphicsCommandList* commandList,
+                                 const TextureLibrary& textures);
 
     // 一覧で使うサムネイルのハンドル。まだ無ければ ptr が 0。
     D3D12_GPU_DESCRIPTOR_HANDLE ThumbnailHandle(MaterialAssetId id) const;
 
 private:
+    // 予約されているぶんをまとめて作る。commandList の扱いは BuildThumbnail と同じ。
+    void BuildPendingThumbnails(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                const TextureLibrary& textures,
+                                ID3D12GraphicsCommandList* commandList);
+    // commandList を渡すとそこへ積み、渡さなければ即時実行（GPU 待機あり）で作る。
     bool BuildThumbnail(rhi::Device& device, rhi::PipelineCache& pipelineCache,
-                        const TextureLibrary& textures, MaterialAsset& asset);
+                        const TextureLibrary& textures, MaterialAsset& asset,
+                        ID3D12GraphicsCommandList* commandList = nullptr);
 
     std::vector<MaterialAsset> m_entries;
     MaterialAssetId m_nextId = 1;

@@ -217,7 +217,7 @@ D3D12_GPU_DESCRIPTOR_HANDLE MaterialLibrary::ThumbnailHandle(MaterialAssetId id)
 }
 
 void MaterialLibrary::ProcessPendingWork(rhi::Device& device, rhi::PipelineCache& pipelineCache,
-                                         const TextureLibrary& textures) {
+                                         const TextureLibrary& textures, bool buildThumbnails) {
     const bool sourceDirty = std::any_of(m_entries.begin(), m_entries.end(), [](const auto& a) { return a.thumbnailDirty && !a.layerMaterial; });
     for (auto& asset : m_entries) if (asset.layerMaterial) {
         if (sourceDirty) asset.thumbnailDirty = true;
@@ -227,6 +227,23 @@ void MaterialLibrary::ProcessPendingWork(rhi::Device& device, rhi::PipelineCache
             if (!asset.layerError.empty() && asset.layerError != previousError) TG_LOG_ERROR("%s: %s", asset.name.c_str(), asset.layerError.c_str());
         }
     }
+    if (buildThumbnails) {
+        BuildPendingThumbnails(device, pipelineCache, textures, nullptr);
+    }
+}
+
+void MaterialLibrary::RenderPendingThumbnails(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                              ID3D12GraphicsCommandList* commandList,
+                                              const TextureLibrary& textures) {
+    if (commandList == nullptr) {
+        return;
+    }
+    BuildPendingThumbnails(device, pipelineCache, textures, commandList);
+}
+
+void MaterialLibrary::BuildPendingThumbnails(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                             const TextureLibrary& textures,
+                                             ID3D12GraphicsCommandList* commandList) {
     const bool anyDirty = std::any_of(m_entries.begin(), m_entries.end(),
                                       [](const MaterialAsset& a) { return a.thumbnailDirty; });
     if (!anyDirty) {
@@ -237,18 +254,17 @@ void MaterialLibrary::ProcessPendingWork(rhi::Device& device, rhi::PipelineCache
         if (!asset.thumbnailDirty) {
             continue;
         }
-        if (BuildThumbnail(device, pipelineCache, textures, asset)) {
-            asset.thumbnailDirty = false;
-        } else {
+        if (!BuildThumbnail(device, pipelineCache, textures, asset, commandList)) {
             // 失敗を繰り返さないよう、要求は落とす。
-            asset.thumbnailDirty = false;
             TG_LOG_WARN("マテリアル「%s」のサムネイルを作れませんでした", asset.name.c_str());
         }
+        asset.thumbnailDirty = false;
     }
 }
 
 bool MaterialLibrary::BuildThumbnail(rhi::Device& device, rhi::PipelineCache& pipelineCache,
-                                     const TextureLibrary& textures, MaterialAsset& asset) {
+                                     const TextureLibrary& textures, MaterialAsset& asset,
+                                     ID3D12GraphicsCommandList* commandList) {
     ID3D12PipelineState* pipeline =
         pipelineCache.GetCompute(L"MaterialThumbnail.hlsl", L"CsMain");
     if (pipeline == nullptr) {
@@ -299,36 +315,38 @@ bool MaterialLibrary::BuildThumbnail(rhi::Device& device, rhi::PipelineCache& pi
     constants.brightness = asset.brightness;
 
     rhi::GpuTexture& thumbnail = asset.thumbnail;
-    const bool executed = device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {
-        PIXBeginEvent(commandList, PIX_COLOR(120, 200, 200), "MaterialThumbnail");
+    const auto record = [&](ID3D12GraphicsCommandList* list) {
+        PIXBeginEvent(list, PIX_COLOR(120, 200, 200), "MaterialThumbnail");
 
         // 作った直後（COMMON）は Discard で初期化してから UAV へ。
         // 中身はディスパッチが全画素を書き潰すので、初期化は Discard で十分。
         if (thumbnail.state == D3D12_RESOURCE_STATE_COMMON) {
-            rhi::TransitionIfNeeded(commandList, thumbnail, D3D12_RESOURCE_STATE_RENDER_TARGET);
-            commandList->DiscardResource(thumbnail.resource.Get(), nullptr);
+            rhi::TransitionIfNeeded(list, thumbnail, D3D12_RESOURCE_STATE_RENDER_TARGET);
+            list->DiscardResource(thumbnail.resource.Get(), nullptr);
         }
-        rhi::TransitionIfNeeded(commandList, thumbnail, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        rhi::TransitionIfNeeded(list, thumbnail, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
-        commandList->SetComputeRootSignature(pipelineCache.GlobalRootSignature());
-        commandList->SetPipelineState(pipeline);
+        list->SetComputeRootSignature(pipelineCache.GlobalRootSignature());
+        list->SetPipelineState(pipeline);
         const auto cb = device.Upload().Allocate(sizeof(constants), 256);
-        if (!cb.IsValid()) { PIXEndEvent(commandList); return; }
+        if (!cb.IsValid()) { PIXEndEvent(list); return; }
         std::memcpy(cb.cpu, &constants, sizeof(constants));
-        commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
-        commandList->Dispatch(DispatchCount(kThumbnailSize), DispatchCount(kThumbnailSize), 1);
+        list->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+        list->Dispatch(DispatchCount(kThumbnailSize), DispatchCount(kThumbnailSize), 1);
 
         // ImGui から SRV として読むので、ピクセルシェーダ可視の状態へ移す。
-        rhi::TransitionIfNeeded(commandList, thumbnail,
-                                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        // 同じコマンドリストのこの後に ImGui の描画が積まれるので、順序は保たれる。
+        rhi::TransitionIfNeeded(list, thumbnail, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
-        PIXEndEvent(commandList);
-    });
+        PIXEndEvent(list);
+    };
 
-    if (!executed) {
-        return false;
+    // フレームの中ならそのまま積む。**GPU 待機を挟まない**のはこちらの経路。
+    if (commandList != nullptr) {
+        record(commandList);
+        return true;
     }
-    return true;
+    return device.ExecuteImmediate(record);
 }
 
 }  // namespace tg::compositor

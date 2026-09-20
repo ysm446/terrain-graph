@@ -481,8 +481,9 @@ int Application::Run() {
         // リンク切れの繋ぎ直しも読み込みなので、同じくフレームの外で行う。
         ProcessPendingTextureRelinks();
 
-        // サムネイルの生成も GPU 待機を伴う。
-        m_materialLibrary.ProcessPendingWork(m_device, m_pipelineCache, m_textureLibrary);
+        // 合成材質の組み直しはここで。サムネイルは GPU 待機を避けてフレームの中で作る
+        // （スライダーを離した拍子に画が止まらないようにするため）。
+        m_materialLibrary.ProcessPendingWork(m_device, m_pipelineCache, m_textureLibrary, false);
         // 天球のサムネイルは HDR ファイルの読み込みを伴うので、1 フレームに 1 枚だけ作る。
         m_skyLibrary.ProcessPendingWork(m_device, m_pipelineCache);
 
@@ -545,6 +546,9 @@ int Application::Run() {
 
         RenderModelPreviews(commandList);
         m_assetThumbnails.Render(m_device, m_pipelineCache, commandList, m_renderer);
+        // 一覧のマテリアルサムネイル。ImGui の描画より前に積む。
+        m_materialLibrary.RenderPendingThumbnails(m_device, m_pipelineCache, commandList,
+                                                  m_textureLibrary);
 
         // マテリアルプレビューの球。**窓を開いている間だけ描く。**
         // ImGui はこのフレームで描いた中身をそのまま読む（submit 済みの
