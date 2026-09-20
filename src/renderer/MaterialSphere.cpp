@@ -80,6 +80,8 @@ struct SphereConstants {
     float colorAdjust[2];  // 色相（ラジアン）, 彩度
     float brightness;      // 明度（倍率）
     uint32_t shape;
+    float displacementMeters;
+    uint32_t heightIndex, heightFieldIndex, heightOutputIndex;
     compositor::LayerMaterialGpu layerMaterial;
 };
 
@@ -88,6 +90,7 @@ struct SphereConstants {
 void MaterialSphere::Destroy(rhi::Device& device) {
     device.DeferRelease(m_output);
     device.DeferRelease(m_masks);
+    device.DeferRelease(m_heightField);
 }
 
 void MaterialSphere::Orbit(float deltaXDegrees, float deltaYDegrees) {
@@ -154,7 +157,22 @@ void MaterialSphere::Render(rhi::Device& device, rhi::PipelineCache& pipelineCac
         }
     }
 
+    auto* heightPipeline = pipelineCache.GetCompute(L"MaterialSphere.hlsl", L"CsHeight");
+    if (!heightPipeline) return;
+    if (!m_heightField.IsValid()) {
+        rhi::TextureDesc desc;
+        desc.width = desc.height = kOutputSize;
+        desc.format = DXGI_FORMAT_R32_FLOAT;
+        desc.allowUnorderedAccess = true; desc.createSrv = true;
+        desc.initialState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+        desc.debugName = L"MaterialPreviewHeight";
+        if (!device.Allocator().CreateTexture2D(desc, m_heightField)) return;
+    }
     SphereConstants constants = {};
+    constants.displacementMeters = m_showDisplacement ? (asset.layerMaterial ? asset.layerGpu.displacementMeters : m_displacementMeters) : 0.0f;
+    constants.heightIndex = textures.SrvIndex(asset.height.texture, false);
+    constants.heightFieldIndex = m_heightField.SrvIndex();
+    constants.heightOutputIndex = m_heightField.UavIndex();
     constants.layerMaterial = asset.layerGpu;
     constants.shape = static_cast<uint32_t>(m_shape);
     constants.outputIndex = m_output.UavIndex();
@@ -213,6 +231,14 @@ void MaterialSphere::Render(rhi::Device& device, rhi::PipelineCache& pipelineCac
     }
     std::memcpy(cb.cpu, &constants, sizeof(constants));
 
+    PIXBeginEvent(commandList, PIX_COLOR(120, 200, 200), "MaterialPreviewHeight");
+    rhi::TransitionIfNeeded(commandList, m_heightField, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    commandList->SetComputeRootSignature(pipelineCache.GlobalRootSignature());
+    commandList->SetPipelineState(heightPipeline);
+    commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+    commandList->Dispatch(DispatchCount(kOutputSize), DispatchCount(kOutputSize), 1);
+    rhi::TransitionIfNeeded(commandList, m_heightField, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    PIXEndEvent(commandList);
     PIXBeginEvent(commandList, PIX_COLOR(120, 200, 200), "MaterialSphere");
 
     rhi::TransitionIfNeeded(commandList, m_output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);

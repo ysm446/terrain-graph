@@ -1,6 +1,6 @@
-// マテリアル 1 つを、回せる球で見るためのプレビュー。
+// マテリアルを回せる球・平面で見るプレビュー。ハイトで表面を変位する。
 //
-// メッシュは使わず、単位球とレイを解析的に交差させる。**照らし方はビューポートと同じ**
+// メッシュは使わず、合成ハイトとのレイ交差を求める。**照らし方はビューポートと同じ**
 // （適用中の天球の IBL + 太陽 + 露出 + トーンマップ）。素材が本番の環境でどう見えるかを
 // そのまま確かめるためで、一覧のサムネイル（MaterialThumbnail.hlsl）とは目的が違う
 // （あちらは見比べるための固定 2 灯で、正面から見た円板）。
@@ -57,6 +57,10 @@ struct SphereConstants
     float2 colorAdjust;  // 色相（ラジアン）, 彩度
     float brightness;    // 明度（倍率）
     uint shape;
+    float displacementMeters;
+    uint heightIndex;
+    uint heightFieldIndex;
+    uint heightOutputIndex;
     LayerMaterialData layerMaterial;
 };
 
@@ -126,6 +130,66 @@ float SilhouetteDistance(float3 origin, float3 direction)
     return sqrt(max(dot(origin, origin) - b * b, 0.0f));
 }
 
+// 合成済みハイトを一度だけ焼き、交差探索では軽いテクスチャ参照を使う。
+float2 SurfaceUv(float3 p) {
+    return g_sphere.shape == 1 ? p.xz * 0.5f + 0.5f : DirectionToEquirectUv(normalize(p));
+}
+float HeightAt(float3 p) {
+    Texture2D<float> height = ResourceDescriptorHeap[g_sphere.heightFieldIndex];
+    float2 uv = SurfaceUv(p);
+    if (g_sphere.shape != 1) uv.y = clamp(uv.y, 0.5f / g_sphere.size, 1 - 0.5f / g_sphere.size);
+    return height.SampleLevel(g_samplerLinearWrap, uv, 0);
+}
+float SurfaceDistance(float3 p) {
+    const float displacement = (HeightAt(p) - 0.5f) * g_sphere.displacementMeters * 2 / g_sphere.lengthMeters;
+    return g_sphere.shape == 1 ? p.y - displacement : length(p) - 1 - displacement;
+}
+// 有限の領域内で最初の交差を探す。球と平面の輪郭にもハイトを反映する。
+bool TraceHeight(float3 origin, float3 direction, out float3 position) {
+    const float amplitude = g_sphere.displacementMeters / g_sphere.lengthMeters;
+    const float3 extent = g_sphere.shape == 1 ? float3(1, max(amplitude, 1e-5f), 1) : (1 + amplitude).xxx;
+    const float3 safeDirection = float3(abs(direction.x) < 1e-6f ? 1e-6f : direction.x,
+        abs(direction.y) < 1e-6f ? 1e-6f : direction.y, abs(direction.z) < 1e-6f ? 1e-6f : direction.z);
+    const float3 a = (-extent - origin) / safeDirection, b = (extent - origin) / safeDirection;
+    const float3 nearT = min(a,b), farT = max(a,b);
+    float begin = max(max(nearT.x, nearT.y), max(nearT.z, 0));
+    float end = min(farT.x, min(farT.y, farT.z));
+    position = 0;
+    if (end <= begin) return false;
+    float previousT = begin;
+    float previous = SurfaceDistance(origin + direction * begin);
+    [loop] for (uint i = 1; i <= 192; ++i) {
+        float t = lerp(begin, end, i / 192.0f);
+        float value = SurfaceDistance(origin + direction * t);
+        if (value * previous <= 0) {
+            [unroll] for (uint j = 0; j < 7; ++j) {
+                const float mid = (previousT + t) * 0.5f;
+                const float v = SurfaceDistance(origin + direction * mid);
+                if (v * previous > 0) { previousT = mid; previous = v; } else t = mid;
+            }
+            position = origin + direction * ((previousT + t) * 0.5f);
+            return true;
+        }
+        previous = value; previousT = t;
+    }
+    return false;
+}
+[numthreads(8, 8, 1)]
+void CsHeight(uint3 id : SV_DispatchThreadID) {
+    if (any(id.xy >= g_sphere.size)) return;
+    const float2 scale = g_sphere.shape == 1 ? g_sphere.lengthMeters.xx :
+        float2(kPi, kPi * 0.5f) * g_sphere.lengthMeters;
+    const float2 uv = (float2(id.xy) + 0.5f) / g_sphere.size * scale;
+    float value = 0.5f;
+    if (g_sphere.layerMaterial.count > 0)
+        value = EvaluateLayerMaterialBase(g_sphere.layerMaterial, uv, uv, scale / g_sphere.size, float2(1,0), float2(0,1)).height;
+    else if (g_sphere.heightIndex != kInvalidTextureIndex)
+        value = SampleScalarMap(g_sphere.heightIndex, TG_CHANNEL_SLOT_HEIGHT, uv,
+            MapLod(g_sphere.heightIndex, float2(scale.x / g_sphere.size,0), float2(0,scale.y / g_sphere.size)));
+    RWTexture2D<float> height = ResourceDescriptorHeap[g_sphere.heightOutputIndex];
+    height[id.xy] = saturate(value);
+}
+
 [numthreads(8, 8, 1)]
 void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
 {
@@ -168,6 +232,10 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     const float planeT = abs(direction.y) > 1e-5f ? -origin.y / direction.y : -1;
     const float3 planePosition = origin + direction * planeT;
     if (plane) coverage = planeT > 0 ? 1 - smoothstep(1 - pixelWidth, 1 + pixelWidth, max(abs(planePosition.x), abs(planePosition.z))) : 0;
+    float3 displacedPosition = 0;
+    const bool displaced = g_sphere.displacementMeters > 0 &&
+        (g_sphere.layerMaterial.count > 0 || g_sphere.heightIndex != kInvalidTextureIndex);
+    if (displaced) coverage = TraceHeight(origin, direction, displacedPosition) ? 1 : 0;
     if (coverage <= 0.0f)
     {
         output[dispatchThreadId.xy] =
@@ -178,8 +246,8 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     }
 
     // --- 球の上の点 --------------------------------------------------------
-    const float3 normalGeometric = plane ? float3(0, origin.y >= 0 ? 1 : -1, 0) : SphereNormal(origin, direction);
-    const float3 position = plane ? planePosition : normalGeometric;  // 半径 1 なので法線と同じ
+    const float3 normalGeometric = plane ? float3(0, origin.y >= 0 ? 1 : -1, 0) : (displaced ? normalize(displacedPosition) : SphereNormal(origin, direction));
+    const float3 position = displaced ? displacedPosition : (plane ? planePosition : normalGeometric);  // 半径 1 なので法線と同じ
     const float3 viewDirection = normalize(origin - position);
 
     // **UV は素材の中の距離（m）で持つ**（レイヤーマテリアルの「1 UV = 1 m」と同じ規約）。
@@ -189,7 +257,7 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     const float2 metersScale = plane ? float2(g_sphere.lengthMeters, g_sphere.lengthMeters)
                                      : float2(kPi * g_sphere.lengthMeters,
                                               kPi * g_sphere.lengthMeters * 0.5f);
-    const float2 uv = (plane ? planePosition.xz * 0.5f + 0.5f : DirectionToEquirectUv(normalGeometric)) * metersScale;
+    const float2 uv = (plane ? position.xz * 0.5f + 0.5f : DirectionToEquirectUv(normalGeometric)) * metersScale;
     // 隣の画素の UV。ミップを選ぶためだけに使う。
     const float2 uvX = DirectionToEquirectUv(SphereNormal(
                            origin, RayDirection(pixel + float2(1.0f, 0.0f), forward, right, up))) *
@@ -206,6 +274,12 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
         deltaY = ((origin + rayY * (-origin.y / rayY.y)).xz - planePosition.xz) * 0.5f * metersScale;
     }
 
+    if (displaced) {
+        // 元の球・平面との位置差を微分に混ぜない。変位後も画素幅に応じて読む。
+        const float footprint = max(pixelWidth * 0.5f, 1.0f / g_sphere.size);
+        deltaX = float2(footprint * metersScale.x, 0);
+        deltaY = float2(0, footprint * metersScale.y);
+    }
     float3 baseColor = g_sphere.baseColorTint;
     if (g_sphere.baseColorIndex != kInvalidTextureIndex)
     {
@@ -255,7 +329,7 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
 
         // 極では接線が縮退するので、そのときは幾何法線のまま使う。
         const float horizontal = length(normalGeometric.xz);
-        if (horizontal > 1e-3f)
+        if (plane || horizontal > 1e-3f)
         {
             const float3 tangent = plane ? float3(1,0,0) : normalize(float3(-normalGeometric.z, 0.0f, normalGeometric.x));
             // v は北極（+Y）から南へ増えるので、従法線は下向き
@@ -277,6 +351,17 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
         }
     }
 
+    if (displaced && g_sphere.layerMaterial.count == 0) {
+        const float stepSize = max(g_sphere.lengthMeters / g_sphere.size, 0.001f) * 2 / g_sphere.lengthMeters;
+        const float3 t = plane ? float3(1,0,0) : normalize(float3(-normalGeometric.z, 0, normalGeometric.x) + float3(1e-7f,0,0));
+        const float3 b = plane ? float3(0,0,1) : cross(normalGeometric, t);
+        const float2 gradient = float2(HeightAt(position + t * stepSize) - HeightAt(position - t * stepSize),
+            HeightAt(position + b * stepSize) - HeightAt(position - b * stepSize)) *
+            g_sphere.displacementMeters / (stepSize * g_sphere.lengthMeters);
+        const float3 detail = float3(dot(normal,t), dot(normal,b), dot(normal,normalGeometric));
+        const float3 combined = ReorientNormal(normalize(float3(-gradient,1)), detail);
+        normal = normalize(t * combined.x + b * combined.y + normalGeometric * combined.z);
+    }
     float3 diffuseColor;
     float3 f0;
     SplitBaseColor(baseColor, metallic, diffuseColor, f0);

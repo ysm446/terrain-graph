@@ -53,11 +53,16 @@ public:
 
     // プレビューに映す長さ（m）。**平面なら一辺、球なら直径。**
     // 素材を実寸で見るための表示設定で、マテリアル自体には保存しない。
+    bool& ShowDisplacement() { return m_showDisplacement; }
+    float& DisplacementMeters() { return m_displacementMeters; }
     float& LengthMeters() { return m_lengthMeters; }
 
 private:
     rhi::GpuTexture m_output;
     rhi::GpuTexture m_masks;
+    rhi::GpuTexture m_heightField;
+    float m_displacementMeters = 0.1f;
+    bool m_showDisplacement = true;
     // 既定は平面。**模様の実寸とタイリングを読むのが主目的**なので、
     // 丸みの見え方を確かめる球よりこちらを先に出す。
     int m_shape = 1;

@@ -459,6 +459,11 @@ void Application::DrawMaterialSphereWindow() {
                           plane ? "映す平面の一辺の長さ（m）。マテリアルには保存しない"
                                 : "映す球の直径（m）。赤道の模様が同じ長さの平面と揃う。マテリアルには保存しない",
                           "%.2f m");
+        ui::PropertyBool("変位を表示", &m_materialSphere.ShowDisplacement(), true, "ハイトで表面の形状と輪郭を変える。プレビュー専用");
+        if (!layerLayout)
+            ui::PropertyFloat("変位量", &m_materialSphere.DisplacementMeters(), 0.0f, 1.0f, 0.1f,
+                "ハイト0〜1の高低差。0.5を基準に表面を変位させる。プレビュー専用", "%.3f m");
+        else ui::HintText("凹凸の高さは右側の「変位量」で調整");
         ui::EndPropertyTable();
     }
     if (ui::Button("視点を戻す", ui::kWideButtonWidth)) {
