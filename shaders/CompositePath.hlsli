@@ -77,7 +77,7 @@ struct PathFrame
     float intensity;
 };
 
-PathFrame ComputePathFrame(ByteAddressBuffer segments, uint count, float2 position, float sizeMeters)
+PathFrame ComputePathFrameRange(ByteAddressBuffer segments, uint begin, uint end, float2 position, float sizeMeters)
 {
     PathFrame frame;
     frame.along = 0.0f;
@@ -89,7 +89,7 @@ PathFrame ComputePathFrame(ByteAddressBuffer segments, uint count, float2 positi
     frame.intensity = 1.0f;
     float nearest = 1e30f;
     [loop]
-    for (uint i = 0; i < count; ++i)
+    for (uint i = begin; i < end; ++i)
     {
         const PathSegmentData segment = LoadSegment(segments, i, sizeMeters);
         const float2 ab = segment.b - segment.a;
@@ -119,4 +119,18 @@ PathFrame ComputePathFrame(ByteAddressBuffer segments, uint count, float2 positi
     return frame;
 }
 
+PathFrame ComputePathFrame(ByteAddressBuffer segments, uint count, float2 position, float sizeMeters) {
+    return ComputePathFrameRange(segments, 0, count, position, sizeMeters);
+}
+
+// BuildPathSegments は鎖ごとに弧長を0へ戻す。隣接する曲線分割を別のパスとして混ぜない。
+uint PathStrandEnd(ByteAddressBuffer segments, uint begin, uint count, float sizeMeters) {
+    uint end = begin + 1;
+    [loop] while (end < count) {
+        const PathSegmentData next = LoadSegment(segments, end, sizeMeters);
+        if (next.alongA == 0) break;
+        ++end;
+    }
+    return end;
+}
 #endif

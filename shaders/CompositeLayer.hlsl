@@ -112,7 +112,7 @@ struct LayerUv
     float2 uvPerMeter;       // U / V それぞれの 1 m あたりの UV 幅（法線の勾配用）
 };
 
-LayerUv ComputeLayerUv(float2 outputUv, float2 texelSize)
+LayerUv ComputeLayerUv(float2 outputUv, float2 texelSize, uint begin, uint end)
 {
     LayerUv result;
     result.path = false;
@@ -129,7 +129,7 @@ LayerUv ComputeLayerUv(float2 outputUv, float2 texelSize)
     ByteAddressBuffer segments = ResourceDescriptorHeap[g_layer.pathUvIndices.x];
     const float sizeMeters = max(g_layer.pathUvParams.w, 1e-3f);
     const PathFrame frame =
-        ComputePathFrame(segments, g_layer.pathUvIndices.y, outputUv * sizeMeters, sizeMeters);
+        ComputePathFrameRange(segments, begin, end, outputUv * sizeMeters, sizeMeters);
     const float repeatMeters = max(g_layer.pathUvParams.x, 1e-3f);
     const float widthRepeat = max(g_layer.pathUvParams.y, 1e-3f);
     const float widthMeters = max(frame.width, 1e-3f);
@@ -375,29 +375,15 @@ float3 ComputeLayerNormal(LayerUv layerUv, float2 texelSize)
     return normal;
 }
 
-[numthreads(8, 8, 1)]
-void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
-{
-    if (dispatchThreadId.x >= g_layer.tile.z || dispatchThreadId.y >= g_layer.tile.w)
-    {
-        return;
-    }
-
-    const uint2 texel = g_layer.tile.xy + dispatchThreadId.xy;
-
-    RWTexture2D<float4> baseColorTarget = ResourceDescriptorHeap[g_layer.outputIndices.x];
-    RWTexture2D<float2> normalTarget    = ResourceDescriptorHeap[g_layer.outputIndices.y];
-    RWTexture2D<float4> surfaceTarget   = ResourceDescriptorHeap[g_layer.outputIndices.z];
-    RWTexture2D<float>  heightTarget    = ResourceDescriptorHeap[g_layer.outputIndices.w];
-
-    const float2 texelSize = 1.0f / float2(g_layer.resolution);
-    // ペイントマスクは出力そのものの座標で引くため、UV スケールを掛ける前を残しておく。
-    const float2 outputUv = (float2(texel) + 0.5f) * texelSize;
-    const LayerUv layerUv = ComputeLayerUv(outputUv, texelSize);
+struct SurfaceSample {
+    float3 color;
+    float3 normal;
+    float3 surface;
+    float height;
+};
+SurfaceSample EvaluateSurface(LayerUv layerUv, float2 outputUv, float2 texelSize) {
     const float2 uv = layerUv.uv;
-    // 出力テクセル 1 つが張る UV 幅。テクスチャのミップ選択に使う。
     const float uvPerOutputTexel = layerUv.uvPerOutputTexel;
-
     // --- レイヤーの値 ------------------------------------------------------
     float3 layerBaseColor = g_layer.baseColor.rgb;
     float layerRoughness = g_layer.surfaceParams.x;
@@ -441,6 +427,66 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
         if (layerUv.path) layerNormal = normalize(float3(layerNormal.x * layerUv.xAxis + layerNormal.y * layerUv.yAxis, layerNormal.z));
     }
 
+    SurfaceSample result;
+    result.color = layerBaseColor; result.normal = layerNormal;
+    result.surface = float3(layerRoughness, layerMetallic, layerAo); result.height = layerHeight;
+    return result;
+}
+
+[numthreads(8, 8, 1)]
+void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
+{
+    if (dispatchThreadId.x >= g_layer.tile.z || dispatchThreadId.y >= g_layer.tile.w)
+    {
+        return;
+    }
+
+    const uint2 texel = g_layer.tile.xy + dispatchThreadId.xy;
+
+    RWTexture2D<float4> baseColorTarget = ResourceDescriptorHeap[g_layer.outputIndices.x];
+    RWTexture2D<float2> normalTarget    = ResourceDescriptorHeap[g_layer.outputIndices.y];
+    RWTexture2D<float4> surfaceTarget   = ResourceDescriptorHeap[g_layer.outputIndices.z];
+    RWTexture2D<float>  heightTarget    = ResourceDescriptorHeap[g_layer.outputIndices.w];
+
+    const float2 texelSize = 1.0f / float2(g_layer.resolution);
+    // ペイントマスクは出力そのものの座標で引くため、UV スケールを掛ける前を残しておく。
+    const float2 outputUv = (float2(texel) + 0.5f) * texelSize;
+    const LayerUv layerUv = ComputeLayerUv(outputUv, texelSize, 0, g_layer.pathUvIndices.y);
+    const float2 uv = layerUv.uv;
+    // 出力テクセル 1 つが張る UV 幅。テクスチャのミップ選択に使う。
+    const float uvPerOutputTexel = layerUv.uvPerOutputTexel;
+
+    SurfaceSample sample = EvaluateSurface(layerUv, outputUv, texelSize);
+    float layerMask = SampleLayerMask(uv, outputUv, outputUv, uvPerOutputTexel) * layerUv.coverage;
+    if (layerUv.path) {
+        // 各鎖は自身のUVで評価する。覆いを足して濃くせず、最大値を帯全体の覆いに使う。
+        ByteAddressBuffer segments = ResourceDescriptorHeap[g_layer.pathUvIndices.x];
+        const float sizeMeters = max(g_layer.pathUvParams.w, 1e-3f);
+        float total = 0;
+        layerMask = 0;
+        uint begin = 0;
+        [loop] while (begin < g_layer.pathUvIndices.y) {
+            const uint end = PathStrandEnd(segments, begin, g_layer.pathUvIndices.y, sizeMeters);
+            const LayerUv strandUv = ComputeLayerUv(outputUv, texelSize, begin, end);
+            const float influence = strandUv.coverage * SampleLayerMask(strandUv.uv, outputUv, outputUv, strandUv.uvPerOutputTexel);
+            if (influence > 0) {
+                const SurfaceSample strand = EvaluateSurface(strandUv, outputUv, texelSize);
+                const float weight = influence / (total + influence);
+                sample.color = lerp(sample.color, strand.color, weight);
+                sample.surface = lerp(sample.surface, strand.surface, weight);
+                sample.height = lerp(sample.height, strand.height, weight);
+                sample.normal = ReorientNormal(FlattenNormal(sample.normal, 1 - weight), FlattenNormal(strand.normal, weight));
+                total += influence;
+                layerMask = max(layerMask, influence);
+            }
+            begin = end;
+        }
+    }
+    float3 layerBaseColor = sample.color;
+    float3 layerNormal = sample.normal;
+    float layerRoughness = sample.surface.x, layerMetallic = sample.surface.y, layerAo = sample.surface.z;
+    float layerHeight = sample.height;
+
     const bool isBaseLayer = (g_layer.flags & TG_FLAG_BASE_LAYER) != 0u;
     const bool isShape = (g_layer.flags & TG_FLAG_KIND_SHAPE) != 0u;
     const bool isLiquid = (g_layer.flags & TG_FLAG_KIND_LIQUID) != 0u;
@@ -451,8 +497,7 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     if (!isBaseLayer)
     {
         // パス UV のときは帯の外に乗らない（coverage が 0）。
-        const float mask =
-            SampleLayerMask(uv, outputUv, outputUv, uvPerOutputTexel) * layerUv.coverage;
+        const float mask = layerMask;
         const float destinationHeight = heightTarget[texel];
         if (isWrap)
         {
@@ -600,9 +645,24 @@ void CsMaskThumbnail(uint3 dispatchThreadId : SV_DispatchThreadID)
             const float2 offset =
                 (float2(x, y) + 0.5f) / float(TG_MASK_THUMBNAIL_TAPS);
             const float2 outputUv = (float2(dispatchThreadId.xy) + offset) * texelSize;
-            const LayerUv layerUv = ComputeLayerUv(outputUv, texelSize);
-            sum += SampleLayerMask(layerUv.uv, outputUv, outputUv, layerUv.uvPerOutputTexel) *
-                   layerUv.coverage;
+            const LayerUv layerUv = ComputeLayerUv(outputUv, texelSize, 0, g_layer.pathUvIndices.y);
+            float mask = SampleLayerMask(layerUv.uv, outputUv, outputUv, layerUv.uvPerOutputTexel) *
+                         layerUv.coverage;
+            if (layerUv.path)
+            {
+                ByteAddressBuffer segments = ResourceDescriptorHeap[g_layer.pathUvIndices.x];
+                mask = 0.0f;
+                uint begin = 0;
+                [loop] while (begin < g_layer.pathUvIndices.y)
+                {
+                    const uint end = PathStrandEnd(segments, begin, g_layer.pathUvIndices.y, max(g_layer.pathUvParams.w, 1e-3f));
+                    const LayerUv strandUv = ComputeLayerUv(outputUv, texelSize, begin, end);
+                    mask = max(mask, strandUv.coverage * SampleLayerMask(
+                        strandUv.uv, outputUv, outputUv, strandUv.uvPerOutputTexel));
+                    begin = end;
+                }
+            }
+            sum += mask;
         }
     }
 
