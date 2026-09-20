@@ -412,7 +412,7 @@ inline void DrawAssetPathRow(const char* label, const std::filesystem::path& pat
 
 // マテリアルを選ぶ行。サムネイル付きの一覧から選ぶ。
 inline bool DrawMaterialSlotRow(const char* label, compositor::MaterialAssetId& slot,
-                         const compositor::MaterialLibrary& library, std::filesystem::path& revealRequest, bool allowLayerMaterials = true) {
+                         const compositor::MaterialLibrary& library, std::filesystem::path& revealRequest, bool allowLayerMaterials = true, bool showThumbnail = false) {
     ui::PropertyLabel(label, "「なし」ならレイヤーの定数値だけで塗る");
 
     std::string preview = "なし";
@@ -420,8 +420,29 @@ inline bool DrawMaterialSlotRow(const char* label, compositor::MaterialAssetId& 
         preview = current->name;
     }
 
-    const float thumbnailSize = ImGui::GetFrameHeight();
+    const float thumbnailSize = showThumbnail ? ui::Scaled(40) : ImGui::GetFrameHeight();
     bool changed = false;
+    const auto acceptDrop = [&]() {
+        bool accepted = false;
+        if (ImGui::BeginDragDropTarget()) {
+            if (const auto* payload = ImGui::AcceptDragDropPayload(kMaterialDragDropType);
+                payload && payload->DataSize == sizeof(compositor::MaterialAssetId)) {
+                const auto id = *static_cast<const compositor::MaterialAssetId*>(payload->Data);
+                const auto* asset = library.Find(id);
+                if (asset && (allowLayerMaterials || !asset->layerMaterial)) { slot = id; accepted = true; }
+            }
+            ImGui::EndDragDropTarget();
+        }
+        return accepted;
+    };
+    if (showThumbnail) {
+        const float rowY = ImGui::GetCursorPosY();
+        ui::ThumbnailButton("##assignedMaterial", static_cast<ImTextureID>(library.ThumbnailHandle(slot).ptr), thumbnailSize, false);
+        changed |= acceptDrop();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("マテリアルをここへドロップして割り当て");
+        ImGui::SameLine();
+        ImGui::SetCursorPosY(rowY + (thumbnailSize - ImGui::GetFrameHeight()) * 0.5f);
+    }
     ImGui::SetNextItemWidth(
         AssetReferenceWidth(std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x)));
     if (ImGui::BeginCombo("##value", preview.c_str())) {
@@ -433,11 +454,25 @@ inline bool DrawMaterialSlotRow(const char* label, compositor::MaterialAssetId& 
             if (!allowLayerMaterials && asset.layerMaterial) continue;
             ImGui::PushID(static_cast<int>(asset.id));
             if (asset.thumbnail.IsValid()) {
+                // サムネイルと名前を行の中央で揃えるため、行全体をサムネイルの高さの
+                // Selectable にして、その上へ画像と名前を描く。
+                const ImVec2 rowPos = ImGui::GetCursorPos();
+                const bool picked = ImGui::Selectable("##item", slot == asset.id,
+                                                      ImGuiSelectableFlags_None,
+                                                      ImVec2(0.0f, thumbnailSize));
+                const ImVec2 nextPos = ImGui::GetCursorPos();
+                ImGui::SetCursorPos(rowPos);
                 ImGui::Image(static_cast<ImTextureID>(asset.thumbnail.srv.gpu.ptr),
                              ImVec2(thumbnailSize, thumbnailSize));
                 ImGui::SameLine();
-            }
-            if (ImGui::Selectable(asset.name.c_str(), slot == asset.id)) {
+                ImGui::SetCursorPosY(rowPos.y + (thumbnailSize - ImGui::GetTextLineHeight()) * 0.5f);
+                ImGui::TextUnformatted(asset.name.c_str());
+                ImGui::SetCursorPos(nextPos);
+                if (picked) {
+                    slot = asset.id;
+                    changed = true;
+                }
+            } else if (ImGui::Selectable(asset.name.c_str(), slot == asset.id)) {
                 slot = asset.id;
                 changed = true;
             }
@@ -897,6 +932,117 @@ inline ProjectedPoint ProjectToViewport(const DirectX::XMMATRIX& viewProjection,
                         min.y + (0.5f - ndcY * 0.5f) * size.y);
     out.visible = true;
     return out;
+}
+
+// ライトの向きを示すギズモ。地面のリング、水平方向、仰角の弧、光が来る向きの矢印。
+//
+// **ビューポートと素材プレビューで同じ絵を使う。** 見る場所が変わっても読み方を
+// 変えないため。半径は見ているものの実寸（平面の一辺の半分）で渡す。
+// 色はテーマから引かない。座標軸ギズモと同じく「意味を持つ色」として固定する。
+inline void DrawLightGizmoOverlay(const DirectX::XMMATRIX& viewProjection, const ImVec2& viewportMin,
+                                  const ImVec2& viewportMax, float gizmoRadius, float azimuth,
+                                  float elevation, const DirectX::XMFLOAT3& direction, float fade,
+                                  const char* text, const ImVec2& textMin) {
+    using namespace DirectX;
+    const ImVec2 size(viewportMax.x - viewportMin.x, viewportMax.y - viewportMin.y);
+    if (size.x <= 0.0f || size.y <= 0.0f || fade <= 0.001f) {
+        return;
+    }
+
+    const XMFLOAT3 origin{0.0f, 0.0f, 0.0f};
+    const XMFLOAT3 horizontal{std::sin(azimuth), 0.0f, std::cos(azimuth)};
+
+    const auto color = [fade](int r, int g, int b, int a) {
+        return IM_COL32(r, g, b, static_cast<int>(static_cast<float>(a) * fade));
+    };
+    const auto offset = [](const XMFLOAT3& base, const XMFLOAT3& dir, float amount) {
+        return XMFLOAT3{base.x + dir.x * amount, base.y + dir.y * amount,
+                        base.z + dir.z * amount};
+    };
+    const auto project = [&](const XMFLOAT3& world) {
+        return ProjectToViewport(viewProjection, world, viewportMin, size);
+    };
+
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    drawList->PushClipRect(viewportMin, viewportMax, true);
+
+    const auto drawWorldLine = [&](const XMFLOAT3& a, const XMFLOAT3& b, ImU32 lineColor,
+                                   float thickness) {
+        const ProjectedPoint pa = project(a);
+        const ProjectedPoint pb = project(b);
+        if (pa.visible && pb.visible) {
+            drawList->AddLine(pa.screen, pb.screen, lineColor, thickness);
+        }
+    };
+
+    // 地面のリング。方位角の目安になる。
+    constexpr int kRingSegments = 72;
+    ProjectedPoint previous;
+    for (int i = 0; i <= kRingSegments; ++i) {
+        const float t = (static_cast<float>(i) / kRingSegments) * 2.0f * 3.14159265f;
+        const ProjectedPoint current =
+            project(XMFLOAT3{std::sin(t) * gizmoRadius, 0.0f, std::cos(t) * gizmoRadius});
+        if (i > 0 && previous.visible && current.visible) {
+            drawList->AddLine(previous.screen, current.screen, color(150, 160, 175, 130), 1.6f);
+        }
+        previous = current;
+    }
+
+    // 水平方向への投影と、そこから仰角ぶんの弧。
+    drawWorldLine(origin, offset(origin, horizontal, gizmoRadius), color(150, 160, 175, 170), 1.8f);
+
+    constexpr int kArcSegments = 32;
+    ProjectedPoint previousArc;
+    for (int i = 0; i <= kArcSegments; ++i) {
+        const float angle = elevation * (static_cast<float>(i) / kArcSegments);
+        const float ring = std::cos(angle) * gizmoRadius;
+        const ProjectedPoint current = project(
+            XMFLOAT3{horizontal.x * ring, std::sin(angle) * gizmoRadius, horizontal.z * ring});
+        if (i > 0 && previousArc.visible && current.visible) {
+            drawList->AddLine(previousArc.screen, current.screen, color(255, 206, 112, 150), 1.6f);
+        }
+        previousArc = current;
+    }
+
+    // 光が来る向きの矢印。ライトの位置から原点へ向ける。
+    const ProjectedPoint arrowStart = project(offset(origin, direction, gizmoRadius));
+    const ProjectedPoint arrowEnd = project(offset(origin, direction, gizmoRadius * 0.22f));
+    if (arrowStart.visible && arrowEnd.visible) {
+        const ImU32 lightColor = color(255, 188, 76, 245);
+        ImVec2 screenDir(arrowEnd.screen.x - arrowStart.screen.x,
+                         arrowEnd.screen.y - arrowStart.screen.y);
+        const float length = std::sqrt(screenDir.x * screenDir.x + screenDir.y * screenDir.y);
+        if (length > 0.001f) {
+            screenDir.x /= length;
+            screenDir.y /= length;
+            const ImVec2 side(-screenDir.y, screenDir.x);
+            const float head = ui::Scaled(14.0f);
+            const float halfWidth = ui::Scaled(6.0f);
+            const ImVec2 base(arrowEnd.screen.x - screenDir.x * head,
+                              arrowEnd.screen.y - screenDir.y * head);
+            drawList->AddLine(arrowStart.screen, base, lightColor, ui::Scaled(3.5f));
+            drawList->AddTriangleFilled(
+                arrowEnd.screen, ImVec2(base.x + side.x * halfWidth, base.y + side.y * halfWidth),
+                ImVec2(base.x - side.x * halfWidth, base.y - side.y * halfWidth), lightColor);
+        }
+    }
+
+    if (const ProjectedPoint center = project(origin); center.visible) {
+        drawList->AddCircle(center.screen, ui::Scaled(5.0f), color(200, 210, 220, 200), 20, 1.6f);
+    }
+
+    // いまの値。掴んだまま数字を確かめられるようにする。
+    if (text != nullptr && text[0] != 0) {
+        const ImVec2 textSize = ImGui::CalcTextSize(text);
+        const ImVec2 padding(ui::Scaled(8.0f), ui::Scaled(5.0f));
+        const ImVec2 textMax(textMin.x + textSize.x + padding.x * 2.0f,
+                             textMin.y + textSize.y + padding.y * 2.0f);
+        drawList->AddRectFilled(textMin, textMax, color(8, 10, 12, 190), ui::Scaled(4.0f));
+        drawList->AddText(ImVec2(textMin.x + padding.x, textMin.y + padding.y),
+                          color(235, 235, 235, 255), text);
+    }
+
+    drawList->PopClipRect();
 }
 
 // ビューポート左下に置く座標軸ギズモ。

@@ -31,7 +31,7 @@ struct SphereConstants
 
     float metallicValue;
     float aoValue;
-    float uvScale;           // 球 1 周に並べるタイル数
+    float lengthMeters;      // 映す長さ（m）。平面なら一辺、球なら直径
     uint flipNormalGreen;    // 0 以外なら法線マップの緑を反転して読む
 
     float3 cameraPosition;   // 球の中心は原点、半径 1
@@ -56,7 +56,7 @@ struct SphereConstants
     // ベースカラーの調整（ティントを掛けたあとに効く）。合成と同じ値を渡すこと。
     float2 colorAdjust;  // 色相（ラジアン）, 彩度
     float brightness;    // 明度（倍率）
-    float pad0;
+    uint shape;
     LayerMaterialData layerMaterial;
 };
 
@@ -161,9 +161,13 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     // 球を解析的に持っているので、判定を 0/1 にせず輪郭をまたぐ幅で滑らかにする。
     // 画素の角幅 × 距離が、球の表面での画素の大きさにあたる。
     const float pixelWidth = (2.0f * g_sphere.tanHalfFov / float(g_sphere.size)) * length(origin);
-    const float coverage =
+    float coverage =
         1.0f - smoothstep(1.0f - pixelWidth, 1.0f + pixelWidth,
                           SilhouetteDistance(origin, direction));
+    const bool plane = g_sphere.shape == 1;
+    const float planeT = abs(direction.y) > 1e-5f ? -origin.y / direction.y : -1;
+    const float3 planePosition = origin + direction * planeT;
+    if (plane) coverage = planeT > 0 ? 1 - smoothstep(1 - pixelWidth, 1 + pixelWidth, max(abs(planePosition.x), abs(planePosition.z))) : 0;
     if (coverage <= 0.0f)
     {
         output[dispatchThreadId.xy] =
@@ -174,21 +178,33 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     }
 
     // --- 球の上の点 --------------------------------------------------------
-    const float3 normalGeometric = SphereNormal(origin, direction);
-    const float3 position = normalGeometric;  // 半径 1 なので法線と同じ
+    const float3 normalGeometric = plane ? float3(0, origin.y >= 0 ? 1 : -1, 0) : SphereNormal(origin, direction);
+    const float3 position = plane ? planePosition : normalGeometric;  // 半径 1 なので法線と同じ
     const float3 viewDirection = normalize(origin - position);
 
-    // マップは緯度経度で貼る（環境マップと同じ並び）。uvScale で並べる数を決める。
-    const float2 uv = DirectionToEquirectUv(normalGeometric) * g_sphere.uvScale;
+    // **UV は素材の中の距離（m）で持つ**（レイヤーマテリアルの「1 UV = 1 m」と同じ規約）。
+    // 平面は一辺 lengthMeters の板。球は直径 lengthMeters なので、緯度経度の u は赤道の
+    // 周長 πL、v は極から極までの経線長 πL/2 にあたる。こうすると赤道付近の模様の大きさが
+    // 同じ長さの平面と一致し、縦横比も崩れない。
+    const float2 metersScale = plane ? float2(g_sphere.lengthMeters, g_sphere.lengthMeters)
+                                     : float2(kPi * g_sphere.lengthMeters,
+                                              kPi * g_sphere.lengthMeters * 0.5f);
+    const float2 uv = (plane ? planePosition.xz * 0.5f + 0.5f : DirectionToEquirectUv(normalGeometric)) * metersScale;
     // 隣の画素の UV。ミップを選ぶためだけに使う。
     const float2 uvX = DirectionToEquirectUv(SphereNormal(
                            origin, RayDirection(pixel + float2(1.0f, 0.0f), forward, right, up))) *
-                       g_sphere.uvScale;
+                       metersScale;
     const float2 uvY = DirectionToEquirectUv(SphereNormal(
                            origin, RayDirection(pixel + float2(0.0f, 1.0f), forward, right, up))) *
-                       g_sphere.uvScale;
-    const float2 deltaX = WrapDelta(uvX - uv);
-    const float2 deltaY = WrapDelta(uvY - uv);
+                       metersScale;
+    float2 deltaX = WrapDelta(uvX - uv);
+    float2 deltaY = WrapDelta(uvY - uv);
+    if (plane) {
+        const float3 rayX = RayDirection(pixel + float2(1,0), forward, right, up);
+        const float3 rayY = RayDirection(pixel + float2(0,1), forward, right, up);
+        deltaX = ((origin + rayX * (-origin.y / rayX.y)).xz - planePosition.xz) * 0.5f * metersScale;
+        deltaY = ((origin + rayY * (-origin.y / rayY.y)).xz - planePosition.xz) * 0.5f * metersScale;
+    }
 
     float3 baseColor = g_sphere.baseColorTint;
     if (g_sphere.baseColorIndex != kInvalidTextureIndex)
@@ -241,10 +257,10 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
         const float horizontal = length(normalGeometric.xz);
         if (horizontal > 1e-3f)
         {
-            const float3 tangent = normalize(float3(-normalGeometric.z, 0.0f, normalGeometric.x));
+            const float3 tangent = plane ? float3(1,0,0) : normalize(float3(-normalGeometric.z, 0.0f, normalGeometric.x));
             // v は北極（+Y）から南へ増えるので、従法線は下向き
             // （赤道・経度 0 では T=(0,0,1)、N=(1,0,0)、B=N×T=(0,-1,0)）。
-            const float3 bitangent = cross(normalGeometric, tangent);
+            const float3 bitangent = plane ? float3(0,0,1) : cross(normalGeometric, tangent);
             normal = normalize(tangent * sampled.x + bitangent * sampled.y +
                                normalGeometric * sampled.z);
         }
@@ -252,11 +268,11 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     // --- 陰影（ビューポートと同じ式）---------------------------------------
     if (g_sphere.layerMaterial.count > 0) {
-        const LayerMaterialSample material = EvaluateLayerMaterial(g_sphere.layerMaterial, uv, uv, g_sphere.uvScale / g_sphere.size, float2(1,1), float2(1,0), float2(0,1));
+        const LayerMaterialSample material = EvaluateLayerMaterial(g_sphere.layerMaterial, uv, uv, metersScale / g_sphere.size, float2(1,1), float2(1,0), float2(0,1));
         baseColor = material.color; roughness = material.surface.x; metallic = material.surface.y; ambientOcclusion = material.surface.z;
-        if (length(normalGeometric.xz) > 1e-3f) {
-            const float3 t = normalize(float3(-normalGeometric.z, 0, normalGeometric.x));
-            const float3 b = cross(normalGeometric, t);
+        if (plane || length(normalGeometric.xz) > 1e-3f) {
+            const float3 t = plane ? float3(1,0,0) : normalize(float3(-normalGeometric.z, 0, normalGeometric.x));
+            const float3 b = plane ? float3(0,0,1) : cross(normalGeometric, t);
             normal = normalize(t * material.normal.x + b * material.normal.y + normalGeometric * material.normal.z);
         }
     }
@@ -300,4 +316,18 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     const float3 color = lerp(background, radiance, coverage) * g_sphere.exposure;
     output[dispatchThreadId.xy] =
         float4(LinearToSrgb(ApplyTonemap(color, g_sphere.tonemapMode)), 1.0f);
+}
+
+// 4 層分を横に並べたマスク画像。合成と同じ GPU 評価を使う。
+[numthreads(8, 8, 1)]
+void CsMasks(uint3 id : SV_DispatchThreadID) {
+    if (id.x >= g_sphere.size * 4 || id.y >= g_sphere.size) return;
+    const uint slot = id.x / g_sphere.size;
+    // マスク画像は平面と同じ見え方にする（一辺 lengthMeters の範囲を 1 枚に収める）。
+    const float2 uv = (float2(id.x % g_sphere.size, id.y) + 0.5f) / g_sphere.size * g_sphere.lengthMeters;
+    const LayerMaterialSample sample = EvaluateLayerMaterialBase(g_sphere.layerMaterial, uv, uv,
+        g_sphere.lengthMeters / g_sphere.size, float2(1,0), float2(0,1));
+    const float value = slot < g_sphere.layerMaterial.count ? sample.coverage[slot] : 0;
+    RWTexture2D<float4> output = ResourceDescriptorHeap[g_sphere.outputIndex];
+    output[id.xy] = float4(value, value, value, 1);
 }

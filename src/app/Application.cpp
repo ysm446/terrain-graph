@@ -549,8 +549,13 @@ int Application::Run() {
             const auto& materials = m_materialLibrary.Entries();
             const int index =
                 std::clamp(m_selectedMaterial, 0, static_cast<int>(materials.size()) - 1);
+            const compositor::MaterialAsset* previewAsset = &materials[static_cast<size_t>(index)];
+            if (m_materialEditPending && m_materialEditDraft.id == previewAsset->id) {
+                m_materialEditDraft.layerGpu = m_materialLibrary.CompileLayerMaterial(m_materialEditDraft, m_textureLibrary, m_materialEditDraft.layerError);
+                previewAsset = &m_materialEditDraft;
+            }
             m_materialSphere.Render(m_device, m_pipelineCache, commandList,
-                                    materials[static_cast<size_t>(index)], m_textureLibrary,
+                                    *previewAsset, m_textureLibrary,
                                     m_renderer.GetEnvironment(), m_renderer.EnvironmentIntensity(),
                                     m_renderer.EffectiveLight(), m_renderer.Exposure().Exposure(),
                                     m_renderer.Tonemap());

@@ -523,6 +523,7 @@ bool Application::HandleCloudTransformGizmo(bool itemActive, bool itemHovered, c
     return drag.axis>=0 || hover>=0;
 }
 
+// ライトの向きを示すギズモ。**絵は素材プレビューと共有する**（`DrawLightGizmoOverlay`）。
 void Application::DrawLightGizmo(const ImVec2& viewportMin, const ImVec2& viewportMax) {
     const double now = ImGui::GetTime();
     if (!m_lightDragActive && now >= m_lightGizmoUntil) {
@@ -533,107 +534,18 @@ void Application::DrawLightGizmo(const ImVec2& viewportMin, const ImVec2& viewpo
             ? 1.0f
             : static_cast<float>(std::clamp((m_lightGizmoUntil - now) / kLightGizmoFadeSeconds,
                                             0.0, 1.0));
-    if (fade <= 0.001f) {
-        return;
-    }
 
     using namespace DirectX;
     const renderer::Camera& camera = m_renderer.GetCamera();
     const XMMATRIX viewProjection = camera.ViewMatrix() * camera.ProjectionMatrix();
-    const ImVec2 size(viewportMax.x - viewportMin.x, viewportMax.y - viewportMin.y);
-    if (size.x <= 0.0f || size.y <= 0.0f) {
-        return;
-    }
-
     const renderer::LightSettings& light = m_renderer.Light();
-    const XMFLOAT3 direction = light.Direction();
+
     // **見ているものの実寸に合わせる。** 素材（2m 角）でも地形（2km 角）でも
     // 同じ見え方になるよう、平面の一辺（m）から決める。固定値にすると、
     // 地形では原点の一点に潰れて見えなくなる。
     // 包む球（対角）ではなく**辺の半分**にしてあるのは、対角だと視界からはみ出して
     // リングが読めなくなるため。地形の縁に接するくらいがちょうどいい。
     const float gizmoRadius = m_renderer.PlaneSize() * 0.5f;
-    const XMFLOAT3 origin{0.0f, 0.0f, 0.0f};
-    const XMFLOAT3 horizontal{std::sin(light.azimuth), 0.0f, std::cos(light.azimuth)};
-
-    const auto color = [fade](int r, int g, int b, int a) {
-        return IM_COL32(r, g, b, static_cast<int>(static_cast<float>(a) * fade));
-    };
-    const auto offset = [](const XMFLOAT3& base, const XMFLOAT3& dir, float amount) {
-        return XMFLOAT3{base.x + dir.x * amount, base.y + dir.y * amount,
-                        base.z + dir.z * amount};
-    };
-    const auto project = [&](const XMFLOAT3& world) {
-        return ProjectToViewport(viewProjection, world, viewportMin, size);
-    };
-
-    ImDrawList* drawList = ImGui::GetWindowDrawList();
-    drawList->PushClipRect(viewportMin, viewportMax, true);
-
-    const auto drawWorldLine = [&](const XMFLOAT3& a, const XMFLOAT3& b, ImU32 lineColor,
-                                   float thickness) {
-        const ProjectedPoint pa = project(a);
-        const ProjectedPoint pb = project(b);
-        if (pa.visible && pb.visible) {
-            drawList->AddLine(pa.screen, pb.screen, lineColor, thickness);
-        }
-    };
-
-    // 地面のリング。方位角の目安になる。
-    constexpr int kRingSegments = 72;
-    ProjectedPoint previous;
-    for (int i = 0; i <= kRingSegments; ++i) {
-        const float t = (static_cast<float>(i) / kRingSegments) * 2.0f * 3.14159265f;
-        const ProjectedPoint current =
-            project(XMFLOAT3{std::sin(t) * gizmoRadius, 0.0f, std::cos(t) * gizmoRadius});
-        if (i > 0 && previous.visible && current.visible) {
-            drawList->AddLine(previous.screen, current.screen, color(150, 160, 175, 130), 1.6f);
-        }
-        previous = current;
-    }
-
-    // 水平方向への投影と、そこから仰角ぶんの弧。
-    drawWorldLine(origin, offset(origin, horizontal, gizmoRadius), color(150, 160, 175, 170), 1.8f);
-
-    constexpr int kArcSegments = 32;
-    ProjectedPoint previousArc;
-    for (int i = 0; i <= kArcSegments; ++i) {
-        const float angle = light.elevation * (static_cast<float>(i) / kArcSegments);
-        const float ring = std::cos(angle) * gizmoRadius;
-        const ProjectedPoint current = project(
-            XMFLOAT3{horizontal.x * ring, std::sin(angle) * gizmoRadius, horizontal.z * ring});
-        if (i > 0 && previousArc.visible && current.visible) {
-            drawList->AddLine(previousArc.screen, current.screen, color(255, 206, 112, 150), 1.6f);
-        }
-        previousArc = current;
-    }
-
-    // 光が来る向きの矢印。ライトの位置から原点へ向ける。
-    const ProjectedPoint arrowStart = project(offset(origin, direction, gizmoRadius));
-    const ProjectedPoint arrowEnd = project(offset(origin, direction, gizmoRadius * 0.22f));
-    if (arrowStart.visible && arrowEnd.visible) {
-        const ImU32 lightColor = color(255, 188, 76, 245);
-        ImVec2 screenDir(arrowEnd.screen.x - arrowStart.screen.x,
-                         arrowEnd.screen.y - arrowStart.screen.y);
-        const float length = std::sqrt(screenDir.x * screenDir.x + screenDir.y * screenDir.y);
-        if (length > 0.001f) {
-            screenDir.x /= length;
-            screenDir.y /= length;
-            const ImVec2 side(-screenDir.y, screenDir.x);
-            const float head = ui::Scaled(14.0f);
-            const float halfWidth = ui::Scaled(6.0f);
-            const ImVec2 base(arrowEnd.screen.x - screenDir.x * head,
-                              arrowEnd.screen.y - screenDir.y * head);
-            drawList->AddLine(arrowStart.screen, base, lightColor, ui::Scaled(3.5f));
-            drawList->AddTriangleFilled(
-                arrowEnd.screen, ImVec2(base.x + side.x * halfWidth, base.y + side.y * halfWidth),
-                ImVec2(base.x - side.x * halfWidth, base.y - side.y * halfWidth), lightColor);
-        }
-    }
-
-    if (const ProjectedPoint center = project(origin); center.visible) {
-        drawList->AddCircle(center.screen, ui::Scaled(5.0f), color(200, 210, 220, 200), 20, 1.6f);
-    }
 
     // いまの値。掴んだまま数字を確かめられるようにする。
     // 日時モードでは動かしているのが時刻なので、日付と時刻を先頭に出す。
@@ -648,19 +560,13 @@ void Application::DrawLightGizmo(const ImVec2& viewportMin, const ImVec2& viewpo
         std::snprintf(text, sizeof(text), "方位角 %.0f 度   仰角 %.0f 度",
                       RadiansToDegrees(light.azimuth), RadiansToDegrees(light.elevation));
     }
-    const ImVec2 textSize = ImGui::CalcTextSize(text);
-    const ImVec2 padding(ui::Scaled(8.0f), ui::Scaled(5.0f));
     // 左上には表示モードのボタンがあるので、その下へ置く。
     const ImVec2 textMin(viewportMin.x + ui::Scaled(10.0f),
                          viewportMin.y + ui::Scaled(10.0f) + ImGui::GetFrameHeight() +
                              ui::Scaled(6.0f));
-    const ImVec2 textMax(textMin.x + textSize.x + padding.x * 2.0f,
-                         textMin.y + textSize.y + padding.y * 2.0f);
-    drawList->AddRectFilled(textMin, textMax, color(8, 10, 12, 190), ui::Scaled(4.0f));
-    drawList->AddText(ImVec2(textMin.x + padding.x, textMin.y + padding.y),
-                      color(235, 235, 235, 255), text);
 
-    drawList->PopClipRect();
+    DrawLightGizmoOverlay(viewProjection, viewportMin, viewportMax, gizmoRadius, light.azimuth,
+                          light.elevation, light.Direction(), fade, text, textMin);
 }
 
 // ハイトの範囲のラベル（0.0 / 0.5 / 1.0）。

@@ -322,6 +322,37 @@ bool Application::DrawMaterialProperties(compositor::MaterialAsset& asset) {
     return changed;
 }
 
+// 素材プレビューに重ねるライトのギズモ。**ビューポートと同じ絵**
+// （`DrawLightGizmoOverlay`）で、L＋ドラッグの手応えを窓ごとに変えない。
+//
+// 視点はシェーダのレイ生成と同じ右手系で組む（`MaterialSphere.hlsl` の forward / right / up）。
+// 球も平面も原点まわりの半径 1 なので、ギズモの半径は 1 でよい。
+void Application::DrawMaterialSphereLightGizmo(const ImVec2& previewMin, const ImVec2& previewMax) {
+    const double now = ImGui::GetTime();
+    if (now >= m_materialLightGizmoUntil) {
+        return;
+    }
+    const float fade = static_cast<float>(
+        std::clamp((m_materialLightGizmoUntil - now) / kLightGizmoFadeSeconds, 0.0, 1.0));
+
+    using namespace DirectX;
+    const XMFLOAT3 cameraPosition = m_materialSphere.CameraPosition();
+    const XMMATRIX view =
+        XMMatrixLookAtRH(XMLoadFloat3(&cameraPosition), XMVectorZero(), XMVectorSet(0, 1, 0, 0));
+    const float fovY = renderer::MaterialSphere::kFovYDegrees * (3.14159265358979f / 180.0f);
+    // プレビューは正方形で描いているのでアスペクトは 1。
+    const XMMATRIX projection = XMMatrixPerspectiveFovRH(fovY, 1.0f, 0.05f, 100.0f);
+
+    const renderer::LightSettings light = m_materialSphere.PreviewLight(m_renderer.Light());
+    char text[64] = {};
+    std::snprintf(text, sizeof(text), "方位角 %.0f 度   仰角 %.0f 度",
+                  RadiansToDegrees(light.azimuth), RadiansToDegrees(light.elevation));
+    const ImVec2 textMin(previewMin.x + ui::Scaled(10.0f), previewMin.y + ui::Scaled(10.0f));
+
+    DrawLightGizmoOverlay(view * projection, previewMin, previewMax, 1.0f, light.azimuth,
+                          light.elevation, light.Direction(), fade, text, textMin);
+}
+
 // マテリアルプレビューの窓。回せる球と、そのマテリアルのプロパティ。
 //
 // **映すのは一覧で選んでいるマテリアル。** 窓の側に別の選択を持たせると、
@@ -332,18 +363,18 @@ void Application::DrawMaterialSphereWindow() {
         return;
     }
 
-    // 縦長。球の下にプロパティが続くので、幅は 1 列ぶんあれば足りる。
-    // **窓そのものはスクロールさせない。** 中身は上下 2 つの区画で、
-    // スクロールするのは下（プロパティ）だけ。
-    ImGui::SetNextWindowSize(ImVec2(ui::Scaled(420.0f), ui::Scaled(720.0f)),
-                             ImGuiCond_FirstUseEver);
+    const auto& assets = m_materialLibrary.Entries();
+    const int index = std::clamp(m_selectedMaterial, 0, std::max(0, static_cast<int>(assets.size()) - 1));
+    const bool layerLayout = !assets.empty() && assets[index].layerMaterial.has_value();
+    ImGui::SetNextWindowSize(ImVec2(ui::Scaled(layerLayout ? 1000.0f : 420.0f), ui::Scaled(720.0f)),
+        layerLayout != m_materialPreviewLayerLayout ? ImGuiCond_Always : ImGuiCond_FirstUseEver);
+    m_materialPreviewLayerLayout = layerLayout;
     if (!ImGui::Begin("マテリアルプレビュー", &m_showMaterialSphere,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         ImGui::End();
         return;
     }
 
-    const std::vector<compositor::MaterialAsset>& assets = m_materialLibrary.Entries();
     if (assets.empty()) {
         ui::HintText("マテリアルがない。「マテリアル」パネルの「追加」で作る");
         ImGui::End();
@@ -352,15 +383,18 @@ void Application::DrawMaterialSphereWindow() {
 
     m_materialSphereVisible = true;
 
-    const int index =
-        std::clamp(m_selectedMaterial, 0, static_cast<int>(assets.size()) - 1);
     compositor::MaterialAsset& asset =
         *m_materialLibrary.FindMutable(assets[static_cast<size_t>(index)].id);
 
-    // --- 上下 2 区画 ----------------------------------------------------------
-    // 上が球、下がプロパティ。**スクロールするのは下だけ。**
-    // 上は**幅に合わせた正方形**なので、窓を広げれば球も大きくなり、余白が残らない。
-    const float paneSize = asset.layerMaterial ? std::min(PreviewPaneSize(), ui::Scaled(112.0f)) : PreviewPaneSize();
+    // レイヤーマテリアルは左にプレビュー、右に独立してスクロールする編集欄。
+    if (layerLayout) {
+        const float width = ImGui::GetContentRegionAvail().x * 0.48f;
+        ImGui::BeginChild("layerMaterialPreview", ImVec2(width, 0), ImGuiChildFlags_None,
+            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    }
+    const float paneSize = layerLayout
+        ? std::max(ui::Scaled(32), std::min(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y - ui::Scaled(145)))
+        : PreviewPaneSize();
 
     // --- 球 ------------------------------------------------------------------
     ImGui::BeginChild("materialSpherePane", ImVec2(0.0f, paneSize), ImGuiChildFlags_None,
@@ -381,7 +415,13 @@ void Application::DrawMaterialSphereWindow() {
         if (ImGui::IsItemActive()) {
             // 1px = 0.35 度。ビューポートのカメラ（0.006 ラジアン ≒ 0.34 度）に合わせる。
             const ImVec2 delta = ImGui::GetIO().MouseDelta;
-            m_materialSphere.Orbit(delta.x * 0.35f, delta.y * 0.35f);
+            const auto& io = ImGui::GetIO();
+            if (ImGui::IsKeyDown(ImGuiKey_L) && !io.KeyCtrl && !io.KeyAlt && !io.KeyShift) {
+                m_materialSphere.RotateLight(delta.x, delta.y);
+                // ビューポートと同じギズモを、掴んでいる間と離した直後だけ出す。
+                m_materialLightGizmoUntil = ImGui::GetTime() + kLightGizmoFadeSeconds;
+            }
+            else m_materialSphere.Orbit(delta.x * 0.35f, delta.y * 0.35f);
         }
         // **寄るのはホイール。** この区画はスクロールしない（`NoScrollWithMouse`）ので、
         // ビューポートと同じようにホイールをズームへ回せる。
@@ -396,26 +436,44 @@ void Application::DrawMaterialSphereWindow() {
         }
         ImGui::GetWindowDrawList()->AddRect(min, max, ImGui::GetColorU32(ImGuiCol_Border),
                                             ImGui::GetStyle().FrameRounding, 0, ui::Scaled(1.0f));
+
+        DrawMaterialSphereLightGizmo(min, max);
     }
     ImGui::EndChild();
 
     ImGui::Separator();
 
     // --- プロパティ（この区画だけスクロールする）------------------------------
-    ImGui::BeginChild("materialPropertyPane", ImVec2(0.0f, 0.0f));
-    ui::HintText("ドラッグで回す / ホイールで寄る。照らし方はビューポートと同じ");
+    if (!layerLayout) ImGui::BeginChild("materialPropertyPane", ImVec2(0.0f, 0.0f));
+    ui::HintText("ドラッグ: 回転 / ホイール: ズーム / L＋ドラッグ: 光源");
 
     // 表示だけの設定。マテリアルの設定とは区切り線で分ける。
     if (ui::BeginPropertyTable("materialSphereViewRows")) {
-        ui::PropertyFloat("タイル", &m_materialSphere.UvScale(), 0.25f, 8.0f, 2.0f,
-                          "球 1 周に並べるマップの数。マテリアルには保存しない", "%.2f");
+        const char* shapes[]{"球", "平面"};
+        int shape = m_materialSphere.Shape();
+        if (ui::PropertyCombo("形状", &shape, shapes, 2, 0, "プレビュー形状。マテリアルには保存しません")) m_materialSphere.SetShape(shape);
+        // 長さは実寸（m）。平面は一辺、球は直径で、どちらも同じ値を使う
+        // （球の赤道付近の模様が、同じ長さの平面と同じ大きさで見える）。
+        const bool plane = m_materialSphere.Shape() == 1;
+        ui::PropertyFloat(plane ? "一辺" : "直径", &m_materialSphere.LengthMeters(), 0.1f, 100.0f, 2.0f,
+                          plane ? "映す平面の一辺の長さ（m）。マテリアルには保存しない"
+                                : "映す球の直径（m）。赤道の模様が同じ長さの平面と揃う。マテリアルには保存しない",
+                          "%.2f m");
         ui::EndPropertyTable();
     }
     if (ui::Button("視点を戻す", ui::kWideButtonWidth)) {
         m_materialSphere.ResetView();
     }
+    ImGui::SameLine();
+    if (ui::Button("光源を戻す", ui::kWideButtonWidth)) m_materialSphere.ResetLight();
 
     ImGui::Separator();
+
+    if (layerLayout) {
+        ImGui::EndChild();
+        ImGui::SameLine();
+        ImGui::BeginChild("materialPropertyPane", ImVec2(0, 0));
+    }
 
     if (m_materialEditDraft.id != asset.id) CommitMaterialEdit();
     if (!m_materialEditPending) CopyMaterialValues(asset, m_materialEditDraft);

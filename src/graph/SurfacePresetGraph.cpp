@@ -133,7 +133,7 @@ PresetGraph MakePresetGraph(const std::vector<PresetMaterial>& materials) {
     graph.nodes.back().inputs[0] = previous;
     return graph;
 }
-bool CompilePresetMaterials(const LayerMaterial& preset, std::vector<PresetMaterial>& materials, std::string& error) {
+bool ExtractPresetLayers(const LayerMaterial& preset, std::vector<PresetMaterial>& materials, std::string& error) {
     error.clear();
     if (!preset.materialGraph) materials = preset.materials;
     else {
@@ -142,6 +142,10 @@ bool CompilePresetMaterials(const LayerMaterial& preset, std::vector<PresetMater
         for (const auto& node : preset.materialGraph->nodes) if (node.kind == PresetNodeKind::Output)
             if (!Compile(*preset.materialGraph, node.id, materials)) return false;
     }
+    return !materials.empty();
+}
+bool CompilePresetMaterials(const LayerMaterial& preset, std::vector<PresetMaterial>& materials, std::string& error) {
+    if (!ExtractPresetLayers(preset, materials, error)) return false;
     if (!materials.empty()) materials[0] = SourceMaterial(materials[0]);
     for (size_t i = 0; i < materials.size(); ++i) if (!materials[i].enabled) {
         if (!i) materials[i] = PresetMaterial{};

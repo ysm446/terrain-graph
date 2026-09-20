@@ -172,12 +172,13 @@ private:
     // マテリアル 1 つのプロパティ（基本 + マップ）。変更があれば真を返す。
     // **置き場所はプレビューの窓だけ**（一覧はサムネイルだけを出す）。
     bool DrawLayerMaterialProperties(compositor::MaterialAsset& asset);
-    bool DrawSurfacePresetGraph(graph::LayerMaterial& preset);
     bool DrawMaterialProperties(compositor::MaterialAsset& asset);
     void CommitMaterialEdit();
     // マテリアルプレビューの窓（回せる球 + プロパティ）。
     // 一覧のサムネイルをダブルクリックするか、ウィンドウメニューから開く。
     void DrawMaterialSphereWindow();
+    // 素材プレビューに重ねるライトのギズモ（ビューポートと同じ絵）。
+    void DrawMaterialSphereLightGizmo(const ImVec2& previewMin, const ImVec2& previewMax);
     // 天球パネル。一覧で選んだものがそのままビューポートの環境になる。
     // 天球一覧の右クリックメニュー（追加 / 複製 / 削除）。
     // 天球プレビューの窓（大きい絵 + 設定）。
@@ -469,10 +470,9 @@ private:
     graph::GraphId m_graphPressedPin = 0;
     ImVec2 m_graphPressedPinPos{};
     ax::NodeEditor::EditorContext* m_nodeEditor = nullptr;
-    ax::NodeEditor::EditorContext* m_presetNodeEditor = nullptr;
     uint32_t m_presetEditorId = 0;
-    int m_presetNavigateFrames = 0;
-    uint32_t m_selectedPresetNode = 0;
+    int m_selectedPresetLayer = 0;
+    bool m_materialPreviewLayerLayout = false;
     std::string m_surfacePresetError;
     // グラフパネル内の「エディタ / プロパティ」境界の高さ（96 DPI 基準）。
     float m_graphEditorHeight = 380.0f;
@@ -516,6 +516,9 @@ private:
     // 日時モードの L + ドラッグで時刻を変えたか。離したときに 1 段だけアンドゥへ積む。
     bool m_lightDragChangedTime = false;
     double m_lightGizmoUntil = 0.0;
+    // 素材プレビューの L＋ドラッグでも同じギズモを出す。ビューポートとは別の窓なので
+    // 消えるまでの時刻を別に持つ。
+    double m_materialLightGizmoUntil = 0.0;
     // ストローク中の状態。前フレームのカーソル位置から線分としてブラシを積む。
     bool m_strokeActive = false;
     float m_strokeLastX = 0.0f;

@@ -36,6 +36,22 @@ int main() {
     check(tg::graph::AppendPresetLayer(*layer.materialGraph, error) && tg::graph::AppendPresetLayer(*layer.materialGraph, error), "four layers");
     check(!tg::graph::AppendPresetLayer(*layer.materialGraph, error), "fifth layer rejected");
 
+    // 編集用変換では、非表示の素材・マスクも再表示できるよう保持する。
+    auto hidden = layer;
+    for (auto& node : hidden.materialGraph->nodes) if (node.kind == tg::graph::PresetNodeKind::Material) node.settings.enabled = false;
+    std::vector<tg::graph::PresetMaterial> editable;
+    check(tg::graph::ExtractPresetLayers(hidden, editable, error) && editable.size() == 4, "extract editable layers");
+    check(!editable.front().enabled && editable.front().material == 7 && !editable.back().enabled && editable.back().mask.has_value(), "hidden settings retained");
+    std::vector<tg::graph::PresetMaterial> beforeConversion, afterConversion;
+    check(tg::graph::CompilePresetMaterials(hidden, beforeConversion, error), "compile hidden graph");
+    hidden.materialGraph.reset(); hidden.materials = editable;
+    check(tg::graph::CompilePresetMaterials(hidden, afterConversion, error), "compile converted stack");
+    auto beforeLayer = hidden; beforeLayer.materials = beforeConversion;
+    auto afterLayer = hidden; afterLayer.materials = afterConversion;
+    check(tg::io::WriteLayerMaterial(beforeLayer) == tg::io::WriteLayerMaterial(afterLayer), "conversion preserves evaluated materials");
+    auto stackBody = tg::io::WriteLayerMaterial(hidden);
+    check(tg::io::ReadLayerMaterial(stackBody, restored, error) && tg::io::WriteLayerMaterial(restored) == stackBody, "hidden layer stack roundtrip");
+
     namespace fs = std::filesystem;
     const auto root = fs::current_path() / "layer-material-test-data";
     tg::io::ProjectWorkspace workspace;

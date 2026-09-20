@@ -10,7 +10,7 @@ struct LayerMaterialData {
     uint count; float blendRange; float displacementMeters; float pad;
     LayerMaterialSlot slots[4];
 };
-struct LayerMaterialSample { float3 color; float3 normal; float3 surface; float height; };
+struct LayerMaterialSample { float3 color; float3 normal; float3 surface; float height; float4 coverage; };
 float4 SampleLayerMaterialMap(uint index, float2 uv, float footprint) {
     Texture2D<float4> map = ResourceDescriptorHeap[index];
     uint w, h; map.GetDimensions(w, h);
@@ -77,6 +77,7 @@ LayerMaterialSample EvaluateLayerMaterialBase(LayerMaterialData data, float2 met
     const float total = dot(weights, 1.0f);
     weights = maskWeights + (total > 1e-5f ? weights / total : float4(1,0,0,0)) * (1 - maskTotal);
     LayerMaterialSample result;
+    result.coverage = coverage; result.coverage.x = 1;
     result.color = 0; result.surface = 0; result.height = 0; result.normal = float3(0,0,1);
     [unroll] for (uint j = 0; j < 4; ++j) {
         result.color += samples[j].color * weights[j]; result.surface += samples[j].surface * weights[j]; result.height += heights[j] * weights[j];

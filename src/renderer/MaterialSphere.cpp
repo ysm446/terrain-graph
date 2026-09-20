@@ -17,9 +17,9 @@ using rhi::DispatchCount;
 // 十分に大きい正方形を 1 枚だけ持ち、表示側で縮めて使う。
 constexpr uint32_t kOutputSize = 1024;
 
-// 画角。**素材を見るための望遠寄り**にしてある。広角にすると球の縁が
-// 引き伸ばされ、同じ素材でも中心と縁で見え方が変わってしまう。
-constexpr float kFovYDegrees = 30.0f;
+// 画角は MaterialSphere::kFovYDegrees（ギズモ側と共有するのでヘッダに置いてある）。
+// **素材を見るための望遠寄り**で、広角にすると球の縁が引き伸ばされ、
+// 同じ素材でも中心と縁で見え方が変わってしまう。
 
 // 軌道の範囲。仰角は極を避ける（シェーダの上方向との外積が縮退する）。
 constexpr float kMaxPitchDegrees = 85.0f;
@@ -54,7 +54,7 @@ struct SphereConstants {
 
     float metallicValue;
     float aoValue;
-    float uvScale;
+    float lengthMeters;
     uint32_t flipNormalGreen;
 
     float cameraPosition[3];
@@ -79,7 +79,7 @@ struct SphereConstants {
     // ベースカラーの調整。合成と同じ値を渡すこと。
     float colorAdjust[2];  // 色相（ラジアン）, 彩度
     float brightness;      // 明度（倍率）
-    float pad0;
+    uint32_t shape;
     compositor::LayerMaterialGpu layerMaterial;
 };
 
@@ -87,6 +87,7 @@ struct SphereConstants {
 
 void MaterialSphere::Destroy(rhi::Device& device) {
     device.DeferRelease(m_output);
+    device.DeferRelease(m_masks);
 }
 
 void MaterialSphere::Orbit(float deltaXDegrees, float deltaYDegrees) {
@@ -97,6 +98,26 @@ void MaterialSphere::Orbit(float deltaXDegrees, float deltaYDegrees) {
         std::clamp(m_pitchDegrees + deltaYDegrees, -kMaxPitchDegrees, kMaxPitchDegrees);
 }
 
+DirectX::XMFLOAT3 MaterialSphere::CameraPosition() const {
+    const float yaw = m_yawDegrees * (kPi / 180.0f);
+    const float pitch = m_pitchDegrees * (kPi / 180.0f);
+    const float cosPitch = std::cos(pitch);
+    return DirectX::XMFLOAT3{m_distance * cosPitch * std::sin(yaw), m_distance * std::sin(pitch),
+                             m_distance * cosPitch * std::cos(yaw)};
+}
+
+LightSettings MaterialSphere::PreviewLight(const LightSettings& scene) const {
+    LightSettings previewLight = scene;
+    previewLight.azimuth += m_lightAzimuthOffset;
+    previewLight.elevation = std::clamp(scene.elevation + m_lightElevationOffset, -1.55f, 1.55f);
+    return previewLight;
+}
+
+void MaterialSphere::RotateLight(float x, float y) {
+    m_lightAzimuthOffset = std::fmod(m_lightAzimuthOffset + x * 0.006f, 2 * kPi);
+    m_lightElevationOffset = std::clamp(m_lightElevationOffset - y * 0.006f, -kPi, kPi);
+}
+
 void MaterialSphere::Zoom(float steps) {
     // 1 段で 10% 寄る。指数で効かせると、寄っても引いても手応えが同じになる。
     m_distance = std::clamp(m_distance * std::pow(0.9f, steps), kMinDistance, kMaxDistance);
@@ -104,7 +125,7 @@ void MaterialSphere::Zoom(float steps) {
 
 void MaterialSphere::ResetView() {
     m_yawDegrees = 0.0f;
-    m_pitchDegrees = kDefaultPitchDegrees;
+    m_pitchDegrees = m_shape == 1 ? 40.0f : kDefaultPitchDegrees;
     m_distance = kDefaultDistance;
 }
 
@@ -135,6 +156,7 @@ void MaterialSphere::Render(rhi::Device& device, rhi::PipelineCache& pipelineCac
 
     SphereConstants constants = {};
     constants.layerMaterial = asset.layerGpu;
+    constants.shape = static_cast<uint32_t>(m_shape);
     constants.outputIndex = m_output.UavIndex();
     constants.size = kOutputSize;
     // ベースカラーだけ sRGB として読む。それ以外はリニア（サムネイルと同じ）。
@@ -150,22 +172,20 @@ void MaterialSphere::Render(rhi::Device& device, rhi::PipelineCache& pipelineCac
     constants.roughnessValue = asset.roughnessValue;
     constants.metallicValue = asset.metallicValue;
     constants.aoValue = asset.ambientOcclusionValue;
-    constants.uvScale = m_uvScale;
+    constants.lengthMeters = m_lengthMeters;
     constants.colorAdjust[0] = asset.hueShiftDegrees * (kPi / 180.0f);
     constants.colorAdjust[1] = asset.saturation;
     constants.brightness = asset.brightness;
     constants.flipNormalGreen = asset.flipNormalGreen ? 1u : 0u;
 
     // 軌道カメラ。球は原点にあり半径 1。
-    const float yaw = m_yawDegrees * (kPi / 180.0f);
-    const float pitch = m_pitchDegrees * (kPi / 180.0f);
-    const float cosPitch = std::cos(pitch);
-    constants.cameraPosition[0] = m_distance * cosPitch * std::sin(yaw);
-    constants.cameraPosition[1] = m_distance * std::sin(pitch);
-    constants.cameraPosition[2] = m_distance * cosPitch * std::cos(yaw);
+    const DirectX::XMFLOAT3 cameraPosition = CameraPosition();
+    constants.cameraPosition[0] = cameraPosition.x;
+    constants.cameraPosition[1] = cameraPosition.y;
+    constants.cameraPosition[2] = cameraPosition.z;
     constants.tanHalfFov = std::tan(kFovYDegrees * 0.5f * (kPi / 180.0f));
 
-    const DirectX::XMFLOAT3 lightDirection = light.Direction();
+    const DirectX::XMFLOAT3 lightDirection = PreviewLight(light).Direction();
     constants.lightDirection[0] = lightDirection.x;
     constants.lightDirection[1] = lightDirection.y;
     constants.lightDirection[2] = lightDirection.z;
@@ -206,6 +226,29 @@ void MaterialSphere::Render(rhi::Device& device, rhi::PipelineCache& pipelineCac
     rhi::TransitionIfNeeded(commandList, m_output, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
     PIXEndEvent(commandList);
+
+    if (asset.layerMaterial) {
+        auto* maskPipeline = pipelineCache.GetCompute(L"MaterialSphere.hlsl", L"CsMasks");
+        if (!maskPipeline) return;
+        if (!m_masks.IsValid()) {
+            rhi::TextureDesc desc;
+            desc.width = 256; desc.height = 64; desc.format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            desc.allowUnorderedAccess = true; desc.createSrv = true;
+            desc.initialState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS; desc.debugName = L"LayerMaterialMasks";
+            if (!device.Allocator().CreateTexture2D(desc, m_masks)) return;
+        }
+        constants.outputIndex = m_masks.UavIndex(); constants.size = 64;
+        const auto maskCb = device.Upload().Allocate(sizeof(SphereConstants), 256);
+        if (!maskCb.IsValid()) return;
+        std::memcpy(maskCb.cpu, &constants, sizeof(constants));
+        PIXBeginEvent(commandList, PIX_COLOR(120, 200, 200), "LayerMaterialMasks");
+        rhi::TransitionIfNeeded(commandList, m_masks, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        commandList->SetPipelineState(maskPipeline);
+        commandList->SetComputeRootConstantBufferView(1, maskCb.gpuAddress);
+        commandList->Dispatch(DispatchCount(256), DispatchCount(64), 1);
+        rhi::TransitionIfNeeded(commandList, m_masks, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        PIXEndEvent(commandList);
+    }
 }
 
 }  // namespace tg::renderer
