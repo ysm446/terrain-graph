@@ -638,7 +638,12 @@ struct MaterialLayer {
     // 走らせるときに立てる。Result を繋がずに Mask だけを使う繋ぎ方のためのもの。
     // **保存しない。** グラフの繋ぎ方からコンパイルのたびに決まる。
     bool maskOnly = false;
-    bool emitPoints = false; // Model Scatter用の評価だけで有効にする。保存しない。
+    // Model Scatter へ渡す配置の点を作る（散布 / 崩落）。0 なら作らない。
+    // 値は点の元のノードの ID で、評価器は点の組をこの値で持ち分ける。保存しない。
+    uint32_t pointsId = 0;
+    // 点だけを作り、形（Height の差分と Mask の元）は描かない。散布の形を誰も
+    // 読まない枝（Model Scatter だけに繋いだ散布）の無駄を省く。保存しない。
+    bool pointsOnly = false;
 
     LayerMask mask;
 

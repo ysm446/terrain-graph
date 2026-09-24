@@ -161,6 +161,11 @@ private:
     void DrawModelPreviewWindow();
     void ProcessModelWork();
     void PrepareModelScatters();
+    // 配置の点の元（散布 / 崩落）の、いま使える点の組。本体の評価器が作っていれば
+    // そちらを、無ければ元ごとの評価器を見る。Ready で *out が nullptr なら点は 0。
+    enum class PlacementPointsState { Missing, Evaluating, Ready };
+    PlacementPointsState PlacementPointsOf(graph::GraphId source,
+                                           const compositor::PlacementPointSet** out) const;
     // 配置用メッシュの描画量を読み戻す。フレームの記録を始めた後、描画より前に呼ぶ。
     void CollectModelScatterStats();
     // インポスターの作成・削除と画像の読み込み。フレームの外で呼ぶ。
@@ -421,6 +426,9 @@ private:
         uint64_t graphRevision = 0, documentRevision = 0, paintRevision = 0;
     };
     std::unordered_map<graph::GraphId, std::unique_ptr<ModelPointSlot>> m_modelPoints;
+    // 本体の評価器が点まで作っている元（出力のチェーンをプレビューしているときだけ）。
+    // ここに無い元は m_modelPoints の評価器で作る。
+    std::vector<graph::GraphId> m_mainPointSources;
     std::vector<graph::CompiledModelScatter> m_modelScatters;
     std::unordered_map<std::string, std::unique_ptr<renderer::ModelPreview>> m_instanceMeshes;
     CloudMaskSlot m_cloudMasks[2]; // 0: 分布／雲量、1: 雲種。

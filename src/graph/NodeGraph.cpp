@@ -1240,6 +1240,58 @@ void NodeGraph::CollectLayerMaskSources(const Node& maskNode, std::vector<const 
     }
 }
 
+int NodeGraph::LastMaskDependency(const Node& maskNode,
+                                  const std::vector<const Node*>& layerNodes, int depth) const {
+    constexpr int kMaxDepth = 32;
+    if (depth > kMaxDepth) {
+        return -1;
+    }
+    const auto indexOf = [&](const Node* node) {
+        const auto found = std::find(layerNodes.begin(), layerNodes.end(), node);
+        return found == layerNodes.end() ? -2 : static_cast<int>(found - layerNodes.begin());
+    };
+    if (IsLayerMaskSourceKind(maskNode.kind)) {
+        return indexOf(&maskNode);
+    }
+    int last = -1;
+    if (IsHeightMaskNodeKind(maskNode.kind)) {
+        // Base がチェーンに居なければ使う側の直下へ落ちる（EmitMaskOps と同じ）ので縛らない。
+        if (const Node* base = UpstreamOf(maskNode, ValueType::Material); base != nullptr) {
+            last = std::max(last, indexOf(base));
+        }
+    }
+    for (size_t which = 0; which < 2; ++which) {
+        const MaskSourceRef input = UpstreamMaskOf(maskNode, which);
+        if (input.node == nullptr) continue;
+        const int dependency = LastMaskDependency(*input.node, layerNodes, depth + 1);
+        if (dependency == -2) return -2;
+        last = std::max(last, dependency);
+    }
+    return last;
+}
+
+bool NodeGraph::MaskUsesDefaultHeight(const Node& maskNode,
+                                      const std::vector<const Node*>& layerNodes, int depth) const {
+    constexpr int kMaxDepth = 32;
+    if (depth > kMaxDepth || IsLayerMaskSourceKind(maskNode.kind)) {
+        return false;
+    }
+    if (IsHeightMaskNodeKind(maskNode.kind)) {
+        const Node* base = UpstreamOf(maskNode, ValueType::Material);
+        if (base == nullptr ||
+            std::find(layerNodes.begin(), layerNodes.end(), base) == layerNodes.end()) {
+            return true;
+        }
+    }
+    for (size_t which = 0; which < 2; ++which) {
+        const MaskSourceRef input = UpstreamMaskOf(maskNode, which);
+        if (input.node != nullptr && MaskUsesDefaultHeight(*input.node, layerNodes, depth + 1)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // マスクのノードを op の列へ落とす（入力が先、出力が後）。
 // **同じノードは 1 つの op を共有する。** Mask Blend で合流したり、
 // 同じマスクを 2 つのレイヤーで使ったりしても、評価は 1 回で済む。
@@ -1260,10 +1312,13 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
     if (depth > kMaxDepth || (!IsMaskNodeKind(maskNode.kind) && !isLayerMaskSource)) {
         return -1;
     }
+    // 既に焼いてあれば同じ op を共有する。**出力ピンまで一致していること。**
+    // Height の起点は、木が「使う側の直下」を読むときだけ一致を求める
+    // （Base を繋いだ高さマスクだけなら、どこから使っても同じ結果になる）。
+    const bool usesDefaultHeight = MaskUsesDefaultHeight(maskNode, layerNodes, 0);
     for (size_t i = 0; i < emitted.size(); ++i) {
-        // 既に焼いてあれば同じ op を共有する。**出力ピンまで一致していること。**
-        if (emitted[i].node == &maskNode && emitted[i].heightLayer == defaultHeightLayer &&
-            emitted[i].outputIndex == source.outputIndex) {
+        if (emitted[i].node == &maskNode && emitted[i].outputIndex == source.outputIndex &&
+            (!usesDefaultHeight || emitted[i].heightLayer == defaultHeightLayer)) {
             return static_cast<int>(i);
         }
     }
@@ -1525,7 +1580,8 @@ void NodeGraph::RecordLayerSources(const std::vector<const Node*>& layerNodes,
     }
 }
 
-CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace) const {
+CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace,
+                                          bool withPointSources) const {
     const std::vector<const Node*> chain = ChainFrom(top);
 
     // 途中経過は呼び出し側が要求したときだけ外へ残す。
@@ -1593,7 +1649,12 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace) co
                 if (settings == nullptr || join < 0) {
                     continue;  // 本流と合流しない。差し込めないので、そのまま定数へ落ちる。
                 }
-                const size_t at = static_cast<size_t>(join) + 1;
+                // **出どころ自身のマスクが読むレイヤーより後ろへ置く。** 合流点の直後に置くと、
+                // 後ろにある川などのマスクを、その川が走る前（前回の評価の中身）で読んでしまう。
+                const MaskSourceRef sourceMask = UpstreamMaskOf(*sourceNode);
+                const int sourceDependency =
+                    sourceMask.node ? LastMaskDependency(*sourceMask.node, layerNodes, 0) : -1;
+                const size_t at = static_cast<size_t>(std::max(join, sourceDependency)) + 1;
                 if (at > i) {
                     continue;  // 使う側より上には差し込めない（循環は接続時に弾いている）。
                 }
@@ -1605,6 +1666,59 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace) co
                 inserted = true;
                 break;
             }
+        }
+    }
+
+    // **配置の点の元（散布 / 崩落）にも点を作らせる。**
+    //
+    // 点は分布のマスクを読むので、**マスクが依存するレイヤーすべての後**で作る。
+    // 下地が本流と合流する所の直後に置くと、後ろにある川などのマスクが間に合わず、
+    // マスク無し（全面）で散布されてしまう。散布は「点だけ」のレイヤーを別に差し込み、
+    // チェーンに居る元の散布（形を他のマスクへ渡している）には手を付けない。
+    // 崩落は形を作らないと点が出ないので、チェーンに居て依存が前に揃っているときだけ
+    // その場で作らせる。どれにも当てはまらない元は、点を別の評価器で作る。
+    if (withPointSources) {
+        std::vector<const Node*> handled;
+        for (const CompiledModelScatter& scatter : CompileModelScatters()) {
+            const Node* sourceNode = FindNode(scatter.source);
+            const auto* settings =
+                sourceNode ? std::get_if<LayerNodeSettings>(&sourceNode->settings) : nullptr;
+            if (settings == nullptr ||
+                std::find(handled.begin(), handled.end(), sourceNode) != handled.end()) {
+                continue;
+            }
+            handled.push_back(sourceNode);
+            const auto pointsId = static_cast<uint32_t>(sourceNode->id);
+            const MaskSourceRef mask = UpstreamMaskOf(*sourceNode);
+            const int maskDependency =
+                mask.node ? LastMaskDependency(*mask.node, layerNodes, 0) : -1;
+            if (maskDependency == -2) continue;
+            // チェーンに居て、マスクの依存がその手前に揃っていれば、その場で点も作らせる。
+            // 崩落は形を作らないと点が出ないので、揃っていなければ別の評価器に任せる。
+            const auto found = std::find(layerNodes.begin(), layerNodes.end(), sourceNode);
+            if (found != layerNodes.end()) {
+                const auto at = static_cast<int>(found - layerNodes.begin());
+                if (maskDependency < at) {
+                    compiled.layers[static_cast<size_t>(at)].pointsId = pointsId;
+                    continue;
+                }
+                if (sourceNode->kind == NodeKind::Crumbling) continue;
+            }
+            // すぐ下の下地が本流に居るときだけ（本流から分かれた加工を挟むと、その加工が
+            // 抜けて点の高さが元の地形とずれる）。
+            const int join = FindMaskSpliceIndex(*sourceNode, layerNodes);
+            const std::vector<const Node*> sourceChain = ChainFrom(sourceNode);
+            if (join < 0 || sourceChain.size() < 2 ||
+                sourceChain[1] != layerNodes[static_cast<size_t>(join)]) {
+                continue;
+            }
+            compositor::MaterialLayer layer = settings->layer;
+            layer.maskOnly = true;
+            layer.pointsOnly = sourceNode->kind == NodeKind::Scatter;
+            layer.pointsId = pointsId;
+            const size_t at = static_cast<size_t>(std::max(join, maskDependency)) + 1;
+            compiled.layers.insert(compiled.layers.begin() + static_cast<ptrdiff_t>(at), layer);
+            layerNodes.insert(layerNodes.begin() + static_cast<ptrdiff_t>(at), sourceNode);
         }
     }
 
@@ -1658,11 +1772,19 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace) co
 
     RecordMaskOpSources(emitted, compiled);
     RecordLayerSources(layerNodes, compiled);
+    // 点だけのレイヤーは元の散布の写し。ノードのサムネイルなどが元のほうを引くよう、出どころから外す。
+    for (size_t i = 0; i < compiled.layers.size(); ++i) {
+        if (compiled.layers[i].pointsOnly) compiled.layerSources[i] = 0;
+    }
     return compiled;
 }
 
 CompiledGraph NodeGraph::CompileLayers() const {
     return CompileChainFrom(ChainTop());
+}
+
+CompiledGraph NodeGraph::CompileLayersWithPoints() const {
+    return CompileChainFrom(ChainTop(), nullptr, true);
 }
 
 CompiledGraph NodeGraph::CompileLayersTo(GraphId nodeId, GraphId outputPin) const {

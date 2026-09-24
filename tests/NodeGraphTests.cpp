@@ -115,6 +115,46 @@ void RunNodeGraphTests() {
     }
 
     {
+        Section("配置の点はマスクの依存より後ろで、プレビューの評価と一緒に作る");
+        auto graph = NodeGraph::CreateDefault();
+        tg::graph::GraphId baseId = 0, outputId = 0;
+        for (const auto& node : graph.Nodes()) {
+            if (node.kind == NodeKind::Surface) baseId = node.id;
+            if (node.kind == NodeKind::Output) outputId = node.id;
+        }
+        const auto pin = [&](tg::graph::GraphId id, bool output, size_t index) {
+            const auto* node = graph.FindNode(id);
+            return output ? node->outputs[index].id : node->inputs[index].id;
+        };
+        // 地面 → 河川 → 出力。散布は地面を下地に、河川の水面を反転したマスクで置く。
+        const auto river = graph.CreateNode(NodeKind::River);
+        graph.CreateLink(pin(baseId, true, 0), pin(river, false, 0));
+        graph.CreateLink(pin(river, true, 0), pin(outputId, false, 0));
+        const auto levels = graph.CreateNode(NodeKind::MaskLevels);
+        graph.CreateLink(pin(river, true, 1), pin(levels, false, 0));
+        const auto scatter = graph.CreateNode(NodeKind::Scatter);
+        graph.CreateLink(pin(baseId, true, 0), pin(scatter, false, 0));
+        graph.CreateLink(pin(levels, true, 0), pin(scatter, false, 1));
+        const auto models = graph.CreateNode(NodeKind::ModelScatter);
+        const auto modelOutput = graph.CreateNode(NodeKind::ModelOutput);
+        graph.CreateLink(pin(scatter, true, 3), pin(models, false, 0));
+        graph.CreateLink(pin(models, true, 0), pin(modelOutput, false, 0));
+
+        const auto plain = graph.CompileLayers();
+        Check(plain.layers.size() == 2, "点を作らないコンパイルは地面と河川だけ");
+        const auto withPoints = graph.CompileLayersWithPoints();
+        Check(withPoints.layers.size() == 3, "点だけのレイヤーを 1 枚差し込む");
+        if (withPoints.layers.size() == 3) {
+            const auto& layer = withPoints.layers[2];
+            Check(layer.kind == tg::compositor::LayerKind::Scatter && layer.maskOnly &&
+                      layer.pointsOnly && layer.pointsId == static_cast<uint32_t>(scatter),
+                  "河川（マスクの依存）の後ろへ、点だけの散布を置く");
+            Check(layer.mask.maskOp >= 0, "散布の分布マスクを解決する");
+            Check(withPoints.layerSources[2] == 0, "点だけのレイヤーはノードの出どころにしない");
+        }
+    }
+
+    {
         Section("Cloud Animation の接続と循環");
         NodeGraph graph;
         const auto shape=graph.CreateNode(NodeKind::CloudShapeGenerate);

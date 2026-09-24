@@ -5,6 +5,7 @@
 #include "compositor/PaintMask.h"
 #include "compositor/TextureLibrary.h"
 
+#include <unordered_map>
 #include <vector>
 #include "rhi/ComputeQueue.h"
 #include "rhi/Device.h"
@@ -168,6 +169,22 @@ struct ScatterResources {
     bool IsValid() const { return packed.IsValid() && delta.IsValid(); }
 };
 
+// Model Scatter へ渡す配置の点 1 組（散布 / 崩落のレイヤー 1 枚ぶん）。
+// 候補（格子の全マス / 全試行）を作り、間引いた結果を points に詰める。
+// 実際に残った数は GPU で数え、フェンスを待って読み戻す。
+struct PlacementPointSet {
+    rhi::GpuTexture candidates;  // RGBA32_FLOAT 位置と直径 / 法線と向き（2 行で 1 点）
+    rhi::GpuTexture points;      // 間引いた後（同じ並び）
+    rhi::GpuTexture grid;        // R32_UINT 重なり判定の格子と、残った数
+    rhi::GpuBuffer countReadback;
+    ID3D12Fence* countFence = nullptr;
+    uint64_t countFenceValue = 0;
+    uint32_t count = 0;          // 候補の数（描画はこの数ぶん回して、間引いた点を飛ばす）
+    uint32_t activeCount = 0;    // 間引いた後に残った数（読み戻しが済んでから有効）
+    bool countReady = false;
+    bool touched = false;        // 今回の評価で作り直したか
+};
+
 // 合成の Height を小さなグリッドで CPU へ写したもの。
 //
 // ビューポートでパスを地形に沿って編集するのに使う（クリック位置の投影、点の表示）。
@@ -268,11 +285,12 @@ public:
 
     uint32_t TileSize() const { return m_tileSize; }
 
-    void CapturePlacementPoints(bool enabled) { m_captureCrumblingPoints = enabled; }
-    const rhi::GpuTexture& PlacementPoints() const { return m_crumblingPoints; }
-    uint32_t PlacementPointCount() const { return m_crumblingPointCount; }
-    uint32_t PlacementActivePointCount() const { return m_crumblingActivePointCount; }
-    bool PlacementPointCountReady() const { return m_crumblingPointCountReady; }
+    // 配置の点の組。`MaterialLayer::pointsId` を持つレイヤーが評価のたびに作る。
+    // まだ無ければ nullptr。
+    const PlacementPointSet* PlacementPoints(uint32_t pointsId) const {
+        const auto found = m_placementPoints.find(pointsId);
+        return found == m_placementPoints.end() ? nullptr : &found->second;
+    }
     void SetTileSize(uint32_t tileSize) { m_tileSize = (tileSize > 0) ? tileSize : 1; }
     uint32_t EvaluatedTileCount() const { return m_evaluatedTileCount; }
 
@@ -311,9 +329,11 @@ public:
 
     // 変更を検知していなくても次回に評価し直す。
     void Invalidate() {
-        m_crumblingPointCountReady = false;
-        m_crumblingCountFence = nullptr;
-        m_crumblingPointCount = 0;
+        for (auto& [id, set] : m_placementPoints) {
+            set.countReady = false;
+            set.countFence = nullptr;
+            set.count = 0;
+        }
         m_evaluatedRevision = 0;
         m_postprocessRevision = 0;
     }
@@ -484,17 +504,13 @@ private:
     rhi::GpuTexture m_maskHeightRange;
     SedimentResources m_sediment;
     CrumblingResources m_crumbling;
+    // 候補の置き場を用意する（数が変わったら作り直す）。
+    bool EnsurePointCandidates(rhi::Device& device, PlacementPointSet& set, uint32_t count,
+                               const wchar_t* name);
     bool FilterCrumblingPoints(rhi::Device& device, rhi::PipelineCache& cache,
-        ID3D12GraphicsCommandList* list, float maxDiameter, bool avoidOverlap);
+        ID3D12GraphicsCommandList* list, PlacementPointSet& set, float maxDiameter, bool avoidOverlap);
     void CollectPlacementPointCount();
-    rhi::GpuTexture m_crumblingPoints, m_crumblingCandidates, m_crumblingPointGrid;
-    rhi::GpuBuffer m_crumblingCountReadback;
-    ID3D12Fence* m_crumblingCountFence = nullptr;
-    uint64_t m_crumblingCountFenceValue = 0;
-    uint32_t m_crumblingActivePointCount = 0;
-    bool m_crumblingPointCountReady = false;
-    uint32_t m_crumblingPointCount = 0;
-    bool m_captureCrumblingPoints = false;
+    std::unordered_map<uint32_t, PlacementPointSet> m_placementPoints;
     SnowResources m_snow;
     struct SnowCoverResources {
         rhi::GpuTexture state[2], output, weather, particles, sums;

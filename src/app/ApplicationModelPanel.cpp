@@ -35,6 +35,8 @@ void Application::PrepareModelScatters() {
                           scatter.settings.autoLod && m_impostors.Find(model->id) != nullptr);
         }
         if (std::find(sources.begin(),sources.end(),scatter.source) != sources.end()) continue;
+        // 本体の評価器が点まで作っていれば、元ごとの評価器は持たない（VRAM と GPU 時間の節約）。
+        if (std::find(m_mainPointSources.begin(),m_mainPointSources.end(),scatter.source) != m_mainPointSources.end()) continue;
         sources.push_back(scatter.source);
         auto& slot = m_modelPoints[scatter.source];
         if (!slot) slot = std::make_unique<ModelPointSlot>();
@@ -49,7 +51,9 @@ void Application::PrepareModelScatters() {
             auto compiled = m_graph.CompileLayersTo(scatter.source);
             for (size_t i=0;i<compiled.layerSources.size();++i)
                 if (compiled.layerSources[i] == scatter.source) {
-                    compiled.layers[i].maskOnly = true; compiled.layers[i].emitPoints = true;
+                    compiled.layers[i].maskOnly = true;
+                    compiled.layers[i].pointsOnly = true;
+                    compiled.layers[i].pointsId = static_cast<uint32_t>(scatter.source);
                 }
             slot->stack.Layers() = std::move(compiled.layers);
             slot->stack.MaskOps() = std::move(compiled.maskOps);
@@ -59,7 +63,6 @@ void Application::PrepareModelScatters() {
             slot->documentRevision = m_graphStack.Revision();
             slot->paintRevision = m_paintMasks.Revision();
         }
-        slot->evaluator.CapturePlacementPoints(true);
     }
     for (auto it=m_modelPoints.begin();it!=m_modelPoints.end();) {
         if (std::find(sources.begin(),sources.end(),it->first)==sources.end()) {
@@ -73,6 +76,25 @@ void Application::PrepareModelScatters() {
     }
     m_renderer.drawInstances = [this](auto* list,const auto& matrix,bool shadow) { DrawModelScatters(list,matrix,shadow); };
 }
+Application::PlacementPointsState Application::PlacementPointsOf(
+    graph::GraphId source, const compositor::PlacementPointSet** out) const {
+    *out = nullptr;
+    const compositor::MaterialEvaluator* evaluator = nullptr;
+    bool current = false;
+    if (std::find(m_mainPointSources.begin(), m_mainPointSources.end(), source) != m_mainPointSources.end()) {
+        evaluator = &m_renderer.Evaluator();
+        current = evaluator->EvaluatedRevision() == m_graphStack.Revision();
+    } else if (const auto slot = m_modelPoints.find(source); slot != m_modelPoints.end()) {
+        evaluator = &slot->second->evaluator;
+        current = slot->second->graphRevision == m_graph.TerrainRevision() &&
+                  evaluator->EvaluatedRevision() == slot->second->stack.Revision();
+    } else {
+        return PlacementPointsState::Missing;
+    }
+    if (!current || evaluator->HasPendingPostprocess()) return PlacementPointsState::Evaluating;
+    *out = evaluator->PlacementPoints(static_cast<uint32_t>(source));
+    return PlacementPointsState::Ready;
+}
 void Application::CollectModelScatterStats() {
     for (auto& [key, mesh] : m_instanceMeshes) mesh->CollectInstanceStats(m_device);
 }
@@ -82,11 +104,9 @@ void Application::DrawModelScatters(ID3D12GraphicsCommandList* commandList,
     // 本描画で使ったメッシュ。複数の配置で共有していても、描画量は 1 回だけ足す（読み戻しは合計）。
     std::vector<const renderer::ModelPreview*> drawn;
     for (const auto& scatter : m_modelScatters) {
-        const auto pointSlot = m_modelPoints.find(scatter.source);
-        if (pointSlot == m_modelPoints.end()) continue;
-        const auto& evaluator = pointSlot->second->evaluator;
-        if (evaluator.EvaluatedRevision() != pointSlot->second->stack.Revision()) continue;
-        if (!evaluator.PlacementPoints().IsValid() || !evaluator.PlacementPointCount() || evaluator.HasPendingPostprocess()) continue;
+        const compositor::PlacementPointSet* points = nullptr;
+        if (PlacementPointsOf(scatter.source, &points) != PlacementPointsState::Ready || points == nullptr ||
+            !points->points.IsValid() || points->count == 0) continue;
         float total = 0;
         for (const auto& choice : scatter.settings.models)
             if (std::any_of(m_models.begin(),m_models.end(),[&](const auto& m){return m.id==choice.model && m.geometry;})) total += std::max(choice.weight,0.0f);
@@ -98,8 +118,8 @@ void Application::DrawModelScatters(ID3D12GraphicsCommandList* commandList,
             const auto mesh=m_instanceMeshes.find(InstanceMeshKey(choice.model, scatter.settings));
             if (mesh==m_instanceMeshes.end()) continue;
             renderer::ModelInstanceDraw draw;
-            draw.points=evaluator.PlacementPoints().SrvIndex();
-            draw.rows=evaluator.PlacementPoints().height/2; draw.count=evaluator.PlacementPointCount();
+            draw.points=points->points.SrvIndex();
+            draw.rows=points->points.height/2; draw.count=points->count;
             draw.seed=static_cast<uint32_t>(scatter.settings.seed);
             draw.weightStart=cumulative/total; cumulative+=choice.weight; draw.weightEnd=cumulative/total;
             draw.scaleMin=scatter.settings.scaleMin; draw.scaleMax=std::max(draw.scaleMin,scatter.settings.scaleMax);

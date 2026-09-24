@@ -364,9 +364,15 @@ void Application::SyncGraphStack() {
     m_compiledGraphRevision = m_graph.TerrainRevision();
     m_compiledGraphTarget = target;
     m_compiledGraphTargetPin = m_previewGraphPin;
+    // 出力のチェーンを見ているときは、配置の点もこの評価で作る（元ごとに評価器を持たない）。
+    // 途中のノードをプレビューしている間は、チェーンが途中で切れるので元ごとの評価器に任せる。
     graph::CompiledGraph compiled = (target != 0)
                                         ? m_graph.CompileLayersTo(target, m_previewGraphPin)
-                                        : m_graph.CompileLayers();
+                                        : m_graph.CompileLayersWithPoints();
+    m_mainPointSources.clear();
+    for (const compositor::MaterialLayer& layer : compiled.layers) {
+        if (layer.pointsId != 0) m_mainPointSources.push_back(static_cast<graph::GraphId>(layer.pointsId));
+    }
     m_graphStack.Layers() = std::move(compiled.layers);
     m_graphStack.MaskOps() = std::move(compiled.maskOps);
     m_graphStack.MarkDirty();

@@ -495,6 +495,11 @@ public:
     // 出力ノードの「下地」チェーンを遡る。
     // チェーンが空なら下地 1 枚（MaterialStack::MakeBaseLayer と同じもの）を返す。
     CompiledGraph CompileLayers() const;
+    // CompileLayers に加えて、Model Output へ繋がる配置の点の元（散布 / 崩落）にも
+    // 点を作らせる（`MaterialLayer::pointsId`）。チェーンに居ない元は、下地が本流と
+    // 合流する所の直後へ「点だけ」のレイヤーとして差し込む（Height へは書かない）。
+    // プレビューの評価器 1 本で点まで作り、元ごとに評価器を持たずに済ませるためのもの。
+    CompiledGraph CompileLayersWithPoints() const;
     CompiledCloud CompileCloud() const;
     std::vector<CompiledModelScatter> CompileModelScatters() const;
     // Snow Plume ノードをすべて集める。Source の上流に Wind Field があればその風を使う。
@@ -567,13 +572,23 @@ private:
     static void RecordLayerSources(const std::vector<const Node*>& layerNodes,
                                    CompiledGraph& compiled);
     // top から「下地」チェーンを遡ってレイヤー列（下から上）にする共通部。
-    CompiledGraph CompileChainFrom(const Node* top, ChainTrace* trace = nullptr) const;
+    CompiledGraph CompileChainFrom(const Node* top, ChainTrace* trace = nullptr,
+                                   bool withPointSources = false) const;
     // マスクの木を辿って、**レイヤーでもある出どころ**（堆積 / 崩落 / 積雪）を集める。
     // Mask Levels / Mask Blend の先にいても見つける。この 3 つは
     // 「そのレイヤーを合成した時点」の作業用テクスチャから焼くので、
     // チェーンの中で走っていないと結果が残らない。
     void CollectLayerMaskSources(const Node& maskNode, std::vector<const Node*>& out,
                                  int depth) const;
+    // マスクの木が読むレイヤー（レイヤー由来のマスクの出どころと、高さマスクの Base）のうち、
+    // チェーンで一番後ろの添字。依存が無ければ -1。チェーンに居ない出どころがあれば -2
+    // （このチェーンでは焼けない）。
+    int LastMaskDependency(const Node& maskNode, const std::vector<const Node*>& layerNodes,
+                           int depth) const;
+    // マスクの木が「使う側の直下の Height」（Base を繋いでいない高さマスク）を読むか。
+    // 読まなければ、どのレイヤーから使っても同じ結果なので op を共有できる。
+    bool MaskUsesDefaultHeight(const Node& maskNode, const std::vector<const Node*>& layerNodes,
+                               int depth) const;
     // マスクのノードを op の列へ落とす。返り値は結果の op の添字（-1 は未接続）。
     // 同じノード（かつ同じ Height の起点・同じ出力ピン）は 1 つの op を共有する。
     int EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,

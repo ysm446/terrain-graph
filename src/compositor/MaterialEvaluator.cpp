@@ -372,7 +372,8 @@ uint64_t HashHeightState(uint64_t seed, const MaterialLayer& layer) {
     hash = HashBytes(hash, &layer.multiScaleErosion.breachingRadius, sizeof(layer.multiScaleErosion.breachingRadius));
     hash = HashBytes(hash, &layer.scatter, sizeof(layer.scatter));
     hash = HashBytes(hash, &layer.maskOnly, sizeof(layer.maskOnly));
-    hash = HashBytes(hash, &layer.emitPoints, sizeof(layer.emitPoints));
+    hash = HashBytes(hash, &layer.pointsId, sizeof(layer.pointsId));
+    hash = HashBytes(hash, &layer.pointsOnly, sizeof(layer.pointsOnly));
     // マスクは「どこに載せるか」を決めるので Height にも効く。
     hash = HashBytes(hash, &layer.mask.source, sizeof(layer.mask.source));
     hash = HashBytes(hash, &layer.mask.constant, sizeof(layer.mask.constant));
@@ -948,13 +949,13 @@ void MaterialEvaluator::Destroy(rhi::Device& device) {
     device.DeferRelease(m_maskHeightRange);
     ReleaseSedimentResources(device);
     ReleaseCrumblingResources(device);
-    device.DeferRelease(m_crumblingPoints);
-    device.DeferRelease(m_crumblingCandidates);
-    device.DeferRelease(m_crumblingPointGrid);
-    device.DeferRelease(m_crumblingCountReadback);
-    m_crumblingCountFence = nullptr;
-    m_crumblingPointCountReady = false;
-    m_crumblingPointCount = 0;
+    for (auto& [id, set] : m_placementPoints) {
+        device.DeferRelease(set.candidates);
+        device.DeferRelease(set.points);
+        device.DeferRelease(set.grid);
+        device.DeferRelease(set.countReadback);
+    }
+    m_placementPoints.clear();
     ReleaseSnowResources(device);
     for (auto* texture : {&m_snowCover.state[0], &m_snowCover.state[1], &m_snowCover.output, &m_snowCover.weather, &m_snowCover.particles, &m_snowCover.sums}) device.DeferRelease(*texture);
     m_snowCover.allocation = 0;
@@ -4409,13 +4410,27 @@ bool MaterialEvaluator::ApplyDropletMask(rhi::Device& device, rhi::PipelineCache
     return true;
 }
 
+bool MaterialEvaluator::EnsurePointCandidates(rhi::Device& device, PlacementPointSet& set,
+                                              uint32_t count, const wchar_t* name) {
+    const uint32_t rows = (count + 1023) / 1024;
+    if (set.candidates.IsValid() && set.candidates.height == rows * 2) return true;
+    device.DeferRelease(set.candidates);
+    rhi::TextureDesc desc;
+    desc.width = 1024; desc.height = rows * 2;
+    desc.format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+    desc.allowUnorderedAccess = true;
+    desc.initialState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    desc.debugName = name;
+    return device.Allocator().CreateTexture2D(desc, set.candidates);
+}
+
 bool MaterialEvaluator::FilterCrumblingPoints(rhi::Device& device, rhi::PipelineCache& cache,
-    ID3D12GraphicsCommandList* list, float maxDiameter, bool avoidOverlap) {
+    ID3D12GraphicsCommandList* list, PlacementPointSet& set, float maxDiameter, bool avoidOverlap) {
     auto* clear = cache.GetCompute(L"CrumblingPoints.hlsl", L"CsClear");
     auto* build = cache.GetCompute(L"CrumblingPoints.hlsl", L"CsBuild");
     auto* filter = cache.GetCompute(L"CrumblingPoints.hlsl", L"CsFilter");
     if (!clear || !build || !filter) return false;
-    const uint32_t rows = m_crumblingCandidates.height / 2;
+    const uint32_t rows = set.candidates.height / 2;
     const auto ensure = [&](rhi::GpuTexture& texture, uint32_t height, DXGI_FORMAT format,
                             const wchar_t* name) {
         if (texture.IsValid() && texture.height == height) return true;
@@ -4427,25 +4442,25 @@ bool MaterialEvaluator::FilterCrumblingPoints(rhi::Device& device, rhi::Pipeline
         desc.debugName = name;
         return device.Allocator().CreateTexture2D(desc, texture);
     };
-    if (!ensure(m_crumblingPoints, rows*2, DXGI_FORMAT_R32G32B32A32_FLOAT, L"CrumblingPoints") ||
-        !ensure(m_crumblingPointGrid, 256+rows+1, DXGI_FORMAT_R32_UINT, L"CrumblingPointGrid")) return false;
+    if (!ensure(set.points, rows*2, DXGI_FORMAT_R32G32B32A32_FLOAT, L"CrumblingPoints") ||
+        !ensure(set.grid, 256+rows+1, DXGI_FORMAT_R32_UINT, L"CrumblingPointGrid")) return false;
     // 再編集で前回のコピーがまだ実行中でも、その読み戻しバッファを上書きしない。
-    device.DeferRelease(m_crumblingCountReadback);
-    m_crumblingCountFence = nullptr;
-    if (!device.Allocator().CreateReadbackBuffer(256, L"CrumblingPointCount", m_crumblingCountReadback)) return false;
+    device.DeferRelease(set.countReadback);
+    set.countFence = nullptr;
+    if (!device.Allocator().CreateReadbackBuffer(256, L"CrumblingPointCount", set.countReadback)) return false;
     struct Constants {
         uint32_t source, output, grid, count, rows, avoidOverlap;
         float cellSize; uint32_t padding;
-    } constants{m_crumblingCandidates.SrvIndex(), m_crumblingPoints.UavIndex(),
-        m_crumblingPointGrid.UavIndex(), m_crumblingPointCount, rows, avoidOverlap ? 1u : 0u,
+    } constants{set.candidates.SrvIndex(), set.points.UavIndex(),
+        set.grid.UavIndex(), set.count, rows, avoidOverlap ? 1u : 0u,
         std::max(maxDiameter, 0.001f), 0};
     const auto cb = AllocateConstants(device, sizeof(constants));
     if (!cb.IsValid()) return false;
     std::memcpy(cb.cpu, &constants, sizeof(constants));
     PIXBeginEvent(list, PIX_COLOR(150,130,110), "CrumblingPoints");
-    TransitionIfNeeded(list, m_crumblingCandidates, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    TransitionIfNeeded(list, m_crumblingPoints, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    TransitionIfNeeded(list, m_crumblingPointGrid, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(list, set.candidates, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(list, set.points, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(list, set.grid, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     list->SetComputeRootConstantBufferView(1, cb.gpuAddress);
     const auto barrier = [&]() {
         const auto uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
@@ -4453,34 +4468,36 @@ bool MaterialEvaluator::FilterCrumblingPoints(rhi::Device& device, rhi::Pipeline
     };
     list->SetPipelineState(clear); list->Dispatch(262144/64,1,1); barrier();
     if (avoidOverlap) {
-        list->SetPipelineState(build); list->Dispatch((m_crumblingPointCount+63)/64,1,1); barrier();
+        list->SetPipelineState(build); list->Dispatch((set.count+63)/64,1,1); barrier();
     }
-    list->SetPipelineState(filter); list->Dispatch((m_crumblingPointCount+63)/64,1,1); barrier();
-    TransitionIfNeeded(list, m_crumblingPoints, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    TransitionIfNeeded(list, m_crumblingPointGrid, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    list->SetPipelineState(filter); list->Dispatch((set.count+63)/64,1,1); barrier();
+    TransitionIfNeeded(list, set.points, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(list, set.grid, D3D12_RESOURCE_STATE_COPY_SOURCE);
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
     footprint.Footprint = {DXGI_FORMAT_R32_UINT,1,1,1,256};
-    const CD3DX12_TEXTURE_COPY_LOCATION destination(m_crumblingCountReadback.resource.Get(), footprint);
-    const CD3DX12_TEXTURE_COPY_LOCATION source(m_crumblingPointGrid.resource.Get(),0);
+    const CD3DX12_TEXTURE_COPY_LOCATION destination(set.countReadback.resource.Get(), footprint);
+    const CD3DX12_TEXTURE_COPY_LOCATION source(set.grid.resource.Get(),0);
     const D3D12_BOX box{0,256+rows,0,1,257+rows,1};
     list->CopyTextureRegion(&destination,0,0,0,&source,&box);
-    m_crumblingCountFence = m_recordingAsync ? m_compute.Fence() : device.FrameFence();
-    m_crumblingCountFenceValue = m_recordingAsync ? m_compute.SubmittedValue()+1 : device.NextFenceValue();
-    m_crumblingPointCountReady = false;
+    set.countFence = m_recordingAsync ? m_compute.Fence() : device.FrameFence();
+    set.countFenceValue = m_recordingAsync ? m_compute.SubmittedValue()+1 : device.NextFenceValue();
+    set.countReady = false;
     PIXEndEvent(list);
     return true;
 }
 
 void MaterialEvaluator::CollectPlacementPointCount() {
-    if (!m_crumblingCountFence || m_crumblingCountFence->GetCompletedValue() < m_crumblingCountFenceValue) return;
-    m_crumblingCountFence = nullptr;
-    void* mapped = nullptr;
-    const D3D12_RANGE range{0,sizeof(uint32_t)};
-    if (!TG_CHECK_HR(m_crumblingCountReadback.resource->Map(0,&range,&mapped))) return;
-    std::memcpy(&m_crumblingActivePointCount,mapped,sizeof(uint32_t));
-    const D3D12_RANGE written{0,0};
-    m_crumblingCountReadback.resource->Unmap(0,&written);
-    m_crumblingPointCountReady = true;
+    for (auto& [id, set] : m_placementPoints) {
+        if (!set.countFence || set.countFence->GetCompletedValue() < set.countFenceValue) continue;
+        set.countFence = nullptr;
+        void* mapped = nullptr;
+        const D3D12_RANGE range{0,sizeof(uint32_t)};
+        if (!TG_CHECK_HR(set.countReadback.resource->Map(0,&range,&mapped))) continue;
+        std::memcpy(&set.activeCount,mapped,sizeof(uint32_t));
+        const D3D12_RANGE written{0,0};
+        set.countReadback.resource->Unmap(0,&written);
+        set.countReady = true;
+    }
 }
 
 bool MaterialEvaluator::ApplyCrumbling(rhi::Device& device, rhi::PipelineCache& pipelineCache,
@@ -4543,25 +4560,18 @@ bool MaterialEvaluator::ApplyCrumbling(rhi::Device& device, rhi::PipelineCache& 
     constants.params1[2] = texelMeters;
     constants.params1[3] = heightMeters;
     constants.params2[0] = amount;
-    if (m_captureCrumblingPoints && layer.emitPoints) {
-        m_crumblingPointCount = amount > 0 ? static_cast<uint32_t>(attempts) : 0;
-        m_crumblingActivePointCount = 0;
-        m_crumblingPointCountReady = m_crumblingPointCount == 0;
-        if (m_crumblingPointCount > 0) {
-            const uint32_t rows = (m_crumblingPointCount + 1023) / 1024;
-            if (!m_crumblingCandidates.IsValid() || m_crumblingCandidates.height != rows * 2) {
-                device.DeferRelease(m_crumblingCandidates);
-                rhi::TextureDesc desc;
-                desc.width = 1024; desc.height = rows * 2;
-                desc.format = DXGI_FORMAT_R32G32B32A32_FLOAT;
-                desc.allowUnorderedAccess = true;
-                desc.initialState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-                desc.debugName = L"CrumblingPoints";
-                if (!device.Allocator().CreateTexture2D(desc, m_crumblingCandidates)) return false;
-            }
-            TransitionIfNeeded(commandList, m_crumblingCandidates, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-            constants.indices2[2] = rows;
-            constants.indices2[3] = m_crumblingCandidates.UavIndex();
+    PlacementPointSet* points = nullptr;
+    if (layer.pointsId != 0) {
+        points = &m_placementPoints[layer.pointsId];
+        points->touched = true;
+        points->count = amount > 0 ? static_cast<uint32_t>(attempts) : 0;
+        points->activeCount = 0;
+        points->countReady = points->count == 0;
+        if (points->count > 0) {
+            if (!EnsurePointCandidates(device, *points, points->count, L"CrumblingCandidates")) return false;
+            TransitionIfNeeded(commandList, points->candidates, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            constants.indices2[2] = points->candidates.height / 2;
+            constants.indices2[3] = points->candidates.UavIndex();
         }
     }
 
@@ -4611,8 +4621,8 @@ bool MaterialEvaluator::ApplyCrumbling(rhi::Device& device, rhi::PipelineCache& 
     if (normalPass != nullptr && !layer.maskOnly) {
         RebuildNormalsFromHeight(device, normalPass, commandList, stack);
     }
-    if (m_captureCrumblingPoints && layer.emitPoints && m_crumblingPointCount > 0)
-        return FilterCrumblingPoints(device, pipelineCache, commandList,
+    if (points != nullptr && points->count > 0)
+        return FilterCrumblingPoints(device, pipelineCache, commandList, *points,
             maxTexels * texelMeters, params.avoidPointOverlap);
     return true;
 }
@@ -4727,11 +4737,14 @@ bool MaterialEvaluator::ApplyScatter(rhi::Device& device, rhi::PipelineCache& pi
     constants.params2[3] = heightMeters;
     constants.params3[0] = std::clamp(params.smoothness, 0.0f, 1.0f);
 
-    // Pointsの枝ではHeight用の形状ラスタライズを省き、セルごとに1点を作る。
-    if (m_captureCrumblingPoints && layer.emitPoints) {
-        m_crumblingPointCount = 0;
-        m_crumblingActivePointCount = 0;
-        m_crumblingPointCountReady = false;
+    // 点はセルごとに 1 つ。形（Height の差分と Mask の元）を誰も読まない枝では、
+    // 点だけを作って形のラスタライズを省く（pointsOnly）。
+    if (layer.pointsId != 0) {
+        PlacementPointSet& points = m_placementPoints[layer.pointsId];
+        points.touched = true;
+        points.count = 0;
+        points.activeCount = 0;
+        points.countReady = false;
         const double halfCells = std::ceil(double(sizeMeters) * 0.5 / density);
         // 後段の64スレッドDispatchとテクスチャのハードウェア上限を超えない。
         if (!std::isfinite(halfCells) || halfCells > 1023) {
@@ -4741,39 +4754,31 @@ bool MaterialEvaluator::ApplyScatter(rhi::Device& device, rhi::PipelineCache& pi
         const uint32_t side = static_cast<uint32_t>(halfCells) * 2;
         const uint32_t count = side * side;
         if (params.coverage <= 0 || count == 0) {
-            m_crumblingPointCountReady = true;
-            return true;
+            points.countReady = true;
+        } else {
+            auto* pointsPass = pipeline(L"CsPoints");
+            if (!pointsPass) return false;
+            if (!EnsurePointCandidates(device, points, count, L"ScatterPoints")) return false;
+            ScatterConstants pointConstants = constants;
+            pointConstants.points[0] = points.candidates.UavIndex();
+            pointConstants.points[1] = points.candidates.height / 2;
+            pointConstants.points[2] = side;
+            pointConstants.points[3] = static_cast<uint32_t>(-static_cast<int32_t>(halfCells));
+            const auto pointsCb = AllocateConstants(device, sizeof(pointConstants));
+            if (!pointsCb.IsValid()) return false;
+            std::memcpy(pointsCb.cpu, &pointConstants, sizeof(pointConstants));
+            PIXBeginEvent(commandList, PIX_COLOR(120, 170, 110), "ScatterPoints");
+            TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            TransitionIfNeeded(commandList, points.candidates, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            commandList->SetComputeRootConstantBufferView(1, pointsCb.gpuAddress);
+            commandList->SetPipelineState(pointsPass);
+            commandList->Dispatch((count + 63) / 64, 1, 1);
+            TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            PIXEndEvent(commandList);
+            points.count = count;
+            if (!FilterCrumblingPoints(device, pipelineCache, commandList, points, maxMeters, false)) return false;
         }
-        auto* pointsPass = pipeline(L"CsPoints");
-        if (!pointsPass) return false;
-        const uint32_t rows = (count + 1023) / 1024;
-        if (!m_crumblingCandidates.IsValid() || m_crumblingCandidates.height != rows * 2) {
-            device.DeferRelease(m_crumblingCandidates);
-            rhi::TextureDesc desc;
-            desc.width = 1024; desc.height = rows * 2;
-            desc.format = DXGI_FORMAT_R32G32B32A32_FLOAT;
-            desc.allowUnorderedAccess = true;
-            desc.initialState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-            desc.debugName = L"ScatterPoints";
-            if (!device.Allocator().CreateTexture2D(desc, m_crumblingCandidates)) return false;
-        }
-        constants.points[0] = m_crumblingCandidates.UavIndex();
-        constants.points[1] = rows;
-        constants.points[2] = side;
-        constants.points[3] = static_cast<uint32_t>(-static_cast<int32_t>(halfCells));
-        const auto pointsCb = AllocateConstants(device, sizeof(constants));
-        if (!pointsCb.IsValid()) return false;
-        std::memcpy(pointsCb.cpu, &constants, sizeof(constants));
-        PIXBeginEvent(commandList, PIX_COLOR(120, 170, 110), "ScatterPoints");
-        TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-        TransitionIfNeeded(commandList, m_crumblingCandidates, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        commandList->SetComputeRootConstantBufferView(1, pointsCb.gpuAddress);
-        commandList->SetPipelineState(pointsPass);
-        commandList->Dispatch((count + 63) / 64, 1, 1);
-        TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        PIXEndEvent(commandList);
-        m_crumblingPointCount = count;
-        return FilterCrumblingPoints(device, pipelineCache, commandList, maxMeters, false);
+        if (layer.pointsOnly) return true;
     }
 
     const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(ScatterConstants));
@@ -4973,6 +4978,8 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         }
     }
     m_postprocessPending = false;
+    // 点の組は、今回の評価で作ったものだけを生かす（消した / 無効にした散布の点を残さない）。
+    for (auto& [id, set] : m_placementPoints) set.touched = false;
     if (m_postprocessRevision != stack.Revision()) {
         for (auto& cache : m_breachCaches) {
             device.DeferRelease(cache.readback);
@@ -5630,6 +5637,14 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         TransitionIfNeeded(commandList, thumbnail, kOutputReadState);
     }
 
+    for (auto& [id, set] : m_placementPoints) {
+        if (set.touched) continue;
+        set.count = 0;
+        set.activeCount = 0;
+        set.countFence = nullptr;
+        set.countReady = true;
+    }
+
     // プレビュー用の評価器だけ、Height を CPU へ写す（パスの編集に使う）。
     if (m_asynchronous && complete && !m_postprocessPending) {
         RecordHeightfieldReadback(device, pipelineCache, commandList);
@@ -5696,10 +5711,6 @@ void MaterialEvaluator::Update(rhi::Device& device, rhi::PipelineCache& pipeline
         if (Evaluate(device, pipelineCache, commandList, stack, textures, materials, paintMasks,
                      tiles)) {
             m_evaluatedRevision = m_postprocessPending ? 0 : stack.Revision();
-            if (m_captureCrumblingPoints && !m_crumblingPointCount && !m_postprocessPending) {
-                m_crumblingActivePointCount = 0;
-                m_crumblingPointCountReady = true;
-            }
             if (m_frontTextures.IsValid()) {
                 std::swap(m_textures, m_frontTextures);
                 std::swap(m_maskOpThumbnails, m_frontMaskOpThumbnails);
