@@ -3567,8 +3567,13 @@ std::map<fs::path, size_t> FingerprintAssets(const ProjectRefs& refs) {
     };
     for (const auto& asset : refs.materials.Entries())
         add(asset.assetPath, WriteMaterialBody(asset, [](compositor::TextureId id) { return json(id); }));
-    if (refs.models) for (const auto& asset : *refs.models)
-        add(asset.assetPath, {{"source", ToUtf8Portable(asset.path)}, {"materials", asset.materials}, {"name", asset.name}});
+    if (refs.models) for (const auto& asset : *refs.models) {
+        // LOD の距離とインポスターも保存する中身なので含める（焼いただけで未保存にならなかった）。
+        json body = {{"source", ToUtf8Portable(asset.path)}, {"materials", asset.materials}, {"name", asset.name}};
+        WriteModelLodDistances(asset, body);
+        WriteModelImpostor(asset, body, [](const fs::path& path) { return json(ToUtf8Portable(path)); });
+        add(asset.assetPath, body);
+    }
     for (const auto& asset : refs.skies.Entries()) add(asset.assetPath, WriteSky(asset, {}));
     return result;
 }
