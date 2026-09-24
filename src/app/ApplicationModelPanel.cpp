@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <tuple>
 
 #include "app/Application.h"
 #include "app/ApplicationUiHelpers.h"
@@ -69,8 +70,14 @@ void Application::PrepareModelScatters() {
     }
     m_renderer.drawInstances = [this](auto* list,const auto& matrix,bool shadow) { DrawModelScatters(list,matrix,shadow); };
 }
+void Application::CollectModelScatterStats() {
+    for (auto& [key, mesh] : m_instanceMeshes) mesh->CollectInstanceStats(m_device);
+}
 void Application::DrawModelScatters(ID3D12GraphicsCommandList* commandList,
                                    const DirectX::XMFLOAT4X4& viewProjection, bool shadow) {
+    static_assert(renderer::kMaxInstanceLods == std::tuple_size_v<decltype(renderer::RenderStats::instancesPerLod)>);
+    // 本描画で使ったメッシュ。複数の配置で共有していても、描画量は 1 回だけ足す（読み戻しは合計）。
+    std::vector<const renderer::ModelPreview*> drawn;
     for (const auto& scatter : m_modelScatters) {
         const auto pointSlot = m_modelPoints.find(scatter.source);
         if (pointSlot == m_modelPoints.end()) continue;
@@ -104,15 +111,17 @@ void Application::DrawModelScatters(ID3D12GraphicsCommandList* commandList,
                 draw.atmosphere=clouds.atmosphere; draw.cloudNoiseIndex=clouds.noiseIndex; draw.atmosphericMode=clouds.mode;
                 draw.ambient=m_renderer.InstanceAmbient();
             }
-            // 自動のときは最も詳細な段で数える（統計は上限の表示）。
-            const int statLod = scatter.settings.autoLod ? 0 : scatter.settings.lod;
-            const auto& lod=model->geometry->lods[std::min(statLod,static_cast<int>(model->geometry->lods.size())-1)];
-            for (const auto& part : lod.parts)
-                m_renderer.RecordInstanceDraw(static_cast<uint32_t>(part.mesh.indices.size()),draw.count);
-            mesh->second->Render(m_device,m_pipelineCache,commandList,*model,m_materialLibrary,m_textureLibrary,
-                m_renderer.GetEnvironment(),m_renderer.EnvironmentIntensity(),m_renderer.EffectiveLight(),
-                m_renderer.Exposure().Exposure(),m_renderer.Tonemap(),&draw);
+            m_renderer.RecordInstanceDrawCalls(mesh->second->Render(m_device,m_pipelineCache,commandList,*model,
+                m_materialLibrary,m_textureLibrary,m_renderer.GetEnvironment(),m_renderer.EnvironmentIntensity(),
+                m_renderer.EffectiveLight(),m_renderer.Exposure().Exposure(),m_renderer.Tonemap(),&draw));
+            if (!shadow && std::find(drawn.begin(),drawn.end(),mesh->second.get())==drawn.end())
+                drawn.push_back(mesh->second.get());
         }
+    }
+    // 影も含めた 1 フレームぶんの合計が、完了したフレームから読み戻してある。
+    for (const auto* mesh : drawn) {
+        const auto& stats = mesh->LatestInstanceStats();
+        m_renderer.RecordInstanceStats(stats.vertices, stats.triangles, stats.instances);
     }
 }
 

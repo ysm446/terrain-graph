@@ -54,6 +54,11 @@ void ModelPreview::Destroy(rhi::Device& device) {
     device.DeferRelease(m_depth);
     device.DeferRelease(m_visibleInstances);
     device.DeferRelease(m_indirectArguments);
+    device.DeferRelease(m_statCounters);
+    for (auto& readback : m_statReadback) device.DeferRelease(readback);
+    for (auto& fence : m_statFence) fence = 0;
+    m_statFrame = m_statCollected = 0;
+    m_instanceStats = {};
     device.Defer(m_drawSignature);
     m_drawSignature.Reset();
 }
@@ -128,7 +133,13 @@ bool ModelPreview::CullInstances(rhi::Device& device, rhi::PipelineCache& cache,
     if (!draw.count || m_meshes.empty()) return false;
     auto* cull = cache.GetCompute(L"InstanceCulling.hlsl", L"CsCull");
     auto* finish = cache.GetCompute(L"InstanceCulling.hlsl", L"CsFinish");
-    if (!cull || !finish) return false;
+    auto* accumulate = cache.GetCompute(L"InstanceCulling.hlsl", L"CsAccumulate");
+    if (!cull || !finish || !accumulate) return false;
+    if (!m_statCounters.IsValid() &&
+        !device.Allocator().CreateStructuredBuffer(kStatSlots,sizeof(uint32_t),L"InstanceStats",m_statCounters,true)) return false;
+    const uint32_t frame = device.FrameIndex();
+    if (!m_statReadback[frame].IsValid() &&
+        !device.Allocator().CreateReadbackBuffer(kStatSlots*sizeof(uint32_t),L"InstanceStatsReadback",m_statReadback[frame])) return false;
     if (!m_drawSignature) {
         D3D12_INDIRECT_ARGUMENT_DESC argument{};
         argument.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED;
@@ -177,7 +188,7 @@ bool ModelPreview::CullInstances(rhi::Device& device, rhi::PipelineCache& cache,
         float offset; uint32_t usePointSize; uint32_t lodCount; float fadeBand;
         float lodStart[kMaxInstanceLods];
         uint32_t segmentFirst[kMaxInstanceLods * 2];
-        uint32_t segmentCount; uint32_t padding[3]{};
+        uint32_t segmentCount, statCounters, statOffset; uint32_t padding{};
     } constants{};
     static_assert(sizeof(CullConstants)==240);
     constants.planes = InstanceFrustumPlanes(draw.viewProjection);
@@ -200,10 +211,21 @@ bool ModelPreview::CullInstances(rhi::Device& device, rhi::PipelineCache& cache,
     for (size_t segment = 0; segment < segments; ++segment)
         constants.segmentFirst[segment] = m_segmentFirstArgument[segment];
     constants.segmentCount = static_cast<uint32_t>(segments);
+    constants.statCounters = m_statCounters.uav.index;
+    constants.statOffset = draw.shadow ? kMaxInstanceLods * 2 : 0;
     const auto cb = device.Upload().Allocate(sizeof(constants),256);
     if (!cb.IsValid()) return false;
     std::memcpy(cb.cpu,&constants,sizeof(constants));
     PIXBeginEvent(list, PIX_COLOR(120,200,200), "CullModelInstances");
+    // フレームの最初の使用で集計を 0 に戻す。
+    if (m_statFrame != device.NextFenceValue()) {
+        const auto zeros = device.Upload().Allocate(kStatSlots*sizeof(uint32_t),16);
+        if (!zeros.IsValid()) { PIXEndEvent(list); return false; }
+        std::memset(zeros.cpu,0,kStatSlots*sizeof(uint32_t));
+        transition(m_statCounters,D3D12_RESOURCE_STATE_COPY_DEST);
+        list->CopyBufferRegion(m_statCounters.resource.Get(),0,zeros.resource,zeros.offset,kStatSlots*sizeof(uint32_t));
+        m_statFrame = device.NextFenceValue();
+    }
     transition(m_indirectArguments,D3D12_RESOURCE_STATE_COPY_DEST);
     list->CopyBufferRegion(m_indirectArguments.resource.Get(),0,upload.resource,upload.offset,argumentBytes);
     transition(m_indirectArguments,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -218,19 +240,61 @@ bool ModelPreview::CullInstances(rhi::Device& device, rhi::PipelineCache& cache,
         list->SetPipelineState(finish); list->Dispatch((argumentCount+63)/64,1,1);
         list->ResourceBarrier(1,&barrier);
     }
+    // 区画ごとの件数を足し込み、このフレームの読み戻し先へ写す（後の使用で上書きされ、最後が合計）。
+    transition(m_statCounters,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    list->SetPipelineState(accumulate); list->Dispatch(1,1,1);
+    transition(m_statCounters,D3D12_RESOURCE_STATE_COPY_SOURCE);
+    list->CopyBufferRegion(m_statReadback[frame].resource.Get(),0,m_statCounters.resource.Get(),0,kStatSlots*sizeof(uint32_t));
+    m_statFence[frame] = device.NextFenceValue();
+    m_statLodCount[frame] = lods;
     transition(m_visibleInstances,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     transition(m_indirectArguments,D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
     PIXEndEvent(list);
     return true;
 }
 
-void ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+void ModelPreview::CollectInstanceStats(rhi::Device& device) {
+    // 完了したうち最も新しいフレームを読む。
+    const uint64_t completed = device.CompletedFenceValue();
+    int newest = -1;
+    for (uint32_t i = 0; i < rhi::kFrameCount; ++i)
+        if (m_statFence[i] && m_statFence[i] <= completed && m_statFence[i] > m_statCollected &&
+            (newest < 0 || m_statFence[i] > m_statFence[newest]))
+            newest = static_cast<int>(i);
+    if (newest < 0) return;
+    m_statCollected = m_statFence[newest];
+    const size_t lods = m_statLodCount[newest];
+    if (lods != LodCount() || !lods) return;
+    uint32_t counts[kStatSlots] = {};
+    void* mapped = nullptr;
+    const D3D12_RANGE range{0,sizeof(counts)};
+    if (!TG_CHECK_HR(m_statReadback[newest].resource->Map(0,&range,&mapped))) return;
+    std::memcpy(counts,mapped,sizeof(counts));
+    const D3D12_RANGE written{0,0};
+    m_statReadback[newest].resource->Unmap(0,&written);
+    InstanceStats stats;
+    const size_t segments = SegmentCount();
+    for (size_t pass = 0; pass < 2; ++pass)
+        for (size_t segment = 0; segment < segments; ++segment) {
+            const size_t level = segment % lods;
+            const uint64_t instances = counts[pass*kMaxInstanceLods*2+segment];
+            uint64_t indices = 0;
+            for (size_t part = m_lodFirstPart[level]; part < m_lodFirstPart[level+1]; ++part)
+                indices += m_meshes[part].IndexCount();
+            stats.vertices += instances*indices;
+            stats.triangles += instances*(indices/3);
+            if (pass == 0 && m_firstLod + level < kMaxInstanceLods) stats.instances[m_firstLod+level] += instances;
+        }
+    m_instanceStats = stats;
+}
+
+uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                           ID3D12GraphicsCommandList* commandList, const ModelAsset& model,
                           const compositor::MaterialLibrary& materials,
                           const compositor::TextureLibrary& textures,
                           const Environment& environment, float iblIntensity,
                           const LightSettings& light, float exposure, TonemapMode tonemap, const ModelInstanceDraw* instances) {
-    if (!m_geometry || !m_ready) return;
+    if (!m_geometry || !m_ready) return 0;
     // パーツのマテリアルごとに PSO を選ぶ。アルファ抜きは早期深度テストが効きにくいので、
     // 使うパーツだけ clip 付きの PS にする。影は不透明なら PS なしの深度だけで描く。
     const auto pipelineFor = [&](bool cutout, bool twoSided, bool fade) {
@@ -250,7 +314,7 @@ void ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache
         }
         return pipelineCache.GetGraphics(desc);
     };
-    if (!pipelineFor(false, false, false)) return;
+    if (!pipelineFor(false, false, false)) return 0;
     if (!instances) {
     if (!m_output.IsValid()) {
         rhi::TextureDesc target;
@@ -259,7 +323,7 @@ void ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache
         target.allowRenderTarget = true;
         target.clearColor[0] = target.clearColor[1] = target.clearColor[2] = 0.025f;
         target.debugName = L"ModelPreview";
-        if (!device.Allocator().CreateTexture2D(target, m_output)) return;
+        if (!device.Allocator().CreateTexture2D(target, m_output)) return 0;
     }
     if (!m_depth.IsValid()) {
         rhi::TextureDesc depth;
@@ -269,7 +333,7 @@ void ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache
         depth.allowDepthStencil = true;
         depth.createSrv = false;
         depth.debugName = L"ModelPreviewDepth";
-        if (!device.Allocator().CreateTexture2D(depth, m_depth)) return;
+        if (!device.Allocator().CreateTexture2D(depth, m_depth)) return 0;
     }
     PIXBeginEvent(commandList, PIX_COLOR(120, 200, 200), "ModelPreview");
     rhi::TransitionIfNeeded(commandList, m_output, D3D12_RESOURCE_STATE_RENDER_TARGET);
@@ -285,9 +349,10 @@ void ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache
     } else {
         PIXBeginEvent(commandList, PIX_COLOR(120, 200, 200), "ModelInstances");
     }
-    if (instances && !CullInstances(device, pipelineCache, commandList, model, *instances)) { PIXEndEvent(commandList); return; }
+    if (instances && !CullInstances(device, pipelineCache, commandList, model, *instances)) { PIXEndEvent(commandList); return 0; }
     commandList->SetGraphicsRootSignature(pipelineCache.GlobalRootSignature());
     ID3D12PipelineState* current = nullptr;
+    uint32_t drawCalls = 0;
     // segment / argument はインスタンス描画のときだけ使う。fade は切り替え中の区画。
     const auto drawPart = [&](size_t i, bool fade, size_t segment, size_t argument) {
         const auto slot = m_parts[i].slot;
@@ -381,6 +446,7 @@ void ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache
         if (instances) m_meshes[i].DrawIndirect(commandList, m_drawSignature.Get(),
             m_indirectArguments.resource.Get(), argument*sizeof(D3D12_DRAW_INDEXED_ARGUMENTS));
         else m_meshes[i].Draw(commandList);
+        ++drawCalls;
     };
     if (!instances) {
         for (size_t i = 0; i < m_meshes.size(); ++i) drawPart(i, false, 0, 0);
@@ -398,5 +464,6 @@ void ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache
     }
     if (!instances) rhi::TransitionIfNeeded(commandList, m_output, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     PIXEndEvent(commandList);
+    return drawCalls;
 }
 }  // namespace tg::renderer

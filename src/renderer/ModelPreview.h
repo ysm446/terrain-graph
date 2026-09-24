@@ -3,6 +3,7 @@
 #include "renderer/ShadowCascades.h"
 #include "renderer/MaterialSphere.h"
 #include "renderer/ModelAsset.h"
+#include <array>
 #include <utility>
 namespace tg::renderer {
 // Prepare に渡すと全 LOD（先頭から kMaxInstanceLods 段まで）を用意し、距離で選んで描く。
@@ -26,11 +27,23 @@ struct ModelInstanceDraw {
     DirectX::XMFLOAT4X4 viewProjection;
     DirectX::XMFLOAT3 cameraPosition;
 };
+// インスタンス描画で GPU が実際に描いた量。カリングと LOD の選択の結果を読み戻して数える。
+struct InstanceStats {
+    // 本描画と影の合計（IA が読む量）。
+    uint64_t vertices = 0, triangles = 0;
+    // 本描画で描いた株の数。添字はモデルの LOD 番号。切り替え中の株は両方の段に数える。
+    std::array<uint64_t, kMaxInstanceLods> instances{};
+};
 class ModelPreview {
    public:
     void Destroy(rhi::Device& device);
     bool Prepare(rhi::Device& device, const ModelAsset& asset, int lod);
-    void Render(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+    // 完了したフレームの集計を読み戻す。フレームの記録を始めた後、描画より前に呼ぶ。
+    void CollectInstanceStats(rhi::Device& device);
+    // 直近に完了したフレームの集計。1〜2 フレーム遅れる。
+    const InstanceStats& LatestInstanceStats() const { return m_instanceStats; }
+    // 発行した描画の回数を返す。
+    uint32_t Render(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                 ID3D12GraphicsCommandList* commandList, const ModelAsset& model,
                 const compositor::MaterialLibrary& materials,
                 const compositor::TextureLibrary& textures, const Environment& environment,
@@ -63,6 +76,16 @@ class ModelPreview {
     std::vector<size_t> m_lodFirstPart;  // 段ごとの先頭パーツ。末尾に総数
     size_t m_firstLod = 0;
     std::vector<uint32_t> m_segmentFirstArgument;  // 区画ごとの先頭の描画引数
+    // 区画ごとの件数を 1 フレームぶん足し込む（本描画 [0, 8)、影 [8, 16)）。
+    // 同じメッシュを影の各段・本描画・複数の配置で使い回すので、描画引数は上書きされる。
+    static constexpr uint32_t kStatSlots = kMaxInstanceLods * 2 * 2;
+    rhi::GpuBuffer m_statCounters;
+    rhi::GpuBuffer m_statReadback[rhi::kFrameCount];
+    uint64_t m_statFence[rhi::kFrameCount]{};   // 読み戻しを記録したフレームのフェンス値。0 は空
+    size_t m_statLodCount[rhi::kFrameCount]{};  // 記録したときの段数（作り直した後の読み違いを防ぐ）
+    uint64_t m_statFrame = 0;                   // 足し込み中のフレームのフェンス値
+    uint64_t m_statCollected = 0;
+    InstanceStats m_instanceStats;
     rhi::GpuTexture m_output, m_depth;
     Camera m_camera;
 };

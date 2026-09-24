@@ -16,7 +16,8 @@ struct CullConstants {
     float4 lodStart;
     // 区画ごとの先頭の描画引数。区画の件数はここに数える。
     uint4 segmentFirst[2];
-    uint segmentCount; uint3 padding;
+    // statCounters: 区画ごとの件数を 1 フレームぶん足し込む先。statOffset は本描画 0、影 8。
+    uint segmentCount, statCounters, statOffset, padding;
 };
 ConstantBuffer<CullConstants> g_cull : register(b1);
 struct DrawArguments { uint indexCount, instanceCount, startIndex; int baseVertex; uint startInstance; };
@@ -72,4 +73,12 @@ void CsFinish(uint3 id : SV_DispatchThreadID) {
     if (first == id.x) return;
     RWStructuredBuffer<DrawArguments> arguments = ResourceDescriptorHeap[g_cull.arguments];
     arguments[id.x].instanceCount = arguments[first].instanceCount;
+}
+// 区画ごとの件数を統計へ足す（CsCull / CsFinish の後に 1 グループで呼ぶ）。
+[numthreads(8,1,1)]
+void CsAccumulate(uint3 id : SV_DispatchThreadID) {
+    if (id.x >= g_cull.segmentCount) return;
+    RWStructuredBuffer<DrawArguments> arguments = ResourceDescriptorHeap[g_cull.arguments];
+    RWStructuredBuffer<uint> counters = ResourceDescriptorHeap[g_cull.statCounters];
+    counters[g_cull.statOffset+id.x] += arguments[SegmentFirst(id.x)].instanceCount;
 }

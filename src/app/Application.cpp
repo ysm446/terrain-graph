@@ -506,6 +506,7 @@ int Application::Run() {
             ImGui::EndFrame();
             continue;
         }
+        CollectModelScatterStats();
 
         // ブラシは前フレームの UV バッファを読むため、合成の評価より前に流す。
         //

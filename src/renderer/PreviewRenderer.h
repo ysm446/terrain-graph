@@ -1,6 +1,8 @@
 #pragma once
 #include "renderer/ShadowCascades.h"
 
+#include <array>
+
 #include "compositor/MaterialEvaluator.h"
 #include "compositor/PaintMask.h"
 #include "compositor/TextureLibrary.h"
@@ -93,7 +95,6 @@ struct LightSettings {
 // **投入した量（IA が読む量）を数える。** テセレーションを入れると実際に
 // 出る三角形はこれより多いが、CPU 側では分からないのでパッチ数と上限を添える。
 struct RenderStats {
-    bool instanceUpperBounds = false;
     uint32_t drawCalls = 0;
     // 投入した頂点とインデックス。インデックス付き描画では
     // 「頂点 = インデックス数」（IA がその回数だけ頂点を読む）。
@@ -103,6 +104,10 @@ struct RenderStats {
     uint64_t patches = 0;
     bool tessellation = false;
     float tessellationFactor = 1.0f;
+    // 配置モデル。GPU のカリングと LOD の選択の結果を読み戻した実数で、1〜2 フレーム遅れる。
+    // 株の数は本描画だけを段（LOD 番号）ごとに数える。切り替え中の株は両方の段に入る。
+    bool instances = false;
+    std::array<uint64_t, 4> instancesPerLod{};  // renderer::kMaxInstanceLods と同じ段数
 };
 
 // 絞りの形。ボケの形になる。
@@ -252,10 +257,15 @@ public:
     // 配置モデルと雪煙に掛ける、環境光の雲あり / 雲なしの混ぜ方。地形へ渡したものと同じ値。
     const Atmosphere::AmbientBlend& InstanceAmbient() const { return m_instanceAmbient; }
     CloudAmbientSettings& CloudAmbient() { return m_atmosphere.CloudAmbient(); }
-    void RecordInstanceDraw(uint32_t indices, uint32_t count) {
-        m_stats.instanceUpperBounds = true;
-        ++m_stats.drawCalls; m_stats.vertices += uint64_t(indices)*count;
-        m_stats.triangles += uint64_t(indices/3)*count;
+    // 配置モデルの描画回数（影を含め、発行したぶん）。
+    void RecordInstanceDrawCalls(uint32_t drawCalls) { m_stats.drawCalls += drawCalls; }
+    // 配置モデルが描いた量（読み戻した実数）。メッシュごとにフレーム 1 回だけ足す。
+    void RecordInstanceStats(uint64_t vertices, uint64_t triangles,
+                             const std::array<uint64_t, 4>& instancesPerLod) {
+        m_stats.instances = true;
+        m_stats.vertices += vertices;
+        m_stats.triangles += triangles;
+        for (size_t i = 0; i < instancesPerLod.size(); ++i) m_stats.instancesPerLod[i] += instancesPerLod[i];
     }
     std::function<void(ID3D12GraphicsCommandList*, const DirectX::XMFLOAT4X4&, bool)> drawInstances;
     // 雪煙（Snow Plume ノード）。Application が毎フレーム積み直す。大気の合成の後に重ねる。

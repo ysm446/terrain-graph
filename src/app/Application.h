@@ -160,6 +160,8 @@ private:
     void DrawModelPreviewWindow();
     void ProcessModelWork();
     void PrepareModelScatters();
+    // 配置用メッシュの描画量を読み戻す。フレームの記録を始めた後、描画より前に呼ぶ。
+    void CollectModelScatterStats();
     // Snow Plume ノードを集め、Source のマスクを評価するスロットを揃える。フレームの外で呼ぶ。
     void PrepareSnowPlumes();
     // 評価済みのマスクと設定をレンダラへ渡す。描く直前に毎フレーム呼ぶ。

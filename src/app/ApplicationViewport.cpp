@@ -140,7 +140,7 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
         lines.emplace_back(text);
         std::snprintf(text, sizeof(text), "Draw calls %u", stats.drawCalls);
         lines.emplace_back(text);
-        std::snprintf(text, sizeof(text), "Vertices%s %s", stats.instanceUpperBounds ? " (max)" : "", GroupDigits(stats.vertices).c_str());
+        std::snprintf(text, sizeof(text), "Vertices %s", GroupDigits(stats.vertices).c_str());
         lines.emplace_back(text);
         // テセレーション中は、三角形はドメインシェーダが決めるので CPU では分からない。
         // **数えられないものを数えたふりをしない。** 投入したパッチ数と上限を出す。
@@ -148,9 +148,21 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
             std::snprintf(text, sizeof(text), "Patches %s (up to x%.0f)",
                           GroupDigits(stats.patches).c_str(), stats.tessellationFactor);
         } else {
-            std::snprintf(text, sizeof(text), "Triangles%s %s", stats.instanceUpperBounds ? " (max)" : "", GroupDigits(stats.triangles).c_str());
+            std::snprintf(text, sizeof(text), "Triangles %s", GroupDigits(stats.triangles).c_str());
         }
         lines.emplace_back(text);
+        // 配置モデルの株数（本描画）を段ごとに。使っていない末尾の段は出さない。
+        if (stats.instances) {
+            size_t levels = stats.instancesPerLod.size();
+            while (levels > 1 && stats.instancesPerLod[levels - 1] == 0) --levels;
+            uint64_t total = 0;
+            std::string breakdown;
+            for (size_t lod = 0; lod < levels; ++lod) {
+                total += stats.instancesPerLod[lod];
+                breakdown += (lod ? " / LOD" : "LOD") + std::to_string(lod) + " " + GroupDigits(stats.instancesPerLod[lod]);
+            }
+            lines.emplace_back("Instances " + GroupDigits(total) + " (" + breakdown + ")");
+        }
         // VRAM はプロセス全体の使用量とバジェット。合成の解像度を上げたときに
         // どれだけ余裕が残っているかを、その場で見えるようにする。
         const rhi::Device::VideoMemory vram = m_device.QueryVideoMemory();
