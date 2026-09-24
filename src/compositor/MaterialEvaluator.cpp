@@ -1226,6 +1226,20 @@ bool MaterialEvaluator::IsEvaluating() const {
     return m_postprocessPending || (m_asyncInFlight && m_compute.IsBusy());
 }
 
+// Update の分岐をなぞる。終わった非同期の評価は、後処理が残っていなければ回収で
+// m_asyncRevision の版が表側になる。残っていれば版は据え置きのまま続きを記録する。
+bool MaterialEvaluator::WillRecordEvaluation(const MaterialStack& stack) const {
+    if (!m_textures.IsValid()) {
+        return false;
+    }
+    if (m_asyncInFlight && m_compute.IsBusy()) {
+        return false;
+    }
+    const uint64_t evaluated =
+        (m_asyncInFlight && !m_postprocessPending) ? m_asyncRevision : m_evaluatedRevision;
+    return evaluated != stack.Revision();
+}
+
 void MaterialEvaluator::WaitForEvaluation() {
     m_compute.Wait();
 }

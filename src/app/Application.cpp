@@ -534,8 +534,32 @@ int Application::Run() {
             if (slot.pin) slot.evaluator.Update(m_device, m_pipelineCache, commandList, slot.stack,
                                                 m_textureLibrary, m_materialLibrary, m_paintMasks);
         }
-        for (auto& [id, slot] : m_modelPoints)
+        // 点の評価器は、それぞれ Scatter より上流のレイヤーを丸ごと評価し直す（初回は
+        // このフレームのリストで同期評価する）。本体の評価と同じフレームに何本も重ねると
+        // 1 回の投入が長くなりすぎて GPU がハングするので、本体の評価が済んでから、
+        // 1 フレームに 1 本ずつ始める。
+        // 評価の途中（非同期で走行中、または後処理の続きが残っている）の評価器があれば、
+        // それだけを進める。
+        const compositor::MaterialEvaluator& mainEvaluator = m_renderer.Evaluator();
+        bool pointEvaluationBlocked = mainEvaluator.IsEvaluating() ||
+                                      mainEvaluator.EvaluatedRevision() != m_graphStack.Revision();
+        const ModelPointSlot* activePointSlot = nullptr;
+        for (const auto& [id, slot] : m_modelPoints) {
+            if (slot->evaluator.IsEvaluating()) {
+                activePointSlot = slot.get();
+                break;
+            }
+        }
+        for (auto& [id, slot] : m_modelPoints) {
+            if (slot->evaluator.WillRecordEvaluation(slot->stack)) {
+                if (pointEvaluationBlocked ||
+                    (activePointSlot != nullptr && activePointSlot != slot.get())) {
+                    continue;
+                }
+                pointEvaluationBlocked = true;
+            }
             slot->evaluator.Update(m_device,m_pipelineCache,commandList,slot->stack,m_textureLibrary,m_materialLibrary,m_paintMasks);
+        }
         m_renderer.SetCloudDistributionMask(m_cloudMasks[0].Srv(), m_cloudMasks[0].Revision());
         m_renderer.SetCloudTypeMask(m_cloudMasks[1].Srv(), m_cloudMasks[1].Revision());
         for (auto& [id, slot] : m_snowPlumeMasks) {

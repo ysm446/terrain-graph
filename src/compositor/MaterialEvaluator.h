@@ -251,6 +251,9 @@ public:
 
     // 非同期の評価が走っている最中か（UI の「評価中」表示と、開発用の撮影の待ちに使う）。
     bool IsEvaluating() const;
+    // このフレームで Update を呼ぶと、評価（または後処理の続き）を記録するか。
+    // 評価器を何本も持つ呼び出し側が、同じフレームに重い評価を重ねないよう順番を決めるのに使う。
+    bool WillRecordEvaluation(const MaterialStack& stack) const;
     bool HasPendingPostprocess() const { return m_postprocessPending; }
     // 合成の Height の CPU 側の写し（プレビュー用。書き出し用の評価器は持たない）。
     // 評価が 1 度も終わっていなければ IsValid() が偽。
