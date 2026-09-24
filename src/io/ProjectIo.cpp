@@ -1808,8 +1808,8 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                 graph::ModelScatterSettings settings;
                 if (const auto* values = FindMember(item, "modelScatter"); values && values->is_object()) {
                     settings.seed = ReadInt(*values,"seed",1);
-                    settings.scaleMin = std::clamp(ReadFloat(*values,"scaleMin",0.8f),0.001f,1000.0f);
-                    settings.scaleMax = std::clamp(ReadFloat(*values,"scaleMax",1.2f),settings.scaleMin,1000.0f);
+                    settings.scaleMin = std::clamp(ReadFloat(*values,"scaleMin",0.8f),graph::kModelScatterScaleMin,graph::kModelScatterScaleMax);
+                    settings.scaleMax = std::clamp(ReadFloat(*values,"scaleMax",1.2f),settings.scaleMin,graph::kModelScatterScaleMax);
                     settings.maxDistance = std::clamp(ReadFloat(*values,"maxDistance",0),0.0f,100000.0f);
                     settings.alignToNormal = std::clamp(ReadFloat(*values,"alignToNormal",1),0.0f,1.0f);
                     settings.offset = std::clamp(ReadFloat(*values,"offset",0),-10000.0f,10000.0f);

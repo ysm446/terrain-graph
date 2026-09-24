@@ -1963,8 +1963,12 @@ void Application::DrawGraphPanel() {
             changed |= ui::PropertyFloat("描画距離", &scatter->maxDistance, 0, 100000, 0,
                 "この距離より遠いモデルを描画対象から外します。0は距離制限なし。影にも適用します", "%.0f m");
             changed |= ui::PropertyBool("ポイントの大きさ",&scatter->usePointSize,true,"モデルの最大寸法を岩片の直径に合わせます");
-            changed |= ui::PropertyFloat("最小スケール",&scatter->scaleMin,0.001f,1000.0f,0.8f);
-            changed |= ui::PropertyFloat("最大スケール",&scatter->scaleMax,0.001f,1000.0f,1.2f);
+            // 対数のスライダーにして 1.0 付近を細かく動かせるようにする。
+            constexpr const char* kScaleTooltip = "株ごとの倍率はこの範囲から選ぶ。大きくすると描画と影の負荷が増える";
+            changed |= ui::PropertyFloat("最小スケール",&scatter->scaleMin,graph::kModelScatterScaleMin,graph::kModelScatterScaleMax,
+                                         0.8f,kScaleTooltip,"%.2f",ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat("最大スケール",&scatter->scaleMax,graph::kModelScatterScaleMin,graph::kModelScatterScaleMax,
+                                         1.2f,kScaleTooltip,"%.2f",ImGuiSliderFlags_Logarithmic);
             changed |= ui::PropertyFloat("地表に沿う",&scatter->alignToNormal,0,1,1);
             changed |= ui::PropertyFloat("接地オフセット",&scatter->offset,-10000,10000,0,"負の値で地面へ埋め込みます","%.3f m");
             changed |= ui::PropertyBool("LOD 自動",&scatter->autoLod,true,

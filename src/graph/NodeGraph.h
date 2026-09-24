@@ -372,6 +372,9 @@ struct CompiledCloud {
 
 // 出力。ここに繋いだチェーンがプレビューのマテリアルになる。
 struct ModelChoice { uint64_t model = 0; float weight = 1.0f; };
+// 配置の倍率の範囲。大きくすると 1 株の画面上の大きさと影の段への重なりが増え、負荷が急に上がる。
+inline constexpr float kModelScatterScaleMin = 0.1f;
+inline constexpr float kModelScatterScaleMax = 10.0f;
 struct ModelScatterSettings {
     std::vector<ModelChoice> models;
     int seed = 1;
