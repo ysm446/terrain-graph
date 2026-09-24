@@ -1,7 +1,13 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-24 12:47
+更新日時: 2026-09-24 13:13
+
+## インポスターの作成（段階 1、2026-09-24 13:13）
+
+`ModelAsset::impostor`（`ImpostorSettings` = 方向数・1 方向の解像度・全球か、と焼いた結果 = 設定・中心・半径・画像のパス）を追加し、.tgmodel の `impostor`（画像は参照、文書内は相対パス、ワークスペースで相互変換）へ通した。`renderer::ImpostorLibrary`（`src/renderer/Impostor.*`）がモデルごとの GPU テクスチャを持つ（テクスチャライブラリとは分け、一覧や文書のテクスチャに混ぜない）。焼き込み（`ImpostorBake.hlsl`）は LOD0 をマスごとに正射影で描き（色 = sRGB 符号化 + 覆い、法線 = 8 面体 + 深度 + ラフネス）、抜けた画素へ同じマス内の近い色を広げ（CsDilate、1 px 刻み 8 px → 4 px 刻み 64 px）、ミップを作って PNG に保存する。アルファ抜きは描画と同じミップ補正で焼く（無いと斜め上からのマスで葉が消えた）。方向とマスの対応は `ImpostorCommon.hlsli` に一本化し、焼き込みはマス番号だけを渡す（半球は上半球を正方形全体へ、全球は 8 面体の展開）。表示（`ModelPreview.hlsl` の VsImpostor / PsImpostor）はカメラを向く四角形で、視線に近い 3 マスそれぞれの平面へ視線を当てて覆いで重み付けして混ぜる。陰影は `ShadeModel` に切り出してメッシュと共有した。作成・削除・画像の読み込みはフレームの外（`ProcessImpostorWork`）。削除は `RetireAsset` で画像と .meta を退避フォルダへ移す。`TextureLibrary::GenerateMips` を公開の static にした。メタルネスと AO は焼かない（植生では影響が小さい）。
+
+検証: Debug / Release ビルド（警告なし）、CTest 6 件、DXC で ImpostorBake（VsBake / PsBake / CsDilate）と ModelPreview の全エントリ。起動時に焼く・表示を切り替える・カメラを回す一時的な行（除去済み）で、這い松 Var1 を Debug で焼いてデバッグレイヤー警告なし（3072 px 四方の 2 枚）。半球で横・斜め上・真上の 3 角度、全球で下から・真上をメッシュと見比べ、形と葉の密度が揃うことを確認。保存（`--save-project`）で .tgmodel に参照と .meta が付き、開き直して PNG から読んだ表示は焼いた直後と画素一致。削除は画像と .meta が `restore.json` 付きで退避され、保存した .tgmodel は元と一致。`--screenshot-ui` で「インポスター」節を確認（見出しへスクロールする一時的な行を使用）。成果物は `data/Test/haimatsu-qa/imp-*.png`、`impostor-*.png`。**未確認**: 配置での使用（段階 2）、影（段階 3）、実際のマウスによる作成・削除の操作、16×16・512 px（8192 px 四方）の焼き込み時間とメモリ、アンドゥで焼いた結果を戻したとき（画像が退避済みなら読み込めない旨を表示する）。
 
 ## LOD の色分け表示（2026-09-24 12:47）
 

@@ -95,6 +95,7 @@ set(tg_sources
     src/app/ApplicationLayerMaterial.cpp
     src/app/ApplicationMaterialPanel.cpp
     src/app/ApplicationModelPanel.cpp
+    src/renderer/Impostor.cpp
     src/renderer/ModelAsset.cpp
     src/renderer/ModelPreview.cpp
     src/renderer/SnowPlume.cpp

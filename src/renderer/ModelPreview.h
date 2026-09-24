@@ -2,6 +2,7 @@
 #include "renderer/Atmosphere.h"
 #include "renderer/ShadowCascades.h"
 #include "renderer/MaterialSphere.h"
+#include "renderer/Impostor.h"
 #include "renderer/ModelAsset.h"
 #include <array>
 #include <utility>
@@ -54,7 +55,8 @@ class ModelPreview {
                 const compositor::MaterialLibrary& materials,
                 const compositor::TextureLibrary& textures, const Environment& environment,
                 float iblIntensity, const LightSettings& light, float exposure,
-                TonemapMode tonemap, const ModelInstanceDraw* instances = nullptr);
+                TonemapMode tonemap, const ModelInstanceDraw* instances = nullptr,
+                const ImpostorTextures* impostor = nullptr);
     Camera& GetCamera() { return m_camera; }
     bool HasOutput() const { return m_output.IsValid(); }
     D3D12_GPU_DESCRIPTOR_HANDLE OutputHandle() const { return m_output.srv.gpu; }

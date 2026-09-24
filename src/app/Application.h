@@ -162,6 +162,9 @@ private:
     void PrepareModelScatters();
     // 配置用メッシュの描画量を読み戻す。フレームの記録を始めた後、描画より前に呼ぶ。
     void CollectModelScatterStats();
+    // インポスターの作成・削除と画像の読み込み。フレームの外で呼ぶ。
+    void ProcessImpostorWork();
+    void DrawImpostorSection(renderer::ModelAsset& asset);
     // Snow Plume ノードを集め、Source のマスクを評価するスロットを揃える。フレームの外で呼ぶ。
     void PrepareSnowPlumes();
     // 評価済みのマスクと設定をレンダラへ渡す。描く直前に毎フレーム呼ぶ。
@@ -507,6 +510,10 @@ private:
     uint64_t m_nextModelId = 1;
     uint64_t m_selectedModel = 0;
     int m_modelLod = 0;
+    // インポスター。作成・削除と画像の読み込みはフレームの外（ProcessModelWork）で行う。
+    renderer::ImpostorLibrary m_impostors;
+    uint64_t m_pendingImpostorBake = 0, m_pendingImpostorDelete = 0;
+    bool m_modelShowImpostor = false;  // モデルプレビューを焼いた画像で描く（確認用、保存しない）
     bool m_showModelPreview = false;
     bool m_modelPreviewVisible = false;
     bool m_focusModelLibrary = false;

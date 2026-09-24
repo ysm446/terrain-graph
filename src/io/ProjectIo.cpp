@@ -257,6 +257,63 @@ compositor::NoiseParams ReadNoise(const json& node, const char* key,
 void WriteModelLodDistances(const renderer::ModelAsset& asset, json& node) {
     if (!asset.lodDistances.empty()) node["lodDistances"] = asset.lodDistances;
 }
+// インポスター。画像のパスの書き方は file に任せる（文書では相対パス、.tgmodel では参照）。
+// 既定の設定で焼いていなければ書かない。
+using ImpostorFileWriter = std::function<json(const fs::path&)>;
+using ImpostorFileReader = std::function<fs::path(const json&)>;
+json WriteImpostorSettings(const renderer::ImpostorSettings& settings) {
+    return {{"frames", settings.frames}, {"frameSize", settings.frameSize}, {"fullSphere", settings.fullSphere}};
+}
+renderer::ImpostorSettings ReadImpostorSettings(const json& node) {
+    const renderer::ImpostorSettings defaults;
+    renderer::ImpostorSettings settings;
+    settings.frames = static_cast<uint32_t>(std::clamp(ReadInt(node, "frames", int(defaults.frames)), 2, 32));
+    settings.frameSize = static_cast<uint32_t>(std::clamp(ReadInt(node, "frameSize", int(defaults.frameSize)), 32, 2048));
+    settings.fullSphere = ReadBool(node, "fullSphere", defaults.fullSphere);
+    return settings;
+}
+void WriteModelImpostor(const renderer::ModelAsset& asset, json& node, const ImpostorFileWriter& file) {
+    const auto& impostor = asset.impostor;
+    if (!impostor.baked && impostor.settings == renderer::ImpostorSettings{}) return;
+    json value = WriteImpostorSettings(impostor.settings);
+    if (impostor.baked) {
+        json baked = WriteImpostorSettings(impostor.bakedSettings);
+        baked["center"] = WriteFloat3(impostor.center);
+        baked["radius"] = impostor.radius;
+        baked["color"] = file(impostor.colorPath);
+        baked["normal"] = file(impostor.normalPath);
+        value["baked"] = std::move(baked);
+    }
+    node["impostor"] = std::move(value);
+}
+void ReadModelImpostor(const json& node, renderer::ModelAsset& asset, const ImpostorFileReader& file) {
+    asset.impostor = {};
+    const json* value = FindMember(node, "impostor");
+    if (value == nullptr || !value->is_object()) return;
+    asset.impostor.settings = ReadImpostorSettings(*value);
+    const json* baked = FindMember(*value, "baked");
+    if (baked == nullptr || !baked->is_object()) return;
+    const json* color = FindMember(*baked, "color");
+    const json* normal = FindMember(*baked, "normal");
+    // 画像の参照が切れていれば焼いていない扱い（作り直せばよい）。
+    const auto colorPath = color ? file(*color) : fs::path{};
+    const auto normalPath = normal ? file(*normal) : fs::path{};
+    const float radius = ReadFloat(*baked, "radius", 0.0f);
+    if (colorPath.empty() || normalPath.empty() || !(radius > 0.0f)) return;
+    auto& impostor = asset.impostor;
+    impostor.baked = true;
+    impostor.bakedSettings = ReadImpostorSettings(*baked);
+    impostor.center = ReadFloat3(*baked, "center", {});
+    impostor.radius = radius;
+    impostor.colorPath = colorPath;
+    impostor.normalPath = normalPath;
+}
+// 文書の中の文字列のパス（絶対、または base からの相対）。
+fs::path ImpostorPathFromString(const json& value, const fs::path& base) {
+    return value.is_string() && !value.get_ref<const std::string&>().empty()
+               ? base / FromUtf8(value.get<std::string>())
+               : fs::path{};
+}
 void ReadModelLodDistances(const json& node, renderer::ModelAsset& asset) {
     asset.lodDistances.clear();
     const json* values = FindMember(node, "lodDistances");
@@ -2700,6 +2757,7 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
                               {"path", RelativePathString(asset.path, baseDir)},
                               {"materials", slots}});
             WriteModelLodDistances(asset, models.back());
+            WriteModelImpostor(asset, models.back(), [&](const fs::path& path) { return json(RelativePathString(path, baseDir)); });
             if (workspace) { models.back()["_assetPath"] = ToUtf8Portable(asset.assetPath); models.back()["uid"] = asset.assetUid; }
         }
         document["models"] = std::move(models);
@@ -2919,6 +2977,7 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
                     TG_LOG_WARN("モデルの読み込みに失敗: %s", asset.error.c_str());
                 }
                 ReadModelLodDistances(node, asset);
+                ReadModelImpostor(node, asset, [&](const json& value) { return ImpostorPathFromString(value, baseDir); });
                 if (const json* slots = FindMember(node, "materials"); slots && slots->is_array()) {
                     asset.materials.resize(std::max(asset.materials.size(), slots->size()));
                     for (size_t i = 0; i < slots->size(); ++i) {
@@ -3206,6 +3265,11 @@ bool SaveSharedAssets(ProjectWorkspace& workspace, const ProjectRefs& refs, cons
         json body = {{"name", asset.name}, {"uid", asset.assetUid},
                      {"source", source(asset.path)}, {"materials", slots}};
         WriteModelLodDistances(asset, body);
+        // 画像が消えていても保存は止めない（参照を落とし、読むときは焼いていない扱い）。
+        WriteModelImpostor(asset, body, [&](const fs::path& path) {
+            std::error_code error;
+            return fs::is_regular_file(path, error) ? source(path) : json();
+        });
         auto path = asset.assetPath;
         if (path.empty()) path = destination(body, "model-asset", L"Models", asset.name.c_str(), ".tgmodel");
         if (!valid || !workspace.SaveAsset(path, "model-asset", body)) return false;
@@ -3304,6 +3368,7 @@ bool LoadSharedAsset(ProjectWorkspace& workspace, const fs::path& path,
             if (!loaded->geometry || loaded->path != source) { loaded->path = source; renderer::LoadModel(source, *loaded); }
             loaded->materials.resize(std::max(loaded->materials.size(), node["materials"].size()), compositor::kNoMaterialAsset);
             ReadModelLodDistances(node, *loaded);
+            ReadModelImpostor(node, *loaded, [&](const json& value) { return ImpostorPathFromString(value, {}); });
             size_t slot = 0;
             for (const auto& value : node["materials"]) {
                 const auto material = materials.find(value.is_number_integer() ? value.get<int>() : 0);
@@ -3319,6 +3384,7 @@ bool LoadSharedAsset(ProjectWorkspace& workspace, const fs::path& path,
         renderer::LoadModel(asset.path, asset);
         asset.materials.resize(std::max(asset.materials.size(), node["materials"].size()));
         ReadModelLodDistances(node, asset);
+        ReadModelImpostor(node, asset, [&](const json& value) { return ImpostorPathFromString(value, {}); });
         size_t i = 0;
         for (const auto& value : node["materials"]) {
             const auto found = materials.find(value.is_number_integer() ? value.get<int>() : 0);

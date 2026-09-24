@@ -3,6 +3,7 @@
 #include "CompositeCommon.hlsli"
 #include "EnvCommon.hlsli"
 #include "Tonemap.hlsli"
+#include "ImpostorCommon.hlsli"
 
 // ModelPreview.cpp と同じ並び。単位はm、UVは読み込み時に画像座標へ変換済み。
 struct SceneShadowData {
@@ -37,7 +38,11 @@ struct ModelConstants
     uint cloudNoiseIndex, atmosphericMode, clearIrradianceIndex; float ambientOcclusion;
     // visibleOffset: 可視リストの区画の先頭（SV_InstanceID は StartInstance を含まない）。
     // lodView: LOD の色分け表示。ベースカラーのマップは色に使わず（アルファ抜きには使う）、ティントが段の色。
-    uint visibleOffset, lodView; uint2 padding;
+    uint visibleOffset, lodView;
+    // インポスター（ImpostorCommon.hlsli）。色は sRGB で符号化した RGBA8、法線は 8 面体 + 深度 + ラフネス。
+    uint impostorColor, impostorNormal;
+    float3 impostorCenter; float impostorRadius;
+    uint impostorFrames, impostorFullSphere; uint2 padding;
 };
 
 ConstantBuffer<ModelConstants> g_model : register(b1);
@@ -132,6 +137,57 @@ PixelInput VsMain(VertexInput input, uint instance : SV_InstanceID) {
     output.fade=fade;
     return output;
 }
+
+// 陰影（ビューポートと同じ式）。メッシュとインポスターで共有する。position はワールド、normal は陰影に使う向き。
+float4 ShadeModel(float3 position, float3 normal, float3 viewDirection, float3 baseColor,
+                  float roughness, float metallic, float ambientOcclusion) {
+    float3 diffuseColor;
+    float3 f0;
+    SplitBaseColor(baseColor, metallic, diffuseColor, f0);
+    const float clampedRoughness = clamp(roughness, kMinPerceptualRoughness, 1.0f);
+
+    const float3 lightDirection = normalize(g_model.lightDirection);
+    // 直射光にはシャドウマップと雲影の両方を掛ける（地形の MeshPbr と同じ）。
+    float visibility = ModelVisibility(position,dot(normal,lightDirection));
+    if (g_model.sceneMode != 0 && g_model.atmosphericMode != 0)
+        visibility *= CloudShadow(position, g_model.atmosphere, g_model.cloudNoiseIndex);
+    float3 radiance = ShadeDirectionalLight(normal, viewDirection, lightDirection,
+                                            g_model.lightColor, g_model.lightIlluminance,
+                                            diffuseColor, f0, clampedRoughness) * visibility;
+
+    if (g_model.irradianceIndex != kInvalidTextureIndex)
+    {
+        // MeshPbr と同じ分割和近似。nDotV は 1 を超えると NaN になるので clamp で守る。
+        const float nDotV = clamp(dot(normal, viewDirection), 1e-4f, 1.0f);
+
+        TextureCube<float4> prefilteredMap = ResourceDescriptorHeap[g_model.prefilteredIndex];
+        Texture2D<float2> brdfLut = ResourceDescriptorHeap[g_model.brdfLutIndex];
+
+        // 雲の上に置かれたモデルは、雲なしの環境で照らす（地形の MeshPbr と同じ）。
+        const bool blendAmbient = g_model.sceneMode != 0 && g_model.atmosphericMode != 0;
+        const float3 irradiance = SampleAmbientIrradiance(
+            g_model.irradianceIndex, blendAmbient ? g_model.clearIrradianceIndex : 0xffffffffu, normal,
+            position.y, g_model.ambientLow, g_model.ambientHigh, g_model.ambientOcclusion);
+        const float3 fresnel = FresnelSchlickRoughness(f0, nDotV, clampedRoughness);
+        const float3 diffuseIbl = (1.0f - fresnel) * diffuseColor * irradiance;
+
+        const float3 reflectionDirection = reflect(-viewDirection, normal);
+        const float mipLevel =
+            clampedRoughness * float(max(g_model.prefilteredMipCount, 1u) - 1u);
+        const float3 prefiltered =
+            prefilteredMap.SampleLevel(g_samplerLinearClamp, reflectionDirection, mipLevel).rgb;
+        const float2 environmentBrdf =
+            brdfLut.SampleLevel(g_samplerLinearClamp, float2(nDotV, clampedRoughness), 0.0f);
+        const float3 specularIbl = prefiltered * (f0 * environmentBrdf.x + environmentBrdf.y);
+
+        radiance += (diffuseIbl + specularIbl) * g_model.iblIntensity * ambientOcclusion;
+    }
+
+
+    if (g_model.sceneMode != 0) return float4(radiance,1);
+    return float4(LinearToSrgb(ApplyTonemap(radiance*g_model.exposure,g_model.tonemapMode)),1);
+}
+
 // アルファ抜きの判定。ミップはアルファも平均するので、遠くほど閾値を超える画素が減って
 // 葉が痩せる。ミップが1段進むごとにアルファを持ち上げ、見かけの被覆を保つ。
 static const float kAlphaMipScale = 0.25f;
@@ -206,53 +262,9 @@ float4 PsMain(PixelInput input, bool frontFace:SV_IsFrontFace):SV_TARGET {
     // 閉じたメッシュの裏面は奥で隠れるので影響しない。
     if (!frontFace) normal = reflect(normal, faceNormal);
 
-    // --- 陰影（ビューポートと同じ式）---------------------------------------
-    float3 diffuseColor;
-    float3 f0;
-    SplitBaseColor(baseColor, metallic, diffuseColor, f0);
-    const float clampedRoughness = clamp(roughness, kMinPerceptualRoughness, 1.0f);
-
-    const float3 lightDirection = normalize(g_model.lightDirection);
-    // 直射光にはシャドウマップと雲影の両方を掛ける（地形の MeshPbr と同じ）。
-    float visibility = ModelVisibility(input.position,dot(normal,lightDirection));
-    if (g_model.sceneMode != 0 && g_model.atmosphericMode != 0)
-        visibility *= CloudShadow(input.position, g_model.atmosphere, g_model.cloudNoiseIndex);
-    float3 radiance = ShadeDirectionalLight(normal, viewDirection, lightDirection,
-                                            g_model.lightColor, g_model.lightIlluminance,
-                                            diffuseColor, f0, clampedRoughness) * visibility;
-
-    if (g_model.irradianceIndex != kInvalidTextureIndex)
-    {
-        // MeshPbr と同じ分割和近似。nDotV は 1 を超えると NaN になるので clamp で守る。
-        const float nDotV = clamp(dot(normal, viewDirection), 1e-4f, 1.0f);
-
-        TextureCube<float4> prefilteredMap = ResourceDescriptorHeap[g_model.prefilteredIndex];
-        Texture2D<float2> brdfLut = ResourceDescriptorHeap[g_model.brdfLutIndex];
-
-        // 雲の上に置かれたモデルは、雲なしの環境で照らす（地形の MeshPbr と同じ）。
-        const bool blendAmbient = g_model.sceneMode != 0 && g_model.atmosphericMode != 0;
-        const float3 irradiance = SampleAmbientIrradiance(
-            g_model.irradianceIndex, blendAmbient ? g_model.clearIrradianceIndex : 0xffffffffu, normal,
-            input.position.y, g_model.ambientLow, g_model.ambientHigh, g_model.ambientOcclusion);
-        const float3 fresnel = FresnelSchlickRoughness(f0, nDotV, clampedRoughness);
-        const float3 diffuseIbl = (1.0f - fresnel) * diffuseColor * irradiance;
-
-        const float3 reflectionDirection = reflect(-viewDirection, normal);
-        const float mipLevel =
-            clampedRoughness * float(max(g_model.prefilteredMipCount, 1u) - 1u);
-        const float3 prefiltered =
-            prefilteredMap.SampleLevel(g_samplerLinearClamp, reflectionDirection, mipLevel).rgb;
-        const float2 environmentBrdf =
-            brdfLut.SampleLevel(g_samplerLinearClamp, float2(nDotV, clampedRoughness), 0.0f);
-        const float3 specularIbl = prefiltered * (f0 * environmentBrdf.x + environmentBrdf.y);
-
-        radiance += (diffuseIbl + specularIbl) * g_model.iblIntensity * ambientOcclusion;
-    }
-
-
-    if (g_model.sceneMode != 0) return float4(radiance,1);
-    return float4(LinearToSrgb(ApplyTonemap(radiance*g_model.exposure,g_model.tonemapMode)),1);
+    return ShadeModel(input.position, normal, viewDirection, baseColor, roughness, metallic, ambientOcclusion);
 }
+
 
 // LOD の切り替え中の区画。4x4 の Bayer 配列で、来る段は閾値が t 未満の画素、
 // 去る段は t 以上の画素だけを残す。両段で画素を分け合うので、隙間も二重描きも出ない。
@@ -265,4 +277,76 @@ float4 PsDither(PixelInput input, bool frontFace:SV_IsFrontFace):SV_TARGET {
     if (input.fade > 1.5f) clip(threshold - (input.fade - 2));
     else clip(input.fade - threshold);
     return PsMain(input, frontFace);
+}
+
+// --- インポスター -----------------------------------------------------------------
+// カメラを向く四角形 1 枚。ピクセルごとに、視線に近い 3 方向の画像それぞれの平面（中心を通り、
+// その方向に垂直）へ視線を当て、当たった位置の画素を重みで混ぜる。
+struct ImpostorInput { float4 clip:SV_POSITION; float3 position:POSITION; };
+
+ImpostorInput VsImpostor(uint vertex : SV_VertexID) {
+    static const float2 kCorners[6] = {float2(-1, -1), float2(1, -1), float2(1, 1),
+                                       float2(-1, -1), float2(1, 1), float2(-1, 1)};
+    const float3 center = g_model.impostorCenter;
+    const float radius = g_model.impostorRadius;
+    const float3 toCamera = g_model.cameraPosition - center;
+    const float cameraDistance = length(toCamera);
+    float3 right, up;
+    ImpostorFrameBasis(toCamera / max(cameraDistance, 1e-4f), right, up);
+    // 透視では球の輪郭が中心の平面上で半径より少し大きく見えるので、その分だけ広げる。
+    const float extent = cameraDistance > radius * 1.01f
+        ? radius * cameraDistance / sqrt(cameraDistance * cameraDistance - radius * radius)
+        : radius * 8;
+    ImpostorInput output;
+    output.position = center + (right * kCorners[vertex].x + up * kCorners[vertex].y) * extent;
+    output.clip = mul(float4(output.position, 1), g_model.viewProjection);
+    return output;
+}
+
+float4 PsImpostor(ImpostorInput input):SV_TARGET {
+    const float3 center = g_model.impostorCenter;
+    const float radius = g_model.impostorRadius;
+    const uint frames = g_model.impostorFrames;
+    const bool fullSphere = g_model.impostorFullSphere != 0;
+    const float3 camera = g_model.cameraPosition;
+    const float3 ray = normalize(input.position - camera);
+    const ImpostorFrames selected = SelectImpostorFrames(normalize(camera - center), frames, fullSphere);
+    Texture2D<float4> colorMap = ResourceDescriptorHeap[g_model.impostorColor];
+    Texture2D<float4> normalMap = ResourceDescriptorHeap[g_model.impostorNormal];
+
+    float2 atlasUv[3];
+    bool inside[3];
+    [unroll] for (uint k = 0; k < 3; ++k) {
+        const float3 direction = ImpostorFrameDirection(selected.frame[k], frames, fullSphere);
+        float3 right, up;
+        ImpostorFrameBasis(direction, right, up);
+        const float denominator = dot(ray, direction);
+        const float t = dot(center - camera, direction) / (abs(denominator) > 1e-4f ? denominator : 1e-4f);
+        const float3 local = camera + ray * t - center;
+        const float2 tile = float2(0.5f + dot(local, right) / (2 * radius), 0.5f - dot(local, up) / (2 * radius));
+        inside[k] = all(tile >= 0) && all(tile <= 1);
+        atlasUv[k] = (float2(selected.frame[k]) + saturate(tile)) / float(frames);
+    }
+    // ミップは最も重いマスの座標の変化で決める（分岐の前に微分を取る）。
+    const float lod = MapLod(g_model.impostorColor, ddx(atlasUv[0]), ddy(atlasUv[0]));
+
+    float3 color = 0;
+    float4 normalDepth = 0;
+    float coverage = 0;
+    [unroll] for (uint k = 0; k < 3; ++k) {
+        if (!inside[k]) continue;
+        const float4 c = colorMap.SampleLevel(g_samplerLinearClamp, atlasUv[k], lod);
+        const float weight = selected.weight[k] * c.a;
+        color += SrgbToLinear(c.rgb) * weight;
+        normalDepth += normalMap.SampleLevel(g_samplerLinearClamp, atlasUv[k], lod) * weight;
+        coverage += weight;
+    }
+    // メッシュのアルファ抜きと同じく、遠くで痩せないようミップ段に応じて持ち上げる。
+    clip(coverage * (1 + max(lod, 0) * kAlphaMipScale) - 0.5f);
+    color /= max(coverage, 1e-4f);
+    normalDepth /= max(coverage, 1e-4f);
+    const float3 normal = DecodeImpostorNormal(normalDepth.xy * 2 - 1);
+    float3 baseColor = color;
+    if (g_model.lodView != 0) baseColor = g_model.baseColorTint;
+    return ShadeModel(input.position, normal, -ray, baseColor, normalDepth.w, 0, 1);
 }

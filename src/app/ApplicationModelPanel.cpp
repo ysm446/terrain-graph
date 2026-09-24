@@ -8,6 +8,7 @@
 #include "app/ApplicationUiHelpers.h"
 #include "core/FileDialog.h"
 #include "core/Log.h"
+#include "io/AssetRelations.h"
 #include "ui/UiStyle.h"
 
 namespace tg {
@@ -163,6 +164,7 @@ void Application::ProcessModelWork() {
                          [&](const auto& a) { return a.id == it->first; })) {
             it->second->Destroy(m_device);
             m_renderedModelThumbnails.erase(it->first);
+            m_impostors.Remove(m_device, it->first);
             it = m_modelPreviews.erase(it);
         } else
             ++it;
@@ -173,6 +175,46 @@ void Application::ProcessModelWork() {
         if (!preview) preview = std::make_unique<renderer::ModelPreview>();
         preview->Prepare(m_device, asset, asset.id == m_selectedModel ? m_modelLod : 0);
     }
+    ProcessImpostorWork();
+}
+void Application::ProcessImpostorWork() {
+    const auto find = [&](uint64_t id) {
+        const auto found = std::find_if(m_models.begin(), m_models.end(), [&](const auto& a) { return a.id == id; });
+        return found == m_models.end() ? nullptr : &*found;
+    };
+    if (auto* asset = find(std::exchange(m_pendingImpostorBake, 0))) {
+        std::filesystem::path colorPath, normalPath;
+        renderer::ImpostorPaths(*asset, colorPath, normalPath);
+        renderer::ModelImpostor result;
+        std::string error;
+        if (m_impostors.Bake(m_device, m_pipelineCache, *asset, m_materialLibrary, m_textureLibrary,
+                             colorPath, normalPath, result, error)) {
+            asset->impostor = result;
+            m_modelShowImpostor = true;
+            m_assetRefresh = true;
+            MarkDocumentChanged(false);
+        } else {
+            TG_LOG_ERROR("インポスターを作れませんでした: %s", error.c_str());
+        }
+    }
+    if (auto* asset = find(std::exchange(m_pendingImpostorDelete, 0)); asset && asset->impostor.baked) {
+        // 画像と .meta はアセットの削除と同じく、ルート内の退避フォルダへ移す（戻せる）。
+        for (const auto& path : {asset->impostor.colorPath, asset->impostor.normalPath}) {
+            std::error_code error;
+            if (!std::filesystem::exists(path, error)) continue;
+            if (!m_workspace.Contains(path) || !io::RetireAsset(m_workspace, io::InspectAssetRelations(m_workspace, path)))
+                TG_LOG_WARN("インポスターの画像を退避できませんでした: %s", ToUtf8Display(path).c_str());
+        }
+        const auto settings = asset->impostor.settings;
+        asset->impostor = {};
+        asset->impostor.settings = settings;
+        m_impostors.Remove(m_device, asset->id);
+        m_modelShowImpostor = false;
+        m_assetRefresh = true;
+        MarkDocumentChanged(false);
+    }
+    // 焼いた画像を GPU へ（読み込み済みなら何もしない）。
+    for (const auto& asset : m_models) m_impostors.Sync(m_device, m_pipelineCache, asset);
 }
 void Application::RenderModelPreviews(ID3D12GraphicsCommandList* commandList) {
     for (const auto& asset : m_models) {
@@ -181,10 +223,12 @@ void Application::RenderModelPreviews(ID3D12GraphicsCommandList* commandList) {
         if (!(m_modelPreviewVisible && asset.id == m_selectedModel) &&
             m_renderedModelThumbnails.contains(asset.id))
             continue;
+        const auto* impostor =
+            asset.id == m_selectedModel && m_modelShowImpostor ? m_impostors.Find(asset.id) : nullptr;
         found->second->Render(m_device, m_pipelineCache, commandList, asset, m_materialLibrary,
                               m_textureLibrary, m_renderer.GetEnvironment(),
                               m_renderer.EnvironmentIntensity(), m_renderer.EffectiveLight(),
-                              m_renderer.Exposure().Exposure(), m_renderer.Tonemap());
+                              m_renderer.Exposure().Exposure(), m_renderer.Tonemap(), nullptr, impostor);
         if (found->second->HasOutput()) m_renderedModelThumbnails.insert(asset.id);
     }
 }
@@ -359,6 +403,7 @@ void Application::DrawModelPreviewWindow() {
         }
         ui::HintText("Model Scatter の「LOD 自動」で使います");
     }
+    if (asset.geometry) DrawImpostorSection(asset);
     if (asset.geometry) {
         ui::SectionHeader("マテリアルスロット");
         if (ui::BeginPropertyTable("modelMaterials")) {
@@ -378,5 +423,84 @@ void Application::DrawModelPreviewWindow() {
     }
     ImGui::EndChild();
     ImGui::End();
+}
+// モデルプレビューのインポスター節。作成・作り直し・削除と、焼いた画像での表示の切り替え。
+void Application::DrawImpostorSection(renderer::ModelAsset& asset) {
+    auto& impostor = asset.impostor;
+    bool changed = false;
+    static constexpr uint32_t kFrames[] = {8, 12, 16};
+    static const char* const kFrameLabels[] = {"8 × 8", "12 × 12", "16 × 16"};
+    static constexpr uint32_t kSizes[] = {128, 256, 512};
+    static const char* const kSizeLabels[] = {"128 px", "256 px", "512 px"};
+    static const char* const kRangeLabels[] = {"半球", "全球"};
+    const auto indexOf = [](const auto& values, uint32_t value) {
+        for (int i = 0; i < static_cast<int>(std::size(values)); ++i)
+            if (values[i] == value) return i;
+        return 1;
+    };
+    ui::SectionHeader("インポスター");
+    if (ui::BeginPropertyTable("modelImpostor", "インポスターで表示")) {
+        int range = impostor.settings.fullSphere ? 1 : 0;
+        if (ui::PropertyCombo("範囲", &range, kRangeLabels, IM_ARRAYSIZE(kRangeLabels), 0,
+                              "半球は上から見る物（地面に置く植生や岩）向けで、同じ方向数なら上からの解像度が倍になる。"
+                              "下からも見る物は全球")) {
+            impostor.settings.fullSphere = range == 1;
+            changed = true;
+        }
+        int frames = indexOf(kFrames, impostor.settings.frames);
+        if (ui::PropertyCombo("方向数", &frames, kFrameLabels, IM_ARRAYSIZE(kFrameLabels), 1,
+                              "撮る方向の数。多いほど向きの変化が滑らかになるが、画像が大きくなる")) {
+            impostor.settings.frames = kFrames[frames];
+            changed = true;
+        }
+        int size = indexOf(kSizes, impostor.settings.frameSize);
+        if (ui::PropertyCombo("解像度", &size, kSizeLabels, IM_ARRAYSIZE(kSizeLabels), 1,
+                              "1 方向の画像の一辺。画面で大きく見える距離で使うなら上げる")) {
+            impostor.settings.frameSize = kSizes[size];
+            changed = true;
+        }
+        if (impostor.baked) {
+            const auto& baked = impostor.bakedSettings;
+            const uint32_t atlas = baked.frames * baked.frameSize;
+            ui::PropertyValue("作成済み", "%s・%u×%u・%u px", baked.fullSphere ? "全球" : "半球",
+                              baked.frames, baked.frames, baked.frameSize);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("作成したときの設定。画像は %u px 四方（色と法線の 2 枚）", atlas);
+            ImGui::BeginDisabled(m_impostors.Find(asset.id) == nullptr);
+            ui::PropertyBool("インポスターで表示", &m_modelShowImpostor, false,
+                             "プレビューを焼いた画像で描き、元のメッシュと見比べる（保存しない）");
+            ImGui::EndDisabled();
+        } else {
+            ui::PropertyValue("作成済み", "なし");
+        }
+        ui::EndPropertyTable();
+    }
+    const uint32_t atlas = impostor.settings.frames * impostor.settings.frameSize;
+    const bool tooLarge = atlas > 8192;
+    if (tooLarge) ui::HintText("画像が大きすぎます。方向数 × 解像度は 8192 px までにしてください");
+    else if (impostor.baked && !(impostor.settings == impostor.bakedSettings))
+        ui::HintText("設定が作成時と違います。作り直すと反映されます");
+    if (impostor.baked && !m_impostors.Find(asset.id))
+        ui::HintText("焼いた画像を読み込めません。作り直してください");
+    ImGui::BeginDisabled(tooLarge);
+    if (ui::Button(impostor.baked ? "作り直す" : "作成", ui::kButtonWidth)) m_pendingImpostorBake = asset.id;
+    ImGui::EndDisabled();
+    if (impostor.baked) {
+        ImGui::SameLine();
+        if (ui::Button("削除", ui::kButtonWidth)) ImGui::OpenPopup("インポスターの削除");
+    }
+    ui::HintText("画像はモデルの横に「名前_Impostor_C.png / _N.png」で保存します");
+    if (ImGui::BeginPopupModal("インポスターの削除", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted(asset.name.c_str());
+        ui::HintText("焼いた画像（色と法線）と .meta を、ルート内の退避フォルダへ移します。");
+        if (ui::Button("削除", ui::kButtonWidth)) {
+            m_pendingImpostorDelete = asset.id;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ui::Button("キャンセル", ui::kButtonWidth) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+    if (changed) MarkDocumentChanged(false);
 }
 }  // namespace tg

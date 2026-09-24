@@ -38,9 +38,12 @@ struct ModelConstants {
     // 可視リストの区画の先頭（インスタンス描画）。SV_InstanceID は StartInstance を含まないので定数で渡す。
     uint32_t visibleOffset;
     uint32_t lodView;  // 真ならベースカラーのマップを使わず、ティントを段の色にする
+    uint32_t impostorColor, impostorNormal;
+    float impostorCenter[3], impostorRadius;
+    uint32_t impostorFrames, impostorFullSphere;
     uint32_t padding[2];
 };
-static_assert(sizeof(ModelConstants) == 1040);
+static_assert(sizeof(ModelConstants) == 1072);
 
 }  // namespace
 void ModelPreview::Destroy(rhi::Device& device) {
@@ -294,7 +297,8 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
                           const compositor::MaterialLibrary& materials,
                           const compositor::TextureLibrary& textures,
                           const Environment& environment, float iblIntensity,
-                          const LightSettings& light, float exposure, TonemapMode tonemap, const ModelInstanceDraw* instances) {
+                          const LightSettings& light, float exposure, TonemapMode tonemap, const ModelInstanceDraw* instances,
+                          const ImpostorTextures* impostor) {
     if (!m_geometry || !m_ready) return 0;
     // パーツのマテリアルごとに PSO を選ぶ。アルファ抜きは早期深度テストが効きにくいので、
     // 使うパーツだけ clip 付きの PS にする。影は不透明なら PS なしの深度だけで描く。
@@ -354,6 +358,32 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
     commandList->SetGraphicsRootSignature(pipelineCache.GlobalRootSignature());
     ID3D12PipelineState* current = nullptr;
     uint32_t drawCalls = 0;
+    // カメラ・ライト・環境。メッシュとインポスターで共通。
+    const auto fillScene = [&](ModelConstants& constants) {
+        const auto position = m_camera.Position();
+        std::memcpy(constants.cameraPosition, &position, sizeof(position));
+        DirectX::XMStoreFloat4x4(
+            &constants.viewProjection,
+            DirectX::XMMatrixTranspose(m_camera.ViewMatrix() * m_camera.ProjectionMatrix()));
+        const DirectX::XMFLOAT3 lightDirection = light.Direction();
+        constants.lightDirection[0] = lightDirection.x;
+        constants.lightDirection[1] = lightDirection.y;
+        constants.lightDirection[2] = lightDirection.z;
+        constants.lightIlluminance = light.illuminance;
+        constants.lightColor[0] = light.color.x;
+        constants.lightColor[1] = light.color.y;
+        constants.lightColor[2] = light.color.z;
+
+        const bool hasEnvironment = environment.IsReady();
+        constants.iblIntensity = hasEnvironment ? iblIntensity : 0.0f;
+        constants.irradianceIndex =
+            hasEnvironment ? environment.IrradianceSrvIndex() : compositor::kInvalidTextureIndex;
+        constants.prefilteredIndex = environment.PrefilteredSrvIndex();
+        constants.brdfLutIndex = environment.BrdfLutSrvIndex();
+        constants.prefilteredMipCount = environment.PrefilteredMipCount();
+        constants.exposure = exposure;
+        constants.tonemapMode = static_cast<uint32_t>(tonemap);
+    };
     // segment / argument はインスタンス描画のときだけ使う。fade は切り替え中の区画。
     const auto drawPart = [&](size_t i, bool fade, size_t segment, size_t argument) {
         const auto slot = m_parts[i].slot;
@@ -389,30 +419,7 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
         constants.brightness = asset.brightness;
         constants.flipNormalGreen = asset.flipNormalGreen ? 1u : 0u;
         constants.alphaCutoff = cutout ? asset.alphaCutoff : 0.0f;
-
-        const auto position = m_camera.Position();
-        std::memcpy(constants.cameraPosition, &position, sizeof(position));
-        DirectX::XMStoreFloat4x4(
-            &constants.viewProjection,
-            DirectX::XMMatrixTranspose(m_camera.ViewMatrix() * m_camera.ProjectionMatrix()));
-        const DirectX::XMFLOAT3 lightDirection = light.Direction();
-        constants.lightDirection[0] = lightDirection.x;
-        constants.lightDirection[1] = lightDirection.y;
-        constants.lightDirection[2] = lightDirection.z;
-        constants.lightIlluminance = light.illuminance;
-        constants.lightColor[0] = light.color.x;
-        constants.lightColor[1] = light.color.y;
-        constants.lightColor[2] = light.color.z;
-
-        const bool hasEnvironment = environment.IsReady();
-        constants.iblIntensity = hasEnvironment ? iblIntensity : 0.0f;
-        constants.irradianceIndex =
-            hasEnvironment ? environment.IrradianceSrvIndex() : compositor::kInvalidTextureIndex;
-        constants.prefilteredIndex = environment.PrefilteredSrvIndex();
-        constants.brdfLutIndex = environment.BrdfLutSrvIndex();
-        constants.prefilteredMipCount = environment.PrefilteredMipCount();
-        constants.exposure = exposure;
-        constants.tonemapMode = static_cast<uint32_t>(tonemap);
+        fillScene(constants);
         if (instances) {
             const auto& draw = *instances;
             constants.points = draw.points; constants.rows = draw.rows;
@@ -459,7 +466,37 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
         else m_meshes[i].Draw(commandList);
         ++drawCalls;
     };
-    if (!instances) {
+    if (!instances && impostor) {
+        // インポスターの確認表示。カメラを向く四角形 1 枚（頂点は SV_VertexID から作る）。
+        rhi::GraphicsPipelineDesc desc;
+        desc.shaderPath = L"ModelPreview.hlsl";
+        desc.vertexEntry = L"VsImpostor";
+        desc.pixelEntry = L"PsImpostor";
+        desc.rtvFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+        desc.dsvFormat = DXGI_FORMAT_D32_FLOAT;
+        desc.cullMode = D3D12_CULL_MODE_NONE;
+        auto* pipeline = pipelineCache.GetGraphics(desc);
+        const auto cb = device.Upload().Allocate(sizeof(ModelConstants), 256);
+        if (pipeline && cb.IsValid()) {
+            ModelConstants constants = {};
+            fillScene(constants);
+            constants.aoValue = 1.0f;
+            constants.impostorColor = impostor->color.SrvIndex();
+            constants.impostorNormal = impostor->normal.SrvIndex();
+            constants.impostorCenter[0] = impostor->center.x;
+            constants.impostorCenter[1] = impostor->center.y;
+            constants.impostorCenter[2] = impostor->center.z;
+            constants.impostorRadius = impostor->radius;
+            constants.impostorFrames = impostor->settings.frames;
+            constants.impostorFullSphere = impostor->settings.fullSphere ? 1u : 0u;
+            std::memcpy(cb.cpu, &constants, sizeof(constants));
+            commandList->SetPipelineState(pipeline);
+            commandList->SetGraphicsRootConstantBufferView(1, cb.gpuAddress);
+            commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            commandList->DrawInstanced(6, 1, 0, 0);
+            ++drawCalls;
+        }
+    } else if (!instances) {
         for (size_t i = 0; i < m_meshes.size(); ++i) drawPart(i, false, 0, 0);
     } else {
         const size_t lods = LodCount();

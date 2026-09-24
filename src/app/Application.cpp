@@ -205,6 +205,7 @@ void Application::Shutdown() {
     m_paintMasks.Destroy(m_device);
     for (auto& [id, preview] : m_modelPreviews) preview->Destroy(m_device);
     m_modelPreviews.clear();
+    m_impostors.Destroy(m_device);
     for (auto& [id,slot] : m_modelPoints) slot->evaluator.Destroy(m_device);
     for (auto& [id, slot] : m_snowPlumeMasks)
         if (slot->mask.evaluator.Resolution() != 0) slot->mask.evaluator.Destroy(m_device);

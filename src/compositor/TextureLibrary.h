@@ -94,6 +94,12 @@ public:
 
     const std::vector<LibraryTexture>& Entries() const { return m_entries; }
 
+    // ミップ 0 から残りのミップを作る。**全ミップが COPY_DEST のテクスチャ**を前提にし、
+    // 終わると全体を読み取り状態にする。ミップごとの SRV / UAV を張って作ること。
+    // GPU 待機を伴うため、フレームの外で呼ぶこと。
+    static bool GenerateMips(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                             rhi::GpuTexture& texture);
+
     // シェーダへ渡すインデックス。id が無効なら kInvalidTextureIndex。
     uint32_t SrvIndex(TextureId id, bool srgb) const;
     const LibraryTexture* Find(TextureId id) const;
@@ -110,8 +116,6 @@ private:
                   const std::filesystem::path& path, LibraryTexture& entry);
     // entry の GPU リソースとディスクリプタをすべて返す。リンク切れなら何もしない。
     void ReleaseResources(rhi::Device& device, LibraryTexture& entry);
-    bool GenerateMips(rhi::Device& device, rhi::PipelineCache& pipelineCache,
-                      rhi::GpuTexture& texture);
     // リニアなテクスチャを sRGB へ直した表示用テクスチャを作る。
     bool BuildPreview(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                       LibraryTexture& entry);

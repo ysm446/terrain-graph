@@ -324,6 +324,12 @@ bool ProjectWorkspace::SaveScene(const fs::path& path, json& document, bool save
         entry["source"] = sourceRef(entry["path"]);
         if (entry["source"].is_null()) return false;
         entry.erase("path");
+        // インポスターの画像も参照へ。見つからなければ参照を落とす（読むときは焼いていない扱い）。
+        if (entry.contains("impostor") && entry["impostor"].is_object() && entry["impostor"].contains("baked"))
+            for (const char* key : {"color", "normal"}) {
+                auto& value = entry["impostor"]["baked"][key];
+                value = sourceRef(value);
+            }
         for (auto& value : entry["materials"]) {
             if (value.is_number_integer()) {
                 const auto found = materials.find(value.get<int>());
@@ -423,6 +429,12 @@ bool ProjectWorkspace::Expand(json& document) {
         const auto source = Resolve(entry["source"]);
         if (source.empty()) return false;
         entry["path"] = ToUtf8Portable(source);
+        if (entry.contains("impostor") && entry["impostor"].is_object() && entry["impostor"].contains("baked"))
+            for (const char* key : {"color", "normal"}) {
+                auto& value = entry["impostor"]["baked"][key];
+                const auto path = value.is_object() ? Resolve(value) : fs::path{};
+                value = path.empty() ? json() : json(ToUtf8Portable(path));
+            }
         if (!entry["materials"].is_array()) return false;
         for (auto& slot : entry["materials"]) slot = materialId(slot);
     }
