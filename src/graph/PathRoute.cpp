@@ -122,13 +122,62 @@ std::vector<PathRouteWaypoint> Simplify(const std::vector<PathRouteWaypoint>& po
     return out;
 }
 
+// 双一次で引き伸ばす（セルの中心どうしを結ぶ。端はクランプ）。
+std::vector<float> Upsample(const float* values, uint32_t resolution, int factor) {
+    const uint32_t size = resolution * static_cast<uint32_t>(factor);
+    std::vector<float> out(static_cast<size_t>(size) * size);
+    const auto at = [&](int x, int y) {
+        x = std::clamp(x, 0, static_cast<int>(resolution) - 1);
+        y = std::clamp(y, 0, static_cast<int>(resolution) - 1);
+        return values[static_cast<size_t>(y) * resolution + static_cast<size_t>(x)];
+    };
+    for (uint32_t y = 0; y < size; ++y) {
+        const float fy = (static_cast<float>(y) + 0.5f) / static_cast<float>(factor) - 0.5f;
+        const int y0 = static_cast<int>(std::floor(fy));
+        const float ty = fy - static_cast<float>(y0);
+        for (uint32_t x = 0; x < size; ++x) {
+            const float fx = (static_cast<float>(x) + 0.5f) / static_cast<float>(factor) - 0.5f;
+            const int x0 = static_cast<int>(std::floor(fx));
+            const float tx = fx - static_cast<float>(x0);
+            const float top = at(x0, y0) * (1.0f - tx) + at(x0 + 1, y0) * tx;
+            const float bottom = at(x0, y0 + 1) * (1.0f - tx) + at(x0 + 1, y0 + 1) * tx;
+            out[static_cast<size_t>(y) * size + x] = top * (1.0f - ty) + bottom * ty;
+        }
+    }
+    return out;
+}
+
 }  // namespace
+
+int TrailRefineFactor(const PathRouteTerrain& terrain) {
+    if (!terrain.IsValid()) return 1;
+    const float cellMeters = terrain.sizeMeters / static_cast<float>(terrain.resolution);
+    return std::clamp(static_cast<int>(std::ceil(cellMeters / 2.0f)), 1, 4);
+}
 
 bool FindPathRoute(const PathRouteTerrain& terrain, const PathRouteQuery& query,
                    std::vector<PathRouteWaypoint>& outWaypoints) {
     outWaypoints.clear();
     if (!terrain.IsValid()) {
         return false;
+    }
+    // 格子を細かくするなら、地形（と避ける所）を引き伸ばして同じ探索に渡す。
+    const int refine = (query.refine > 0) ? query.refine
+                       : (query.mode == PathRoute::Trail) ? TrailRefineFactor(terrain)
+                                                          : 1;
+    if (refine > 1) {
+        const std::vector<float> heights = Upsample(terrain.heights, terrain.resolution, refine);
+        std::vector<float> avoid;
+        PathRouteTerrain fine = terrain;
+        fine.resolution = terrain.resolution * static_cast<uint32_t>(refine);
+        fine.heights = heights.data();
+        if (terrain.avoid != nullptr) {
+            avoid = Upsample(terrain.avoid, terrain.resolution, refine);
+            fine.avoid = avoid.data();
+        }
+        PathRouteQuery fineQuery = query;
+        fineQuery.refine = 1;
+        return FindPathRoute(fine, fineQuery, outWaypoints);
     }
     const int resolution = static_cast<int>(terrain.resolution);
     const auto cellOf = [resolution](float coordinate) {
@@ -170,73 +219,70 @@ bool FindPathRoute(const PathRouteTerrain& terrain, const PathRouteQuery& query,
     cost.mode = query.mode;
     cost.allowedGrade = std::max(query.maxGradePercent, 0.1f) * 0.01f;
 
-    // 登山道の下ごしらえ。周りの平均（積分画像）と勾配は地形全体から引く。
+    // 登山道の下ごしらえ。行き先のセルごとに決まる値（勾配・谷らしさ・避ける所）を、
+    // 探索の箱の中で 1 度だけ求めておく（探索中は向きに依る横断勾配だけを計算する）。
+    // 周りの平均は積分画像で引く（箱の外も読むので、半径ぶん広げた範囲で作る）。
     const bool trail = query.mode == PathRoute::Trail;
-    std::vector<double> integral;
-    int ridgeRadius = 1;
+    std::vector<float> trailGradX, trailGradY, trailTerrainCost;
     if (trail) {
-        const size_t stride = static_cast<size_t>(resolution) + 1;
-        integral.assign(stride * stride, 0.0);
-        for (int y = 0; y < resolution; ++y) {
+        const int radius =
+            std::max(1, static_cast<int>(std::round(kTrailRidgeRadiusMeters / cellMeters)));
+        const int ix0 = std::max(0, minX - radius), iy0 = std::max(0, minY - radius);
+        const int ix1 = std::min(resolution - 1, maxX + radius), iy1 = std::min(resolution - 1, maxY + radius);
+        const int iw = ix1 - ix0 + 1, ih = iy1 - iy0 + 1;
+        const size_t stride = static_cast<size_t>(iw) + 1;
+        std::vector<double> integral(stride * (static_cast<size_t>(ih) + 1), 0.0);
+        for (int y = 0; y < ih; ++y) {
             double row = 0.0;
-            for (int x = 0; x < resolution; ++x) {
-                row += heightAt(x, y);
+            for (int x = 0; x < iw; ++x) {
+                row += heightAt(ix0 + x, iy0 + y);
                 integral[(static_cast<size_t>(y) + 1) * stride + static_cast<size_t>(x) + 1] =
                     integral[static_cast<size_t>(y) * stride + static_cast<size_t>(x) + 1] + row;
             }
         }
-        ridgeRadius = std::max(1, static_cast<int>(std::round(kTrailRidgeRadiusMeters / cellMeters)));
-    }
-    const auto meanAround = [&](int x, int y) {
-        const size_t stride = static_cast<size_t>(resolution) + 1;
-        const int x0 = std::max(0, x - ridgeRadius), x1 = std::min(resolution, x + ridgeRadius + 1);
-        const int y0 = std::max(0, y - ridgeRadius), y1 = std::min(resolution, y + ridgeRadius + 1);
-        const double sum = integral[static_cast<size_t>(y1) * stride + static_cast<size_t>(x1)] -
-                           integral[static_cast<size_t>(y0) * stride + static_cast<size_t>(x1)] -
-                           integral[static_cast<size_t>(y1) * stride + static_cast<size_t>(x0)] +
-                           integral[static_cast<size_t>(y0) * stride + static_cast<size_t>(x0)];
-        return static_cast<float>(sum / static_cast<double>((x1 - x0) * (y1 - y0)));
-    };
-    // 登山道の 1 歩の係数（勾配の超過・横断勾配・谷らしさ・避ける所）。1 以上。
-    const auto trailFactor = [&](int x, int y, int nx, int ny, float length) {
-        const float h0 = heightAt(x, y);
-        const float h1 = heightAt(nx, ny);
-        const float grade = std::abs(h1 - h0) / length;
-        const float excess =
-            std::max(0.0f, grade - cost.allowedGrade) / std::max(cost.allowedGrade, 0.005f);
-        // 行き先の斜面の勾配（中心差分）。進む向きと直交する成分が横断勾配。
-        const int xl = std::max(nx - 1, 0), xr = std::min(nx + 1, resolution - 1);
-        const int yl = std::max(ny - 1, 0), yr = std::min(ny + 1, resolution - 1);
-        const float gx = (heightAt(xr, ny) - heightAt(xl, ny)) / (static_cast<float>(xr - xl) * cellMeters);
-        const float gy = (heightAt(nx, yr) - heightAt(nx, yl)) / (static_cast<float>(yr - yl) * cellMeters);
-        const float dx = static_cast<float>(nx - x), dy = static_cast<float>(ny - y);
-        const float cells = std::sqrt(dx * dx + dy * dy);
-        const float along = (gx * dx + gy * dy) / cells;
-        const float cross = std::sqrt(std::max(0.0f, gx * gx + gy * gy - along * along));
-        const float crossExcess = std::max(0.0f, cross - kTrailCrossFree) / kTrailCrossFree;
-        // 谷らしさ: 周りより低いほど 1、平らで 0.5、稜線で 0。
-        const float relative = (h1 - meanAround(nx, ny)) / kTrailRidgeSensitivityMeters;
-        const float valley = std::clamp(0.5f - 0.5f * relative, 0.0f, 1.0f);
-        const float avoid = (terrain.avoid != nullptr)
-            ? std::clamp(terrain.avoid[static_cast<size_t>(ny) * terrain.resolution + static_cast<size_t>(nx)], 0.0f, 1.0f)
-            : 0.0f;
-        return 1.0f + kTrailExcessWeight * excess * excess +
-               kTrailCrossWeight * crossExcess * crossExcess +
-               std::max(query.ridgeWeight, 0.0f) * valley + std::max(query.avoidWeight, 0.0f) * avoid;
-    };
-    if (cost.mode == PathRoute::Flow) {
-        float lowest = std::numeric_limits<float>::max();
-        float highest = std::numeric_limits<float>::lowest();
+        trailGradX.resize(cellCount);
+        trailGradY.resize(cellCount);
+        trailTerrainCost.resize(cellCount);
         for (int y = minY; y <= maxY; ++y) {
             for (int x = minX; x <= maxX; ++x) {
-                const float h = heightAt(x, y);
-                lowest = std::min(lowest, h);
-                highest = std::max(highest, h);
+                const size_t index = indexOf(x, y);
+                const int xl = std::max(x - 1, 0), xr = std::min(x + 1, resolution - 1);
+                const int yl = std::max(y - 1, 0), yr = std::min(y + 1, resolution - 1);
+                trailGradX[index] = (heightAt(xr, y) - heightAt(xl, y)) / (static_cast<float>(xr - xl) * cellMeters);
+                trailGradY[index] = (heightAt(x, yr) - heightAt(x, yl)) / (static_cast<float>(yr - yl) * cellMeters);
+                // 谷らしさ: 周りより低いほど 1、平らで 0.5、稜線で 0。
+                const int x0 = std::max(ix0, x - radius) - ix0, x1 = std::min(ix1, x + radius) - ix0 + 1;
+                const int y0 = std::max(iy0, y - radius) - iy0, y1 = std::min(iy1, y + radius) - iy0 + 1;
+                const double sum = integral[static_cast<size_t>(y1) * stride + static_cast<size_t>(x1)] -
+                                   integral[static_cast<size_t>(y0) * stride + static_cast<size_t>(x1)] -
+                                   integral[static_cast<size_t>(y1) * stride + static_cast<size_t>(x0)] +
+                                   integral[static_cast<size_t>(y0) * stride + static_cast<size_t>(x0)];
+                const float mean = static_cast<float>(sum / static_cast<double>((x1 - x0) * (y1 - y0)));
+                const float relative = (heightAt(x, y) - mean) / kTrailRidgeSensitivityMeters;
+                const float valley = std::clamp(0.5f - 0.5f * relative, 0.0f, 1.0f);
+                const float avoid = (terrain.avoid != nullptr)
+                    ? std::clamp(terrain.avoid[static_cast<size_t>(y) * terrain.resolution + static_cast<size_t>(x)], 0.0f, 1.0f)
+                    : 0.0f;
+                trailTerrainCost[index] = std::max(query.ridgeWeight, 0.0f) * valley +
+                                          std::max(query.avoidWeight, 0.0f) * avoid;
             }
         }
-        cost.heightMin = lowest;
-        cost.heightRange = highest - lowest;
     }
+    // 登山道の 1 歩の係数（勾配の超過・横断勾配・谷らしさ・避ける所）。1 以上。
+    const auto trailFactor = [&](int x, int y, int nx, int ny, float length) {
+        const float grade = std::abs(heightAt(nx, ny) - heightAt(x, y)) / length;
+        const float excess =
+            std::max(0.0f, grade - cost.allowedGrade) / std::max(cost.allowedGrade, 0.005f);
+        // 行き先の斜面の勾配のうち、進む向きと直交する成分が横断勾配。
+        const size_t next = indexOf(nx, ny);
+        const float gx = trailGradX[next], gy = trailGradY[next];
+        const float dx = static_cast<float>(nx - x), dy = static_cast<float>(ny - y);
+        const float along = (gx * dx + gy * dy) / std::sqrt(dx * dx + dy * dy);
+        const float cross = std::sqrt(std::max(0.0f, gx * gx + gy * gy - along * along));
+        const float crossExcess = std::max(0.0f, cross - kTrailCrossFree) / kTrailCrossFree;
+        return 1.0f + kTrailExcessWeight * excess * excess +
+               kTrailCrossWeight * crossExcess * crossExcess + trailTerrainCost[next];
+    };
 
     // A*。ヒューリスティックは直線距離（コストは常に長さ以上なので許容的）。
     constexpr float kInfinity = std::numeric_limits<float>::max();
@@ -371,10 +417,19 @@ bool RoutePathEdge(PathSettings& path, PathElementId edgeId, const PathRouteTerr
     query.ridgeWeight = edge->ridgeWeight;
     query.avoidWeight = edge->avoidWeight;
     // 間引きの許容差は幅の 1/4（最低でもセル 1.5 個）。マスクは幅でぼけるので細かすぎても無駄。
-    const float widthMeters = std::min(a->widthMeters, b->widthMeters);
-    query.simplifyToleranceUv =
-        std::max(1.5f / static_cast<float>(terrain.resolution),
-                 0.25f * widthMeters / std::max(terrain.sizeMeters, 1e-3f));
+    // 幅はエッジで上書きしていればそちら（登山道は点の既定の幅より細い）。
+    const float widthMeters = edge->overrideValues ? edge->widthMeters
+                                                   : std::min(a->widthMeters, b->widthMeters);
+    if (edge->route == PathRoute::Trail) {
+        // 登山道は細かい格子の 1 セルまで残す（つづら折りの脚を間引きで潰さない）。
+        const float cellUv = 1.0f / static_cast<float>(terrain.resolution * TrailRefineFactor(terrain));
+        query.simplifyToleranceUv =
+            std::max(cellUv, 0.25f * widthMeters / std::max(terrain.sizeMeters, 1e-3f));
+    } else {
+        query.simplifyToleranceUv =
+            std::max(1.5f / static_cast<float>(terrain.resolution),
+                     0.25f * widthMeters / std::max(terrain.sizeMeters, 1e-3f));
+    }
     std::vector<PathRouteWaypoint> waypoints;
     if (!FindPathRoute(terrain, query, waypoints)) {
         return false;

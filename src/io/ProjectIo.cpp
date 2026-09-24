@@ -747,6 +747,10 @@ json WritePath(const graph::PathSettings& path) {
             item["feather"] = edge.featherMeters;
             item["intensity"] = edge.intensity;
         }
+        if (edge.meanderMeters > 0.0f) {
+            item["meander"] = edge.meanderMeters;
+            item["meanderWavelength"] = edge.meanderWavelengthMeters;
+        }
         // 経路探索。内部点は導出したものだが保存する（地形を評価しないと作れないため）。
         if (edge.route != graph::PathRoute::None) {
             static const char* const kPathRouteNames[] = {"none", "road", "flow", "trail"};
@@ -830,6 +834,9 @@ graph::PathSettings ReadPath(const json& parent, const char* key) {
                 edge.featherMeters = ReadFloat(item, "feather", path.defaultFeatherMeters);
                 edge.intensity = ReadFloat(item, "intensity", path.defaultIntensity);
             }
+            edge.meanderMeters = std::clamp(ReadFloat(item, "meander", 0.0f), 0.0f, 100.0f);
+            edge.meanderWavelengthMeters =
+                std::clamp(ReadFloat(item, "meanderWavelength", 20.0f), 1.0f, 1000.0f);
             static const char* const kPathRouteNames[] = {"none", "road", "flow", "trail"};
             edge.route = static_cast<graph::PathRoute>(EnumValue(
                 kPathRouteNames, item, "route", static_cast<uint32_t>(graph::PathRoute::None)));

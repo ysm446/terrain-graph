@@ -48,7 +48,14 @@ struct PathRouteQuery {
     float avoidWeight = 4.0f;       // 登山道のときだけ使う
     // 結果の折れ線を間引く許容差（UV）。0 ならセル 1.5 個ぶん。
     float simplifyToleranceUv = 0.0f;
+    // 探索の格子を地形より細かくする倍率（地形は双一次で引き伸ばす）。0 なら自動
+    // （登山道だけ、1 セルが 2 m 前後になるまで。最大 4 倍）。1 で地形の格子のまま。
+    // 登山道のつづら折りは脚が 10〜30 m と短く、地形の格子（数 m）では表せないため。
+    int refine = 0;
 };
+
+// 登山道の探索の格子を細かくする自動の倍率（1〜4）。
+int TrailRefineFactor(const PathRouteTerrain& terrain);
 
 // 経路を探す。成功したら内部点（両端を除く）を outWaypoints に入れて真を返す。
 // 両端が同じセルなら内部点は空（真）。

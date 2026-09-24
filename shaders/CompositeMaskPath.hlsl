@@ -38,39 +38,83 @@ float FinishPathValue(float value)
     return saturate(value);
 }
 
+// 線分の間引き。8×8 テクセルのまとまりごとに、線分を 64 本ずつ読んで「幅 + フェザーの
+// 範囲がまとまりに届く」ものだけを共有メモリの一覧へ集め、テクセルはその一覧とだけ比べる。
+// 線分が数千本（細かく探した登山道や蛇行）になっても、遠くの線分はまとめて素通りできる。
+// 結果は全部と比べたときと同じ（届かない線分は値 0 なので max に効かない）。
+#define TG_PATH_CULL_BATCH 64u
+groupshared uint g_pathCullCount;
+groupshared uint g_pathCullIndices[TG_PATH_CULL_BATCH];
+
 [numthreads(8, 8, 1)]
-void CsPath(uint3 dispatchThreadId : SV_DispatchThreadID)
+void CsPath(uint3 dispatchThreadId : SV_DispatchThreadID, uint3 groupId : SV_GroupID,
+            uint groupIndex : SV_GroupIndex)
 {
     const uint2 texel = dispatchThreadId.xy;
     const uint resolution = g_path.indices.y;
-    if (texel.x >= resolution || texel.y >= resolution) { return; }
+    // 共有メモリの同期をまたぐので、範囲外のテクセルも最後まで一緒に回す（書き込みだけ省く）。
+    const bool inside = texel.x < resolution && texel.y < resolution;
 
     RWTexture2D<float> output = ResourceDescriptorHeap[g_path.indices.x];
     ByteAddressBuffer segments = ResourceDescriptorHeap[g_path.indices.w];
 
     const float sizeMeters = max(g_path.params.x, 1e-3f);
+    const float texelMeters = sizeMeters / float(resolution);
     const float2 position = ((float2(texel) + 0.5f) / float(resolution)) * sizeMeters;
+    const float2 groupMin = float2(groupId.xy * 8u) * texelMeters;
+    const float2 groupMax = groupMin + 8.0f * texelMeters;
 
     float value = 0.0f;
     const uint count = g_path.indices.z;
     [loop]
-    for (uint i = 0; i < count; ++i)
+    for (uint start = 0; start < count; start += TG_PATH_CULL_BATCH)
     {
-        const PathSegmentData segment = LoadSegment(segments, i, sizeMeters);
-        const float2 ab = segment.b - segment.a;
-        const float lengthSq = dot(ab, ab);
-        // 長さ 0（孤立した点）は円。t = 0 で a との距離になる。
-        const float t = (lengthSq > 1e-8f) ? saturate(dot(position - segment.a, ab) / lengthSq)
-                                           : 0.0f;
-        const float distance = length(position - (segment.a + ab * t));
+        if (groupIndex == 0u)
+        {
+            g_pathCullCount = 0u;
+        }
+        GroupMemoryBarrierWithGroupSync();
+        const uint candidate = start + groupIndex;
+        if (candidate < count)
+        {
+            const PathSegmentData segment = LoadSegment(segments, candidate, sizeMeters);
+            const float reach = max(segment.widthA, segment.widthB) * 0.5f +
+                                max(segment.featherA, segment.featherB);
+            const float2 low = min(segment.a, segment.b) - reach;
+            const float2 high = max(segment.a, segment.b) + reach;
+            if (all(low <= groupMax) && all(high >= groupMin))
+            {
+                uint slot;
+                InterlockedAdd(g_pathCullCount, 1u, slot);
+                g_pathCullIndices[slot] = candidate;
+            }
+        }
+        GroupMemoryBarrierWithGroupSync();
+        const uint survivors = g_pathCullCount;
+        [loop]
+        for (uint k = 0; k < survivors; ++k)
+        {
+            const PathSegmentData segment = LoadSegment(segments, g_pathCullIndices[k], sizeMeters);
+            const float2 ab = segment.b - segment.a;
+            const float lengthSq = dot(ab, ab);
+            // 長さ 0（孤立した点）は円。t = 0 で a との距離になる。
+            const float t = (lengthSq > 1e-8f) ? saturate(dot(position - segment.a, ab) / lengthSq)
+                                               : 0.0f;
+            const float distance = length(position - (segment.a + ab * t));
 
-        const float width = lerp(segment.widthA, segment.widthB, t);
-        const float feather = lerp(segment.featherA, segment.featherB, t);
-        const float intensity = lerp(segment.intensityA, segment.intensityB, t);
-        value = max(value, PathDistanceValue(distance, width, feather) * saturate(intensity));
+            const float width = lerp(segment.widthA, segment.widthB, t);
+            const float feather = lerp(segment.featherA, segment.featherB, t);
+            const float intensity = lerp(segment.intensityA, segment.intensityB, t);
+            value = max(value, PathDistanceValue(distance, width, feather) * saturate(intensity));
+        }
+        // 次のまとまりの一覧を書く前に、全員が読み終わるのを待つ。
+        GroupMemoryBarrierWithGroupSync();
     }
 
-    output[texel] = FinishPathValue(value);
+    if (inside)
+    {
+        output[texel] = FinishPathValue(value);
+    }
 }
 
 // 面。閉じた鎖の多角形の内側を 1 にする。

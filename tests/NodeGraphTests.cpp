@@ -214,6 +214,61 @@ void RunNodeGraphTests() {
     }
 
     {
+        Section("登山道は急斜面でつづら折りになり、蛇行で小刻みに振れる");
+        // 60% の一様な斜面（y が増えるほど低い）。許容 15% では直登できない。
+        constexpr int kSize = 128;
+        std::vector<float> slope(kSize * kSize);
+        for (int y = 0; y < kSize; ++y)
+            for (int x = 0; x < kSize; ++x)
+                slope[static_cast<size_t>(y) * kSize + x] = static_cast<float>(kSize - y) * 8.0f * 0.6f / 1000.0f;
+        tg::graph::PathRouteTerrain terrain;
+        terrain.resolution = kSize;
+        terrain.heights = slope.data();
+        terrain.sizeMeters = 1024.0f;
+        terrain.heightMeters = 1000.0f;
+        tg::graph::PathRouteQuery query;
+        query.fromU = 64.5f / kSize; query.fromV = 100.5f / kSize;
+        query.toU = 64.5f / kSize;   query.toV = 70.5f / kSize;
+        query.mode = tg::graph::PathRoute::Trail;
+        query.maxGradePercent = 15.0f;
+        std::vector<tg::graph::PathRouteWaypoint> waypoints;
+        const bool found = tg::graph::FindPathRoute(terrain, query, waypoints);
+        // 横（u）の進む向きが何回入れ替わったか（折り返しの数）。
+        int turns = 0;
+        float previous = 0.0f;
+        std::vector<tg::graph::PathRouteWaypoint> line{{query.fromU, query.fromV}};
+        line.insert(line.end(), waypoints.begin(), waypoints.end());
+        line.push_back({query.toU, query.toV});
+        for (size_t i = 1; i < line.size(); ++i) {
+            const float du = line[i].u - line[i - 1].u;
+            if (std::abs(du) < 1e-5f) continue;
+            if (previous != 0.0f && (du > 0.0f) != (previous > 0.0f)) ++turns;
+            previous = du;
+        }
+        Check(found && turns >= 2, "急斜面では左右に折り返しながら登る");
+
+        // 2 点の直線に蛇行を掛ける。
+        tg::graph::PathSettings path;
+        const auto a = tg::graph::AddPathPoint(path, 0.2f, 0.5f, 0);
+        tg::graph::AddPathPoint(path, 0.8f, 0.5f, a);
+        const auto strands = tg::graph::BuildPathStrands(path);
+        const auto lateral = [&](float amplitude) {
+            path.edges.front().meanderMeters = amplitude;
+            path.edges.front().meanderWavelengthMeters = 20.0f;
+            const auto samples = tg::graph::SamplePathStrand(path, strands.front(), 12, 1000.0f);
+            float most = 0.0f;
+            for (const auto& sample : samples) most = std::max(most, std::abs(sample.v - 0.5f) * 1000.0f);
+            const bool endsFixed = !samples.empty() && std::abs(samples.front().v - 0.5f) < 1e-6f &&
+                                   std::abs(samples.back().v - 0.5f) < 1e-6f;
+            return endsFixed ? most : -1.0f;
+        };
+        const float none = lateral(0.0f);
+        const float wiggle = lateral(3.0f);
+        Check(none >= 0.0f && none < 1e-3f, "蛇行 0 なら直線のまま");
+        Check(wiggle > 1.0f && wiggle < 3.5f, "蛇行を掛けると振れ幅の範囲で横へ振れ、両端は動かない");
+    }
+
+    {
         Section("Cloud Animation の接続と循環");
         NodeGraph graph;
         const auto shape=graph.CreateNode(NodeKind::CloudShapeGenerate);

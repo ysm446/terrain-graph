@@ -129,7 +129,7 @@ struct PathScreenCache {
 template <typename WorldFn>
 PathScreenCache BuildPathScreenCache(const graph::PathSettings& path, const XMMATRIX& viewProjection,
                                      const ImVec2& viewportMin, const ImVec2& size,
-                                     const WorldFn& worldOf) {
+                                     const WorldFn& worldOf, float sizeMeters) {
     PathScreenCache cache;
     cache.points.reserve(path.points.size());
     for (const graph::PathPoint& point : path.points) {
@@ -208,15 +208,21 @@ PathScreenCache BuildPathScreenCache(const graph::PathSettings& path, const XMMA
         }
         cache.edges.push_back(std::move(screenEdge));
     }
-    // 曲線の鎖。制御点の区間ごとに割り、各標本を地形の高さで描く。
+    // 曲線（か蛇行）の鎖。制御点の区間ごとに割り、各標本を地形の高さで描く。
+    // 直線で蛇行も無ければ、エッジの折れ線をそのまま描くので要らない。
     cache.curves.resize(cache.strands.size());
     for (size_t i = 0; i < cache.strands.size(); ++i) {
-        if (graph::StrandCurve(path, cache.strands[i], nullptr, nullptr) == graph::PathCurve::Line) {
+        const graph::PathEdge* first = cache.strands[i].edges.empty()
+                                           ? nullptr
+                                           : path.FindEdge(cache.strands[i].edges.front());
+        const bool meander = first != nullptr && first->meanderMeters > 0.0f;
+        if (!meander &&
+            graph::StrandCurve(path, cache.strands[i], nullptr, nullptr) == graph::PathCurve::Line) {
             continue;
         }
         constexpr int kSamplesPerSpan = 12;
         for (const graph::PathCurveSample& sample :
-             graph::SamplePathStrand(path, cache.strands[i], kSamplesPerSpan)) {
+             graph::SamplePathStrand(path, cache.strands[i], kSamplesPerSpan, sizeMeters)) {
             const ProjectedPoint projected = ProjectToViewport(
                 viewProjection, worldOf(sample.u, sample.v, sample.heightOffsetMeters),
                 viewportMin, size);
@@ -519,7 +525,7 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
         return PathWorldPosition(u, v, offset);
     };
     const PathScreenCache cache =
-        BuildPathScreenCache(path, viewProjection, viewportMin, size, worldOf);
+        BuildPathScreenCache(path, viewProjection, viewportMin, size, worldOf, m_renderer.PlaneSize());
 
     const ImVec2 mouse = io.MousePos;
     const bool mouseInside = itemHovered;
@@ -1003,7 +1009,7 @@ void Application::DrawPathOverlay(const graph::Node& node, const ImVec2& viewpor
         return PathWorldPosition(u, v, offset);
     };
     const PathScreenCache cache =
-        BuildPathScreenCache(path, viewProjection, viewportMin, size, worldOf);
+        BuildPathScreenCache(path, viewProjection, viewportMin, size, worldOf, m_renderer.PlaneSize());
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     drawList->PushClipRect(viewportMin, viewportMax, true);
@@ -1407,6 +1413,8 @@ bool Application::DrawPathSettings(graph::Node& node) {
             graph::PathRoute route = edges.front()->route;
             float maxGrade = edges.front()->maxGradePercent;
             float ridgeWeight = edges.front()->ridgeWeight;
+            float meander = edges.front()->meanderMeters;
+            float meanderWavelength = edges.front()->meanderWavelengthMeters;
             float avoidWeight = edges.front()->avoidWeight;
             bool overrideValues = edges.front()->overrideValues;
             float edgeWidth = edges.front()->widthMeters;
@@ -1418,6 +1426,8 @@ bool Application::DrawPathSettings(graph::Node& node) {
                     std::abs(edge->clothoidRatio - clothoidRatio) > 1e-4f ||
                     edge->route != route || std::abs(edge->maxGradePercent - maxGrade) > 1e-4f ||
                     std::abs(edge->ridgeWeight - ridgeWeight) > 1e-4f ||
+                    std::abs(edge->meanderMeters - meander) > 1e-4f ||
+                    std::abs(edge->meanderWavelengthMeters - meanderWavelength) > 1e-4f ||
                     std::abs(edge->avoidWeight - avoidWeight) > 1e-4f ||
                     edge->overrideValues != overrideValues ||
                     std::abs(edge->widthMeters - edgeWidth) > 1e-4f ||
@@ -1481,6 +1491,25 @@ bool Application::DrawPathSettings(graph::Node& node) {
                         edge->widthMeters = edgeWidth;
                         edge->featherMeters = edgeFeather;
                         edge->intensity = edgeIntensity;
+                    }
+                    changed = true;
+                }
+                // 蛇行。引いた線を進む向きと直角に小刻みに振る（経路探索とは別に掛かる）。
+                bool meanderChanged = ui::PropertyFloat(
+                    "蛇行", &meander, 0.0f, 20.0f, 0.0f,
+                    "線を進む向きと直角に、なめらかなノイズで振る幅（m）。登山道が岩や藪を"
+                    "避けて小刻みに振れる感じ。0 で振らない。鎖の両端では 0 へ絞る",
+                    "%.1f m");
+                if (meander > 0.0f) {
+                    meanderChanged |= ui::PropertyFloat(
+                        "蛇行の波長", &meanderWavelength, 2.0f, 200.0f, 20.0f,
+                        "1 回振れる長さ（m）。短いほど細かく振れる", "%.1f m",
+                        ImGuiSliderFlags_Logarithmic);
+                }
+                if (meanderChanged) {
+                    for (graph::PathEdge* edge : edges) {
+                        edge->meanderMeters = meander;
+                        edge->meanderWavelengthMeters = meanderWavelength;
                     }
                     changed = true;
                 }

@@ -1002,10 +1002,98 @@ void SampleClothoid(const std::vector<const PathPoint*>& points, float rounding,
     out.push_back(SampleAt(points, static_cast<float>(n - 1), end.u, end.v));
 }
 
+// 鎖の曲線の標本（蛇行を掛ける前）。定義は SamplePathStrand の後ろ。
+std::vector<PathCurveSample> SamplePathStrandCurveImpl(const PathSettings& path,
+                                                       const PathStrand& strand, int samplesPerSpan);
+
+// なめらかな 1 次元のノイズ（-1〜1）。整数ごとの乱数の値を smoothstep で繋ぐ。
+float MeanderHash(int32_t cell, uint32_t seed) {
+    uint32_t h = static_cast<uint32_t>(cell) * 0x9E3779B1u ^ seed * 0x85EBCA77u;
+    h ^= h >> 15; h *= 0x2C1B3C6Du; h ^= h >> 12; h *= 0x297A2D39u; h ^= h >> 15;
+    return static_cast<float>(h & 0xFFFFFFu) / static_cast<float>(0xFFFFFFu) * 2.0f - 1.0f;
+}
+float MeanderNoise(float x, uint32_t seed) {
+    const float cell = std::floor(x);
+    const float t = x - cell;
+    const float s = t * t * (3.0f - 2.0f * t);
+    const auto i = static_cast<int32_t>(cell);
+    return MeanderHash(i, seed) * (1.0f - s) + MeanderHash(i + 1, seed) * s;
+}
+
+// 鎖の蛇行。標本を弧長で細かく打ち直し、進む向きと直角にノイズでずらす。
+// 両端は波長の半分で 0 へ絞る（つなぎ目をずらさない）。
+std::vector<PathCurveSample> ApplyMeander(const std::vector<PathCurveSample>& samples,
+                                          float amplitudeMeters, float wavelengthMeters,
+                                          float sizeMeters, uint32_t seed) {
+    if (samples.size() < 2 || amplitudeMeters <= 0.0f || sizeMeters <= 0.0f) return samples;
+    const float wavelength = std::max(wavelengthMeters, 1.0f);
+    // 弧長（m）。
+    std::vector<float> lengths(samples.size(), 0.0f);
+    for (size_t i = 1; i < samples.size(); ++i) {
+        const float du = (samples[i].u - samples[i - 1].u) * sizeMeters;
+        const float dv = (samples[i].v - samples[i - 1].v) * sizeMeters;
+        lengths[i] = lengths[i - 1] + std::sqrt(du * du + dv * dv);
+    }
+    const float total = lengths.back();
+    if (total <= 1e-3f) return samples;
+    // 1 波長を 8 分割する細かさで打ち直す（間の値は線形に補間）。
+    const float step = std::clamp(wavelength / 8.0f, 0.5f, 4.0f);
+    const int count = std::max(2, static_cast<int>(std::ceil(total / step)) + 1);
+    std::vector<PathCurveSample> dense;
+    dense.reserve(static_cast<size_t>(count));
+    size_t segment = 1;
+    for (int k = 0; k < count; ++k) {
+        const float s = total * static_cast<float>(k) / static_cast<float>(count - 1);
+        while (segment + 1 < samples.size() && lengths[segment] < s) ++segment;
+        const float span = std::max(lengths[segment] - lengths[segment - 1], 1e-6f);
+        const float t = std::clamp((s - lengths[segment - 1]) / span, 0.0f, 1.0f);
+        const PathCurveSample& a = samples[segment - 1];
+        const PathCurveSample& b = samples[segment];
+        PathCurveSample p;
+        p.u = a.u + (b.u - a.u) * t;
+        p.v = a.v + (b.v - a.v) * t;
+        p.widthMeters = a.widthMeters + (b.widthMeters - a.widthMeters) * t;
+        p.featherMeters = a.featherMeters + (b.featherMeters - a.featherMeters) * t;
+        p.intensity = a.intensity + (b.intensity - a.intensity) * t;
+        p.heightOffsetMeters = a.heightOffsetMeters + (b.heightOffsetMeters - a.heightOffsetMeters) * t;
+        dense.push_back(p);
+    }
+    std::vector<PathCurveSample> out = dense;
+    const float taper = wavelength * 0.5f;
+    for (int k = 0; k < count; ++k) {
+        const float s = total * static_cast<float>(k) / static_cast<float>(count - 1);
+        const auto smooth = [](float x) { x = std::clamp(x, 0.0f, 1.0f); return x * x * (3.0f - 2.0f * x); };
+        const float fade = smooth(s / taper) * smooth((total - s) / taper);
+        // 2 オクターブ（大きな振れに、半分の波長の小さな振れを重ねる）。
+        const float n = 0.7f * MeanderNoise(s / wavelength, seed) +
+                        0.3f * MeanderNoise(s / wavelength * 2.1f + 17.0f, seed ^ 0x5bd1e995u);
+        const float offset = amplitudeMeters * n * fade / sizeMeters;  // UV
+        const PathCurveSample& previous = dense[static_cast<size_t>(std::max(k - 1, 0))];
+        const PathCurveSample& next = dense[static_cast<size_t>(std::min(k + 1, count - 1))];
+        float tu = next.u - previous.u, tv = next.v - previous.v;
+        const float length = std::sqrt(tu * tu + tv * tv);
+        if (length <= 1e-9f) continue;
+        tu /= length; tv /= length;
+        out[static_cast<size_t>(k)].u += -tv * offset;
+        out[static_cast<size_t>(k)].v += tu * offset;
+    }
+    return out;
+}
+
 }  // namespace
 
 std::vector<PathCurveSample> SamplePathStrand(const PathSettings& path, const PathStrand& strand,
-                                              int samplesPerSpan) {
+                                              int samplesPerSpan, float sizeMeters) {
+    std::vector<PathCurveSample> out = SamplePathStrandCurveImpl(path, strand, samplesPerSpan);
+    const PathEdge* first = strand.edges.empty() ? nullptr : path.FindEdge(strand.edges.front());
+    if (first == nullptr || first->meanderMeters <= 0.0f || sizeMeters <= 0.0f) return out;
+    return ApplyMeander(out, first->meanderMeters, first->meanderWavelengthMeters, sizeMeters,
+                        static_cast<uint32_t>(first->id) * 2654435761u);
+}
+
+namespace {
+std::vector<PathCurveSample> SamplePathStrandCurveImpl(const PathSettings& path,
+                                                       const PathStrand& strand, int samplesPerSpan) {
     std::vector<PathCurveSample> out;
     // 制御点は「ユーザーの点 + 経路の内部点」。エッジごとに from → to の並びで取り、
     // 鎖の進む向きに合わせて繋ぐ（隣り合うエッジは点を共有するので 1 つ飛ばす）。
@@ -1062,14 +1150,16 @@ std::vector<PathCurveSample> SamplePathStrand(const PathSettings& path, const Pa
     }
     return out;
 }
+}  // namespace
 
-std::vector<compositor::PathSegment> BuildPathSegments(const PathSettings& path) {
+std::vector<compositor::PathSegment> BuildPathSegments(const PathSettings& path, float sizeMeters) {
     std::vector<compositor::PathSegment> segments;
     segments.reserve(path.edges.size() + path.points.size());
     // 評価用の分割。マスクは幅の内側が 1 になるので、粗くても縁は幅でぼける。
     constexpr int kSamplesPerSpan = 12;
     for (const PathStrand& strand : BuildPathStrands(path)) {
-        const std::vector<PathCurveSample> samples = SamplePathStrand(path, strand, kSamplesPerSpan);
+        const std::vector<PathCurveSample> samples =
+            SamplePathStrand(path, strand, kSamplesPerSpan, sizeMeters);
         // 弧長は鎖ごとに始点から積む（正規化 UV 単位）。Surface のパス UV が進行方向の座標に使う。
         float along = 0.0f;
         for (size_t i = 0; i + 1 < samples.size(); ++i) {

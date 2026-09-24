@@ -1462,7 +1462,10 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
             }
             op.kind = compositor::MaskOpKind::Path;
             op.pathMask = settings->pathMask;
-            op.pathSegments = BuildPathSegments(pathSettings->path);
+            // 蛇行は m で持つので、パスの Base のチェーンの実寸で UV へ直す。
+            const TerrainScale* pathScale = FindChainScale(pathNode->id);
+            op.pathSegments = BuildPathSegments(
+                pathSettings->path, pathScale ? pathScale->sizeMeters : TerrainScale{}.sizeMeters);
             if (op.pathSegments.empty()) {
                 return -1;
             }
@@ -1731,7 +1734,11 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace,
         layer.pathUvSegments.clear();
         const Node* pathNode = UpstreamOf(*layerNodes[i], ValueType::Path);
         const auto* path = pathNode ? std::get_if<PathNodeSettings>(&pathNode->settings) : nullptr;
-        if (path) layer.pathUvSegments = BuildPathSegments(path->path);
+        if (path) {
+            const TerrainScale* pathScale = FindChainScale(pathNode->id);
+            layer.pathUvSegments = BuildPathSegments(
+                path->path, pathScale ? pathScale->sizeMeters : TerrainScale{}.sizeMeters);
+        }
     }
 
     // Result 経由とマスクだけの分岐の両方で、接続中の Path から標本を作る。

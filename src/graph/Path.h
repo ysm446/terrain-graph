@@ -86,6 +86,13 @@ struct PathEdge {
     float featherMeters = 12.0f;
     float intensity = 1.0f;
 
+    // --- 蛇行 ---
+    // 引いた線を、進む向きと直角になめらかなノイズでずらす（登山道が岩や藪を避けて
+    // 小刻みに振れる感じ）。鎖ごとに決める（鎖の先頭のエッジの値を使う）。
+    // 鎖の両端では 0 へ絞るので、ほかの鎖や点とのつなぎ目はずれない。
+    float meanderMeters = 0.0f;             // 振れ幅（m）。0 で蛇行しない
+    float meanderWavelengthMeters = 20.0f;  // 1 回振れる長さ（m）
+
     // --- 経路探索 ---
     PathRoute route = PathRoute::None;
     float maxGradePercent = 10.0f;  // 道路 / 登山道の許容勾配（%）
@@ -223,14 +230,17 @@ PathCurve StrandCurve(const PathSettings& path, const PathStrand& strand, float*
 float StrandClothoidRatio(const PathSettings& path, const PathStrand& strand);
 // 鎖を折れ線（曲線なら細かく割ったもの）にする。samplesPerSpan は制御点の区間ごとの標本数。
 // 制御点は「ユーザーの点 + 経路の内部点」。直線の鎖は制御点そのものを返す。
+// sizeMeters（地形の一辺、m）を渡すと、鎖の蛇行を掛ける（0 なら掛けない）。
 std::vector<PathCurveSample> SamplePathStrand(const PathSettings& path, const PathStrand& strand,
-                                              int samplesPerSpan);
+                                              int samplesPerSpan, float sizeMeters = 0.0f);
 // 鎖のエッジを全部反転する。
 bool ReversePathStrand(PathSettings& path, const PathStrand& strand);
 
 // 評価用の線分列。座標は正規化 UV のまま（実寸への換算は評価器が一辺の長さで行う）。
 // 曲線の鎖は細かい直線に割って出す。エッジの無い孤立した点は、長さ 0 の線分（円）として出す。
-std::vector<compositor::PathSegment> BuildPathSegments(const PathSettings& path);
+// sizeMeters（地形の一辺、m）を渡すと、鎖の蛇行を掛ける（0 なら掛けない）。
+std::vector<compositor::PathSegment> BuildPathSegments(const PathSettings& path,
+                                                       float sizeMeters = 0.0f);
 // 独立した開いた鎖を向きに沿って等間隔化。1 本 256 点、合計 2048 点まで。
 std::vector<compositor::MaterialLayer::MeanderPoint> BuildMeanderPoints(
     const PathSettings& path, float sizeMeters, float spacingMeters);
