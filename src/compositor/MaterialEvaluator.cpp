@@ -108,6 +108,7 @@ struct ScatterConstants {
     float params2[4];      // 届く範囲（散布セル）, シード, テクセル（m）, 標高差（m）
     float params3[4];      // なめらかさ, 未使用 x3
     uint32_t points[4];   // Points UAV, 行数, セル一辺の数, 先頭セル
+    uint32_t attributes[4];  // 点の属性の UAV, 色むらのマスク SRV, 未使用 x2
 };
 
 struct SedimentConstants {
@@ -1009,6 +1010,7 @@ void MaterialEvaluator::Destroy(rhi::Device& device) {
         device.DeferRelease(set.candidates);
         device.DeferRelease(set.points);
         device.DeferRelease(set.grid);
+        device.DeferRelease(set.attributes);
         device.DeferRelease(set.countReadback);
     }
     m_placementPoints.clear();
@@ -4623,6 +4625,8 @@ bool MaterialEvaluator::ApplyCrumbling(rhi::Device& device, rhi::PipelineCache& 
         points->count = amount > 0 ? static_cast<uint32_t>(attempts) : 0;
         points->activeCount = 0;
         points->countReady = points->count == 0;
+        // 崩落の点は属性を持たない（描画は中立の色むらで読む）。
+        if (points->attributes.IsValid()) device.DeferRelease(points->attributes);
         if (points->count > 0) {
             if (!EnsurePointCandidates(device, *points, points->count, L"CrumblingCandidates")) return false;
             TransitionIfNeeded(commandList, points->candidates, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -4734,7 +4738,7 @@ bool MaterialEvaluator::ApplyCrumblingMask(rhi::Device& device,
 bool MaterialEvaluator::ApplyScatter(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                                      ID3D12GraphicsCommandList* commandList,
                                      const MaterialLayer& layer, const MaterialStack& stack,
-                                     uint32_t placementIndex) {
+                                     uint32_t placementIndex, uint32_t variationIndex) {
     if (!EnsureScatterResources(device, m_resolution)) {
         return false;
     }
@@ -4815,21 +4819,38 @@ bool MaterialEvaluator::ApplyScatter(rhi::Device& device, rhi::PipelineCache& pi
             auto* pointsPass = pipeline(L"CsPoints");
             if (!pointsPass) return false;
             if (!EnsurePointCandidates(device, points, count, L"ScatterPoints")) return false;
+            // 点の属性（色むら）。候補と同じ番号で引くので、行数も候補に揃える。
+            const uint32_t rows = points.candidates.height / 2;
+            if (!points.attributes.IsValid() || points.attributes.height != rows) {
+                device.DeferRelease(points.attributes);
+                rhi::TextureDesc desc;
+                desc.width = 1024; desc.height = rows;
+                desc.format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+                desc.allowUnorderedAccess = true;
+                desc.initialState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+                desc.debugName = L"ScatterPointAttributes";
+                if (!device.Allocator().CreateTexture2D(desc, points.attributes)) return false;
+            }
             ScatterConstants pointConstants = constants;
             pointConstants.points[0] = points.candidates.UavIndex();
-            pointConstants.points[1] = points.candidates.height / 2;
+            pointConstants.points[1] = rows;
             pointConstants.points[2] = side;
             pointConstants.points[3] = static_cast<uint32_t>(-static_cast<int32_t>(halfCells));
+            pointConstants.attributes[0] = points.attributes.UavIndex();
+            pointConstants.attributes[1] = variationIndex;
             const auto pointsCb = AllocateConstants(device, sizeof(pointConstants));
             if (!pointsCb.IsValid()) return false;
             std::memcpy(pointsCb.cpu, &pointConstants, sizeof(pointConstants));
             PIXBeginEvent(commandList, PIX_COLOR(120, 170, 110), "ScatterPoints");
             TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             TransitionIfNeeded(commandList, points.candidates, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            TransitionIfNeeded(commandList, points.attributes, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             commandList->SetComputeRootConstantBufferView(1, pointsCb.gpuAddress);
             commandList->SetPipelineState(pointsPass);
             commandList->Dispatch((count + 63) / 64, 1, 1);
             TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            // 描画（頂点シェーダ）が読む。
+            TransitionIfNeeded(commandList, points.attributes, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             PIXEndEvent(commandList);
             points.count = count;
             if (!FilterCrumblingPoints(device, pipelineCache, commandList, points, maxMeters, false)) return false;
@@ -5161,10 +5182,12 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 const uint64_t inputHash = maskOpHashOf(static_cast<size_t>(layer.mask.maskOp));
                 hash = HashBytes(hash, &inputHash, sizeof(inputHash));
             }
-            if (layer.hardnessMaskOp >= 0 && static_cast<size_t>(layer.hardnessMaskOp) < maskOps.size() &&
-                maskOpHashDone[static_cast<size_t>(layer.hardnessMaskOp)] != 2) {
-                const uint64_t inputHash = maskOpHashOf(static_cast<size_t>(layer.hardnessMaskOp));
-                hash = HashBytes(hash, &inputHash, sizeof(inputHash));
+            for (const int op : {layer.hardnessMaskOp, layer.variationMaskOp}) {
+                if (op >= 0 && static_cast<size_t>(op) < maskOps.size() &&
+                    maskOpHashDone[static_cast<size_t>(op)] != 2) {
+                    const uint64_t inputHash = maskOpHashOf(static_cast<size_t>(op));
+                    hash = HashBytes(hash, &inputHash, sizeof(inputHash));
+                }
             }
             // テクスチャは ID が同じまま中身が変わることがある（リンク切れの繋ぎ直し）。
             // ID ではなく、いま実際に読む SRV を混ぜて、繋ぎ直したら焼き直されるようにする。
@@ -5295,8 +5318,15 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 }
                 ++m_evaluatedLayerCount;
             } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::Scatter) {
+                // 色むらは点を作るときだけ読む。焼けていなければ中立（点は作る）。
+                const int variationOp = layer.variationMaskOp;
+                const uint32_t variationIndex =
+                    variationOp >= 0 && static_cast<size_t>(variationOp) < maskOpDone.size() &&
+                            maskOpDone[static_cast<size_t>(variationOp)]
+                        ? m_maskOpTextures[static_cast<size_t>(variationOp)].SrvIndex()
+                        : kInvalidTextureIndex;
                 if (!ApplyScatter(device, pipelineCache, commandList, layer, stack,
-                                  inputMaskIndex)) {
+                                  inputMaskIndex, variationIndex)) {
                     complete = false;
                 }
                 ++m_evaluatedLayerCount;

@@ -17,6 +17,8 @@ inline constexpr DirectX::XMFLOAT3 kLodDebugColors[] = {
 };
 struct ModelInstanceDraw {
     uint32_t points = 0, rows = 0, count = 0, seed = 1;
+    // 点の属性（RGBA16F、x = 色むら）の SRV。無ければ中立で描く。
+    uint32_t attributes = 0xffffffffu;
     float weightStart = 0, weightEnd = 1;
     float scaleMin = 1, scaleMax = 1, align = 1, offset = 0;
     bool usePointSize = true, shadow = false;

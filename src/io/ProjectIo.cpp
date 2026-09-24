@@ -282,6 +282,7 @@ void WriteModelImpostor(const renderer::ModelAsset& asset, json& node, const Imp
         baked["radius"] = impostor.radius;
         baked["color"] = file(impostor.colorPath);
         baked["normal"] = file(impostor.normalPath);
+        if (!impostor.variationPath.empty()) baked["variation"] = file(impostor.variationPath);
         value["baked"] = std::move(baked);
     }
     node["impostor"] = std::move(value);
@@ -307,6 +308,8 @@ void ReadModelImpostor(const json& node, renderer::ModelAsset& asset, const Impo
     impostor.radius = radius;
     impostor.colorPath = colorPath;
     impostor.normalPath = normalPath;
+    // 色むらの重みは後から足したので、無くても焼いた扱いのまま（作り直せば付く）。
+    if (const json* variation = FindMember(*baked, "variation")) impostor.variationPath = file(*variation);
 }
 // 文書の中の文字列のパス（絶対、または base からの相対）。
 fs::path ImpostorPathFromString(const json& value, const fs::path& base) {
@@ -339,6 +342,14 @@ json WriteMaterialBody(const compositor::MaterialAsset& asset, const TextureWrit
     node["ambientOcclusion"] = asset.ambientOcclusionValue;
     node["alphaCutoff"] = asset.alphaCutoff;
     node["twoSided"] = asset.twoSided;
+    // 色むらは既定（何もしない）なら書かない。
+    if (const auto& variation = asset.colorVariation; !variation.IsIdentity() || variation.jitter != 0.0f) {
+        node["colorVariation"] = {
+            {"lowHue", variation.lowHueDegrees}, {"lowSaturation", variation.lowSaturation},
+            {"lowBrightness", variation.lowBrightness}, {"highHue", variation.highHueDegrees},
+            {"highSaturation", variation.highSaturation}, {"highBrightness", variation.highBrightness},
+            {"jitter", variation.jitter}};
+    }
 
     json maps;
     maps["baseColor"] = writeTexture(asset.baseColor);
@@ -374,6 +385,18 @@ void ReadMaterialBody(const json& node, compositor::MaterialAsset& asset,
         ReadFloat(node, "ambientOcclusion", defaults.ambientOcclusionValue);
     asset.alphaCutoff = std::clamp(ReadFloat(node, "alphaCutoff", defaults.alphaCutoff), 0.0f, 1.0f);
     asset.twoSided = ReadBool(node, "twoSided", defaults.twoSided);
+    asset.colorVariation = defaults.colorVariation;
+    if (const json* variation = FindMember(node, "colorVariation"); variation && variation->is_object()) {
+        auto& target = asset.colorVariation;
+        const compositor::ColorVariation none;
+        target.lowHueDegrees = std::clamp(ReadFloat(*variation, "lowHue", none.lowHueDegrees), -180.0f, 180.0f);
+        target.lowSaturation = std::clamp(ReadFloat(*variation, "lowSaturation", none.lowSaturation), 0.0f, 2.0f);
+        target.lowBrightness = std::clamp(ReadFloat(*variation, "lowBrightness", none.lowBrightness), 0.0f, 2.0f);
+        target.highHueDegrees = std::clamp(ReadFloat(*variation, "highHue", none.highHueDegrees), -180.0f, 180.0f);
+        target.highSaturation = std::clamp(ReadFloat(*variation, "highSaturation", none.highSaturation), 0.0f, 2.0f);
+        target.highBrightness = std::clamp(ReadFloat(*variation, "highBrightness", none.highBrightness), 0.0f, 2.0f);
+        target.jitter = std::clamp(ReadFloat(*variation, "jitter", none.jitter), 0.0f, 0.5f);
+    }
 
     const json* maps = FindMember(node, "maps");
     if (maps == nullptr || !maps->is_object()) {

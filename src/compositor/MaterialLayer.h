@@ -606,6 +606,8 @@ struct MaterialLayer {
     FlattenBordersSettings flattenBorders;
 
     int hardnessMaskOp = -1; // コンパイル時だけ設定する硬度マスク
+    // 散布の Variation 入力（配置の点へ書く色むらの値）。コンパイル時だけ設定する。
+    int variationMaskOp = -1;
 
 
 

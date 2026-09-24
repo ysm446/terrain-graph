@@ -176,6 +176,9 @@ struct PlacementPointSet {
     rhi::GpuTexture candidates;  // RGBA32_FLOAT 位置と直径 / 法線と向き（2 行で 1 点）
     rhi::GpuTexture points;      // 間引いた後（同じ並び）
     rhi::GpuTexture grid;        // R32_UINT 重なり判定の格子と、残った数
+    // RGBA16_FLOAT 点ごとの属性（候補と同じ並びで 1 行 1 点。間引いても番号は変わらない）。
+    // x = 色むら（散布の Variation。0.5 が中立）、yzw は予約。作らない元（崩落）は無効のまま。
+    rhi::GpuTexture attributes;
     rhi::GpuBuffer countReadback;
     ID3D12Fence* countFence = nullptr;
     uint64_t countFenceValue = 0;
@@ -473,9 +476,11 @@ private:
 
     // 散布レイヤー 1 枚ぶん。近くの散布点から形を決めて Height へ足し戻し、
     // 法線を作り直す。placementIndex は配置マスクの SRV（無ければ kInvalidTextureIndex）。
+    // variationIndex は点へ書く色むらのマスクの SRV（無ければ kInvalidTextureIndex で中立）。
     bool ApplyScatter(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                       ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
-                      const MaterialStack& stack, uint32_t placementIndex);
+                      const MaterialStack& stack, uint32_t placementIndex,
+                      uint32_t variationIndex);
     bool EnsureScatterResources(rhi::Device& device, uint32_t resolution);
     void ReleaseScatterResources(rhi::Device& device);
     // 直前の散布レイヤーが置いた形 / 乱数を、マスクとして焼く。

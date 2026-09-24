@@ -61,6 +61,8 @@ struct ScatterConstants
     float4 params3;
     // x: Points UAV、y: 行数、z: セルの一辺の数、w: 先頭セル（符号付き）
     uint4 points;
+    // x: 点の属性の UAV（RGBA16F、1 行 1 点）、y: 色むらのマスクの SRV（無ければ中立の 0.5）、zw: 未使用
+    uint4 attributes;
 };
 
 ConstantBuffer<ScatterConstants> g_scatter : register(b1);
@@ -347,6 +349,9 @@ void CsPoints(uint3 id : SV_DispatchThreadID)
     const uint2 normalAddress = address + uint2(0, g_scatter.points.y);
     points[address] = 0;
     points[normalAddress] = float4(0, 1, 0, 0);
+    // 点の属性。x = 色むら（0.5 が中立）。置かない点も中立で埋めておく。
+    RWTexture2D<float4> attributes = ResourceDescriptorHeap[g_scatter.attributes.x];
+    attributes[address] = float4(0.5, 0, 0, 0);
     const int gx = int(id.x % side) + asint(g_scatter.points.w);
     const int gz = int(id.x / side) + asint(g_scatter.points.w);
     const int seed = int(g_scatter.params2.y);
@@ -377,4 +382,10 @@ void CsPoints(uint3 id : SV_DispatchThreadID)
         6.28318530718 * g_scatter.params1.z;
     points[address] = float4(horizontal.x, (h - 0.5) * g_scatter.params2.w, horizontal.y, diameter);
     points[normalAddress] = float4(normal, yaw);
+    // 色むらは株の中心の 1 点で引く（個体の中で色が割れないように）。
+    if (g_scatter.attributes.y != kInvalidTextureIndex)
+    {
+        Texture2D<float> variation = ResourceDescriptorHeap[g_scatter.attributes.y];
+        attributes[address] = float4(saturate(variation.Load(int3(ScatterCellToTexel(center), 0))), 0, 0, 0);
+    }
 }

@@ -1,9 +1,11 @@
 // インポスターの焼き込み。1 方向ずつ、モデルを正射影でアトラスのマスへ描く。
 // C++ 側は renderer/Impostor.cpp。方向とマスの対応は ImpostorCommon.hlsli。
 //
-// 出力は 2 枚（どちらも RGBA8 UNORM）:
-//   色   : rgb = ベースカラー（sRGB で符号化）、a = 覆い（アルファ抜き込みで 0 / 1）
-//   法線 : rg = モデル空間の法線（8 面体）、b = 深度（手前ほど大きい）、a = ラフネス
+// 出力は 3 枚（どれも RGBA8 UNORM）:
+//   色     : rgb = ベースカラー（sRGB で符号化）、a = 覆い（アルファ抜き込みで 0 / 1）
+//   法線   : rg = モデル空間の法線（8 面体）、b = 深度（手前ほど大きい）、a = ラフネス
+//   色むら : r = 色むらを受ける割合（色むらを持つマテリアルで 1）、gba は予約（0）。
+//            色むらそのものは焼かず、描画で株ごとに掛ける（ModelPreview.hlsl の PsImpostor）
 // 焼いた後、抜けた画素へ近くの色を広げる（CsDilate）。ミップで縁が黒ずまないように。
 #include "Common.hlsli"
 #include "CompositeCommon.hlsli"
@@ -17,13 +19,13 @@ struct BakeConstants {
     float3 center; float radius;
     // 撮るマスの番号。方向と画面の向きは ImpostorCommon.hlsli から求める（描画と同じ式）。
     uint2 frame; uint frames; uint fullSphere;
-    uint flipNormalGreen; uint3 padding;
+    uint flipNormalGreen; float variationWeight; uint2 padding;
 };
 ConstantBuffer<BakeConstants> g_bake : register(b1);
 
 struct VertexInput { float3 position:POSITION; float3 normal:NORMAL; float4 tangent:TANGENT; float2 uv:TEXCOORD0; };
 struct BakeInput { float4 clip:SV_POSITION; float3 position:POSITION; float3 normal:NORMAL; float4 tangent:TANGENT; float2 uv:TEXCOORD0; };
-struct BakeOutput { float4 color:SV_Target0; float4 normalDepth:SV_Target1; };
+struct BakeOutput { float4 color:SV_Target0; float4 normalDepth:SV_Target1; float4 variation:SV_Target2; };
 
 float BakeMapLod(uint index, float2 deltaX, float2 deltaY) {
     Texture2D<float4> map = ResourceDescriptorHeap[index];
@@ -85,6 +87,7 @@ BakeOutput PsBake(BakeInput input, bool frontFace:SV_IsFrontFace) {
     output.color = float4(LinearToSrgb(saturate(baseColor)), 1);
     const float depth = saturate(0.5f + dot(input.position - g_bake.center, BakeDirection()) / (2 * g_bake.radius));
     output.normalDepth = float4(EncodeImpostorNormal(normal) * 0.5f + 0.5f, depth, saturate(roughness));
+    output.variation = float4(g_bake.variationWeight, 0, 0, 0);
     return output;
 }
 
@@ -93,7 +96,8 @@ BakeOutput PsBake(BakeInput input, bool frontFace:SV_IsFrontFace) {
 // 近くは 1 画素刻み、遠くは 4 画素刻みで探す。見つからなければ中立の値。
 struct DilateConstants {
     uint colorIn, normalIn, colorOut, normalOut;
-    uint width, height, tileSize, padding;
+    uint width, height, tileSize, variationIn;
+    uint variationOut; uint3 padding;
 };
 ConstantBuffer<DilateConstants> g_dilate : register(b0);
 
@@ -104,11 +108,14 @@ void CsDilate(uint3 id : SV_DispatchThreadID) {
     Texture2D<float4> normalIn = ResourceDescriptorHeap[g_dilate.normalIn];
     RWTexture2D<float4> colorOut = ResourceDescriptorHeap[g_dilate.colorOut];
     RWTexture2D<float4> normalOut = ResourceDescriptorHeap[g_dilate.normalOut];
+    Texture2D<float4> variationIn = ResourceDescriptorHeap[g_dilate.variationIn];
+    RWTexture2D<float4> variationOut = ResourceDescriptorHeap[g_dilate.variationOut];
     const int2 pixel = int2(id.xy);
     const float4 color = colorIn[pixel];
     if (color.a > 0.5f) {
         colorOut[pixel] = color;
         normalOut[pixel] = normalIn[pixel];
+        variationOut[pixel] = variationIn[pixel];
         return;
     }
     const int2 tileMin = int2(id.xy / g_dilate.tileSize * g_dilate.tileSize);
@@ -130,8 +137,10 @@ void CsDilate(uint3 id : SV_DispatchThreadID) {
     if (best.x < 0) {
         colorOut[pixel] = float4(0.5f, 0.5f, 0.5f, 0);
         normalOut[pixel] = float4(0.5f, 0.5f, 0.5f, 1);
+        variationOut[pixel] = 0;
         return;
     }
     colorOut[pixel] = float4(colorIn[best].rgb, 0);
     normalOut[pixel] = normalIn[best];
+    variationOut[pixel] = variationIn[best];
 }

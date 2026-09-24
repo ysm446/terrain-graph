@@ -12,6 +12,25 @@
 
 namespace tg::compositor {
 
+// **色むら（モデル用）。** 配置の点が持つ色むらの値（0〜1、0.5 が中立）に応じて、
+// ベースカラーを寄せる。どこでどれだけ寄せるかはグラフ（散布の Variation）が決め、
+// 何色へ寄せるかはここ（樹種のマテリアル）が決める。既定は何もしない。
+//
+// 値が 0.5 から 0 / 1 へ離れるほど、それぞれの端の調整（色相・彩度・明度）へ線形に寄る。
+// 調整の式はベースカラーの調整（AdjustBaseColor）と同じで、テクスチャの明暗は残る。
+struct ColorVariation {
+    float lowHueDegrees = 0.0f, lowSaturation = 1.0f, lowBrightness = 1.0f;     // 値 0 の端
+    float highHueDegrees = 0.0f, highSaturation = 1.0f, highBrightness = 1.0f;  // 値 1 の端
+    // 株ごとの乱数で値をずらす幅（±）。同じ場所に並んだ株にも個体差を付ける。
+    float jitter = 0.0f;
+
+    // 何もしない設定か。インポスターはこれが偽のパーツの画素だけに色むらを掛ける。
+    bool IsIdentity() const {
+        return lowHueDegrees == 0.0f && lowSaturation == 1.0f && lowBrightness == 1.0f &&
+               highHueDegrees == 0.0f && highSaturation == 1.0f && highBrightness == 1.0f;
+    }
+};
+
 // マテリアル 1 つぶん。PBR のマップ一式に名前を付けたもの。
 //
 // レイヤーはマテリアルを 1 つ参照する（Quixel Mixer と同じ形）。
@@ -78,6 +97,8 @@ struct MaterialAsset {
     float alphaCutoff = 0.0f;
     // 裏面も描く（モデル用）。裏から見たときは法線を反転して陰影を付ける。
     bool twoSided = false;
+    // 配置の点の色むらへの応え方（モデル用）。葉のマテリアルに設定し、幹は既定のままにする。
+    ColorVariation colorVariation;
 
     // 一覧に出すサムネイル。マップかパラメータを変えたら作り直す。
     rhi::GpuTexture thumbnail;

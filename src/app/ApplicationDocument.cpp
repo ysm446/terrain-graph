@@ -76,6 +76,7 @@ DocumentSnapshot Application::CaptureDocument() const {
         material.flipNormalGreen = asset.flipNormalGreen;
         material.alphaCutoff = asset.alphaCutoff;
         material.twoSided = asset.twoSided;
+        material.colorVariation = asset.colorVariation;
         material.roughnessValue = asset.roughnessValue;
         material.metallicValue = asset.metallicValue;
         material.ambientOcclusionValue = asset.ambientOcclusionValue;
@@ -162,6 +163,7 @@ void Application::ApplyDocument(const DocumentSnapshot& snapshot) {
         asset.flipNormalGreen = material.flipNormalGreen;
         asset.alphaCutoff = material.alphaCutoff;
         asset.twoSided = material.twoSided;
+        asset.colorVariation = material.colorVariation;
         asset.roughnessValue = material.roughnessValue;
         asset.metallicValue = material.metallicValue;
         asset.ambientOcclusionValue = material.ambientOcclusionValue;

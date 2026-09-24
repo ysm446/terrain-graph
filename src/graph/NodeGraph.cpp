@@ -118,9 +118,12 @@ constexpr std::array<PinDefinition, 5> kDropletPins = {{
 
 // 散布のピン。散布範囲を絞る Mask（省略可）を受け、地形に加えて
 // **分布**と**個体ごとの乱数**を出す。崩落と同じ形。
-constexpr std::array<PinDefinition, 6> kScatterPins = {{
+// Variation（省略可）は配置の点へ書く色むらの値。Model Scatter の株が、
+// マテリアルの「色むら」の設定でこの値に応じて色を寄せる（未接続は中立の 0.5）。
+constexpr std::array<PinDefinition, 7> kScatterPins = {{
     {PinKind::Input, ValueType::Material, "Base"},
     {PinKind::Input, ValueType::Mask, "Mask"},
+    {PinKind::Input, ValueType::Mask, "Variation"},
     {PinKind::Output, ValueType::Material, "Result"},
     {PinKind::Output, ValueType::Mask, "Mask"},
     {PinKind::Output, ValueType::Mask, "Unique"},
@@ -1695,9 +1698,17 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace,
             handled.push_back(sourceNode);
             const auto pointsId = static_cast<uint32_t>(sourceNode->id);
             const MaskSourceRef mask = UpstreamMaskOf(*sourceNode);
-            const int maskDependency =
+            int maskDependency =
                 mask.node ? LastMaskDependency(*mask.node, layerNodes, 0) : -1;
             if (maskDependency == -2) continue;
+            // 散布の Variation（点へ書く色むら）も揃う位置で作る。チェーンに居ないレイヤーに
+            // 依るときは待てないので縛らない（色むらが中立へ落ちるだけで、点は作る）。
+            if (sourceNode->kind == NodeKind::Scatter) {
+                const MaskSourceRef variation = UpstreamMaskOf(*sourceNode, 1);
+                const int dependency =
+                    variation.node ? LastMaskDependency(*variation.node, layerNodes, 0) : -1;
+                maskDependency = std::max(maskDependency, dependency);
+            }
             // チェーンに居て、マスクの依存がその手前に揃っていれば、その場で点も作らせる。
             // 崩落は形を作らないと点が出ないので、揃っていなければ別の評価器に任せる。
             const auto found = std::find(layerNodes.begin(), layerNodes.end(), sourceNode);
@@ -1763,6 +1774,14 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace,
             const MaskSourceRef hardnessSource = UpstreamMaskOf(*layerNodes[i], 1);
             if (hardnessSource.node != nullptr)
                 compiled.layers[i].hardnessMaskOp = EmitMaskOps(hardnessSource,
+                    i > 0 ? static_cast<int>(i) - 1 : 0, layerNodes, compiled.maskOps, emitted, 0);
+        }
+        // 散布の Variation は点を作るときにだけ読む。元ごとの評価器はコンパイルの後で
+        // 点を作らせる（pointsId をここでは知らない）ので、繋がっていれば常に焼く。
+        if (layerNodes[i]->kind == NodeKind::Scatter) {
+            const MaskSourceRef variationSource = UpstreamMaskOf(*layerNodes[i], 1);
+            if (variationSource.node != nullptr)
+                compiled.layers[i].variationMaskOp = EmitMaskOps(variationSource,
                     i > 0 ? static_cast<int>(i) - 1 : 0, layerNodes, compiled.maskOps, emitted, 0);
         }
         const MaskSourceRef maskSource = UpstreamMaskOf(*layerNodes[i]);

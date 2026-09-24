@@ -326,7 +326,9 @@ bool ProjectWorkspace::SaveScene(const fs::path& path, json& document, bool save
         entry.erase("path");
         // インポスターの画像も参照へ。見つからなければ参照を落とす（読むときは焼いていない扱い）。
         if (entry.contains("impostor") && entry["impostor"].is_object() && entry["impostor"].contains("baked"))
-            for (const char* key : {"color", "normal"}) {
+            for (const char* key : {"color", "normal", "variation"}) {
+                // 色むらの重み（variation）は後から足したので、無いものもある。
+                if (!entry["impostor"]["baked"].contains(key)) continue;
                 auto& value = entry["impostor"]["baked"][key];
                 value = sourceRef(value);
             }
@@ -430,7 +432,8 @@ bool ProjectWorkspace::Expand(json& document) {
         if (source.empty()) return false;
         entry["path"] = ToUtf8Portable(source);
         if (entry.contains("impostor") && entry["impostor"].is_object() && entry["impostor"].contains("baked"))
-            for (const char* key : {"color", "normal"}) {
+            for (const char* key : {"color", "normal", "variation"}) {
+                if (!entry["impostor"]["baked"].contains(key)) continue;
                 auto& value = entry["impostor"]["baked"][key];
                 const auto path = value.is_object() ? Resolve(value) : fs::path{};
                 value = path.empty() ? json() : json(ToUtf8Portable(path));

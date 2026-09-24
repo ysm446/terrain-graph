@@ -31,13 +31,15 @@ struct BakeConstants {
     float colorAdjust[2]; float brightness; float alphaCutoff;
     float center[3]; float radius;
     uint32_t frame[2]; uint32_t frames; uint32_t fullSphere;
-    uint32_t flipNormalGreen; uint32_t padding[3];
+    uint32_t flipNormalGreen; float variationWeight; uint32_t padding[2];
 };
 static_assert(sizeof(BakeConstants) == 96);
 struct DilateConstants {
     uint32_t colorIn, normalIn, colorOut, normalOut;
-    uint32_t width, height, tileSize, padding;
+    uint32_t width, height, tileSize, variationIn;
+    uint32_t variationOut, padding[3];
 };
+static_assert(sizeof(DilateConstants) / sizeof(uint32_t) <= rhi::kRootConstantCount);
 
 // 最終のアトラス。ミップ連鎖を作るため、全ミップ COPY_DEST で作りミップごとのビューを張る。
 bool CreateAtlas(rhi::Device& device, uint32_t size, const wchar_t* name, rhi::GpuTexture& texture) {
@@ -121,16 +123,19 @@ bool SaveAtlas(rhi::Device& device, rhi::GpuTexture& texture, const std::filesys
 }
 }  // namespace
 
-void ImpostorPaths(const ModelAsset& model, std::filesystem::path& colorPath, std::filesystem::path& normalPath) {
+void ImpostorPaths(const ModelAsset& model, std::filesystem::path& colorPath, std::filesystem::path& normalPath,
+                   std::filesystem::path& variationPath) {
     const auto directory = (model.assetPath.empty() ? model.path : model.assetPath).parent_path();
     colorPath = directory / FromUtf8(model.name + "_Impostor_C.png");
     normalPath = directory / FromUtf8(model.name + "_Impostor_N.png");
+    variationPath = directory / FromUtf8(model.name + "_Impostor_V.png");
 }
 
 void ImpostorLibrary::Destroy(rhi::Device& device) {
     for (auto& [id, entry] : m_entries) {
         device.DeferRelease(entry.color);
         device.DeferRelease(entry.normal);
+        device.DeferRelease(entry.variation);
     }
     m_entries.clear();
     m_failed.clear();
@@ -146,6 +151,7 @@ void ImpostorLibrary::Remove(rhi::Device& device, uint64_t model) {
     if (found == m_entries.end()) return;
     device.DeferRelease(found->second.color);
     device.DeferRelease(found->second.normal);
+    device.DeferRelease(found->second.variation);
     m_entries.erase(found);
 }
 
@@ -157,15 +163,20 @@ bool ImpostorLibrary::Sync(rhi::Device& device, rhi::PipelineCache& cache, const
         return true;
     }
     if (const auto* entry = Find(model.id); entry && entry->colorPath == impostor.colorPath &&
-        entry->normalPath == impostor.normalPath && entry->settings == impostor.bakedSettings)
+        entry->normalPath == impostor.normalPath && entry->variationPath == impostor.variationPath &&
+        entry->settings == impostor.bakedSettings)
         return true;
     // 読めなかった画像を毎フレーム読み直さない。パスが変われば試し直す。
     if (const auto failed = m_failed.find(model.id); failed != m_failed.end() && failed->second == impostor.colorPath)
         return false;
     const uint32_t size = impostor.bakedSettings.frames * impostor.bakedSettings.frameSize;
-    LdrImage color, normal;
+    LdrImage color, normal, variation;
+    // 色むらの重みは後から足した画像なので、パスが無ければ読まない（全画素が受ける扱い）。
+    const bool hasVariation = !impostor.variationPath.empty();
     if (!LoadLdrImage(impostor.colorPath, color) || !LoadLdrImage(impostor.normalPath, normal) ||
-        color.width != size || color.height != size || normal.width != size || normal.height != size) {
+        color.width != size || color.height != size || normal.width != size || normal.height != size ||
+        (hasVariation && (!LoadLdrImage(impostor.variationPath, variation) ||
+                          variation.width != size || variation.height != size))) {
         TG_LOG_WARN("インポスターの画像を読み込めません（無いか、大きさが設定と違います）: %s",
                     ToUtf8Display(impostor.colorPath).c_str());
         m_failed[model.id] = impostor.colorPath;
@@ -178,13 +189,18 @@ bool ImpostorLibrary::Sync(rhi::Device& device, rhi::PipelineCache& cache, const
     entry.radius = impostor.radius;
     entry.colorPath = impostor.colorPath;
     entry.normalPath = impostor.normalPath;
+    entry.variationPath = impostor.variationPath;
     const bool loaded = CreateAtlas(device, size, L"ImpostorColor", entry.color) &&
                         CreateAtlas(device, size, L"ImpostorNormal", entry.normal) &&
                         UploadAtlas(device, entry.color, color) && UploadAtlas(device, entry.normal, normal) &&
-                        FinishAtlas(device, cache, entry.color) && FinishAtlas(device, cache, entry.normal);
+                        FinishAtlas(device, cache, entry.color) && FinishAtlas(device, cache, entry.normal) &&
+                        (!hasVariation || (CreateAtlas(device, size, L"ImpostorVariation", entry.variation) &&
+                                           UploadAtlas(device, entry.variation, variation) &&
+                                           FinishAtlas(device, cache, entry.variation)));
     if (!loaded) {
         device.DeferRelease(entry.color);
         device.DeferRelease(entry.normal);
+        device.DeferRelease(entry.variation);
         m_failed[model.id] = impostor.colorPath;
         return false;
     }
@@ -198,7 +214,8 @@ bool ImpostorLibrary::Bake(rhi::Device& device, rhi::PipelineCache& cache, const
                            const compositor::MaterialLibrary& materials,
                            const compositor::TextureLibrary& textures,
                            const std::filesystem::path& colorPath, const std::filesystem::path& normalPath,
-                           ModelImpostor& result, std::string& error) {
+                           const std::filesystem::path& variationPath, ModelImpostor& result,
+                           std::string& error) {
     if (!model.geometry || model.geometry->lods.empty()) {
         error = "モデルの形状が読み込まれていません";
         return false;
@@ -226,6 +243,7 @@ bool ImpostorLibrary::Bake(rhi::Device& device, rhi::PipelineCache& cache, const
     desc.layout = rhi::VertexLayout::MeshStandard;
     desc.rtvFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
     desc.rtvFormat1 = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.rtvFormat2 = DXGI_FORMAT_R8G8B8A8_UNORM;
     desc.dsvFormat = DXGI_FORMAT_D32_FLOAT;
     desc.cullMode = D3D12_CULL_MODE_NONE;
     auto* bake = cache.GetGraphics(desc);
@@ -238,13 +256,14 @@ bool ImpostorLibrary::Bake(rhi::Device& device, rhi::PipelineCache& cache, const
     // 焼き込みは LOD0。パーツごとにメッシュを作り、終わったら返す。
     const auto& parts = geometry.lods[0].parts;
     std::vector<Mesh> meshes(parts.size());
-    rhi::GpuTexture rawColor, rawNormal, depth;
+    rhi::GpuTexture rawColor, rawNormal, rawVariation, depth;
     rhi::GpuBuffer constantsBuffer;
     ImpostorTextures entry;
     const auto release = [&]() {
         for (auto& mesh : meshes) mesh.Release(device);
         device.DeferRelease(rawColor);
         device.DeferRelease(rawNormal);
+        device.DeferRelease(rawVariation);
         device.DeferRelease(depth);
         device.DeferRelease(constantsBuffer);
     };
@@ -252,6 +271,7 @@ bool ImpostorLibrary::Bake(rhi::Device& device, rhi::PipelineCache& cache, const
         release();
         device.DeferRelease(entry.color);
         device.DeferRelease(entry.normal);
+        device.DeferRelease(entry.variation);
         error = message;
         return false;
     };
@@ -267,6 +287,8 @@ bool ImpostorLibrary::Bake(rhi::Device& device, rhi::PipelineCache& cache, const
     if (!device.Allocator().CreateTexture2D(target, rawColor)) return fail("描画先を作れません");
     target.debugName = L"ImpostorBakeNormal";
     if (!device.Allocator().CreateTexture2D(target, rawNormal)) return fail("描画先を作れません");
+    target.debugName = L"ImpostorBakeVariation";
+    if (!device.Allocator().CreateTexture2D(target, rawVariation)) return fail("描画先を作れません");
     rhi::TextureDesc depthDesc;
     depthDesc.width = depthDesc.height = size;
     depthDesc.format = DXGI_FORMAT_D32_FLOAT;
@@ -275,7 +297,8 @@ bool ImpostorLibrary::Bake(rhi::Device& device, rhi::PipelineCache& cache, const
     depthDesc.debugName = L"ImpostorBakeDepth";
     if (!device.Allocator().CreateTexture2D(depthDesc, depth)) return fail("深度を作れません");
     if (!CreateAtlas(device, size, L"ImpostorColor", entry.color) ||
-        !CreateAtlas(device, size, L"ImpostorNormal", entry.normal))
+        !CreateAtlas(device, size, L"ImpostorNormal", entry.normal) ||
+        !CreateAtlas(device, size, L"ImpostorVariation", entry.variation))
         return fail("アトラスを作れません");
 
     // マスとパーツごとの定数。CBV は 256 バイト境界。
@@ -312,6 +335,8 @@ bool ImpostorLibrary::Bake(rhi::Device& device, rhi::PipelineCache& cache, const
             constants.frames = frames;
             constants.fullSphere = settings.fullSphere ? 1u : 0u;
             constants.flipNormalGreen = asset.flipNormalGreen ? 1u : 0u;
+            // 色むらを持つマテリアルの画素だけが、描画のときに色むらを受ける。
+            constants.variationWeight = asset.colorVariation.IsIdentity() ? 0.0f : 1.0f;
             drawable[part] = meshes[part].IndexCount() > 0;
             for (uint32_t j = 0; j < frames; ++j)
                 for (uint32_t i = 0; i < frames; ++i) {
@@ -327,13 +352,15 @@ bool ImpostorLibrary::Bake(rhi::Device& device, rhi::PipelineCache& cache, const
         PIXBeginEvent(list, PIX_COLOR(200, 170, 90), "ImpostorBake");
         rhi::TransitionIfNeeded(list, rawColor, D3D12_RESOURCE_STATE_RENDER_TARGET);
         rhi::TransitionIfNeeded(list, rawNormal, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        rhi::TransitionIfNeeded(list, rawVariation, D3D12_RESOURCE_STATE_RENDER_TARGET);
         rhi::TransitionIfNeeded(list, depth, D3D12_RESOURCE_STATE_DEPTH_WRITE);
         const float clear[4] = {0, 0, 0, 0};
         list->ClearRenderTargetView(rawColor.rtv.cpu, clear, 0, nullptr);
         list->ClearRenderTargetView(rawNormal.rtv.cpu, clear, 0, nullptr);
+        list->ClearRenderTargetView(rawVariation.rtv.cpu, clear, 0, nullptr);
         list->ClearDepthStencilView(depth.dsv.cpu, D3D12_CLEAR_FLAG_DEPTH, 1, 0, 0, nullptr);
-        const D3D12_CPU_DESCRIPTOR_HANDLE targets[2] = {rawColor.rtv.cpu, rawNormal.rtv.cpu};
-        list->OMSetRenderTargets(2, targets, FALSE, &depth.dsv.cpu);
+        const D3D12_CPU_DESCRIPTOR_HANDLE targets[3] = {rawColor.rtv.cpu, rawNormal.rtv.cpu, rawVariation.rtv.cpu};
+        list->OMSetRenderTargets(3, targets, FALSE, &depth.dsv.cpu);
         list->SetGraphicsRootSignature(cache.GlobalRootSignature());
         list->SetPipelineState(bake);
         for (uint32_t j = 0; j < frames; ++j)
@@ -353,10 +380,13 @@ bool ImpostorLibrary::Bake(rhi::Device& device, rhi::PipelineCache& cache, const
         constexpr auto kRead = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
         rhi::TransitionIfNeeded(list, rawColor, kRead);
         rhi::TransitionIfNeeded(list, rawNormal, kRead);
+        rhi::TransitionIfNeeded(list, rawVariation, kRead);
         rhi::TransitionMip(list, entry.color, 0, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         rhi::TransitionMip(list, entry.normal, 0, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        rhi::TransitionMip(list, entry.variation, 0, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         const DilateConstants dilateConstants{rawColor.SrvIndex(), rawNormal.SrvIndex(), entry.color.MipUavIndex(0),
-                                              entry.normal.MipUavIndex(0), size, size, frameSize, 0};
+                                              entry.normal.MipUavIndex(0), size, size, frameSize,
+                                              rawVariation.SrvIndex(), entry.variation.MipUavIndex(0), {}};
         list->SetComputeRootSignature(cache.GlobalRootSignature());
         list->SetPipelineState(dilate);
         list->SetComputeRoot32BitConstants(0, sizeof(dilateConstants) / sizeof(uint32_t), &dilateConstants, 0);
@@ -366,13 +396,16 @@ bool ImpostorLibrary::Bake(rhi::Device& device, rhi::PipelineCache& cache, const
         // ミップ生成は全ミップ COPY_DEST を前提にするので戻しておく。
         rhi::TransitionMip(list, entry.color, 0, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
         rhi::TransitionMip(list, entry.normal, 0, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
+        rhi::TransitionMip(list, entry.variation, 0, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
         PIXEndEvent(list);
     });
     release();
     if (!baked) return fail("焼き込みに失敗しました");
-    if (!FinishAtlas(device, cache, entry.color) || !FinishAtlas(device, cache, entry.normal))
+    if (!FinishAtlas(device, cache, entry.color) || !FinishAtlas(device, cache, entry.normal) ||
+        !FinishAtlas(device, cache, entry.variation))
         return fail("ミップを作れません");
-    if (!SaveAtlas(device, entry.color, colorPath) || !SaveAtlas(device, entry.normal, normalPath))
+    if (!SaveAtlas(device, entry.color, colorPath) || !SaveAtlas(device, entry.normal, normalPath) ||
+        !SaveAtlas(device, entry.variation, variationPath))
         return fail("画像を保存できません");
 
     result = model.impostor;
@@ -383,11 +416,13 @@ bool ImpostorLibrary::Bake(rhi::Device& device, rhi::PipelineCache& cache, const
     result.radius = radius;
     result.colorPath = colorPath;
     result.normalPath = normalPath;
+    result.variationPath = variationPath;
     entry.settings = settings;
     entry.center = center;
     entry.radius = radius;
     entry.colorPath = colorPath;
     entry.normalPath = normalPath;
+    entry.variationPath = variationPath;
     Remove(device, model.id);
     m_failed.erase(model.id);
     m_entries.emplace(model.id, std::move(entry));

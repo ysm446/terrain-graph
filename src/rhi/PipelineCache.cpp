@@ -54,6 +54,8 @@ std::wstring GraphicsPipelineDesc::MakeKey() const {
     key += L"#";
     key += std::to_wstring(static_cast<int>(rtvFormat1));
     key += L"#";
+    key += std::to_wstring(static_cast<int>(rtvFormat2));
+    key += L"#";
     key += std::to_wstring(static_cast<int>(dsvFormat));
     key += L"#";
     key += std::to_wstring(static_cast<int>(layout));
@@ -295,6 +297,14 @@ ID3D12PipelineState* PipelineCache::GetGraphics(const GraphicsPipelineDesc& desc
         }
         psoDesc.NumRenderTargets = 2;
         psoDesc.RTVFormats[1] = desc.rtvFormat1;
+        if (desc.rtvFormat2 != DXGI_FORMAT_UNKNOWN) {
+            psoDesc.NumRenderTargets = 3;
+            psoDesc.RTVFormats[2] = desc.rtvFormat2;
+        }
+    } else if (desc.rtvFormat2 != DXGI_FORMAT_UNKNOWN) {
+        TG_LOG_ERROR("グラフィックス PSO: RTV1 が UNKNOWN のまま RTV2 は指定できません");
+        m_graphicsPipelines.emplace(key, nullptr);
+        return nullptr;
     } else {
         psoDesc.NumRenderTargets = (desc.rtvFormat != DXGI_FORMAT_UNKNOWN) ? 1 : 0;
     }

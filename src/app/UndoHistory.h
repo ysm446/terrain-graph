@@ -6,6 +6,7 @@
 // NodeGraph.h も STL と compositor のデータ構造にしか依存しない。
 #include "renderer/Ephemeris.h"
 #include "compositor/MaterialLayer.h"
+#include "compositor/MaterialLibrary.h"
 #include "graph/NodeGraph.h"
 #include "renderer/ModelAsset.h"
 
@@ -43,6 +44,7 @@ struct MaterialSnapshot {
     bool flipNormalGreen = true;
     float alphaCutoff = 0.0f;
     bool twoSided = false;
+    compositor::ColorVariation colorVariation;
     float roughnessValue = 0.5f;
     float metallicValue = 0.0f;
     float ambientOcclusionValue = 1.0f;

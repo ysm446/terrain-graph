@@ -152,6 +152,31 @@ void RunNodeGraphTests() {
                   "河川（マスクの依存）の後ろへ、点だけの散布を置く");
             Check(layer.mask.maskOp >= 0, "散布の分布マスクを解決する");
             Check(withPoints.layerSources[2] == 0, "点だけのレイヤーはノードの出どころにしない");
+            Check(layer.variationMaskOp < 0, "Variation を繋いでいなければ色むらのマスクは無い");
+        }
+
+        // 分布マスクを外し、同じマスクを Variation（色むら）へ繋ぎ替える。
+        // 点は色むらのマスクが依るレイヤー（河川）の後ろで作る。
+        for (const auto& link : graph.Links()) {
+            if (link.endPin == pin(scatter, false, 1)) {
+                graph.DeleteLink(link.id);
+                break;
+            }
+        }
+        Check(graph.FindNode(scatter)->inputs.size() == 3 &&
+                  graph.FindNode(scatter)->inputs[2].label == "Variation",
+              "Scatter の入力の末尾に Variation を持つ");
+        graph.CreateLink(pin(levels, true, 0), pin(scatter, false, 2));
+        const auto withVariation = graph.CompileLayersWithPoints();
+        Check(withVariation.layers.size() == 3, "色むらだけを繋いでも点だけのレイヤーを 1 枚差し込む");
+        if (withVariation.layers.size() == 3) {
+            const auto& layer = withVariation.layers[2];
+            Check(layer.pointsOnly && layer.pointsId == static_cast<uint32_t>(scatter),
+                  "河川（色むらのマスクの依存）の後ろへ、点だけの散布を置く");
+            Check(layer.mask.maskOp < 0, "分布マスクは外れている");
+            Check(layer.variationMaskOp >= 0 &&
+                      static_cast<size_t>(layer.variationMaskOp) < withVariation.maskOps.size(),
+                  "Variation のマスクを op として解決する");
         }
     }
 

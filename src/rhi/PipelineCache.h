@@ -39,6 +39,8 @@ struct GraphicsPipelineDesc {
     DXGI_FORMAT rtvFormat = DXGI_FORMAT_UNKNOWN;
     // 2 枚目のレンダーターゲット。UNKNOWN なら 1 枚だけ書く。
     DXGI_FORMAT rtvFormat1 = DXGI_FORMAT_UNKNOWN;
+    // 3 枚目。使うなら 2 枚目も必須（歯抜けの MRT は作れない）。
+    DXGI_FORMAT rtvFormat2 = DXGI_FORMAT_UNKNOWN;
     DXGI_FORMAT dsvFormat = DXGI_FORMAT_UNKNOWN;
     VertexLayout layout = VertexLayout::None;
     D3D12_CULL_MODE cullMode = D3D12_CULL_MODE_BACK;

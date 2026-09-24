@@ -41,9 +41,39 @@ struct ModelConstants {
     uint32_t impostorColor, impostorNormal;
     float impostorCenter[3], impostorRadius;
     uint32_t impostorFrames, impostorFullSphere, impostorShadow;
-    uint32_t padding;
+    uint32_t impostorVariation;  // 色むらを受ける割合のアトラス。無効なら全画素 1
+    // 色むら（ColorVariation）。pointAttributes は点の属性で、無効なら中立。
+    uint32_t pointAttributes;
+    float variationJitter;
+    uint32_t variationPadding[2];
+    float variationLow[4], variationHigh[4];  // 色相（ラジアン）, 彩度, 明度, 未使用
 };
-static_assert(sizeof(ModelConstants) == 1072);
+static_assert(sizeof(ModelConstants) == 1120);
+
+// インポスターに掛ける色むらの応え方。焼き込み（Impostor.cpp）が重みを 1 にするのと同じ
+// 「色むらを持つマテリアル」のうち、LOD0 で先に現れるもの。無ければ何もしない設定。
+compositor::ColorVariation ImpostorColorVariation(const ModelAsset& model,
+                                                  const compositor::MaterialLibrary& materials) {
+    if (model.geometry && !model.geometry->lods.empty())
+        for (const auto& part : model.geometry->lods[0].parts) {
+            const auto* material = part.slot < model.materials.size() ? materials.Find(model.materials[part.slot]) : nullptr;
+            if (material && !material->colorVariation.IsIdentity()) return material->colorVariation;
+        }
+    return {};
+}
+
+// 色むらの設定を定数へ写す。点の属性が無い描画（モデルのプレビュー）では中立になる。
+void FillColorVariation(ModelConstants& constants, const compositor::ColorVariation& variation,
+                        uint32_t pointAttributes) {
+    constants.pointAttributes = pointAttributes;
+    constants.variationJitter = variation.jitter;
+    constants.variationLow[0] = variation.lowHueDegrees * (kPi / 180.0f);
+    constants.variationLow[1] = variation.lowSaturation;
+    constants.variationLow[2] = variation.lowBrightness;
+    constants.variationHigh[0] = variation.highHueDegrees * (kPi / 180.0f);
+    constants.variationHigh[1] = variation.highSaturation;
+    constants.variationHigh[2] = variation.highBrightness;
+}
 
 }  // namespace
 void ModelPreview::Destroy(rhi::Device& device) {
@@ -430,6 +460,7 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
         }
         const auto& draw = *instances;
         ModelConstants constants = {};
+        constants.pointAttributes = constants.impostorVariation = compositor::kInvalidTextureIndex;
         fillScene(constants);
         constants.aoValue = 1.0f;
         constants.points = draw.points; constants.rows = draw.rows;
@@ -468,6 +499,11 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
         constants.impostorFrames = impostor->settings.frames;
         constants.impostorFullSphere = impostor->settings.fullSphere ? 1u : 0u;
         constants.impostorShadow = shadow ? 1u : 0u;
+        constants.impostorVariation = impostor->variation.IsValid() ? impostor->variation.SrvIndex()
+                                                                    : compositor::kInvalidTextureIndex;
+        // インポスターは 1 枚に全パーツを焼くので、色むらの応え方は 1 つ（焼いたときに
+        // 色むらを持っていたマテリアルの先頭）。受ける画素は重みのアトラスで絞る。
+        FillColorVariation(constants, ImpostorColorVariation(model, materials), draw.attributes);
         std::memcpy(cb.cpu, &constants, sizeof(constants));
         commandList->SetGraphicsRootConstantBufferView(1, cb.gpuAddress);
         commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -493,6 +529,7 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
             current = pipeline;
         }
         ModelConstants constants = {};
+        constants.pointAttributes = constants.impostorVariation = compositor::kInvalidTextureIndex;
         // ベースカラーだけ sRGB として読む。それ以外はリニア（サムネイルと同じ）。
         constants.baseColorIndex = textures.SrvIndex(asset.baseColor, true);
         constants.normalIndex = textures.SrvIndex(asset.normal, false);
@@ -532,6 +569,7 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
             constants.pivot[0] = (lo.x+hi.x)*0.5f; constants.pivot[1] = lo.y;
             constants.pivot[2] = (lo.z+hi.z)*0.5f;
             constants.visibleOffset = static_cast<uint32_t>(segment * draw.count);
+            FillColorVariation(constants, asset.colorVariation, draw.attributes);
             if (draw.lodView) {
                 const size_t lod = std::min<size_t>(m_firstLod + m_parts[i].lod, std::size(kLodDebugColors) - 1);
                 constants.lodView = 1;
@@ -571,6 +609,7 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
         const auto cb = device.Upload().Allocate(sizeof(ModelConstants), 256);
         if (pipeline && cb.IsValid()) {
             ModelConstants constants = {};
+            constants.pointAttributes = constants.impostorVariation = compositor::kInvalidTextureIndex;
             fillScene(constants);
             constants.aoValue = 1.0f;
             constants.impostorColor = impostor->color.SrvIndex();

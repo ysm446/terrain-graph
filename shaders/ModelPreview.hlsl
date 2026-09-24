@@ -43,7 +43,12 @@ struct ModelConstants
     uint impostorColor, impostorNormal;
     float3 impostorCenter; float impostorRadius;
     // impostorShadow: 影パス。板を光源へ向け、光の向きから見た画像で抜く（PsImpostorShadow）。
-    uint impostorFrames, impostorFullSphere, impostorShadow, padding;
+    // impostorVariation: 画素ごとの「色むらを受ける割合」（r）。無効なら全画素 1。
+    uint impostorFrames, impostorFullSphere, impostorShadow, impostorVariation;
+    // 色むら（MaterialLibrary.h の ColorVariation）。pointAttributes は点の属性（x = 色むら）で、
+    // 無効なら中立の 0.5。variationLow / High は値 0 / 1 の端の調整（色相ラジアン, 彩度, 明度, 未使用）。
+    uint pointAttributes; float variationJitter; uint2 variationPadding;
+    float4 variationLow, variationHigh;
 };
 
 ConstantBuffer<ModelConstants> g_model : register(b1);
@@ -105,17 +110,35 @@ float SampleScalarMap(uint index, uint channelSlot, float2 uv, float lod)
 
 struct VertexInput { float3 position:POSITION; float3 normal:NORMAL; float4 tangent:TANGENT; float2 uv:TEXCOORD0; };
 // fade: LOD の切り替えの進み具合（InstanceCulling.hlsl）。1 なら抜かない。
-struct PixelInput { float4 clip:SV_POSITION; float3 position:POSITION; float3 normal:NORMAL; float4 tangent:TANGENT; float2 uv:TEXCOORD0; nointerpolation float fade:FADE; };
+// variation: 株の色むらの値（0〜1、0.5 が中立）。
+struct PixelInput { float4 clip:SV_POSITION; float3 position:POSITION; float3 normal:NORMAL; float4 tangent:TANGENT; float2 uv:TEXCOORD0; nointerpolation float fade:FADE; nointerpolation float variation:VARIATION; };
 uint InstanceHash(uint x) { x ^= x >> 16; x *= 0x7feb352d; x ^= x >> 15; x *= 0x846ca68b; return x ^ (x >> 16); }
 float InstanceRandom(uint x) { return float(InstanceHash(x) >> 8) / 16777216.0; }
 // 配置した 1 株の置き方。モデル空間の点 p は origin + axisX*l.x + up*(l.y+offset) + axisZ*l.z
 // （l = (p - pivot) * scale）へ移る。軸は正規直交。
-struct InstancePlacement { float3 origin, axisX, up, axisZ; float scale, fade; };
+struct InstancePlacement { float3 origin, axisX, up, axisZ; float scale, fade, variation; };
 InstancePlacement IdentityPlacement() {
     InstancePlacement result;
     result.origin = g_model.pivot; result.axisX = float3(1, 0, 0); result.up = float3(0, 1, 0);
-    result.axisZ = float3(0, 0, 1); result.scale = 1; result.fade = 1;
+    result.axisZ = float3(0, 0, 1); result.scale = 1; result.fade = 1; result.variation = 0.5;
     return result;
+}
+// 株の色むらの値。点の属性（散布の Variation）に、株ごとの乱数で個体差を足す。
+float InstanceVariation(uint instance) {
+    float value = 0.5;
+    if (g_model.pointAttributes != kInvalidTextureIndex) {
+        Texture2D<float4> attributes = ResourceDescriptorHeap[g_model.pointAttributes];
+        value = attributes.Load(int3(instance % 1024, instance / 1024, 0)).x;
+    }
+    value += (InstanceRandom(instance ^ g_model.seed ^ 0x5bd1u) * 2 - 1) * g_model.variationJitter;
+    return saturate(value);
+}
+// 色むらの値でベースカラーを寄せる。0.5 から離れるほど、その側の端の調整へ線形に近づく。
+float3 ApplyColorVariation(float3 color, float value) {
+    const float amount = saturate(abs(value - 0.5f) * 2);
+    if (amount <= 0) return color;
+    const float4 end = value < 0.5f ? g_model.variationLow : g_model.variationHigh;
+    return AdjustBaseColor(color, end.x * amount, lerp(1, end.y, amount), lerp(1, end.z, amount));
 }
 // SV_InstanceID から、可視リストの区画を通して株を引く。
 InstancePlacement LoadInstance(uint instance) {
@@ -137,6 +160,7 @@ InstancePlacement LoadInstance(uint instance) {
                    (g_model.usePointSize != 0 ? placement.w/g_model.modelSize : 1);
     result.origin = placement.xyz;
     result.fade = asfloat(entry.y);
+    result.variation = InstanceVariation(instance);
     return result;
 }
 float3 PlacePoint(InstancePlacement p, float3 position) {
@@ -148,10 +172,11 @@ float3 PlaceDirection(InstancePlacement p, float3 direction) {
 }
 
 PixelInput VsMain(VertexInput input, uint instance : SV_InstanceID) {
-    float fade = 1;
+    float fade = 1, variation = 0.5;
     if (g_model.sceneMode != 0) {
         const InstancePlacement placement = LoadInstance(instance);
         fade = placement.fade;
+        variation = placement.variation;
         input.position = PlacePoint(placement, input.position);
         input.normal = PlaceDirection(placement, input.normal);
         input.tangent.xyz = PlaceDirection(placement, input.tangent.xyz);
@@ -160,6 +185,7 @@ PixelInput VsMain(VertexInput input, uint instance : SV_InstanceID) {
     output.clip=mul(float4(input.position,1),g_model.viewProjection);
     output.position=input.position; output.normal=input.normal; output.tangent=input.tangent; output.uv=input.uv;
     output.fade=fade;
+    output.variation=variation;
     return output;
 }
 
@@ -242,6 +268,7 @@ float4 PsMain(PixelInput input, bool frontFace:SV_IsFrontFace):SV_TARGET {
     }
     baseColor = AdjustBaseColor(baseColor, g_model.colorAdjust.x, g_model.colorAdjust.y,
                                 g_model.brightness);
+    if (g_model.lodView == 0) baseColor = ApplyColorVariation(baseColor, input.variation);
 
     float roughness = g_model.roughnessValue;
     if (g_model.roughnessIndex != kInvalidTextureIndex)
@@ -312,7 +339,7 @@ float4 PsDither(PixelInput input, bool frontFace:SV_IsFrontFace):SV_TARGET {
 struct ImpostorInput {
     float4 clip:SV_POSITION; float3 position:POSITION;
     nointerpolation float3 origin:ORIGIN; nointerpolation float3 axisX:AXISX; nointerpolation float3 up:AXISY;
-    nointerpolation float scale:SCALE; nointerpolation float fade:FADE;
+    nointerpolation float scale:SCALE; nointerpolation float fade:FADE; nointerpolation float variation:VARIATION;
 };
 
 ImpostorInput VsImpostor(uint vertex : SV_VertexID, uint instance : SV_InstanceID) {
@@ -337,13 +364,14 @@ ImpostorInput VsImpostor(uint vertex : SV_VertexID, uint instance : SV_InstanceI
     output.position = center + (right * kCorners[vertex % 6].x + up * kCorners[vertex % 6].y) * extent;
     output.clip = mul(float4(output.position, 1), g_model.viewProjection);
     output.origin = placement.origin; output.axisX = placement.axisX; output.up = placement.up;
-    output.scale = placement.scale; output.fade = placement.fade;
+    output.scale = placement.scale; output.fade = placement.fade; output.variation = placement.variation;
     return output;
 }
 
 // 焼いた画像を 1 本の視線で引いた結果（モデル空間）。
 struct ImpostorHit {
     float coverage, roughness;
+    float variationWeight;  // 色むらを受ける割合（葉 1、幹 0）
     float3 color;    // リニア
     float3 normal;   // モデル空間
     float3 surface;  // 焼いた深度から戻した表面の位置（モデル空間）
@@ -358,6 +386,8 @@ ImpostorHit SampleImpostor(float3 eye, float3 ray, float3 toViewer) {
     const ImpostorFrames selected = SelectImpostorFrames(toViewer, frames, fullSphere);
     Texture2D<float4> colorMap = ResourceDescriptorHeap[g_model.impostorColor];
     Texture2D<float4> normalMap = ResourceDescriptorHeap[g_model.impostorNormal];
+    Texture2D<float4> variationMap = ResourceDescriptorHeap[g_model.impostorVariation != kInvalidTextureIndex
+                                                                ? g_model.impostorVariation : g_model.impostorColor];
 
     float2 atlasUv[3];
     float3 hit[3], direction[3];
@@ -378,7 +408,7 @@ ImpostorHit SampleImpostor(float3 eye, float3 ray, float3 toViewer) {
     const float lod = MapLod(g_model.impostorColor, ddx(atlasUv[0]), ddy(atlasUv[0]));
 
     ImpostorHit result;
-    result.coverage = 0; result.roughness = 0;
+    result.coverage = 0; result.roughness = 0; result.variationWeight = 0;
     result.color = 0; result.normal = 0; result.surface = 0;
     float2 normalSum = 0;
     [unroll] for (uint k = 0; k < 3; ++k) {
@@ -389,6 +419,9 @@ ImpostorHit SampleImpostor(float3 eye, float3 ray, float3 toViewer) {
         result.color += SrgbToLinear(c.rgb) * weight;
         normalSum += n.xy * weight;
         result.roughness += n.w * weight;
+        // 重みのアトラスが無い（作り直す前の）インポスターは、全画素が受ける。
+        result.variationWeight += (g_model.impostorVariation != kInvalidTextureIndex
+            ? variationMap.SampleLevel(g_samplerLinearClamp, atlasUv[k], lod).r : 1) * weight;
         // 深度は「中心を通る平面から、撮った向きへどれだけ手前か」（ImpostorBake.hlsl）。
         result.surface += (hit[k] + direction[k] * (n.z - 0.5f) * 2 * radius) * weight;
         result.coverage += weight;
@@ -396,6 +429,7 @@ ImpostorHit SampleImpostor(float3 eye, float3 ray, float3 toViewer) {
     const float inverse = 1 / max(result.coverage, 1e-4f);
     result.color *= inverse;
     result.roughness *= inverse;
+    result.variationWeight *= inverse;
     result.surface *= inverse;
     result.normal = DecodeImpostorNormal(normalSum * inverse * 2 - 1);
     // メッシュのアルファ抜きと同じく、遠くで痩せないようミップ段に応じて持ち上げる。
@@ -425,7 +459,9 @@ float4 PsImpostor(ImpostorInput input):SV_TARGET {
     const float3 normal = normalize(input.axisX * hit.normal.x + input.up * hit.normal.y + axisZ * hit.normal.z);
     // 影と環境光の高さは、板の上の点ではなく焼いた深度から戻した表面で引く（影を落とす側と揃える）。
     const float3 surface = ImpostorToWorld(input, hit.surface);
-    const float3 baseColor = g_model.lodView != 0 ? g_model.baseColorTint : hit.color;
+    // 色むらはメッシュと同じ式で、葉の画素（重み）にだけ掛ける。
+    const float3 baseColor = g_model.lodView != 0 ? g_model.baseColorTint
+        : lerp(hit.color, ApplyColorVariation(hit.color, input.variation), hit.variationWeight);
     return ShadeModel(surface, normal, normalize(g_model.cameraPosition - input.position), baseColor,
                       hit.roughness, 0, 1);
 }

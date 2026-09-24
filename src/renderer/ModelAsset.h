@@ -29,12 +29,13 @@ struct ImpostorSettings {
 };
 struct ModelImpostor {
     ImpostorSettings settings;  // 次に作るときの設定
-    // 焼いた結果。画像はモデルの横に PNG で置く（色 / 法線）。
+    // 焼いた結果。画像はモデルの横に PNG で置く（色 / 法線 / 色むらの重み）。
+    // variationPath は色むらを入れる前に焼いたものでは空（全画素が色むらを受ける扱い）。
     bool baked = false;
     ImpostorSettings bakedSettings;
     DirectX::XMFLOAT3 center{};  // 撮った球の中心と半径（モデル空間、m）
     float radius = 0;
-    std::filesystem::path colorPath, normalPath;
+    std::filesystem::path colorPath, normalPath, variationPath;
 };
 // CPU形状は不変・共有。履歴へ頂点配列を複製しない。
 struct ModelAsset {

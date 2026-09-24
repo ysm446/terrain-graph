@@ -120,6 +120,7 @@ void Application::DrawModelScatters(ID3D12GraphicsCommandList* commandList,
             renderer::ModelInstanceDraw draw;
             draw.points=points->points.SrvIndex();
             draw.rows=points->points.height/2; draw.count=points->count;
+            draw.attributes=points->attributes.IsValid() ? points->attributes.SrvIndex() : compositor::kInvalidTextureIndex;
             draw.seed=static_cast<uint32_t>(scatter.settings.seed);
             draw.weightStart=cumulative/total; cumulative+=choice.weight; draw.weightEnd=cumulative/total;
             draw.scaleMin=scatter.settings.scaleMin; draw.scaleMax=std::max(draw.scaleMin,scatter.settings.scaleMax);
@@ -206,12 +207,12 @@ void Application::ProcessImpostorWork() {
         return found == m_models.end() ? nullptr : &*found;
     };
     if (auto* asset = find(std::exchange(m_pendingImpostorBake, 0))) {
-        std::filesystem::path colorPath, normalPath;
-        renderer::ImpostorPaths(*asset, colorPath, normalPath);
+        std::filesystem::path colorPath, normalPath, variationPath;
+        renderer::ImpostorPaths(*asset, colorPath, normalPath, variationPath);
         renderer::ModelImpostor result;
         std::string error;
         if (m_impostors.Bake(m_device, m_pipelineCache, *asset, m_materialLibrary, m_textureLibrary,
-                             colorPath, normalPath, result, error)) {
+                             colorPath, normalPath, variationPath, result, error)) {
             asset->impostor = result;
             m_modelShowImpostor = true;
             m_assetRefresh = true;
@@ -222,9 +223,9 @@ void Application::ProcessImpostorWork() {
     }
     if (auto* asset = find(std::exchange(m_pendingImpostorDelete, 0)); asset && asset->impostor.baked) {
         // 画像と .meta はアセットの削除と同じく、ルート内の退避フォルダへ移す（戻せる）。
-        for (const auto& path : {asset->impostor.colorPath, asset->impostor.normalPath}) {
+        for (const auto& path : {asset->impostor.colorPath, asset->impostor.normalPath, asset->impostor.variationPath}) {
             std::error_code error;
-            if (!std::filesystem::exists(path, error)) continue;
+            if (path.empty() || !std::filesystem::exists(path, error)) continue;
             if (!m_workspace.Contains(path) || !io::RetireAsset(m_workspace, io::InspectAssetRelations(m_workspace, path)))
                 TG_LOG_WARN("インポスターの画像を退避できませんでした: %s", ToUtf8Display(path).c_str());
         }
@@ -490,7 +491,7 @@ void Application::DrawImpostorSection(renderer::ModelAsset& asset) {
             ui::PropertyValue("作成済み", "%s・%u×%u・%u px", baked.fullSphere ? "全球" : "半球",
                               baked.frames, baked.frames, baked.frameSize);
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("作成したときの設定。画像は %u px 四方（色と法線の 2 枚）", atlas);
+                ImGui::SetTooltip("作成したときの設定。画像は %u px 四方（色・法線・色むらの重みの 3 枚）", atlas);
             ImGui::BeginDisabled(m_impostors.Find(asset.id) == nullptr);
             ui::PropertyBool("インポスターで表示", &m_modelShowImpostor, false,
                              "プレビューを焼いた画像で描き、元のメッシュと見比べる（保存しない）");
@@ -507,6 +508,8 @@ void Application::DrawImpostorSection(renderer::ModelAsset& asset) {
         ui::HintText("設定が作成時と違います。作り直すと反映されます");
     if (impostor.baked && !m_impostors.Find(asset.id))
         ui::HintText("焼いた画像を読み込めません。作り直してください");
+    else if (impostor.baked && impostor.variationPath.empty())
+        ui::HintText("色むらの重みがありません（幹にも色むらが掛かります）。作り直すと付きます");
     ImGui::BeginDisabled(tooLarge);
     if (ui::Button(impostor.baked ? "作り直す" : "作成", ui::kButtonWidth)) m_pendingImpostorBake = asset.id;
     ImGui::EndDisabled();
@@ -514,10 +517,10 @@ void Application::DrawImpostorSection(renderer::ModelAsset& asset) {
         ImGui::SameLine();
         if (ui::Button("削除", ui::kButtonWidth)) ImGui::OpenPopup("インポスターの削除");
     }
-    ui::HintText("画像はモデルの横に「名前_Impostor_C.png / _N.png」で保存します");
+    ui::HintText("画像はモデルの横に「名前_Impostor_C.png / _N.png / _V.png」で保存します");
     if (ImGui::BeginPopupModal("インポスターの削除", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted(asset.name.c_str());
-        ui::HintText("焼いた画像（色と法線）と .meta を、ルート内の退避フォルダへ移します。");
+        ui::HintText("焼いた画像（色・法線・色むらの重み）と .meta を、ルート内の退避フォルダへ移します。");
         if (ui::Button("削除", ui::kButtonWidth)) {
             m_pendingImpostorDelete = asset.id;
             ImGui::CloseCurrentPopup();

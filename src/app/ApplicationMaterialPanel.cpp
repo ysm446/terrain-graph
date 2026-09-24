@@ -46,6 +46,7 @@ void CopyMaterialValues(const compositor::MaterialAsset& source, compositor::Mat
     target.flipNormalGreen = source.flipNormalGreen;
     target.alphaCutoff = source.alphaCutoff;
     target.twoSided = source.twoSided;
+    target.colorVariation = source.colorVariation;
 }
 }  // namespace
 
@@ -341,6 +342,38 @@ bool Application::DrawMaterialProperties(compositor::MaterialAsset& asset) {
         ui::EndPropertyTable();
     }
     ui::HintText("アルファ抜きと両面はモデルの描画だけに効く");
+
+    // 配置の点の色むら（散布の Variation）への応え方。モデルの配置だけに効く。
+    ui::SectionHeader("色むら");
+    if (ui::BeginPropertyTable("materialVariationRows", "0 側の彩度")) {
+        static const compositor::ColorVariation kDefaultVariation;
+        auto& variation = asset.colorVariation;
+        const auto end = [&](const char* side, float* hue, float* saturation, float* brightness,
+                             float defaultHue, float defaultSaturation, float defaultBrightness) {
+            const std::string prefix = std::string(side) + " 側の";
+            changed |= ui::PropertyFloat((prefix + "色相").c_str(), hue, -180.0f, 180.0f, defaultHue,
+                                         "色むらの値がこの端にある株で、ベースカラーの色みを回す（度）",
+                                         "%.0f 度");
+            changed |= ui::PropertyFloat((prefix + "彩度").c_str(), saturation, 0.0f, 2.0f,
+                                         defaultSaturation,
+                                         "色むらの値がこの端にある株の鮮やかさ。1 でそのまま", "%.2f");
+            changed |= ui::PropertyFloat((prefix + "明度").c_str(), brightness, 0.0f, 2.0f,
+                                         defaultBrightness,
+                                         "色むらの値がこの端にある株の明るさ（倍率）。1 でそのまま", "%.2f");
+        };
+        end("0", &variation.lowHueDegrees, &variation.lowSaturation, &variation.lowBrightness,
+            kDefaultVariation.lowHueDegrees, kDefaultVariation.lowSaturation,
+            kDefaultVariation.lowBrightness);
+        end("1", &variation.highHueDegrees, &variation.highSaturation, &variation.highBrightness,
+            kDefaultVariation.highHueDegrees, kDefaultVariation.highSaturation,
+            kDefaultVariation.highBrightness);
+        changed |= ui::PropertyFloat(
+            "個体差", &variation.jitter, 0.0f, 0.5f, kDefaultVariation.jitter,
+            "株ごとの乱数で色むらの値をずらす幅（±）。同じ場所の株どうしにも差を付ける", "%.2f");
+        ui::EndPropertyTable();
+    }
+    ui::HintText("散布の Variation に繋いだマスクの値（0〜1）で色を寄せる。0.5 で調整なし");
+    ui::HintText("葉のマテリアルに設定し、幹は既定のままにする。インポスターは作り直すと反映される");
 
     return changed;
 }
