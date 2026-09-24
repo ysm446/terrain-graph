@@ -191,9 +191,13 @@ ImVec4 PinTypeColor(graph::ValueType valueType) {
     }
 }
 
+// ノードの地の色と左右の余白。ピンの丸をノードの縁へ置くのに使う。
+constexpr ImVec4 kNodeBackground(0.150f, 0.150f, 0.150f, 0.98f);
+constexpr float kNodePaddingX = 12.0f;
+
 // ピンの矩形。当たり判定をラベルまで広げるので、丸の位置は別に持つ。
 struct PinGeometry {
-    ImVec2 min;     // 丸の矩形
+    ImVec2 min;     // 丸の矩形（縦は行の高さ）
     ImVec2 max;
     ImVec2 center;  // 接続点（リンクの端）
 };
@@ -201,21 +205,32 @@ struct PinGeometry {
 // 丸ピンを描いて矩形を返す。**当たり判定（ed::PinRect）は呼び出し側で決める。**
 // ラベルまで含めて掴めるようにするため（出力ピンはクリックでプレビューも切り替える）。
 // filled が真なら丸を塗る。**ビューポートに出ている出力**の印に使う。
-PinGeometry DrawRoundPin(const graph::Pin& pin, bool filled = false) {
+//
+// **丸はノードの縁（edgeX、枠線の上）に置く。** リンクはノードより下の層に描かれるので、
+// 丸をノードの内側に置くと、線がノードの下へ潜ってから届き、裏に付いて見える。
+// 縁に置けば線は丸の外周まで見え、丸に刺さって見える。場所取り（Dummy）は従来どおり
+// 内側に残し、ラベルの位置は変えない。
+PinGeometry DrawRoundPin(const graph::Pin& pin, float edgeX, bool filled = false) {
+    constexpr float kRadius = 4.3f;
     const ImVec2 size(14.0f, 20.0f);
     ImGui::Dummy(size);
+    const ImVec2 slotMin = ImGui::GetItemRectMin();
+    const ImVec2 slotMax = ImGui::GetItemRectMax();
     PinGeometry geometry;
-    geometry.min = ImGui::GetItemRectMin();
-    geometry.max = ImGui::GetItemRectMax();
-    geometry.center = ImVec2((geometry.min.x + geometry.max.x) * 0.5f,
-                             (geometry.min.y + geometry.max.y) * 0.5f);
-    ed::PinPivotRect(ImVec2(geometry.center.x - 6.0f, geometry.center.y - 6.0f),
-                     ImVec2(geometry.center.x + 6.0f, geometry.center.y + 6.0f));
+    geometry.center = ImVec2(edgeX, (slotMin.y + slotMax.y) * 0.5f);
+    geometry.min = ImVec2(edgeX - size.x * 0.5f, slotMin.y);
+    geometry.max = ImVec2(edgeX + size.x * 0.5f, slotMax.y);
+    // リンクの端は丸の中心の 1 点。幅のある矩形にすると、相手に近い角へ端がずれて
+    // 丸から離れた所で止まり、隣のピンとの見分けがつきにくくなる。
+    ed::PinPivotRect(geometry.center, geometry.center);
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
     const ImU32 pinColor = ColorToU32(PinTypeColor(pin.valueType));
     if (filled) {
-        ImGui::GetWindowDrawList()->AddCircleFilled(geometry.center, 4.3f, pinColor, 16);
+        drawList->AddCircleFilled(geometry.center, kRadius + 0.8f, pinColor, 16);
     } else {
-        ImGui::GetWindowDrawList()->AddCircle(geometry.center, 4.3f, pinColor, 16, 1.6f);
+        // 中抜きの丸も中をノードの地で塗る。線の端が輪で止まって見える。
+        drawList->AddCircleFilled(geometry.center, kRadius + 0.8f, ColorToU32(kNodeBackground), 16);
+        drawList->AddCircle(geometry.center, kRadius, pinColor, 16, 1.6f);
     }
     return geometry;
 }
@@ -603,16 +618,22 @@ void Application::DrawGraphNode(const graph::Node& node) {
                                  : isPreview ? ImVec4(0.72f, 0.76f, 0.62f, 1.0f)
                                              : ImVec4(0.22f, 0.22f, 0.22f, 1.0f);
     const ImVec4 activeNodeBorderColor(0.59f, 0.64f, 0.68f, 1.0f);
-    ed::PushStyleVar(ed::StyleVar_NodePadding, ImVec4(12.0f, 10.0f, 12.0f, 10.0f));
+    ed::PushStyleVar(ed::StyleVar_NodePadding, ImVec4(kNodePaddingX, 10.0f, kNodePaddingX, 10.0f));
     ed::PushStyleVar(ed::StyleVar_NodeRounding, 6.0f);
     ed::PushStyleVar(ed::StyleVar_NodeBorderWidth, isPreview ? 2.0f : 1.0f);
     ed::PushStyleVar(ed::StyleVar_SelectedNodeBorderWidth, 1.8f);
-    ed::PushStyleColor(ed::StyleColor_NodeBg, ImVec4(0.150f, 0.150f, 0.150f, 0.98f));
+    ed::PushStyleColor(ed::StyleColor_NodeBg, kNodeBackground);
     ed::PushStyleColor(ed::StyleColor_NodeBorder, nodeBorderColor);
     ed::PushStyleColor(ed::StyleColor_HovNodeBorder, activeNodeBorderColor);
     ed::PushStyleColor(ed::StyleColor_SelNodeBorder, activeNodeBorderColor);
 
     ed::BeginNode(ed::NodeId(node.id));
+    // ノードの左右の縁（ピンの丸を置く所）。右の縁は前のフレームの大きさから取る
+    // （中身が kNodeWidth より広いノードもある）。初回は中身の幅で見積もる。
+    const float nodeLeftX = ImGui::GetCursorScreenPos().x - kNodePaddingX;
+    const float lastNodeWidth = ed::GetNodeSize(ed::NodeId(node.id)).x;
+    const float nodeRightX =
+        nodeLeftX + (lastNodeWidth > 0.0f ? lastNodeWidth : kNodeWidth + kNodePaddingX * 2.0f);
 
     // ヘッダ: 種類色の印 + 名前。レイヤーが無効なら名前を落とした色で描く。
     const auto* layerSettings = std::get_if<graph::LayerNodeSettings>(&node.settings);
@@ -722,7 +743,7 @@ void Application::DrawGraphNode(const graph::Node& node) {
         const float inputY = rowY + static_cast<float>(inputIndex) * 24.0f;
         ImGui::SetCursorPos(ImVec2(rowStartX, inputY));
         ed::BeginPin(ed::PinId(input.id), ed::PinKind::Input);
-        const PinGeometry geometry = DrawRoundPin(input);
+        const PinGeometry geometry = DrawRoundPin(input, nodeLeftX);
         ImGui::SameLine();
         ImGui::SetCursorPosY(inputY + 2.0f);
         ImGui::TextColored(pinLabelColor, "%s", input.label.c_str());
@@ -745,7 +766,7 @@ void Application::DrawGraphNode(const graph::Node& node) {
         const ImVec2 labelMin = ImGui::GetItemRectMin();
         ImGui::SameLine();
         ImGui::SetCursorPosY(outputY);
-        const PinGeometry geometry = DrawRoundPin(output, previewOutput);
+        const PinGeometry geometry = DrawRoundPin(output, nodeRightX, previewOutput);
         // ラベルの左端から丸まで。
         ed::PinRect(ImVec2(labelMin.x, geometry.min.y), geometry.max);
         ed::EndPin();
