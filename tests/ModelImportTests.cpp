@@ -162,13 +162,22 @@ C: "OO",21,0
         }
         const auto& lods = named.geometry->lods;
         if (lods.size() != 2 || lods[0].triangles != 2 || lods[1].triangles != 1) return 9;
-        // 既定は最大寸法（2 m）の 10 倍、次の段は 3 倍。設定があればそれを使う。
+        // 既定は最大寸法（2 m）の 4 倍、次の段は 3 倍。設定があればそれを使う。
         using tg::renderer::LodStartDistance;
-        if (LodStartDistance(named, 0) != 0 || std::abs(LodStartDistance(named, 1) - 20) > 1e-4f ||
-            std::abs(LodStartDistance(named, 2) - 60) > 1e-4f)
+        if (LodStartDistance(named, 0) != 0 || std::abs(LodStartDistance(named, 1) - 8) > 1e-4f ||
+            std::abs(LodStartDistance(named, 2) - 24) > 1e-4f)
             return 10;
         named.lodDistances = {5};
-        if (LodStartDistance(named, 1) != 5 || std::abs(LodStartDistance(named, 2) - 60) > 1e-4f) return 11;
+        if (LodStartDistance(named, 1) != 5 || std::abs(LodStartDistance(named, 2) - 24) > 1e-4f) return 11;
+        // 背の高いモデルでも既定の距離は 300 m で頭打ち（インポスターへ早く替える）。
+        ModelAsset tall;
+        auto geometry = std::make_shared<tg::renderer::ModelGeometry>();
+        geometry->minimum = {0, 0, 0};
+        geometry->maximum = {6, 24, 6};
+        tall.geometry = geometry;
+        if (std::abs(LodStartDistance(tall, 1) - 96) > 1e-4f || std::abs(LodStartDistance(tall, 2) - 288) > 1e-4f ||
+            std::abs(LodStartDistance(tall, 3) - 300) > 1e-4f)
+            return 12;
     }
     {
         std::ofstream out(path);
