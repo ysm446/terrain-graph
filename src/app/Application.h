@@ -124,6 +124,7 @@ private:
     void RequestGraphNodePlacement(bool navigate = true);
     // グラフのエディタ部（imgui-node-editor）。パネルの中で呼ぶ。
     void DrawGraphEditor();
+    void DrawGraphNodeNotes();
     // グラフのノード 1 枚。カード・ピン・リンクの当たり判定を描く。
     void DrawGraphNode(const graph::Node& node);
     // ノードに出すマスクのサムネイル（そのノードの outputIndex 番目の Mask 出力）。
@@ -467,6 +468,7 @@ private:
         // （位置だけだと左上しか分からず、画面中央に寄せると右下へずれる）。
         float sizeX = 0.0f;
         float sizeY = 0.0f;
+        std::string note;
         struct Source {
             int copiedIndex = -1;              // コピーした集合の中の添字
             graph::GraphId externalPin = 0;    // 集合の外なら、その出力ピン
@@ -476,6 +478,8 @@ private:
     std::vector<GraphClipboardNode> m_graphClipboard;
     // 貼るたびに位置をずらす回数。コピーし直すと 0 に戻す。
     int m_graphPasteCount = 0;
+    // メモの印（か省略したメモ）にカーソルが載っているノード。ed::End の後でツールチップを出す。
+    graph::GraphId m_graphNoteHover = 0;
     // ビューポートに出しているノード。**選択とは別に持つ。**
     // 結果を見ながら別のノードのプロパティをいじれるようにするため
     // （terrain-editor と同じ作法）。0 は出力ノードのチェーン。

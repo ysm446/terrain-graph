@@ -3,6 +3,7 @@
 #include "core/ColorSpace.h"
 
 #include <imgui_internal.h>
+#include <imgui_stdlib.h>
 
 #include <algorithm>
 #include <cmath>
@@ -921,6 +922,20 @@ bool PropertyTextInput(const char* label, char* buffer, size_t bufferSize, const
     // 呼び出し側が毎フレーム buffer を作り直していても、終えたフレームには確定した文字列が入る。
     ImGui::InputText("##value", buffer, bufferSize);
     const bool committed = ImGui::IsItemDeactivatedAfterEdit();
+    PropertyEnd();
+    return committed;
+}
+
+bool PropertyTextMultiline(const char* label, std::string& text, int lines, const char* tooltip) {
+    PropertyLabel(label, tooltip);
+    const float width = ImGui::GetContentRegionAvail().x;
+    const float height = ImGui::GetTextLineHeight() * static_cast<float>(std::max(lines, 1)) +
+                         ImGui::GetStyle().FramePadding.y * 2.0f;
+    // 入力中は ImGui が内部バッファで持ち、終えたときに text へ書き戻す。
+    std::string edited = text;
+    ImGui::InputTextMultiline("##value", &edited, ImVec2(width, height), ImGuiInputTextFlags_WordWrap);
+    const bool committed = ImGui::IsItemDeactivatedAfterEdit();
+    if (committed) text = edited;
     PropertyEnd();
     return committed;
 }

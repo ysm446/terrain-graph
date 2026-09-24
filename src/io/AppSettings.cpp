@@ -112,6 +112,10 @@ void AppSettings::Load() {
             showAssetBand != display->end() && showAssetBand->is_boolean()) {
             m_display.showAssetBand = showAssetBand->get<bool>();
         }
+        if (const auto showNodeNotes = display->find("showNodeNotes");
+            showNodeNotes != display->end() && showNodeNotes->is_boolean()) {
+            m_display.showNodeNotes = showNodeNotes->get<bool>();
+        }
         // 壊れた値でも操作不能にならないよう、範囲へ丸める（0 は上限なし）。
         if (const auto limit = display->find("frameRateLimit");
             limit != display->end() && limit->is_number_integer()) {
@@ -154,6 +158,7 @@ bool AppSettings::Save() const {
     display["showStats"] = m_display.showStats;
     display["showHeightGuide"] = m_display.showHeightGuide;
     display["showAssetBand"] = m_display.showAssetBand;
+    display["showNodeNotes"] = m_display.showNodeNotes;
     display["frameRateLimit"] = m_display.frameRateLimit;
     display["inactiveFrameRateLimit"] = m_display.inactiveFrameRateLimit;
     display["clearColor"] = {m_display.clearColor[0], m_display.clearColor[1],

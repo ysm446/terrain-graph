@@ -111,6 +111,10 @@ bool PropertyCombo(const char* label, int* value, const char* const items[], int
 // 終えた時点で buffer には確定した文字列が入っている（ImGui が書き戻す）。
 bool PropertyTextInput(const char* label, char* buffer, size_t bufferSize,
                        const char* tooltip = nullptr);
+// 複数行の文字列の行。高さは lines 行ぶん。**編集を終えたとき（欄外のクリック）だけ true。**
+// 改行は Enter、確定は欄外のクリック（Enter で閉じると改行が打てないため）。
+bool PropertyTextMultiline(const char* label, std::string& text, int lines,
+                           const char* tooltip = nullptr);
 // 表示専用の値。
 void PropertyValue(const char* label, const char* format, ...);
 

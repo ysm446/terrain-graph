@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -25,6 +26,72 @@ namespace ed = ax::NodeEditor;
 
 namespace tg {
 namespace {
+
+// ノードに出すメモの行数の上限。長いメモは末尾を「…」にし、全文はツールチップで見せる。
+constexpr int kNodeNoteLines = 3;
+
+// width で折り返した先頭の lines 行。収まらなければ最後の行の末尾を「…」にする。
+// **自前で文字ごとに折り返す。** ImGui の折り返しは空白や句読点を区切りに使うので、
+// 日本語の長い文では行の見積もりと描画が食い違う。改行はそのまま行の区切りにする。
+std::string NoteExcerpt(const std::string& note, float width, int lines) {
+    const auto advance = [](const std::string& text, size_t i) {
+        const auto c = static_cast<unsigned char>(text[i]);
+        return i + (c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4);
+    };
+    std::vector<std::string> wrapped;
+    std::string line;
+    for (size_t i = 0; i < note.size() && static_cast<int>(wrapped.size()) <= lines;) {
+        if (note[i] == '\n') {
+            wrapped.push_back(std::move(line));
+            line.clear();
+            ++i;
+            continue;
+        }
+        const size_t next = std::min(advance(note, i), note.size());
+        std::string candidate = line + note.substr(i, next - i);
+        if (!line.empty() && ImGui::CalcTextSize(candidate.c_str()).x > width) {
+            wrapped.push_back(std::move(line));
+            line = note.substr(i, next - i);
+        } else {
+            line = std::move(candidate);
+        }
+        i = next;
+    }
+    if (!line.empty() || wrapped.empty()) wrapped.push_back(std::move(line));
+    const bool truncated = static_cast<int>(wrapped.size()) > lines;
+    wrapped.resize(std::min<size_t>(wrapped.size(), static_cast<size_t>(lines)));
+    if (truncated) {
+        // 末尾の「…」が入るまで、最後の行を文字の境目で削る。
+        std::string& last = wrapped.back();
+        while (!last.empty() && ImGui::CalcTextSize((last + "…").c_str()).x > width) {
+            size_t cut = last.size() - 1;
+            while (cut > 0 && (static_cast<unsigned char>(last[cut]) & 0xC0) == 0x80) --cut;
+            last.resize(cut);
+        }
+        last += "…";
+    }
+    std::string result;
+    for (size_t i = 0; i < wrapped.size(); ++i) {
+        if (i) result += '\n';
+        result += wrapped[i];
+    }
+    return result;
+}
+
+// メモがあることを示す小さな印（紙に罫線 3 本）。色はテーマの淡い文字色。
+void DrawNoteIcon() {
+    const ImVec2 size(10.0f, 12.0f);
+    const ImVec2 min = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(size);
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    const ImU32 color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    const ImVec2 top(min.x, min.y + 2.0f);
+    drawList->AddRect(top, ImVec2(top.x + size.x, top.y + size.y), color, 1.5f);
+    for (int i = 0; i < 3; ++i) {
+        const float y = top.y + 3.0f + 2.5f * static_cast<float>(i);
+        drawList->AddLine(ImVec2(top.x + 2.5f, y), ImVec2(top.x + size.x - 2.5f, y), color);
+    }
+}
 
 ImU32 ColorToU32(const ImVec4& color) {
     return ImGui::ColorConvertFloat4ToU32(color);
@@ -382,6 +449,7 @@ void Application::CopySelectedGraphNodes() {
         entry.settings = node->settings;
         entry.posX = node->posX;
         entry.posY = node->posY;
+        entry.note = node->note;
         const ImVec2 size = ed::GetNodeSize(ed::NodeId(node->id));
         entry.sizeX = size.x;
         entry.sizeY = size.y;
@@ -450,6 +518,7 @@ void Application::PasteGraphNodes(const ImVec2& viewCenter) {
             continue;
         }
         node->settings = entry.settings;
+        node->note = entry.note;
         node->component = std::max(0, m_editComponent);
         node->posX = entry.posX + deltaX;
         node->posY = entry.posY + deltaY;
@@ -565,6 +634,12 @@ void Application::DrawGraphNode(const graph::Node& node) {
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(0.72f, 0.76f, 0.62f, 1.0f), "●");
         }
+        // メモの印。載せると全文をツールチップで見せる。
+        if (!node.note.empty()) {
+            ImGui::SameLine();
+            DrawNoteIcon();
+            if (ImGui::IsItemHovered()) m_graphNoteHover = node.id;
+        }
         // 種類はヘッダの下に小さく添える。名前と種類の両方が分かるようにする。
         if (const graph::NodeDefinition* definition = graph::FindNodeDefinition(node.kind);
             definition != nullptr && layerSettings != nullptr) {
@@ -669,6 +744,34 @@ void Application::DrawGraphNode(const graph::Node& node) {
     ed::PopStyleVar(4);
 }
 
+// ノードのメモの先頭を、ノードの上端のすぐ上に吹き出しとして出す（グラフパネルの「メモを表示」）。
+// **ノードの外に描く。** 中に描くとメモの有無や表示の切り替えでノードの高さが変わり、配置が崩れる。
+// ed::Begin と ed::End の間で呼ぶ（キャンバス座標で描き、マウスもキャンバス座標で判定する）。
+void Application::DrawGraphNodeNotes() {
+    if (!m_settings.Display().showNodeNotes) return;
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    const ImVec2 padding(6.0f, 3.0f);
+    constexpr float kGap = 4.0f;
+    const ImU32 background = ImGui::GetColorU32(ImGuiCol_PopupBg, 0.92f);
+    const ImU32 border = ImGui::GetColorU32(ImGuiCol_Border);
+    const ImU32 text = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    for (const graph::Node& node : m_graph.Nodes()) {
+        if (node.note.empty() || (m_editComponent >= 0 && node.component != m_editComponent)) continue;
+        const ImVec2 position = ed::GetNodePosition(ed::NodeId(node.id));
+        const ImVec2 size = ed::GetNodeSize(ed::NodeId(node.id));
+        // エディタがまだ知らないノード（このフレームに作ったもの）は飛ばす。
+        if (!IsValidNodePosition(position.x, position.y) || size.x <= 0.0f) continue;
+        const std::string excerpt = NoteExcerpt(node.note, size.x - padding.x * 2.0f, kNodeNoteLines);
+        const ImVec2 textSize = ImGui::CalcTextSize(excerpt.c_str());
+        const ImVec2 boxMax(position.x + size.x, position.y - kGap);
+        const ImVec2 boxMin(position.x, boxMax.y - textSize.y - padding.y * 2.0f);
+        drawList->AddRectFilled(boxMin, boxMax, background, 4.0f);
+        drawList->AddRect(boxMin, boxMax, border, 4.0f);
+        drawList->AddText(ImVec2(boxMin.x + padding.x, boxMin.y + padding.y), text, excerpt.c_str());
+        if (excerpt != node.note && ImGui::IsMouseHoveringRect(boxMin, boxMax)) m_graphNoteHover = node.id;
+    }
+}
+
 void Application::DrawGraphEditor() {
     if (m_nodeEditor == nullptr) {
         ed::Config config{};
@@ -723,6 +826,7 @@ void Application::DrawGraphEditor() {
         if (m_editComponent >= 0 && node.component != m_editComponent) continue;
         DrawGraphNode(node);
     }
+    DrawGraphNodeNotes();
 
     // A でグラフ全体を画面に収める（ビューポートの A と同じ作法）。
     // 内容の矩形は live なノードから計算されるため、描画の後に呼ぶ。
@@ -1023,6 +1127,16 @@ void Application::DrawGraphEditor() {
 
     ed::End();
 
+    // メモの全文。ノードエディタの外（ed::End の後）でないとツールチップの位置がずれる。
+    if (const graph::Node* noted = m_graph.FindNode(std::exchange(m_graphNoteHover, 0));
+        noted != nullptr && !noted->note.empty()) {
+        ImGui::BeginTooltip();
+        ImGui::PushTextWrapPos(ui::Scaled(360.0f));
+        ImGui::TextUnformatted(noted->note.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
+    }
+
     // エディタが持つ位置をノードへ書き戻す（保存はここから読む）。
     // **このフレーム中に作られたばかりでエディタが知らないノードは飛ばす。**
     // エディタは知らないノードに FLT_MAX を返すため、書き戻すと次の流し込みで
@@ -1269,6 +1383,14 @@ void Application::DrawGraphPanel() {
     } else {
         ui::HintText("出力ノードへ繋いだチェーンがプレビューになる");
     }
+    if (ui::BeginPropertyTable("graphDisplayRows")) {
+        if (ui::PropertyBool("メモを表示", &m_settings.Display().showNodeNotes, true,
+                             "ノードのメモの先頭をノードに表示する。切るとメモの印だけになり、"
+                             "印に載せると全文が出る")) {
+            m_settings.Save();
+        }
+        ui::EndPropertyTable();
+    }
 
     float editorHeight = ui::Scaled(m_graphEditorHeight);
     const float paneWidth = ImGui::GetContentRegionAvail().x;
@@ -1314,6 +1436,15 @@ void Application::DrawGraphPanel() {
     }
 
     graph::Node* selected = m_graph.FindMutableNode(m_selectedGraphNode);
+    // メモはどの種類のノードにも共通。評価には使わないので、確定しても再評価しない。
+    if (selected != nullptr && ui::BeginPropertyTable("graphNodeNote")) {
+        if (ui::PropertyTextMultiline("メモ", selected->note, 3,
+                                      "なぜこのノードを置いたか、などのメモ。ノードビューに表示する"
+                                      "（評価には影響しない）。欄の外をクリックで確定")) {
+            MarkDocumentChanged(false);
+        }
+        ui::EndPropertyTable();
+    }
     if (selected == nullptr) {
         ui::HintText("ノードを選ぶと設定が出る。背景の右クリックで追加、"
                      "ピンをドラッグして接続、Ctrl+C / Ctrl+V でコピー");

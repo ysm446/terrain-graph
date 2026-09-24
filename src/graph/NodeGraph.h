@@ -449,6 +449,8 @@ struct Node {
     float posX = 0.0f;
     float posY = 0.0f;
     bool positionValid = false;
+    // なぜこのノードを置いたか、などのメモ（UTF-8）。表示と保存だけで、評価には使わない。
+    std::string note;
 };
 
 struct Link {
