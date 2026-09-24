@@ -1,7 +1,13 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-24 11:57
+更新日時: 2026-09-24 12:25
+
+## Model Scatter の距離による LOD（2026-09-24 12:25）
+
+Model Scatter に `autoLod`（新規ノードは真、キーの無い既存ファイルは偽で固定 LOD のまま）と `lodBias` を追加。切り替え距離は `ModelAsset::lodDistances`（.tgmodel の `lodDistances`、等倍のときの m）に持ち、未設定の段は最大寸法の 10 倍・以降 3 倍（`LodStartDistance`）。ModelPreview は `kAllLods` で先頭 4 段までを用意する。InstanceCulling の CsCull が距離とインスタンス倍率×倍率から段を選び、可視リストを「段ごとの通常の区画」と「切り替え中の区画」（計 2L 区画、要素は元 ID と進み具合）へ詰める。切り替え距離から 15% の幅では去る段と来る段の両方へ入れ、ModelPreview.hlsl の PsDither が 4x4 Bayer の相補的なディザで画素を分け合う。影は硬く切り替える。SV_InstanceID は StartInstance を含まないので、区画の先頭は定数（visibleOffset）で渡す。FBX は LODGroup に加えて、ノード名の末尾 `_LOD<n>` でも段を分け、番号の飛びは詰める。這い松のスクリプトは骨格と枝先の乱数を分け、LOD0〜2（Var1 で 13,424 / 5,012 / 1,914 三角形）を 1 つの FBX に入れる。
+
+検証: Debug / Release ビルド（警告なし）、CTest 6 件（`_LOD` 命名と既定距離のテストを追加）、DXC で ModelPreview（VsMain / PsMain / PsShadow / PsDither）と InstanceCulling（CsCull / CsFinish）。確認用シーン（這い松を 25〜35 倍）で、倍率 100 の自動と固定 LOD0 が最大差 1、倍率 0.01 の自動と固定 LOD2 が 8 を超える差 1 画素で一致。倍率 1 は近くが LOD0、遠くが簡略な段になり、穴や欠けは見当たらない。Release の 300 フレーム計測で 20.9 ms（全 LOD0）→ 14.5 ms（倍率 1）→ 7.1 ms（全 LOD2）。Debug のデバッグレイヤー警告なし。`.tgproj` への保存・再読み込み・再保存で `autoLod` / `lodBias`、モデルの `lodDistances` を保持。`--screenshot-ui` で Model Scatter と「LOD」節を確認（一時的に最下部へスクロールする行を入れ、撮影後に除去して再ビルド）。Model Scatter の表は最長ラベルに列幅を合わせ、既存の「ポイントの大きさ」「接地オフセット」の切れも直った。成果物は `data/Test/haimatsu-qa/lod-*.png`、`scatter-ui*.png`、`model-lod-ui*.png`、`roundtrip/`。**未確認**: カメラを動かしたときの切り替えの見え方（静止画のみ）、実寸での切り替え距離の妥当性、5 段以上の LOD を持つモデル（先頭 4 段だけ使う）、描画距離の外を地形のマテリアルへ引き継ぐ設定例。
 
 ## モデルのアルファ抜きと這い松（2026-09-24 11:57）
 

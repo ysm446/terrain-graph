@@ -380,7 +380,11 @@ struct ModelScatterSettings {
     float offset = 0.0f;
     bool usePointSize = true;
     float maxDistance = 0; // m。0は距離制限なし
-    int lod = 0;
+    int lod = 0;           // autoLod が偽のときに使う固定の段階
+    // 距離で LOD を選ぶ。切り替え距離はモデル側（ModelAsset::lodDistances）に持ち、
+    // インスタンスの倍率と lodBias を掛けて使う。
+    bool autoLod = true;
+    float lodBias = 1.0f;
 };
 struct CompiledModelScatter {
     GraphId node = 0, source = 0;

@@ -1958,7 +1958,7 @@ void Application::DrawGraphPanel() {
     } else if (auto* scatter = std::get_if<graph::ModelScatterSettings>(&selected->settings)) {
         bool changed = false;
         ui::HintText("Crumbling の Points を接続し、Instances をModel Outputへ接続します");
-        if (ui::BeginPropertyTable("modelScatterSettings")) {
+        if (ui::BeginPropertyTable("modelScatterSettings", "LOD 距離の倍率")) {
             changed |= ui::PropertyInt("シード",&scatter->seed,0,1000000,1);
             changed |= ui::PropertyFloat("描画距離", &scatter->maxDistance, 0, 100000, 0,
                 "この距離より遠いモデルを描画対象から外します。0は距離制限なし。影にも適用します", "%.0f m");
@@ -1967,7 +1967,13 @@ void Application::DrawGraphPanel() {
             changed |= ui::PropertyFloat("最大スケール",&scatter->scaleMax,0.001f,1000.0f,1.2f);
             changed |= ui::PropertyFloat("地表に沿う",&scatter->alignToNormal,0,1,1);
             changed |= ui::PropertyFloat("接地オフセット",&scatter->offset,-10000,10000,0,"負の値で地面へ埋め込みます","%.3f m");
-            changed |= ui::PropertyInt("LOD",&scatter->lod,0,16,0,"モデルにないLODは最も近い段階を使います");
+            changed |= ui::PropertyBool("LOD 自動",&scatter->autoLod,true,
+                "カメラからの距離で LOD を切り替えます。切り替え距離はモデルのプロパティで設定します");
+            if (scatter->autoLod)
+                changed |= ui::PropertyFloat("LOD 距離の倍率",&scatter->lodBias,0.01f,100.0f,1.0f,
+                    "モデルの切り替え距離に掛けます。小さくすると近くから簡略な段階になり軽くなります","%.2f");
+            else
+                changed |= ui::PropertyInt("LOD",&scatter->lod,0,16,0,"モデルにないLODは最も近い段階を使います");
             ui::EndPropertyTable();
         }
         std::vector<const char*> names{"未指定"};

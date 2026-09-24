@@ -5,7 +5,8 @@
 #       --out data/models/Haimatsu [--root data] [--variants 3] [--seed 1]
 #
 # 出力（--out の下）:
-#   Haimatsu_VarN.fbx        幹・枝（Bark）と葉のカード（Needles）の 2 スロット
+#   Haimatsu_VarN.fbx        幹・枝（Bark）と葉のカード（Needles）の 2 スロット。
+#                            LOD0〜2 をオブジェクト名の末尾 _LOD<n> で 1 ファイルに入れる
 #   T_Haimatsu_Needles_*.png 枝先のカード（RGBA、A でアルファ抜き）と法線（OpenGL 規約）
 #   T_Haimatsu_Bark_*.png    樹皮（縦方向に繰り返す）と法線
 #   Haimatsu.blend           全バリエーション（手直し用）
@@ -293,8 +294,18 @@ def add_tube(geo, points, radii, sides=7, bark_tile=0.30):
                      [a[1], b[1], tangents[-1]])
 
 
-def add_shoot(geo, base, axis, rng, scale=1.0):
-    """枝先 1 本。軸まわりに 60 度ずつ回したカード 3 枚。"""
+# LOD ごとの作り分け。骨格（幹と枝の形）は全段で同じ乱数から作り、細かさだけを変える。
+#   sides: 幹・枝・小枝の筒の角数（0 なら作らない）  stride: 筒の節を何点おきに使うか
+#   spacing / scale: 枝先の間隔と大きさの倍率  cards: 枝先 1 本のカード枚数  tips: 先端の房の本数
+LODS = [
+    {"sides": (8, 6, 5), "stride": 1, "spacing": 1.0, "scale": 1.0, "cards": 3, "tips": 3},
+    {"sides": (5, 4, 3), "stride": 2, "spacing": 2.0, "scale": 1.35, "cards": 2, "tips": 1},
+    {"sides": (4, 3, 0), "stride": 4, "spacing": 3.4, "scale": 1.8, "cards": 2, "tips": 0},
+]
+
+
+def add_shoot(geo, base, axis, rng, scale=1.0, cards=3):
+    """枝先 1 本。軸まわりに 180/cards 度ずつ回したカード。"""
     axis = axis.normalized()
     length, width = CARD_LENGTH * scale, CARD_WIDTH * scale
     base = base - axis * 0.02 * scale
@@ -303,8 +314,8 @@ def add_shoot(geo, base, axis, rng, scale=1.0):
     start = rng.uniform(0, math.pi)
     outward = Vector((base.x, base.y, 0.0))
     outward = outward.normalized() if outward.length > 1e-4 else Vector((1, 0, 0))
-    for k in range(3):
-        angle = start + k * math.pi / 3
+    for k in range(cards):
+        angle = start + k * math.pi / cards
         across = (reference * math.cos(angle) + axis.cross(reference) * math.sin(angle)).normalized()
         face = across.cross(axis).normalized()
         if face.dot(outward + UP) < 0:
@@ -339,7 +350,16 @@ def grow(start, yaw, length, pitch_at, rng, wander=0.25, step=0.05, ground=0.0):
     return points, yaw
 
 
-def build_plant(rng):
+def add_tube_lod(geo, points, radii, sides, lod):
+    """LOD に合わせて節を間引いた筒。角数 0 なら作らない。"""
+    if sides <= 0:
+        return
+    keep = list(range(0, len(points) - 1, lod["stride"])) + [len(points) - 1]
+    add_tube(geo, [points[i] for i in keep], [radii[i] for i in keep], sides=sides)
+
+
+def build_plant(seed, lod):
+    rng = random.Random(seed)
     geo = Geometry()
     stems = rng.randint(6, 9)
     yaw0 = rng.uniform(0, 2 * math.pi)
@@ -360,13 +380,13 @@ def build_plant(rng):
         r0 = rng.uniform(0.045, 0.065)
         points, _ = grow(Vector((0, 0, -0.04)), yaw, length, pitch_at, rng, ground=r0 * 0.6)
         radii = [r0 * (1 - 0.78 * (i / (len(points) - 1))) + 0.006 for i in range(len(points))]
-        add_tube(geo, points, radii, sides=8)
-        add_branches(geo, points, radii, rng, order=1)
-        add_foliage(geo, points, rng, start=0.40, spacing=0.055)
+        add_tube_lod(geo, points, radii, lod["sides"][0], lod)
+        add_branches(geo, points, radii, rng, 1, lod)
+        add_foliage(geo, points, rng.getrandbits(32), 0.40, 0.055, lod)
     return geo
 
 
-def add_branches(geo, points, radii, rng, order):
+def add_branches(geo, points, radii, rng, order, lod):
     total = len(points) - 1
     distance, next_at = 0.0, rng.uniform(0.1, 0.2)
     side = rng.choice((-1, 1))
@@ -390,14 +410,20 @@ def add_branches(geo, points, radii, rng, order):
         branch, _ = grow(points[i], yaw, length, pitch_at, rng, wander=0.4, step=0.04, ground=0.02)
         r0 = radii[i] * 0.55
         branch_radii = [r0 * (1 - 0.7 * (j / (len(branch) - 1))) + 0.003 for j in range(len(branch))]
-        add_tube(geo, branch, branch_radii, sides=6 if order == 1 else 5)
+        # 骨格の乱数は段によらず同じだけ使う（段で形がずれないように）。作らない段も進める。
+        sides = lod["sides"][order]
+        add_tube_lod(geo, branch, branch_radii, sides, lod)
         if order == 1 and length > 0.3:
-            add_branches(geo, branch, branch_radii, rng, order=2)
-        add_foliage(geo, branch, rng, start=0.25 if order == 1 else 0.1, spacing=0.045)
+            add_branches(geo, branch, branch_radii, rng, 2, lod)
+        foliage_seed = rng.getrandbits(32)
+        if sides > 0:
+            add_foliage(geo, branch, foliage_seed, 0.25 if order == 1 else 0.1, 0.045, lod)
 
 
-def add_foliage(geo, points, rng, start, spacing):
-    """枝の外側に横向きの枝先、先端に上向きの枝先を付ける。"""
+def add_foliage(geo, points, seed, start, spacing, lod):
+    """枝の外側に横向きの枝先、先端に上向きの枝先を付ける。乱数は枝ごとに独立。"""
+    rng = random.Random(seed)
+    spacing *= lod["spacing"]
     total = len(points) - 1
     distance, next_at = 0.0, 0.0
     for i in range(1, total):
@@ -410,14 +436,15 @@ def add_foliage(geo, points, rng, start, spacing):
         sideways = sideways.normalized() if sideways.length > 1e-4 else perpendicular(tangent)
         sideways *= rng.choice((-1, 1))
         axis = tangent * 0.6 + sideways * rng.uniform(0.4, 0.8) + UP * rng.uniform(0.7, 1.2)
-        add_shoot(geo, points[i], axis, rng, scale=rng.uniform(0.8, 1.1))
+        add_shoot(geo, points[i], axis, rng, rng.uniform(0.8, 1.1) * lod["scale"], lod["cards"])
     tangent = (points[-1] - points[-2]).normalized()
-    add_shoot(geo, points[-1], tangent + UP * 0.8, rng, scale=rng.uniform(0.95, 1.15))
-    for k in range(rng.randint(2, 3)):
+    add_shoot(geo, points[-1], tangent + UP * 0.8, rng, rng.uniform(0.95, 1.15) * lod["scale"], lod["cards"])
+    for k in range(min(rng.randint(2, 3), lod["tips"])):
         angle = 2 * math.pi * k / 3 + rng.uniform(-0.4, 0.4)
         spread = perpendicular(tangent)
         spread = spread * math.cos(angle) + tangent.cross(spread) * math.sin(angle)
-        add_shoot(geo, points[-1], tangent + UP * 0.9 + spread * 0.7, rng, scale=rng.uniform(0.8, 1.0))
+        add_shoot(geo, points[-1], tangent + UP * 0.9 + spread * 0.7, rng,
+                  rng.uniform(0.8, 1.0) * lod["scale"], lod["cards"])
 
 
 # --- Blender ------------------------------------------------------------------
@@ -458,17 +485,20 @@ def make_object(name, geo, materials, offset):
     return obj
 
 
-def export_fbx(obj, path):
-    location = obj.location.copy()
-    obj.location = (0, 0, 0)
+def export_fbx(objects, path):
+    """段ごとのオブジェクトを原点へ戻して 1 つの FBX へ書く。名前の _LOD<n> で段を表す。"""
+    locations = [obj.location.copy() for obj in objects]
     bpy.ops.object.select_all(action="DESELECT")
-    obj.select_set(True)
-    bpy.context.view_layer.objects.active = obj
+    for obj in objects:
+        obj.location = (0, 0, 0)
+        obj.select_set(True)
+    bpy.context.view_layer.objects.active = objects[0]
     bpy.ops.export_scene.fbx(filepath=path, use_selection=True, object_types={"MESH"},
                              axis_forward="-Z", axis_up="Y", apply_unit_scale=True,
                              mesh_smooth_type="OFF", add_leaf_bones=False, bake_anim=False,
                              path_mode="STRIP", embed_textures=False)
-    obj.location = location
+    for obj, location in zip(objects, locations):
+        obj.location = location
 
 
 # --- terrain-graph のアセット -------------------------------------------------
@@ -550,16 +580,20 @@ def main():
 
     for index in range(1, options["variants"] + 1):
         name = f"Haimatsu_Var{index}"
-        geo = build_plant(random.Random(options["seed"] * 1000 + index))
-        obj = make_object(name, geo, materials, ((index - 1) * 5.0, 0, 0))
+        objects = []
+        for level, lod in enumerate(LODS):
+            geo = build_plant(options["seed"] * 1000 + index, lod)
+            # .blend では段を奥へ並べて見比べられるようにする。
+            objects.append(make_object(f"{name}_LOD{level}", geo, materials,
+                                       ((index - 1) * 5.0, level * 5.0, 0)))
+            triangles = sum(len(f) - 2 for f in geo.faces)
+            cards = geo.face_mat.count(NEEDLES)
+            print(f"{name}_LOD{level}: {triangles} triangles, {cards} cards")
         fbx = os.path.join(out, name + ".fbx")
-        export_fbx(obj, fbx)
+        export_fbx(objects, fbx)
         # スロットの並びは FBX で最初に現れた順（幹が先）。
         write_model(os.path.join(out, name + ".tgmodel"), name, source_ref(fbx, root),
                     [asset_ref(bark_mat, root), asset_ref(needle_mat, root)])
-        triangles = sum(len(f) - 2 for f in geo.faces)
-        cards = geo.face_mat.count(NEEDLES)
-        print(f"{name}: {triangles} triangles, {cards // 3} shoots")
 
     bpy.ops.wm.save_as_mainfile(filepath=os.path.join(out, "Haimatsu.blend"))
 

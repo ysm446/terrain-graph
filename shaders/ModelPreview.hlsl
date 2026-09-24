@@ -35,6 +35,8 @@ struct ModelConstants
     AtmosphericParameters atmosphere;
     // clearIrradianceIndex: 雲なしの環境の irradiance（0xFFFFFFFF なら混ぜない）。ambientOcclusion: 遮蔽の強さ。
     uint cloudNoiseIndex, atmosphericMode, clearIrradianceIndex; float ambientOcclusion;
+    // visibleOffset: 可視リストの区画の先頭（SV_InstanceID は StartInstance を含まない）。
+    uint visibleOffset; uint3 padding;
 };
 
 ConstantBuffer<ModelConstants> g_model : register(b1);
@@ -95,13 +97,17 @@ float SampleScalarMap(uint index, uint channelSlot, float2 uv, float lod)
 
 
 struct VertexInput { float3 position:POSITION; float3 normal:NORMAL; float4 tangent:TANGENT; float2 uv:TEXCOORD0; };
-struct PixelInput { float4 clip:SV_POSITION; float3 position:POSITION; float3 normal:NORMAL; float4 tangent:TANGENT; float2 uv:TEXCOORD0; };
+// fade: LOD の切り替えの進み具合（InstanceCulling.hlsl）。1 なら抜かない。
+struct PixelInput { float4 clip:SV_POSITION; float3 position:POSITION; float3 normal:NORMAL; float4 tangent:TANGENT; float2 uv:TEXCOORD0; nointerpolation float fade:FADE; };
 uint InstanceHash(uint x) { x ^= x >> 16; x *= 0x7feb352d; x ^= x >> 15; x *= 0x846ca68b; return x ^ (x >> 16); }
 float InstanceRandom(uint x) { return float(InstanceHash(x) >> 8) / 16777216.0; }
 PixelInput VsMain(VertexInput input, uint instance : SV_InstanceID) {
+    float fade = 1;
     if (g_model.sceneMode != 0) {
-        StructuredBuffer<uint> visible = ResourceDescriptorHeap[g_model.visibleIndices];
-        instance = visible[instance];
+        StructuredBuffer<uint2> visible = ResourceDescriptorHeap[g_model.visibleIndices];
+        const uint2 entry = visible[g_model.visibleOffset + instance];
+        instance = entry.x;
+        fade = asfloat(entry.y);
         Texture2D<float4> points = ResourceDescriptorHeap[g_model.points];
         const uint2 address = uint2(instance%1024,instance/1024);
         const float4 placement = points.Load(int3(address,0));
@@ -122,6 +128,7 @@ PixelInput VsMain(VertexInput input, uint instance : SV_InstanceID) {
     PixelInput output;
     output.clip=mul(float4(input.position,1),g_model.viewProjection);
     output.position=input.position; output.normal=input.normal; output.tangent=input.tangent; output.uv=input.uv;
+    output.fade=fade;
     return output;
 }
 // アルファ抜きの判定。ミップはアルファも平均するので、遠くほど閾値を超える画素が減って
@@ -244,4 +251,17 @@ float4 PsMain(PixelInput input, bool frontFace:SV_IsFrontFace):SV_TARGET {
 
     if (g_model.sceneMode != 0) return float4(radiance,1);
     return float4(LinearToSrgb(ApplyTonemap(radiance*g_model.exposure,g_model.tonemapMode)),1);
+}
+
+// LOD の切り替え中の区画。4x4 の Bayer 配列で、来る段は閾値が t 未満の画素、
+// 去る段は t 以上の画素だけを残す。両段で画素を分け合うので、隙間も二重描きも出ない。
+float LodDitherThreshold(uint2 pixel) {
+    static const uint kBayer[16] = {0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5};
+    return (kBayer[(pixel.y & 3) * 4 + (pixel.x & 3)] + 0.5f) / 16.0f;
+}
+float4 PsDither(PixelInput input, bool frontFace:SV_IsFrontFace):SV_TARGET {
+    const float threshold = LodDitherThreshold(uint2(input.clip.xy));
+    if (input.fade > 1.5f) clip(threshold - (input.fade - 2));
+    else clip(input.fade - threshold);
+    return PsMain(input, frontFace);
 }

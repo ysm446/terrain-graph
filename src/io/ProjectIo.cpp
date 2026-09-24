@@ -251,6 +251,20 @@ compositor::NoiseParams ReadNoise(const json& node, const char* key,
     return noise;
 }
 
+// --- モデル ---------------------------------------------------------------
+//
+// LOD の切り替え距離。未設定（空）のときは書かず、読み手は既定値を使う。
+void WriteModelLodDistances(const renderer::ModelAsset& asset, json& node) {
+    if (!asset.lodDistances.empty()) node["lodDistances"] = asset.lodDistances;
+}
+void ReadModelLodDistances(const json& node, renderer::ModelAsset& asset) {
+    asset.lodDistances.clear();
+    const json* values = FindMember(node, "lodDistances");
+    if (values == nullptr || !values->is_array()) return;
+    for (const json& value : *values)
+        asset.lodDistances.push_back(value.is_number() ? std::clamp(value.get<float>(), 0.0f, 1.0e6f) : 0.0f);
+}
+
 // --- マテリアル -----------------------------------------------------------
 //
 // プロジェクトへの埋め込みと .tgmat で同じ形を使う。違うのはテクスチャ参照の書き方だけ。
@@ -1543,7 +1557,8 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             auto& values = item["modelScatter"];
             values = {{"maxDistance",scatter->maxDistance},{"seed",scatter->seed},{"scaleMin",scatter->scaleMin},{"scaleMax",scatter->scaleMax},
                       {"alignToNormal",scatter->alignToNormal},{"offset",scatter->offset},
-                      {"usePointSize",scatter->usePointSize},{"lod",scatter->lod}};
+                      {"usePointSize",scatter->usePointSize},{"lod",scatter->lod},
+                      {"autoLod",scatter->autoLod},{"lodBias",scatter->lodBias}};
             values["models"] = json::array();
             for (const auto& choice : scatter->models)
                 values["models"].push_back({{"model",choice.model},{"weight",choice.weight}});
@@ -1743,6 +1758,9 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     settings.offset = std::clamp(ReadFloat(*values,"offset",0),-10000.0f,10000.0f);
                     settings.usePointSize = ReadBool(*values,"usePointSize",true);
                     settings.lod = std::clamp(ReadInt(*values,"lod",0),0,16);
+                    // キーの無い既存ファイルは固定 LOD のまま開く（見た目を変えない）。
+                    settings.autoLod = ReadBool(*values,"autoLod",false);
+                    settings.lodBias = std::clamp(ReadFloat(*values,"lodBias",1),0.01f,100.0f);
                     if (const auto* choices = FindMember(*values,"models"); choices && choices->is_array()) {
                         for (const auto& choice : *choices) {
                             if (!choice.is_object()) continue;
@@ -2681,6 +2699,7 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
             models.push_back({{"id", asset.id}, {"name", asset.name},
                               {"path", RelativePathString(asset.path, baseDir)},
                               {"materials", slots}});
+            WriteModelLodDistances(asset, models.back());
             if (workspace) { models.back()["_assetPath"] = ToUtf8Portable(asset.assetPath); models.back()["uid"] = asset.assetUid; }
         }
         document["models"] = std::move(models);
@@ -2899,6 +2918,7 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
                 if (!renderer::LoadModel(asset.path, asset)) {
                     TG_LOG_WARN("モデルの読み込みに失敗: %s", asset.error.c_str());
                 }
+                ReadModelLodDistances(node, asset);
                 if (const json* slots = FindMember(node, "materials"); slots && slots->is_array()) {
                     asset.materials.resize(std::max(asset.materials.size(), slots->size()));
                     for (size_t i = 0; i < slots->size(); ++i) {
@@ -3185,6 +3205,7 @@ bool SaveSharedAssets(ProjectWorkspace& workspace, const ProjectRefs& refs, cons
         }
         json body = {{"name", asset.name}, {"uid", asset.assetUid},
                      {"source", source(asset.path)}, {"materials", slots}};
+        WriteModelLodDistances(asset, body);
         auto path = asset.assetPath;
         if (path.empty()) path = destination(body, "model-asset", L"Models", asset.name.c_str(), ".tgmodel");
         if (!valid || !workspace.SaveAsset(path, "model-asset", body)) return false;
@@ -3282,6 +3303,7 @@ bool LoadSharedAsset(ProjectWorkspace& workspace, const fs::path& path,
             const auto source = FromUtf8(ReadString(node, "path"));
             if (!loaded->geometry || loaded->path != source) { loaded->path = source; renderer::LoadModel(source, *loaded); }
             loaded->materials.resize(std::max(loaded->materials.size(), node["materials"].size()), compositor::kNoMaterialAsset);
+            ReadModelLodDistances(node, *loaded);
             size_t slot = 0;
             for (const auto& value : node["materials"]) {
                 const auto material = materials.find(value.is_number_integer() ? value.get<int>() : 0);
@@ -3296,6 +3318,7 @@ bool LoadSharedAsset(ProjectWorkspace& workspace, const fs::path& path,
         asset.name = ReadString(node, "name"); asset.path = FromUtf8(ReadString(node, "path"));
         renderer::LoadModel(asset.path, asset);
         asset.materials.resize(std::max(asset.materials.size(), node["materials"].size()));
+        ReadModelLodDistances(node, asset);
         size_t i = 0;
         for (const auto& value : node["materials"]) {
             const auto found = materials.find(value.is_number_integer() ? value.get<int>() : 0);

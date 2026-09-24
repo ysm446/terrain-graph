@@ -35,15 +35,21 @@ struct ModelConstants {
     AtmosphereSettings atmosphere;
     uint32_t cloudNoiseIndex, atmosphericMode, clearIrradianceIndex;
     float ambientOcclusion;
+    // 可視リストの区画の先頭（インスタンス描画）。SV_InstanceID は StartInstance を含まないので定数で渡す。
+    uint32_t visibleOffset;
+    uint32_t padding[3];
 };
-static_assert(sizeof(ModelConstants) == 1024);
+static_assert(sizeof(ModelConstants) == 1040);
 
 }  // namespace
 void ModelPreview::Destroy(rhi::Device& device) {
     for (auto& mesh : m_meshes) mesh.Release(device);
     m_meshes.clear();
     m_geometry.reset();
-    m_lod = -1;
+    m_ready = false;
+    m_parts.clear();
+    m_lodFirstPart.clear();
+    m_segmentFirstArgument.clear();
     device.DeferRelease(m_output);
     device.DeferRelease(m_depth);
     device.DeferRelease(m_visibleInstances);
@@ -80,23 +86,45 @@ bool ModelPreview::Prepare(rhi::Device& device, const ModelAsset& asset, int lod
         if (m_geometry) Destroy(device);
         return false;
     }
-    lod = std::clamp(lod, 0, static_cast<int>(asset.geometry->lods.size()) - 1);
-    if (m_geometry == asset.geometry && m_lod == lod) return true;
+    const size_t lodCount = asset.geometry->lods.size();
+    const bool all = lod == kAllLods;
+    if (!all) lod = std::clamp(lod, 0, static_cast<int>(lodCount) - 1);
+    if (m_ready && m_geometry == asset.geometry && m_requestedLod == lod) return true;
     for (auto& mesh : m_meshes) mesh.Release(device);
     m_meshes.clear();
+    m_parts.clear();
+    m_lodFirstPart.clear();
+    m_segmentFirstArgument.clear();
     const bool changed = m_geometry != asset.geometry;
     m_geometry = asset.geometry;
-    m_lod = -1;
-    for (const auto& part : m_geometry->lods[lod].parts) {
-        m_meshes.emplace_back();
-        if (!m_meshes.back().Create(device, part.mesh, L"ModelPreviewMesh")) return false;
+    m_ready = false;
+    m_requestedLod = lod;
+    m_firstLod = all ? 0 : static_cast<size_t>(lod);
+    const size_t lastLod = all ? std::min(lodCount, kMaxInstanceLods) : m_firstLod + 1;
+    for (size_t level = m_firstLod; level < lastLod; ++level) {
+        m_lodFirstPart.push_back(m_meshes.size());
+        for (const auto& part : m_geometry->lods[level].parts) {
+            m_meshes.emplace_back();
+            if (!m_meshes.back().Create(device, part.mesh, L"ModelPreviewMesh")) return false;
+            m_parts.push_back({static_cast<uint32_t>(level - m_firstLod), part.slot});
+        }
     }
-    m_lod = lod;
+    m_lodFirstPart.push_back(m_meshes.size());
+    // 区画ごとの描画引数。区画 s の段は s % L、各段のパーツ数ぶん並べる。
+    const size_t lods = LodCount();
+    uint32_t argument = 0;
+    for (size_t segment = 0; segment < SegmentCount(); ++segment) {
+        const size_t level = segment % lods;
+        m_segmentFirstArgument.push_back(argument);
+        argument += static_cast<uint32_t>(m_lodFirstPart[level + 1] - m_lodFirstPart[level]);
+    }
+    m_ready = true;
     if (changed) ResetView();
     return true;
 }
 bool ModelPreview::CullInstances(rhi::Device& device, rhi::PipelineCache& cache,
-                                 ID3D12GraphicsCommandList* list, const ModelInstanceDraw& draw) {
+                                 ID3D12GraphicsCommandList* list, const ModelAsset& model,
+                                 const ModelInstanceDraw& draw) {
     if (!draw.count || m_meshes.empty()) return false;
     auto* cull = cache.GetCompute(L"InstanceCulling.hlsl", L"CsCull");
     auto* finish = cache.GetCompute(L"InstanceCulling.hlsl", L"CsFinish");
@@ -109,15 +137,23 @@ bool ModelPreview::CullInstances(rhi::Device& device, rhi::PipelineCache& cache,
         desc.NumArgumentDescs = 1; desc.pArgumentDescs = &argument;
         if (!TG_CHECK_HR(device.GetDevice()->CreateCommandSignature(&desc,nullptr,IID_PPV_ARGS(&m_drawSignature)))) return false;
     }
-    if (m_visibleInstances.sizeInBytes < uint64_t(draw.count)*sizeof(uint32_t)) {
+    const size_t lods = LodCount(), segments = SegmentCount();
+    // 区画ごとに候補数ぶんの枠を取る。要素は（元ID, 切り替えの進み具合）。
+    const uint64_t visibleCount = uint64_t(draw.count) * segments;
+    constexpr uint32_t kVisibleStride = sizeof(uint32_t) * 2;
+    if (m_visibleInstances.sizeInBytes < visibleCount * kVisibleStride) {
         device.DeferRelease(m_visibleInstances);
-        if (!device.Allocator().CreateStructuredBuffer(draw.count,sizeof(uint32_t),L"VisibleInstances",m_visibleInstances,true)) return false;
+        if (!device.Allocator().CreateStructuredBuffer(static_cast<uint32_t>(visibleCount),kVisibleStride,L"VisibleInstances",m_visibleInstances,true)) return false;
     }
-    const uint32_t parts = static_cast<uint32_t>(m_meshes.size());
-    const uint64_t argumentBytes = uint64_t(parts)*sizeof(D3D12_DRAW_INDEXED_ARGUMENTS);
+    uint32_t argumentCount = 0;
+    for (size_t segment = 0; segment < segments; ++segment) {
+        const size_t level = segment % lods;
+        argumentCount += static_cast<uint32_t>(m_lodFirstPart[level + 1] - m_lodFirstPart[level]);
+    }
+    const uint64_t argumentBytes = uint64_t(argumentCount)*sizeof(D3D12_DRAW_INDEXED_ARGUMENTS);
     if (m_indirectArguments.sizeInBytes != argumentBytes) {
         device.DeferRelease(m_indirectArguments);
-        if (!device.Allocator().CreateStructuredBuffer(parts,sizeof(D3D12_DRAW_INDEXED_ARGUMENTS),L"InstanceArguments",m_indirectArguments,true)) return false;
+        if (!device.Allocator().CreateStructuredBuffer(argumentCount,sizeof(D3D12_DRAW_INDEXED_ARGUMENTS),L"InstanceArguments",m_indirectArguments,true)) return false;
     }
     const auto transition = [&](rhi::GpuBuffer& buffer, D3D12_RESOURCE_STATES state) {
         if (buffer.state == state) return;
@@ -127,20 +163,27 @@ bool ModelPreview::CullInstances(rhi::Device& device, rhi::PipelineCache& cache,
     const auto upload = device.Upload().Allocate(argumentBytes,16);
     if (!upload.IsValid()) return false;
     auto* arguments = static_cast<D3D12_DRAW_INDEXED_ARGUMENTS*>(upload.cpu);
-    for (uint32_t i=0;i<parts;++i) arguments[i] = {m_meshes[i].IndexCount(),0,0,0,0};
+    for (size_t segment = 0, index = 0; segment < segments; ++segment) {
+        const size_t level = segment % lods;
+        for (size_t part = m_lodFirstPart[level]; part < m_lodFirstPart[level + 1]; ++part)
+            arguments[index++] = {m_meshes[part].IndexCount(),0,0,0,0};
+    }
     struct CullConstants {
         std::array<DirectX::XMFLOAT4,6> planes;
         uint32_t points, visible, arguments, count;
-        uint32_t seed, partCount; float weightStart, weightEnd;
+        uint32_t seed, argumentCount; float weightStart, weightEnd;
         float scaleMin, scaleMax, modelSize, radius;
         DirectX::XMFLOAT3 camera; float maxDistance;
-        float offset; uint32_t usePointSize; uint32_t padding[2]{};
+        float offset; uint32_t usePointSize; uint32_t lodCount; float fadeBand;
+        float lodStart[kMaxInstanceLods];
+        uint32_t segmentFirst[kMaxInstanceLods * 2];
+        uint32_t segmentCount; uint32_t padding[3]{};
     } constants{};
-    static_assert(sizeof(CullConstants)==176);
+    static_assert(sizeof(CullConstants)==240);
     constants.planes = InstanceFrustumPlanes(draw.viewProjection);
     constants.points = draw.points; constants.visible = m_visibleInstances.uav.index;
     constants.arguments = m_indirectArguments.uav.index; constants.count = draw.count;
-    constants.seed = draw.seed; constants.partCount = parts;
+    constants.seed = draw.seed; constants.argumentCount = argumentCount;
     constants.weightStart = draw.weightStart; constants.weightEnd = draw.weightEnd;
     constants.scaleMin = draw.scaleMin; constants.scaleMax = draw.scaleMax;
     const auto& lo = m_geometry->minimum; const auto& hi = m_geometry->maximum;
@@ -149,6 +192,14 @@ bool ModelPreview::CullInstances(rhi::Device& device, rhi::PipelineCache& cache,
     constants.radius = std::sqrt(x*x+y*y+z*z);
     constants.camera = draw.cameraPosition; constants.maxDistance = draw.maxDistance;
     constants.offset = draw.offset; constants.usePointSize = draw.usePointSize;
+    constants.lodCount = static_cast<uint32_t>(lods);
+    // 影は硬く切り替える（重ね合わせの区画を描かない）。
+    constants.fadeBand = draw.shadow ? 0.0f : std::max(draw.fadeBand, 0.0f);
+    for (size_t level = 1; level < lods; ++level)
+        constants.lodStart[level] = LodStartDistance(model, m_firstLod + level) * std::max(draw.lodBias, 0.0f);
+    for (size_t segment = 0; segment < segments; ++segment)
+        constants.segmentFirst[segment] = m_segmentFirstArgument[segment];
+    constants.segmentCount = static_cast<uint32_t>(segments);
     const auto cb = device.Upload().Allocate(sizeof(constants),256);
     if (!cb.IsValid()) return false;
     std::memcpy(cb.cpu,&constants,sizeof(constants));
@@ -162,8 +213,9 @@ bool ModelPreview::CullInstances(rhi::Device& device, rhi::PipelineCache& cache,
     list->SetPipelineState(cull); list->Dispatch((draw.count+63)/64,1,1);
     const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
     list->ResourceBarrier(1,&barrier);
-    if (parts > 1) {
-        list->SetPipelineState(finish); list->Dispatch((parts+63)/64,1,1);
+    // 区画の先頭の件数を、同じ区画の他のパーツへ写す。
+    if (argumentCount > segments) {
+        list->SetPipelineState(finish); list->Dispatch((argumentCount+63)/64,1,1);
         list->ResourceBarrier(1,&barrier);
     }
     transition(m_visibleInstances,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
@@ -178,10 +230,10 @@ void ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache
                           const compositor::TextureLibrary& textures,
                           const Environment& environment, float iblIntensity,
                           const LightSettings& light, float exposure, TonemapMode tonemap, const ModelInstanceDraw* instances) {
-    if (!m_geometry || m_lod < 0) return;
+    if (!m_geometry || !m_ready) return;
     // パーツのマテリアルごとに PSO を選ぶ。アルファ抜きは早期深度テストが効きにくいので、
     // 使うパーツだけ clip 付きの PS にする。影は不透明なら PS なしの深度だけで描く。
-    const auto pipelineFor = [&](bool cutout, bool twoSided) {
+    const auto pipelineFor = [&](bool cutout, bool twoSided, bool fade) {
         rhi::GraphicsPipelineDesc desc;
         desc.shaderPath = L"ModelPreview.hlsl";
         desc.vertexEntry = L"VsMain";
@@ -193,11 +245,12 @@ void ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache
         if (instances) {
             desc.rtvFormat = instances->shadow ? DXGI_FORMAT_UNKNOWN : DXGI_FORMAT_R16G16B16A16_FLOAT;
             if (instances->shadow) desc.pixelEntry = cutout ? L"PsShadow" : L"";
+            else if (fade) desc.pixelEntry = L"PsDither";
             desc.cullMode = D3D12_CULL_MODE_NONE;
         }
         return pipelineCache.GetGraphics(desc);
     };
-    if (!pipelineFor(false, false)) return;
+    if (!pipelineFor(false, false, false)) return;
     if (!instances) {
     if (!m_output.IsValid()) {
         rhi::TextureDesc target;
@@ -232,11 +285,12 @@ void ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache
     } else {
         PIXBeginEvent(commandList, PIX_COLOR(120, 200, 200), "ModelInstances");
     }
-    if (instances && !CullInstances(device, pipelineCache, commandList, *instances)) { PIXEndEvent(commandList); return; }
+    if (instances && !CullInstances(device, pipelineCache, commandList, model, *instances)) { PIXEndEvent(commandList); return; }
     commandList->SetGraphicsRootSignature(pipelineCache.GlobalRootSignature());
     ID3D12PipelineState* current = nullptr;
-    for (size_t i = 0; i < m_meshes.size(); ++i) {
-        const auto slot = m_geometry->lods[m_lod].parts[i].slot;
+    // segment / argument はインスタンス描画のときだけ使う。fade は切り替え中の区画。
+    const auto drawPart = [&](size_t i, bool fade, size_t segment, size_t argument) {
+        const auto slot = m_parts[i].slot;
         const auto* material =
             slot < model.materials.size() ? materials.Find(model.materials[slot]) : nullptr;
         const compositor::MaterialAsset fallback;
@@ -244,8 +298,8 @@ void ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache
         // アルファはベースカラーのマップから読むので、マップが無ければ抜かない。
         const bool cutout = asset.alphaCutoff > 0.0f &&
                             textures.SrvIndex(asset.baseColor, true) != compositor::kInvalidTextureIndex;
-        auto* pipeline = pipelineFor(cutout, asset.twoSided);
-        if (!pipeline) continue;
+        auto* pipeline = pipelineFor(cutout, asset.twoSided, fade);
+        if (!pipeline) return;
         if (pipeline != current) {
             commandList->SetPipelineState(pipeline);
             current = pipeline;
@@ -312,6 +366,7 @@ void ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache
             const auto& lo = m_geometry->minimum; const auto& hi = m_geometry->maximum;
             constants.pivot[0] = (lo.x+hi.x)*0.5f; constants.pivot[1] = lo.y;
             constants.pivot[2] = (lo.z+hi.z)*0.5f;
+            constants.visibleOffset = static_cast<uint32_t>(segment * draw.count);
             constants.modelSize = std::max({hi.x-lo.x,hi.y-lo.y,hi.z-lo.z,0.0001f});
             DirectX::XMStoreFloat4x4(&constants.viewProjection,
                 DirectX::XMMatrixTranspose(DirectX::XMLoadFloat4x4(&draw.viewProjection)));
@@ -320,12 +375,26 @@ void ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache
 
 
         const auto cb = device.Upload().Allocate(sizeof(constants), 256);
-        if (!cb.IsValid()) continue;
+        if (!cb.IsValid()) return;
         std::memcpy(cb.cpu, &constants, sizeof(constants));
         commandList->SetGraphicsRootConstantBufferView(1, cb.gpuAddress);
         if (instances) m_meshes[i].DrawIndirect(commandList, m_drawSignature.Get(),
-            m_indirectArguments.resource.Get(), i*sizeof(D3D12_DRAW_INDEXED_ARGUMENTS));
+            m_indirectArguments.resource.Get(), argument*sizeof(D3D12_DRAW_INDEXED_ARGUMENTS));
         else m_meshes[i].Draw(commandList);
+    };
+    if (!instances) {
+        for (size_t i = 0; i < m_meshes.size(); ++i) drawPart(i, false, 0, 0);
+    } else {
+        const size_t lods = LodCount();
+        for (size_t segment = 0; segment < SegmentCount(); ++segment) {
+            const bool fade = segment >= lods;
+            // 影と重ね合わせ無しでは切り替え中の区画は空なので描かない。
+            if (fade && (instances->shadow || instances->fadeBand <= 0)) continue;
+            const size_t level = segment % lods;
+            for (size_t part = m_lodFirstPart[level]; part < m_lodFirstPart[level + 1]; ++part)
+                drawPart(part, fade, segment,
+                         m_segmentFirstArgument[segment] + (part - m_lodFirstPart[level]));
+        }
     }
     if (!instances) rhi::TransitionIfNeeded(commandList, m_output, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     PIXEndEvent(commandList);

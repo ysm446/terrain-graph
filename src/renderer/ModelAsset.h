@@ -29,7 +29,12 @@ struct ModelAsset {
     std::filesystem::path path;
     std::shared_ptr<const ModelGeometry> geometry;
     std::vector<compositor::MaterialAssetId> materials;
+    // LOD の切り替え距離（m、等倍のとき）。[i] が LOD i+1 に替わる距離。
+    // 足りない段は LodStartDistance の既定値を使う。空なら全段が既定値。
+    std::vector<float> lodDistances;
     std::string error;
 };
 bool LoadModel(const std::filesystem::path& path, ModelAsset& asset);
+// LOD lod に替わるカメラ距離（m、等倍のとき）。lod 0 は 0。
+float LodStartDistance(const ModelAsset& asset, size_t lod);
 }  // namespace tg::renderer

@@ -116,6 +116,61 @@ C: "OO",4,2
             return 4;
     }
     {
+        // LODGroup の無い FBX でも、名前の末尾 _LOD<n> で段を分ける。番号の飛びは詰める。
+        std::ofstream out(path);
+        out << R"(; FBX 7.4.0 project file
+FBXHeaderExtension: { FBXHeaderVersion: 1003
+FBXVersion: 7400
+}
+GlobalSettings: {
+Version: 1000
+Properties70: {
+P: "UpAxis", "int", "Integer", "",1
+P: "UpAxisSign", "int", "Integer", "",1
+P: "FrontAxis", "int", "Integer", "",2
+P: "FrontAxisSign", "int", "Integer", "",1
+P: "CoordAxis", "int", "Integer", "",0
+P: "CoordAxisSign", "int", "Integer", "",1
+P: "UnitScaleFactor", "double", "Number", "",100
+}
+}
+Objects: {
+Geometry: 10, "Geometry::Detail", "Mesh" {
+Vertices: *12 { a: 0,0,0,2,0,0,0,1,0,2,1,0 }
+PolygonVertexIndex: *6 { a: 0,1,-3,1,3,-3 }
+}
+Geometry: 11, "Geometry::Coarse", "Mesh" {
+Vertices: *9 { a: 0,0,0,2,0,0,0,1,0 }
+PolygonVertexIndex: *3 { a: 0,1,-3 }
+}
+Model: 20, "Model::Bush_LOD0", "Mesh" { Version: 232 }
+Model: 21, "Model::Bush_lod2", "Mesh" { Version: 232 }
+}
+Connections: {
+C: "OO",10,20
+C: "OO",20,0
+C: "OO",11,21
+C: "OO",21,0
+}
+)";
+    }
+    {
+        ModelAsset named;
+        if (!LoadModel(path, named)) {
+            std::cerr << named.error;
+            return 8;
+        }
+        const auto& lods = named.geometry->lods;
+        if (lods.size() != 2 || lods[0].triangles != 2 || lods[1].triangles != 1) return 9;
+        // 既定は最大寸法（2 m）の 10 倍、次の段は 3 倍。設定があればそれを使う。
+        using tg::renderer::LodStartDistance;
+        if (LodStartDistance(named, 0) != 0 || std::abs(LodStartDistance(named, 1) - 20) > 1e-4f ||
+            std::abs(LodStartDistance(named, 2) - 60) > 1e-4f)
+            return 10;
+        named.lodDistances = {5};
+        if (LodStartDistance(named, 1) != 5 || std::abs(LodStartDistance(named, 2) - 60) > 1e-4f) return 11;
+    }
+    {
         std::ofstream out(path);
         out << "invalid";
     }

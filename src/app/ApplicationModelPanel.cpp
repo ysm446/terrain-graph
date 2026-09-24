@@ -10,6 +10,12 @@
 #include "ui/UiStyle.h"
 
 namespace tg {
+namespace {
+// 配置用メッシュの共有キー。自動 LOD は全段を持つので固定 LOD と分ける。
+std::string InstanceMeshKey(uint64_t model, const graph::ModelScatterSettings& settings) {
+    return std::to_string(model) + ":" + (settings.autoLod ? std::string("auto") : std::to_string(settings.lod));
+}
+}  // namespace
 void Application::PrepareModelScatters() {
     m_modelScatters = m_graph.CompileModelScatters();
     std::vector<graph::GraphId> sources;
@@ -18,11 +24,11 @@ void Application::PrepareModelScatters() {
         for (const auto& choice : scatter.settings.models) {
             const auto model = std::find_if(m_models.begin(),m_models.end(),[&](const auto& m) { return m.id == choice.model; });
             if (model == m_models.end() || !model->geometry || choice.weight <= 0) continue;
-            const auto key = std::to_string(choice.model)+":"+std::to_string(scatter.settings.lod);
+            const auto key = InstanceMeshKey(choice.model, scatter.settings);
             meshKeys.push_back(key);
             auto& mesh = m_instanceMeshes[key];
             if (!mesh) mesh = std::make_unique<renderer::ModelPreview>();
-            mesh->Prepare(m_device,*model,scatter.settings.lod);
+            mesh->Prepare(m_device,*model,scatter.settings.autoLod ? renderer::kAllLods : scatter.settings.lod);
         }
         if (std::find(sources.begin(),sources.end(),scatter.source) != sources.end()) continue;
         sources.push_back(scatter.source);
@@ -79,8 +85,7 @@ void Application::DrawModelScatters(ID3D12GraphicsCommandList* commandList,
         for (const auto& choice : scatter.settings.models) {
             const auto model=std::find_if(m_models.begin(),m_models.end(),[&](const auto& m){return m.id==choice.model;});
             if (model==m_models.end() || !model->geometry || choice.weight<=0) continue;
-            const auto key=std::to_string(choice.model)+":"+std::to_string(scatter.settings.lod);
-            const auto mesh=m_instanceMeshes.find(key);
+            const auto mesh=m_instanceMeshes.find(InstanceMeshKey(choice.model, scatter.settings));
             if (mesh==m_instanceMeshes.end()) continue;
             renderer::ModelInstanceDraw draw;
             draw.points=evaluator.PlacementPoints().SrvIndex();
@@ -90,6 +95,7 @@ void Application::DrawModelScatters(ID3D12GraphicsCommandList* commandList,
             draw.scaleMin=scatter.settings.scaleMin; draw.scaleMax=std::max(draw.scaleMin,scatter.settings.scaleMax);
             draw.align=scatter.settings.alignToNormal; draw.offset=scatter.settings.offset;
             draw.maxDistance=scatter.settings.maxDistance;
+            draw.lodBias=scatter.settings.lodBias;
             draw.usePointSize=scatter.settings.usePointSize; draw.shadow=shadow;
             draw.viewProjection=viewProjection; draw.cameraPosition=m_renderer.GetCamera().Position();
             if (!shadow) {
@@ -98,7 +104,9 @@ void Application::DrawModelScatters(ID3D12GraphicsCommandList* commandList,
                 draw.atmosphere=clouds.atmosphere; draw.cloudNoiseIndex=clouds.noiseIndex; draw.atmosphericMode=clouds.mode;
                 draw.ambient=m_renderer.InstanceAmbient();
             }
-            const auto& lod=model->geometry->lods[std::min(scatter.settings.lod,static_cast<int>(model->geometry->lods.size())-1)];
+            // 自動のときは最も詳細な段で数える（統計は上限の表示）。
+            const int statLod = scatter.settings.autoLod ? 0 : scatter.settings.lod;
+            const auto& lod=model->geometry->lods[std::min(statLod,static_cast<int>(model->geometry->lods.size())-1)];
             for (const auto& part : lod.parts)
                 m_renderer.RecordInstanceDraw(static_cast<uint32_t>(part.mesh.indices.size()),draw.count);
             mesh->second->Render(m_device,m_pipelineCache,commandList,*model,m_materialLibrary,m_textureLibrary,
@@ -313,6 +321,34 @@ void Application::DrawModelPreviewWindow() {
         ui::EndPropertyTable();
     }
     if (!asset.error.empty()) ui::HintText(asset.error.c_str());
+    if (asset.geometry && asset.geometry->lods.size() > 1) {
+        const size_t count = asset.geometry->lods.size();
+        ui::SectionHeader("LOD");
+        if (ui::BeginPropertyTable("modelLods")) {
+            renderer::ModelAsset defaults;
+            defaults.geometry = asset.geometry;
+            for (size_t lod = 1; lod < count; ++lod) {
+                ImGui::PushID(static_cast<int>(lod));
+                float value = renderer::LodStartDistance(asset, lod);
+                const std::string label = "LOD" + std::to_string(lod) + " の距離";
+                if (ui::PropertyFloat(label.c_str(), &value, 0.0f, 100000.0f,
+                                      renderer::LodStartDistance(defaults, lod),
+                                      "カメラからこの距離より遠いと、この段階以降を使います。"
+                                      "等倍のときの値で、配置の倍率に合わせて伸び縮みします",
+                                      "%.1f m")) {
+                    // 未設定の段も今の値で埋めてから書き換える。手前の段より近くはしない。
+                    std::vector<float> distances(count - 1);
+                    for (size_t i = 1; i < count; ++i) distances[i - 1] = renderer::LodStartDistance(asset, i);
+                    distances[lod - 1] = std::max(value, lod > 1 ? distances[lod - 2] : 0.0f);
+                    asset.lodDistances = std::move(distances);
+                    changed = true;
+                }
+                ImGui::PopID();
+            }
+            ui::EndPropertyTable();
+        }
+        ui::HintText("Model Scatter の「LOD 自動」で使います");
+    }
     if (asset.geometry) {
         ui::SectionHeader("マテリアルスロット");
         if (ui::BeginPropertyTable("modelMaterials")) {

@@ -1,16 +1,35 @@
-// 1候補1スレッドでモデル選択と包囲球判定。元IDを詰め直し、間接描画の件数を作る。
+// 1候補1スレッドでモデル選択と包囲球判定、距離による LOD の選択。
+// 元IDを区画ごとに詰め直し、間接描画の件数を作る。
+//
+// 区画: [0, L) は LOD ごとの通常の区画、[L, 2L) は切り替え中の区画（L は LOD の段数）。
+// 切り替え中のインスタンスは去る段と来る段の両方へ入れ、ピクセルシェーダが相補的な
+// ディザで抜く（ModelPreview.hlsl の PsDither）。要素の y は進み具合 t（0〜1）で、
+// 去る段には t + 2 を入れて区別する。通常の区画は 1。
 struct CullConstants {
     float4 planes[6];
     uint points, visible, arguments, count;
-    uint seed, partCount; float weightStart, weightEnd;
+    uint seed, argumentCount; float weightStart, weightEnd;
     float scaleMin, scaleMax, modelSize, radius;
     float3 camera; float maxDistance;
-    float offset; uint usePointSize; uint2 padding;
+    float offset; uint usePointSize; uint lodCount; float fadeBand;
+    // lodStart[k]: LOD k に替わる距離（等倍、倍率を掛け済み）。[0] は使わない。
+    float4 lodStart;
+    // 区画ごとの先頭の描画引数。区画の件数はここに数える。
+    uint4 segmentFirst[2];
+    uint segmentCount; uint3 padding;
 };
 ConstantBuffer<CullConstants> g_cull : register(b1);
 struct DrawArguments { uint indexCount, instanceCount, startIndex; int baseVertex; uint startInstance; };
 uint InstanceHash(uint x) { x ^= x >> 16; x *= 0x7feb352d; x ^= x >> 15; x *= 0x846ca68b; return x ^ (x >> 16); }
 float InstanceRandom(uint x) { return float(InstanceHash(x) >> 8) / 16777216.0; }
+uint SegmentFirst(uint segment) { return g_cull.segmentFirst[segment >> 2][segment & 3]; }
+void Append(uint segment, uint id, float fade) {
+    RWStructuredBuffer<DrawArguments> arguments = ResourceDescriptorHeap[g_cull.arguments];
+    RWStructuredBuffer<uint2> visible = ResourceDescriptorHeap[g_cull.visible];
+    uint destination;
+    InterlockedAdd(arguments[SegmentFirst(segment)].instanceCount,1,destination);
+    visible[segment*g_cull.count+destination] = uint2(id,asuint(fade));
+}
 [numthreads(64,1,1)]
 void CsCull(uint3 id : SV_DispatchThreadID) {
     if (id.x >= g_cull.count) return;
@@ -24,16 +43,33 @@ void CsCull(uint3 id : SV_DispatchThreadID) {
     float radius = g_cull.radius*abs(scale)+abs(g_cull.offset);
     for (uint i=0;i<6;++i)
         if (dot(g_cull.planes[i],float4(placement.xyz,1)) < -radius) return;
-    if (g_cull.maxDistance > 0 && distance(placement.xyz,g_cull.camera) > g_cull.maxDistance+radius) return;
-    RWStructuredBuffer<DrawArguments> arguments = ResourceDescriptorHeap[g_cull.arguments];
-    RWStructuredBuffer<uint> visible = ResourceDescriptorHeap[g_cull.visible];
-    uint destination;
-    InterlockedAdd(arguments[0].instanceCount,1,destination);
-    visible[destination] = id.x;
+    const float cameraDistance = distance(placement.xyz,g_cull.camera);
+    if (g_cull.maxDistance > 0 && cameraDistance > g_cull.maxDistance+radius) return;
+    // 切り替え距離はインスタンスの倍率に合わせて伸び縮みさせる（大きい株ほど遠くまで詳細）。
+    uint lod = 0;
+    for (uint k=1;k<g_cull.lodCount;++k)
+        if (cameraDistance >= g_cull.lodStart[k]*abs(scale)) lod = k;
+    if (lod > 0 && g_cull.fadeBand > 0) {
+        const float start = g_cull.lodStart[lod]*abs(scale);
+        const float t = (cameraDistance-start)/max(start*g_cull.fadeBand,1e-4);
+        if (t < 1) {
+            Append(g_cull.lodCount+lod,id.x,t);
+            Append(g_cull.lodCount+lod-1,id.x,t+2);
+            return;
+        }
+    }
+    Append(lod,id.x,1);
 }
+// 区画の先頭の件数を、同じ区画の他のパーツの描画引数へ写す。
 [numthreads(64,1,1)]
 void CsFinish(uint3 id : SV_DispatchThreadID) {
-    if (id.x == 0 || id.x >= g_cull.partCount) return;
+    if (id.x >= g_cull.argumentCount) return;
+    uint first = 0;
+    for (uint segment=0;segment<g_cull.segmentCount;++segment) {
+        const uint candidate = SegmentFirst(segment);
+        if (candidate <= id.x) first = candidate;
+    }
+    if (first == id.x) return;
     RWStructuredBuffer<DrawArguments> arguments = ResourceDescriptorHeap[g_cull.arguments];
-    arguments[id.x].instanceCount = arguments[0].instanceCount;
+    arguments[id.x].instanceCount = arguments[first].instanceCount;
 }
