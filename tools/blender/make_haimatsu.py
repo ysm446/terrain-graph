@@ -244,7 +244,11 @@ class Geometry:
 
 
 BARK, NEEDLES = 0, 1
-CARD_LENGTH, CARD_WIDTH = 0.24, 0.12  # テクスチャの縦横比 2:1 に合わせる
+# 枝先の房のカード（m）。テクスチャの縦横比 2:1 に合わせる。実物の房（長さ 10〜15 cm）に揃えた大きさ。
+CARD_LENGTH, CARD_WIDTH = 0.14, 0.07
+# 房の間隔はカードの長さに比例させる（カードを変えても枝あたりの覆い方が変わらない）。
+STEM_SHOOT_SPACING = 0.23 * CARD_LENGTH
+BRANCH_SHOOT_SPACING = 0.19 * CARD_LENGTH
 
 
 def perpendicular(v):
@@ -382,7 +386,7 @@ def build_plant(seed, lod):
         radii = [r0 * (1 - 0.78 * (i / (len(points) - 1))) + 0.006 for i in range(len(points))]
         add_tube_lod(geo, points, radii, lod["sides"][0], lod)
         add_branches(geo, points, radii, rng, 1, lod)
-        add_foliage(geo, points, rng.getrandbits(32), 0.40, 0.055, lod)
+        add_foliage(geo, points, rng.getrandbits(32), 0.40, STEM_SHOOT_SPACING, lod)
     return geo
 
 
@@ -417,26 +421,32 @@ def add_branches(geo, points, radii, rng, order, lod):
             add_branches(geo, branch, branch_radii, rng, 2, lod)
         foliage_seed = rng.getrandbits(32)
         if sides > 0:
-            add_foliage(geo, branch, foliage_seed, 0.25 if order == 1 else 0.1, 0.045, lod)
+            add_foliage(geo, branch, foliage_seed, 0.25 if order == 1 else 0.1, BRANCH_SHOOT_SPACING, lod)
 
 
 def add_foliage(geo, points, seed, start, spacing, lod):
     """枝の外側に横向きの枝先、先端に上向きの枝先を付ける。乱数は枝ごとに独立。"""
     rng = random.Random(seed)
     spacing *= lod["spacing"]
-    total = len(points) - 1
-    distance, next_at = 0.0, 0.0
-    for i in range(1, total):
-        distance += (points[i] - points[i - 1]).length
-        if i / total < start or distance < next_at:
-            continue
-        next_at = distance + spacing * rng.uniform(0.8, 1.3)
-        tangent = (points[i + 1] - points[i - 1]).normalized()
+    # 節の間にも置けるよう、枝の長さに沿って連続に進む（節の間隔より細かい間隔を許す）。
+    lengths = [0.0]
+    for i in range(1, len(points)):
+        lengths.append(lengths[-1] + (points[i] - points[i - 1]).length)
+    along, end = lengths[-1] * start, lengths[-2]  # 最後の節は先端の房に任せる
+    segment = 1
+    while along < end:
+        while lengths[segment] < along:
+            segment += 1
+        a, b = points[segment - 1], points[segment]
+        t = (along - lengths[segment - 1]) / max(lengths[segment] - lengths[segment - 1], 1e-6)
+        position = a.lerp(b, t)
+        tangent = (b - a).normalized()
         sideways = tangent.cross(UP)
         sideways = sideways.normalized() if sideways.length > 1e-4 else perpendicular(tangent)
         sideways *= rng.choice((-1, 1))
         axis = tangent * 0.6 + sideways * rng.uniform(0.4, 0.8) + UP * rng.uniform(0.7, 1.2)
-        add_shoot(geo, points[i], axis, rng, rng.uniform(0.8, 1.1) * lod["scale"], lod["cards"])
+        add_shoot(geo, position, axis, rng, rng.uniform(0.8, 1.1) * lod["scale"], lod["cards"])
+        along += spacing * rng.uniform(0.8, 1.3)
     tangent = (points[-1] - points[-2]).normalized()
     add_shoot(geo, points[-1], tangent + UP * 0.8, rng, rng.uniform(0.95, 1.15) * lod["scale"], lod["cards"])
     for k in range(min(rng.randint(2, 3), lod["tips"])):

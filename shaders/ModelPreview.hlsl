@@ -42,7 +42,8 @@ struct ModelConstants
     // インポスター（ImpostorCommon.hlsli）。色は sRGB で符号化した RGBA8、法線は 8 面体 + 深度 + ラフネス。
     uint impostorColor, impostorNormal;
     float3 impostorCenter; float impostorRadius;
-    uint impostorFrames, impostorFullSphere; uint2 padding;
+    // impostorShadow: 影パス。板を光源へ向け、光の向きから見た画像で抜く（PsImpostorShadow）。
+    uint impostorFrames, impostorFullSphere, impostorShadow, padding;
 };
 
 ConstantBuffer<ModelConstants> g_model : register(b1);
@@ -324,9 +325,12 @@ ImpostorInput VsImpostor(uint vertex : SV_VertexID, uint instance : SV_InstanceI
     const float3 toCamera = g_model.cameraPosition - center;
     const float cameraDistance = length(toCamera);
     float3 right, up;
-    ImpostorFrameBasis(toCamera / max(cameraDistance, 1e-4f), right, up);
+    // 影パスは平行光の正射影。板を光源へ向け、半径ぶんだけ覆う。
+    const bool shadow = g_model.impostorShadow != 0;
+    ImpostorFrameBasis(shadow ? normalize(g_model.lightDirection) : toCamera / max(cameraDistance, 1e-4f), right, up);
     // 透視では球の輪郭が中心の平面上で半径より少し大きく見えるので、その分だけ広げる。
-    const float extent = cameraDistance > radius * 1.01f
+    const float extent = shadow ? radius
+        : cameraDistance > radius * 1.01f
         ? radius * cameraDistance / sqrt(cameraDistance * cameraDistance - radius * radius)
         : radius * 8;
     ImpostorInput output;
@@ -337,31 +341,35 @@ ImpostorInput VsImpostor(uint vertex : SV_VertexID, uint instance : SV_InstanceI
     return output;
 }
 
-float4 PsImpostor(ImpostorInput input):SV_TARGET {
+// 焼いた画像を 1 本の視線で引いた結果（モデル空間）。
+struct ImpostorHit {
+    float coverage, roughness;
+    float3 color;    // リニア
+    float3 normal;   // モデル空間
+    float3 surface;  // 焼いた深度から戻した表面の位置（モデル空間）
+};
+// eye を通り ray へ進む視線で引く。toViewer はマスを選ぶ向き（透視なら株の中心からカメラ、
+// 平行光なら光源の向き）。3 マスそれぞれの平面へ視線を当て、覆いで重みを付けて混ぜる。
+ImpostorHit SampleImpostor(float3 eye, float3 ray, float3 toViewer) {
     const float3 center = g_model.impostorCenter;
     const float radius = g_model.impostorRadius;
     const uint frames = g_model.impostorFrames;
     const bool fullSphere = g_model.impostorFullSphere != 0;
-    // ワールドの点をモデル空間へ戻す（PlacePoint の逆）。
-    const float3 axisZ = cross(input.axisX, input.up);
-    const float3 origin = input.origin + input.up * g_model.offset;
-    const float3 cameraRelative = g_model.cameraPosition - origin, pointRelative = input.position - origin;
-    const float3 camera = float3(dot(cameraRelative, input.axisX), dot(cameraRelative, input.up), dot(cameraRelative, axisZ)) / input.scale + g_model.pivot;
-    const float3 target = float3(dot(pointRelative, input.axisX), dot(pointRelative, input.up), dot(pointRelative, axisZ)) / input.scale + g_model.pivot;
-    const float3 ray = normalize(target - camera);
-    const ImpostorFrames selected = SelectImpostorFrames(normalize(camera - center), frames, fullSphere);
+    const ImpostorFrames selected = SelectImpostorFrames(toViewer, frames, fullSphere);
     Texture2D<float4> colorMap = ResourceDescriptorHeap[g_model.impostorColor];
     Texture2D<float4> normalMap = ResourceDescriptorHeap[g_model.impostorNormal];
 
     float2 atlasUv[3];
+    float3 hit[3], direction[3];
     bool inside[3];
     [unroll] for (uint k = 0; k < 3; ++k) {
-        const float3 direction = ImpostorFrameDirection(selected.frame[k], frames, fullSphere);
+        direction[k] = ImpostorFrameDirection(selected.frame[k], frames, fullSphere);
         float3 right, up;
-        ImpostorFrameBasis(direction, right, up);
-        const float denominator = dot(ray, direction);
-        const float t = dot(center - camera, direction) / (abs(denominator) > 1e-4f ? denominator : 1e-4f);
-        const float3 local = camera + ray * t - center;
+        ImpostorFrameBasis(direction[k], right, up);
+        const float denominator = dot(ray, direction[k]);
+        const float t = dot(center - eye, direction[k]) / (abs(denominator) > 1e-4f ? denominator : 1e-4f);
+        hit[k] = eye + ray * t;
+        const float3 local = hit[k] - center;
         const float2 tile = float2(0.5f + dot(local, right) / (2 * radius), 0.5f - dot(local, up) / (2 * radius));
         inside[k] = all(tile >= 0) && all(tile <= 1);
         atlasUv[k] = (float2(selected.frame[k]) + saturate(tile)) / float(frames);
@@ -369,27 +377,68 @@ float4 PsImpostor(ImpostorInput input):SV_TARGET {
     // ミップは最も重いマスの座標の変化で決める（分岐の前に微分を取る）。
     const float lod = MapLod(g_model.impostorColor, ddx(atlasUv[0]), ddy(atlasUv[0]));
 
-    float3 color = 0;
-    float4 normalDepth = 0;
-    float coverage = 0;
+    ImpostorHit result;
+    result.coverage = 0; result.roughness = 0;
+    result.color = 0; result.normal = 0; result.surface = 0;
+    float2 normalSum = 0;
     [unroll] for (uint k = 0; k < 3; ++k) {
         if (!inside[k]) continue;
         const float4 c = colorMap.SampleLevel(g_samplerLinearClamp, atlasUv[k], lod);
+        const float4 n = normalMap.SampleLevel(g_samplerLinearClamp, atlasUv[k], lod);
         const float weight = selected.weight[k] * c.a;
-        color += SrgbToLinear(c.rgb) * weight;
-        normalDepth += normalMap.SampleLevel(g_samplerLinearClamp, atlasUv[k], lod) * weight;
-        coverage += weight;
+        result.color += SrgbToLinear(c.rgb) * weight;
+        normalSum += n.xy * weight;
+        result.roughness += n.w * weight;
+        // 深度は「中心を通る平面から、撮った向きへどれだけ手前か」（ImpostorBake.hlsl）。
+        result.surface += (hit[k] + direction[k] * (n.z - 0.5f) * 2 * radius) * weight;
+        result.coverage += weight;
     }
+    const float inverse = 1 / max(result.coverage, 1e-4f);
+    result.color *= inverse;
+    result.roughness *= inverse;
+    result.surface *= inverse;
+    result.normal = DecodeImpostorNormal(normalSum * inverse * 2 - 1);
     // メッシュのアルファ抜きと同じく、遠くで痩せないようミップ段に応じて持ち上げる。
-    clip(coverage * (1 + max(lod, 0) * kAlphaMipScale) - 0.5f);
-    color /= max(coverage, 1e-4f);
-    normalDepth /= max(coverage, 1e-4f);
-    const float3 local = DecodeImpostorNormal(normalDepth.xy * 2 - 1);
-    const float3 normal = normalize(input.axisX * local.x + input.up * local.y + axisZ * local.z);
-    float3 baseColor = color;
-    if (g_model.lodView != 0) baseColor = g_model.baseColorTint;
-    return ShadeModel(input.position, normal, normalize(g_model.cameraPosition - input.position), baseColor,
-                      normalDepth.w, 0, 1);
+    result.coverage *= 1 + max(lod, 0) * kAlphaMipScale;
+    return result;
+}
+// 株の置き方（ImpostorInput）でワールドとモデル空間を行き来する。
+float3 ImpostorToModel(ImpostorInput input, float3 world) {
+    const float3 axisZ = cross(input.axisX, input.up);
+    const float3 relative = world - (input.origin + input.up * g_model.offset);
+    return float3(dot(relative, input.axisX), dot(relative, input.up), dot(relative, axisZ)) / input.scale + g_model.pivot;
+}
+float3 ImpostorDirectionToModel(ImpostorInput input, float3 direction) {
+    return float3(dot(direction, input.axisX), dot(direction, input.up), dot(direction, cross(input.axisX, input.up)));
+}
+float3 ImpostorToWorld(ImpostorInput input, float3 model) {
+    const float3 local = (model - g_model.pivot) * input.scale;
+    return input.origin + input.axisX * local.x + input.up * (local.y + g_model.offset) + cross(input.axisX, input.up) * local.z;
+}
+
+float4 PsImpostor(ImpostorInput input):SV_TARGET {
+    const float3 camera = ImpostorToModel(input, g_model.cameraPosition);
+    const float3 target = ImpostorToModel(input, input.position);
+    const ImpostorHit hit = SampleImpostor(camera, normalize(target - camera), normalize(camera - g_model.impostorCenter));
+    clip(hit.coverage - 0.5f);
+    const float3 axisZ = cross(input.axisX, input.up);
+    const float3 normal = normalize(input.axisX * hit.normal.x + input.up * hit.normal.y + axisZ * hit.normal.z);
+    // 影と環境光の高さは、板の上の点ではなく焼いた深度から戻した表面で引く（影を落とす側と揃える）。
+    const float3 surface = ImpostorToWorld(input, hit.surface);
+    const float3 baseColor = g_model.lodView != 0 ? g_model.baseColorTint : hit.color;
+    return ShadeModel(surface, normal, normalize(g_model.cameraPosition - input.position), baseColor,
+                      hit.roughness, 0, 1);
+}
+
+// 影パス。光の向きの平行な視線で引き、焼いた深度から戻した表面の深度を書く
+// （板の平面の深度だと、影が中心の平面へつぶれ、受ける側とも食い違う）。
+float PsImpostorShadow(ImpostorInput input):SV_Depth {
+    const float3 toLight = ImpostorDirectionToModel(input, normalize(g_model.lightDirection));
+    const float3 target = ImpostorToModel(input, input.position);
+    const ImpostorHit hit = SampleImpostor(target + toLight * (4 * g_model.impostorRadius), -toLight, toLight);
+    clip(hit.coverage - 0.5f);
+    const float4 projected = mul(float4(ImpostorToWorld(input, hit.surface), 1), g_model.viewProjection);
+    return saturate(projected.z / projected.w);
 }
 
 // インポスター段の切り替え中の区画（PsDither と同じ相補的なディザ）。

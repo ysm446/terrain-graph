@@ -40,8 +40,8 @@ struct ModelConstants {
     uint32_t lodView;  // 真ならベースカラーのマップを使わず、ティントを段の色にする
     uint32_t impostorColor, impostorNormal;
     float impostorCenter[3], impostorRadius;
-    uint32_t impostorFrames, impostorFullSphere;
-    uint32_t padding[2];
+    uint32_t impostorFrames, impostorFullSphere, impostorShadow;
+    uint32_t padding;
 };
 static_assert(sizeof(ModelConstants) == 1072);
 
@@ -410,14 +410,15 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
         constants.tonemapMode = static_cast<uint32_t>(tonemap);
     };
     // segment / argument はインスタンス描画のときだけ使う。fade は切り替え中の区画。
-    // インポスター段の 1 回の描画（配置のときだけ）。影はまだ落とさない。
+    // インポスター段の 1 回の描画（配置のときだけ）。影パスでは光源へ向けた板で深度だけを書く。
     const auto drawImpostor = [&](size_t i, bool fade, size_t segment, size_t argument) {
-        if (!impostor || instances->shadow) return;
+        if (!impostor) return;
+        const bool shadow = instances->shadow;
         rhi::GraphicsPipelineDesc desc;
         desc.shaderPath = L"ModelPreview.hlsl";
         desc.vertexEntry = L"VsImpostor";
-        desc.pixelEntry = fade ? L"PsImpostorDither" : L"PsImpostor";
-        desc.rtvFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        desc.pixelEntry = shadow ? L"PsImpostorShadow" : fade ? L"PsImpostorDither" : L"PsImpostor";
+        desc.rtvFormat = shadow ? DXGI_FORMAT_UNKNOWN : DXGI_FORMAT_R16G16B16A16_FLOAT;
         desc.dsvFormat = DXGI_FORMAT_D32_FLOAT;
         desc.cullMode = D3D12_CULL_MODE_NONE;
         auto* pipeline = pipelineCache.GetGraphics(desc);
@@ -466,6 +467,7 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
         constants.impostorRadius = impostor->radius;
         constants.impostorFrames = impostor->settings.frames;
         constants.impostorFullSphere = impostor->settings.fullSphere ? 1u : 0u;
+        constants.impostorShadow = shadow ? 1u : 0u;
         std::memcpy(cb.cpu, &constants, sizeof(constants));
         commandList->SetGraphicsRootConstantBufferView(1, cb.gpuAddress);
         commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
