@@ -73,6 +73,12 @@ struct MaterialAsset {
     // そちらで、既定を DirectX にすると読み込んだ素材が軒並み反転して見えるため。
     bool flipNormalGreen = true;
 
+    // **アルファ抜き（モデル用）。** ベースカラーのアルファがこの値未満の画素を捨てる。
+    // 0 で無効（不透明）。葉のカードなどに使う。地形のレイヤー合成には効かない。
+    float alphaCutoff = 0.0f;
+    // 裏面も描く（モデル用）。裏から見たときは法線を反転して陰影を付ける。
+    bool twoSided = false;
+
     // 一覧に出すサムネイル。マップかパラメータを変えたら作り直す。
     rhi::GpuTexture thumbnail;
     bool thumbnailDirty = true;

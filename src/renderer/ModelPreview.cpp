@@ -19,7 +19,7 @@ struct ModelConstants {
     float baseColorTint[3];
     float roughnessValue;
     float metallicValue, aoValue, colorAdjust[2];
-    float brightness, ambientLow, ambientHigh, pad0;
+    float brightness, ambientLow, ambientHigh, alphaCutoff;
     float cameraPosition[3];
     float exposure;
     float lightDirection[3];
@@ -179,20 +179,25 @@ void ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache
                           const Environment& environment, float iblIntensity,
                           const LightSettings& light, float exposure, TonemapMode tonemap, const ModelInstanceDraw* instances) {
     if (!m_geometry || m_lod < 0) return;
-    rhi::GraphicsPipelineDesc desc;
-    desc.shaderPath = L"ModelPreview.hlsl";
-    desc.vertexEntry = L"VsMain";
-    desc.pixelEntry = L"PsMain";
-    desc.layout = rhi::VertexLayout::MeshStandard;
-    desc.rtvFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
-    desc.dsvFormat = DXGI_FORMAT_D32_FLOAT;
-    if (instances) {
-        desc.rtvFormat = instances->shadow ? DXGI_FORMAT_UNKNOWN : DXGI_FORMAT_R16G16B16A16_FLOAT;
-        if (instances->shadow) desc.pixelEntry.clear();
-        desc.cullMode = D3D12_CULL_MODE_NONE;
-    }
-    auto* pipeline = pipelineCache.GetGraphics(desc);
-    if (!pipeline) return;
+    // パーツのマテリアルごとに PSO を選ぶ。アルファ抜きは早期深度テストが効きにくいので、
+    // 使うパーツだけ clip 付きの PS にする。影は不透明なら PS なしの深度だけで描く。
+    const auto pipelineFor = [&](bool cutout, bool twoSided) {
+        rhi::GraphicsPipelineDesc desc;
+        desc.shaderPath = L"ModelPreview.hlsl";
+        desc.vertexEntry = L"VsMain";
+        desc.pixelEntry = L"PsMain";
+        desc.layout = rhi::VertexLayout::MeshStandard;
+        desc.rtvFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+        desc.dsvFormat = DXGI_FORMAT_D32_FLOAT;
+        desc.cullMode = twoSided ? D3D12_CULL_MODE_NONE : D3D12_CULL_MODE_BACK;
+        if (instances) {
+            desc.rtvFormat = instances->shadow ? DXGI_FORMAT_UNKNOWN : DXGI_FORMAT_R16G16B16A16_FLOAT;
+            if (instances->shadow) desc.pixelEntry = cutout ? L"PsShadow" : L"";
+            desc.cullMode = D3D12_CULL_MODE_NONE;
+        }
+        return pipelineCache.GetGraphics(desc);
+    };
+    if (!pipelineFor(false, false)) return;
     if (!instances) {
     if (!m_output.IsValid()) {
         rhi::TextureDesc target;
@@ -229,13 +234,22 @@ void ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache
     }
     if (instances && !CullInstances(device, pipelineCache, commandList, *instances)) { PIXEndEvent(commandList); return; }
     commandList->SetGraphicsRootSignature(pipelineCache.GlobalRootSignature());
-    commandList->SetPipelineState(pipeline);
+    ID3D12PipelineState* current = nullptr;
     for (size_t i = 0; i < m_meshes.size(); ++i) {
         const auto slot = m_geometry->lods[m_lod].parts[i].slot;
         const auto* material =
             slot < model.materials.size() ? materials.Find(model.materials[slot]) : nullptr;
         const compositor::MaterialAsset fallback;
         const auto& asset = material ? *material : fallback;
+        // アルファはベースカラーのマップから読むので、マップが無ければ抜かない。
+        const bool cutout = asset.alphaCutoff > 0.0f &&
+                            textures.SrvIndex(asset.baseColor, true) != compositor::kInvalidTextureIndex;
+        auto* pipeline = pipelineFor(cutout, asset.twoSided);
+        if (!pipeline) continue;
+        if (pipeline != current) {
+            commandList->SetPipelineState(pipeline);
+            current = pipeline;
+        }
         ModelConstants constants = {};
         // ベースカラーだけ sRGB として読む。それ以外はリニア（サムネイルと同じ）。
         constants.baseColorIndex = textures.SrvIndex(asset.baseColor, true);
@@ -254,6 +268,7 @@ void ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineCache
         constants.colorAdjust[1] = asset.saturation;
         constants.brightness = asset.brightness;
         constants.flipNormalGreen = asset.flipNormalGreen ? 1u : 0u;
+        constants.alphaCutoff = cutout ? asset.alphaCutoff : 0.0f;
 
         const auto position = m_camera.Position();
         std::memcpy(constants.cameraPosition, &position, sizeof(position));

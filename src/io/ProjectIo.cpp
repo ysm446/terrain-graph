@@ -266,6 +266,8 @@ json WriteMaterialBody(const compositor::MaterialAsset& asset, const TextureWrit
     node["roughness"] = asset.roughnessValue;
     node["metallic"] = asset.metallicValue;
     node["ambientOcclusion"] = asset.ambientOcclusionValue;
+    node["alphaCutoff"] = asset.alphaCutoff;
+    node["twoSided"] = asset.twoSided;
 
     json maps;
     maps["baseColor"] = writeTexture(asset.baseColor);
@@ -299,6 +301,8 @@ void ReadMaterialBody(const json& node, compositor::MaterialAsset& asset,
     asset.metallicValue = ReadFloat(node, "metallic", defaults.metallicValue);
     asset.ambientOcclusionValue =
         ReadFloat(node, "ambientOcclusion", defaults.ambientOcclusionValue);
+    asset.alphaCutoff = std::clamp(ReadFloat(node, "alphaCutoff", defaults.alphaCutoff), 0.0f, 1.0f);
+    asset.twoSided = ReadBool(node, "twoSided", defaults.twoSided);
 
     const json* maps = FindMember(node, "maps");
     if (maps == nullptr || !maps->is_object()) {

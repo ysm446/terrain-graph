@@ -44,6 +44,8 @@ void CopyMaterialValues(const compositor::MaterialAsset& source, compositor::Mat
     target.metallicValue = source.metallicValue;
     target.ambientOcclusionValue = source.ambientOcclusionValue;
     target.flipNormalGreen = source.flipNormalGreen;
+    target.alphaCutoff = source.alphaCutoff;
+    target.twoSided = source.twoSided;
 }
 }  // namespace
 
@@ -323,6 +325,22 @@ bool Application::DrawMaterialProperties(compositor::MaterialAsset& asset) {
     }
     ui::HintText("ORD は AO=R / ラフネス=G / ハイト=B に割り当てる（Megascans の並び）");
     ui::HintText("ハイトはレイヤーの「ハイトのソース」をテクスチャにすると効く");
+
+    // モデルに割り当てたときだけ効く設定。地形のレイヤー合成には使わない。
+    ui::SectionHeader("モデル");
+    if (ui::BeginPropertyTable("materialModelRows")) {
+        static const compositor::MaterialAsset kDefaultAsset;
+        changed |= ui::PropertyFloat(
+            "アルファ抜き", &asset.alphaCutoff, 0.0f, 1.0f, kDefaultAsset.alphaCutoff,
+            "ベースカラーのアルファがこの値未満の画素を描かない（影も抜ける）。0 で無効。"
+            "葉のカードなどに使う。目安は 0.5",
+            "%.2f");
+        changed |= ui::PropertyBool(
+            "両面", &asset.twoSided, kDefaultAsset.twoSided,
+            "裏面も描く。裏から見たときは法線を反転して陰影を付ける。葉のカードなど厚みの無い面に使う");
+        ui::EndPropertyTable();
+    }
+    ui::HintText("アルファ抜きと両面はモデルの描画だけに効く");
 
     return changed;
 }

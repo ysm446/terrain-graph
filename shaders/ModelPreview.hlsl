@@ -20,7 +20,8 @@ struct ModelConstants
     float3 baseColorTint; float roughnessValue;
     float metallicValue, aoValue; float2 colorAdjust;
     // ambientLow / High: 環境光を雲あり / 雲なしで混ぜる高さの範囲（m）。SampleAmbientIrradiance を参照。
-    float brightness, ambientLow, ambientHigh, pad0;
+    // alphaCutoff: ベースカラーのアルファがこれ未満の画素を捨てる。0 で不透明。
+    float brightness, ambientLow, ambientHigh, alphaCutoff;
     float3 cameraPosition; float exposure;
     float3 lightDirection; float lightIlluminance;
     float3 lightColor; float iblIntensity;
@@ -123,17 +124,32 @@ PixelInput VsMain(VertexInput input, uint instance : SV_InstanceID) {
     output.position=input.position; output.normal=input.normal; output.tangent=input.tangent; output.uv=input.uv;
     return output;
 }
-float4 PsMain(PixelInput input):SV_TARGET {
+// アルファ抜きの判定。ミップはアルファも平均するので、遠くほど閾値を超える画素が減って
+// 葉が痩せる。ミップが1段進むごとにアルファを持ち上げ、見かけの被覆を保つ。
+static const float kAlphaMipScale = 0.25f;
+void ClipAlpha(float alpha, float lod) {
+    if (g_model.alphaCutoff <= 0) return;
+    clip(alpha * (1 + max(lod, 0) * kAlphaMipScale) - g_model.alphaCutoff);
+}
+// 影パス（アルファ抜きのパーツだけ）。深度だけを書くので色は返さない。
+void PsShadow(PixelInput input) {
+    const float lod = MapLod(g_model.baseColorIndex, ddx(input.uv), ddy(input.uv));
+    ClipAlpha(SampleMap(g_model.baseColorIndex, input.uv, lod).a, lod);
+}
+float4 PsMain(PixelInput input, bool frontFace:SV_IsFrontFace):SV_TARGET {
     const float3 normalGeometric=normalize(input.normal);
     const float3 viewDirection=normalize(g_model.cameraPosition-input.position);
     const float2 uv=input.uv;
     const float2 deltaX=ddx(uv),deltaY=ddy(uv);
+    // 面の法線（向きは問わない）。clip より前に微分を取る。
+    const float3 faceNormal=normalize(cross(ddx(input.position),ddy(input.position)));
     float3 baseColor = g_model.baseColorTint;
     if (g_model.baseColorIndex != kInvalidTextureIndex)
     {
-        baseColor *= SampleMap(g_model.baseColorIndex, uv,
-                               MapLod(g_model.baseColorIndex, deltaX, deltaY))
-                         .rgb;
+        const float lod = MapLod(g_model.baseColorIndex, deltaX, deltaY);
+        const float4 sampled = SampleMap(g_model.baseColorIndex, uv, lod);
+        ClipAlpha(sampled.a, lod);
+        baseColor *= sampled.rgb;
     }
     baseColor = AdjustBaseColor(baseColor, g_model.colorAdjust.x, g_model.colorAdjust.y,
                                 g_model.brightness);
@@ -177,6 +193,10 @@ float4 PsMain(PixelInput input):SV_TARGET {
         const float3 bitangent=cross(normalGeometric,tangent)*input.tangent.w;
         normal=normalize(tangent*sampled.x+bitangent*sampled.y+normalGeometric*sampled.z);
     }
+    // 両面のマテリアルを裏から見たとき。面に対して鏡映し、面に沿った成分（葉のカードで
+    // 上や外へ曲げた法線）は残す。平らな法線なら単純な反転と同じ。
+    // 閉じたメッシュの裏面は奥で隠れるので影響しない。
+    if (!frontFace) normal = reflect(normal, faceNormal);
 
     // --- 陰影（ビューポートと同じ式）---------------------------------------
     float3 diffuseColor;
