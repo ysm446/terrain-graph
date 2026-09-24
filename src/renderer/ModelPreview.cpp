@@ -51,6 +51,8 @@ void ModelPreview::Destroy(rhi::Device& device) {
     m_meshes.clear();
     m_geometry.reset();
     m_ready = false;
+    m_impostorLevel = false;
+    device.DeferRelease(m_impostorIndices);
     m_parts.clear();
     m_lodFirstPart.clear();
     m_segmentFirstArgument.clear();
@@ -90,7 +92,7 @@ void ModelPreview::FrameView() {
     m_camera.SetSceneRadius(radius);
     m_camera.Frame(center, radius);
 }
-bool ModelPreview::Prepare(rhi::Device& device, const ModelAsset& asset, int lod) {
+bool ModelPreview::Prepare(rhi::Device& device, const ModelAsset& asset, int lod, bool impostorLevel) {
     if (!asset.geometry) {
         if (m_geometry) Destroy(device);
         return false;
@@ -98,7 +100,9 @@ bool ModelPreview::Prepare(rhi::Device& device, const ModelAsset& asset, int lod
     const size_t lodCount = asset.geometry->lods.size();
     const bool all = lod == kAllLods;
     if (!all) lod = std::clamp(lod, 0, static_cast<int>(lodCount) - 1);
-    if (m_ready && m_geometry == asset.geometry && m_requestedLod == lod) return true;
+    impostorLevel = impostorLevel && all;
+    if (m_ready && m_geometry == asset.geometry && m_requestedLod == lod && m_requestedImpostor == impostorLevel)
+        return true;
     for (auto& mesh : m_meshes) mesh.Release(device);
     m_meshes.clear();
     m_parts.clear();
@@ -108,8 +112,10 @@ bool ModelPreview::Prepare(rhi::Device& device, const ModelAsset& asset, int lod
     m_geometry = asset.geometry;
     m_ready = false;
     m_requestedLod = lod;
+    m_requestedImpostor = impostorLevel;
+    m_impostorLevel = impostorLevel;
     m_firstLod = all ? 0 : static_cast<size_t>(lod);
-    const size_t lastLod = all ? std::min(lodCount, kMaxInstanceLods) : m_firstLod + 1;
+    const size_t lastLod = all ? std::min(lodCount, kMaxInstanceLods - (impostorLevel ? 1 : 0)) : m_firstLod + 1;
     for (size_t level = m_firstLod; level < lastLod; ++level) {
         m_lodFirstPart.push_back(m_meshes.size());
         for (const auto& part : m_geometry->lods[level].parts) {
@@ -118,7 +124,22 @@ bool ModelPreview::Prepare(rhi::Device& device, const ModelAsset& asset, int lod
             m_parts.push_back({static_cast<uint32_t>(level - m_firstLod), part.slot});
         }
     }
-    m_lodFirstPart.push_back(m_meshes.size());
+    if (impostorLevel) {
+        // インポスター段は四角形 1 枚。頂点は SV_VertexID から作るのでインデックスだけ持つ。
+        m_lodFirstPart.push_back(m_meshes.size());
+        m_parts.push_back({static_cast<uint32_t>(lastLod - m_firstLod), kImpostorSlot});
+        if (!m_impostorIndices.IsValid()) {
+            constexpr uint32_t kIndices[6] = {0, 1, 2, 3, 4, 5};
+            if (!device.Allocator().CreateUploadBuffer(sizeof(kIndices), L"ImpostorIndices", m_impostorIndices)) return false;
+            void* mapped = nullptr;
+            const D3D12_RANGE none{0, 0};
+            if (!TG_CHECK_HR(m_impostorIndices.resource->Map(0, &none, &mapped))) return false;
+            std::memcpy(mapped, kIndices, sizeof(kIndices));
+            m_impostorIndices.resource->Unmap(0, nullptr);
+            m_impostorIndexView = {m_impostorIndices.GpuAddress(), sizeof(kIndices), DXGI_FORMAT_R32_UINT};
+        }
+    }
+    m_lodFirstPart.push_back(m_parts.size());
     // 区画ごとの描画引数。区画 s の段は s % L、各段のパーツ数ぶん並べる。
     const size_t lods = LodCount();
     uint32_t argument = 0;
@@ -181,7 +202,7 @@ bool ModelPreview::CullInstances(rhi::Device& device, rhi::PipelineCache& cache,
     for (size_t segment = 0, index = 0; segment < segments; ++segment) {
         const size_t level = segment % lods;
         for (size_t part = m_lodFirstPart[level]; part < m_lodFirstPart[level + 1]; ++part)
-            arguments[index++] = {m_meshes[part].IndexCount(),0,0,0,0};
+            arguments[index++] = {PartIndexCount(part),0,0,0,0};
     }
     struct CullConstants {
         std::array<DirectX::XMFLOAT4,6> planes;
@@ -210,8 +231,12 @@ bool ModelPreview::CullInstances(rhi::Device& device, rhi::PipelineCache& cache,
     constants.lodCount = static_cast<uint32_t>(lods);
     // 影は硬く切り替える（重ね合わせの区画を描かない）。
     constants.fadeBand = draw.shadow ? 0.0f : std::max(draw.fadeBand, 0.0f);
-    for (size_t level = 1; level < lods; ++level)
-        constants.lodStart[level] = LodStartDistance(model, m_firstLod + level) * std::max(draw.lodBias, 0.0f);
+    // インポスター段はモデルの最後のメッシュ段の次（メッシュ段を詰めて省いた段があっても同じ距離）。
+    for (size_t level = 1; level < lods; ++level) {
+        const bool impostor = m_impostorLevel && level + 1 == lods;
+        const size_t modelLevel = impostor ? m_geometry->lods.size() : m_firstLod + level;
+        constants.lodStart[level] = LodStartDistance(model, modelLevel) * std::max(draw.lodBias, 0.0f);
+    }
     for (size_t segment = 0; segment < segments; ++segment)
         constants.segmentFirst[segment] = m_segmentFirstArgument[segment];
     constants.segmentCount = static_cast<uint32_t>(segments);
@@ -284,7 +309,7 @@ void ModelPreview::CollectInstanceStats(rhi::Device& device) {
             const uint64_t instances = counts[pass*kMaxInstanceLods*2+segment];
             uint64_t indices = 0;
             for (size_t part = m_lodFirstPart[level]; part < m_lodFirstPart[level+1]; ++part)
-                indices += m_meshes[part].IndexCount();
+                indices += PartIndexCount(part);
             stats.vertices += instances*indices;
             stats.triangles += instances*(indices/3);
             if (pass == 0 && m_firstLod + level < kMaxInstanceLods) stats.instances[m_firstLod+level] += instances;
@@ -385,7 +410,72 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
         constants.tonemapMode = static_cast<uint32_t>(tonemap);
     };
     // segment / argument はインスタンス描画のときだけ使う。fade は切り替え中の区画。
+    // インポスター段の 1 回の描画（配置のときだけ）。影はまだ落とさない。
+    const auto drawImpostor = [&](size_t i, bool fade, size_t segment, size_t argument) {
+        if (!impostor || instances->shadow) return;
+        rhi::GraphicsPipelineDesc desc;
+        desc.shaderPath = L"ModelPreview.hlsl";
+        desc.vertexEntry = L"VsImpostor";
+        desc.pixelEntry = fade ? L"PsImpostorDither" : L"PsImpostor";
+        desc.rtvFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        desc.dsvFormat = DXGI_FORMAT_D32_FLOAT;
+        desc.cullMode = D3D12_CULL_MODE_NONE;
+        auto* pipeline = pipelineCache.GetGraphics(desc);
+        const auto cb = device.Upload().Allocate(sizeof(ModelConstants), 256);
+        if (!pipeline || !cb.IsValid()) return;
+        if (pipeline != current) {
+            commandList->SetPipelineState(pipeline);
+            current = pipeline;
+        }
+        const auto& draw = *instances;
+        ModelConstants constants = {};
+        fillScene(constants);
+        constants.aoValue = 1.0f;
+        constants.points = draw.points; constants.rows = draw.rows;
+        constants.visibleIndices = m_visibleInstances.srv.index; constants.seed = draw.seed;
+        constants.scaleMin = draw.scaleMin; constants.scaleMax = draw.scaleMax;
+        constants.align = draw.align; constants.offset = draw.offset;
+        constants.usePointSize = draw.usePointSize; constants.sceneMode = 1;
+        constants.shadows = draw.shadows;
+        constants.atmosphere = draw.atmosphere;
+        constants.cloudNoiseIndex = draw.cloudNoiseIndex;
+        constants.atmosphericMode = draw.atmosphericMode;
+        constants.clearIrradianceIndex = draw.ambient.clearIrradianceIndex;
+        constants.ambientLow = draw.ambient.low;
+        constants.ambientHigh = draw.ambient.high;
+        constants.ambientOcclusion = draw.ambient.occlusion;
+        const auto& lo = m_geometry->minimum; const auto& hi = m_geometry->maximum;
+        constants.pivot[0] = (lo.x+hi.x)*0.5f; constants.pivot[1] = lo.y; constants.pivot[2] = (lo.z+hi.z)*0.5f;
+        constants.modelSize = std::max({hi.x-lo.x,hi.y-lo.y,hi.z-lo.z,0.0001f});
+        DirectX::XMStoreFloat4x4(&constants.viewProjection,
+            DirectX::XMMatrixTranspose(DirectX::XMLoadFloat4x4(&draw.viewProjection)));
+        std::memcpy(constants.cameraPosition,&draw.cameraPosition,sizeof(constants.cameraPosition));
+        constants.visibleOffset = static_cast<uint32_t>(segment * draw.count);
+        if (draw.lodView) {
+            const size_t lod = std::min<size_t>(m_firstLod + m_parts[i].lod, std::size(kLodDebugColors) - 1);
+            constants.lodView = 1;
+            constants.baseColorTint[0] = kLodDebugColors[lod].x;
+            constants.baseColorTint[1] = kLodDebugColors[lod].y;
+            constants.baseColorTint[2] = kLodDebugColors[lod].z;
+        }
+        constants.impostorColor = impostor->color.SrvIndex();
+        constants.impostorNormal = impostor->normal.SrvIndex();
+        constants.impostorCenter[0] = impostor->center.x;
+        constants.impostorCenter[1] = impostor->center.y;
+        constants.impostorCenter[2] = impostor->center.z;
+        constants.impostorRadius = impostor->radius;
+        constants.impostorFrames = impostor->settings.frames;
+        constants.impostorFullSphere = impostor->settings.fullSphere ? 1u : 0u;
+        std::memcpy(cb.cpu, &constants, sizeof(constants));
+        commandList->SetGraphicsRootConstantBufferView(1, cb.gpuAddress);
+        commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        commandList->IASetIndexBuffer(&m_impostorIndexView);
+        commandList->ExecuteIndirect(m_drawSignature.Get(), 1, m_indirectArguments.resource.Get(),
+                                     argument * sizeof(D3D12_DRAW_INDEXED_ARGUMENTS), nullptr, 0);
+        ++drawCalls;
+    };
     const auto drawPart = [&](size_t i, bool fade, size_t segment, size_t argument) {
+        if (m_parts[i].slot == kImpostorSlot) return drawImpostor(i, fade, segment, argument);
         const auto slot = m_parts[i].slot;
         const auto* material =
             slot < model.materials.size() ? materials.Find(model.materials[slot]) : nullptr;

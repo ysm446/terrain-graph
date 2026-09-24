@@ -44,12 +44,14 @@ struct InstanceStats {
 class ModelPreview {
    public:
     void Destroy(rhi::Device& device);
-    bool Prepare(rhi::Device& device, const ModelAsset& asset, int lod);
+    // impostorLevel が真で lod が kAllLods なら、メッシュの段の後ろにインポスター段を足す
+    // （合計 kMaxInstanceLods 段まで。メッシュは先頭から詰める）。描くときは Render に画像を渡す。
+    bool Prepare(rhi::Device& device, const ModelAsset& asset, int lod, bool impostorLevel = false);
     // 完了したフレームの集計を読み戻す。フレームの記録を始めた後、描画より前に呼ぶ。
     void CollectInstanceStats(rhi::Device& device);
     // 直近に完了したフレームの集計。1〜2 フレーム遅れる。
     const InstanceStats& LatestInstanceStats() const { return m_instanceStats; }
-    // 発行した描画の回数を返す。
+    // 発行した描画の回数を返す。impostor はモデルプレビューなら確認表示、配置ならインポスター段の画像。
     uint32_t Render(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                 ID3D12GraphicsCommandList* commandList, const ModelAsset& model,
                 const compositor::MaterialLibrary& materials,
@@ -76,7 +78,14 @@ class ModelPreview {
     Microsoft::WRL::ComPtr<ID3D12CommandSignature> m_drawSignature;
     std::shared_ptr<const ModelGeometry> m_geometry;
     int m_requestedLod = 0;
+    bool m_requestedImpostor = false;
     bool m_ready = false;
+    // インポスター段。m_parts の末尾の 1 パーツ（m_meshes には無い）で、6 インデックスの四角形を描く。
+    static constexpr uint32_t kImpostorSlot = 0xffffffffu;
+    bool m_impostorLevel = false;
+    rhi::GpuBuffer m_impostorIndices;
+    D3D12_INDEX_BUFFER_VIEW m_impostorIndexView{};
+    uint32_t PartIndexCount(size_t part) const { return part < m_meshes.size() ? m_meshes[part].IndexCount() : 6; }
     std::vector<Mesh> m_meshes;
     // m_meshes と同じ並び。lod は用意した段の中での番号（0 が m_firstLod）。
     struct Part { uint32_t lod = 0, slot = 0; };

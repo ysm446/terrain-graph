@@ -30,7 +30,9 @@ void Application::PrepareModelScatters() {
             meshKeys.push_back(key);
             auto& mesh = m_instanceMeshes[key];
             if (!mesh) mesh = std::make_unique<renderer::ModelPreview>();
-            mesh->Prepare(m_device,*model,scatter.settings.autoLod ? renderer::kAllLods : scatter.settings.lod);
+            // 自動 LOD でインポスターを焼いてあれば、最終段として使う。
+            mesh->Prepare(m_device,*model,scatter.settings.autoLod ? renderer::kAllLods : scatter.settings.lod,
+                          scatter.settings.autoLod && m_impostors.Find(model->id) != nullptr);
         }
         if (std::find(sources.begin(),sources.end(),scatter.source) != sources.end()) continue;
         sources.push_back(scatter.source);
@@ -115,7 +117,8 @@ void Application::DrawModelScatters(ID3D12GraphicsCommandList* commandList,
             }
             m_renderer.RecordInstanceDrawCalls(mesh->second->Render(m_device,m_pipelineCache,commandList,*model,
                 m_materialLibrary,m_textureLibrary,m_renderer.GetEnvironment(),m_renderer.EnvironmentIntensity(),
-                m_renderer.EffectiveLight(),m_renderer.Exposure().Exposure(),m_renderer.Tonemap(),&draw));
+                m_renderer.EffectiveLight(),m_renderer.Exposure().Exposure(),m_renderer.Tonemap(),&draw,
+                m_impostors.Find(model->id)));
             if (!shadow && std::find(drawn.begin(),drawn.end(),mesh->second.get())==drawn.end())
                 drawn.push_back(mesh->second.get());
         }
@@ -375,16 +378,18 @@ void Application::DrawModelPreviewWindow() {
         ui::EndPropertyTable();
     }
     if (!asset.error.empty()) ui::HintText(asset.error.c_str());
-    if (asset.geometry && asset.geometry->lods.size() > 1) {
-        const size_t count = asset.geometry->lods.size();
+    // インポスターを焼いてあれば、メッシュの段の後ろにインポスターの距離を足す。
+    if (asset.geometry && (asset.geometry->lods.size() > 1 || asset.impostor.baked)) {
+        const size_t count = asset.geometry->lods.size() + (asset.impostor.baked ? 1 : 0);
         ui::SectionHeader("LOD");
-        if (ui::BeginPropertyTable("modelLods")) {
+        if (ui::BeginPropertyTable("modelLods", "インポスターの距離")) {
             renderer::ModelAsset defaults;
             defaults.geometry = asset.geometry;
             for (size_t lod = 1; lod < count; ++lod) {
                 ImGui::PushID(static_cast<int>(lod));
                 float value = renderer::LodStartDistance(asset, lod);
-                const std::string label = "LOD" + std::to_string(lod) + " の距離";
+                const bool impostorLevel = asset.impostor.baked && lod + 1 == count;
+                const std::string label = impostorLevel ? "インポスターの距離" : "LOD" + std::to_string(lod) + " の距離";
                 if (ui::PropertyFloat(label.c_str(), &value, 0.0f, 100000.0f,
                                       renderer::LodStartDistance(defaults, lod),
                                       "カメラからこの距離より遠いと、この段階以降を使います。"

@@ -107,29 +107,53 @@ struct VertexInput { float3 position:POSITION; float3 normal:NORMAL; float4 tang
 struct PixelInput { float4 clip:SV_POSITION; float3 position:POSITION; float3 normal:NORMAL; float4 tangent:TANGENT; float2 uv:TEXCOORD0; nointerpolation float fade:FADE; };
 uint InstanceHash(uint x) { x ^= x >> 16; x *= 0x7feb352d; x ^= x >> 15; x *= 0x846ca68b; return x ^ (x >> 16); }
 float InstanceRandom(uint x) { return float(InstanceHash(x) >> 8) / 16777216.0; }
+// 配置した 1 株の置き方。モデル空間の点 p は origin + axisX*l.x + up*(l.y+offset) + axisZ*l.z
+// （l = (p - pivot) * scale）へ移る。軸は正規直交。
+struct InstancePlacement { float3 origin, axisX, up, axisZ; float scale, fade; };
+InstancePlacement IdentityPlacement() {
+    InstancePlacement result;
+    result.origin = g_model.pivot; result.axisX = float3(1, 0, 0); result.up = float3(0, 1, 0);
+    result.axisZ = float3(0, 0, 1); result.scale = 1; result.fade = 1;
+    return result;
+}
+// SV_InstanceID から、可視リストの区画を通して株を引く。
+InstancePlacement LoadInstance(uint instance) {
+    StructuredBuffer<uint2> visible = ResourceDescriptorHeap[g_model.visibleIndices];
+    const uint2 entry = visible[g_model.visibleOffset + instance];
+    instance = entry.x;
+    Texture2D<float4> points = ResourceDescriptorHeap[g_model.points];
+    const uint2 address = uint2(instance%1024,instance/1024);
+    const float4 placement = points.Load(int3(address,0));
+    const float4 orientation = points.Load(int3(address+uint2(0,g_model.rows),0));
+    InstancePlacement result;
+    result.up = normalize(lerp(float3(0,1,0),orientation.xyz,g_model.align));
+    const float3 right = normalize(cross(abs(result.up.z)<0.99 ? float3(0,0,1) : float3(1,0,0),result.up));
+    const float3 forward = cross(right,result.up);
+    const float angle = orientation.w + InstanceRandom(instance ^ g_model.seed ^ 0xa6e1u)*6.2831853;
+    const float c = cos(angle), s = sin(angle);
+    result.axisX = right*c+forward*s; result.axisZ = forward*c-right*s;
+    result.scale = lerp(g_model.scaleMin,g_model.scaleMax,InstanceRandom(instance ^ g_model.seed ^ 0x3187u)) *
+                   (g_model.usePointSize != 0 ? placement.w/g_model.modelSize : 1);
+    result.origin = placement.xyz;
+    result.fade = asfloat(entry.y);
+    return result;
+}
+float3 PlacePoint(InstancePlacement p, float3 position) {
+    const float3 local = (position-g_model.pivot)*p.scale;
+    return p.origin + p.axisX*local.x + p.up*(local.y+g_model.offset) + p.axisZ*local.z;
+}
+float3 PlaceDirection(InstancePlacement p, float3 direction) {
+    return p.axisX*direction.x + p.up*direction.y + p.axisZ*direction.z;
+}
+
 PixelInput VsMain(VertexInput input, uint instance : SV_InstanceID) {
     float fade = 1;
     if (g_model.sceneMode != 0) {
-        StructuredBuffer<uint2> visible = ResourceDescriptorHeap[g_model.visibleIndices];
-        const uint2 entry = visible[g_model.visibleOffset + instance];
-        instance = entry.x;
-        fade = asfloat(entry.y);
-        Texture2D<float4> points = ResourceDescriptorHeap[g_model.points];
-        const uint2 address = uint2(instance%1024,instance/1024);
-        const float4 placement = points.Load(int3(address,0));
-        const float4 orientation = points.Load(int3(address+uint2(0,g_model.rows),0));
-        float3 up = normalize(lerp(float3(0,1,0),orientation.xyz,g_model.align));
-        float3 right = normalize(cross(abs(up.z)<0.99 ? float3(0,0,1) : float3(1,0,0),up));
-        float3 forward = cross(right,up);
-        const float angle = orientation.w + InstanceRandom(instance ^ g_model.seed ^ 0xa6e1u)*6.2831853;
-        const float c = cos(angle), s = sin(angle);
-        const float3 axisX = right*c+forward*s, axisZ = forward*c-right*s;
-        const float scale = lerp(g_model.scaleMin,g_model.scaleMax,InstanceRandom(instance ^ g_model.seed ^ 0x3187u)) *
-                            (g_model.usePointSize != 0 ? placement.w/g_model.modelSize : 1);
-        const float3 local = (input.position-g_model.pivot)*scale;
-        input.position = placement.xyz + axisX*local.x + up*(local.y+g_model.offset) + axisZ*local.z;
-        input.normal = axisX*input.normal.x + up*input.normal.y + axisZ*input.normal.z;
-        input.tangent.xyz = axisX*input.tangent.x + up*input.tangent.y + axisZ*input.tangent.z;
+        const InstancePlacement placement = LoadInstance(instance);
+        fade = placement.fade;
+        input.position = PlacePoint(placement, input.position);
+        input.normal = PlaceDirection(placement, input.normal);
+        input.tangent.xyz = PlaceDirection(placement, input.tangent.xyz);
     }
     PixelInput output;
     output.clip=mul(float4(input.position,1),g_model.viewProjection);
@@ -282,13 +306,21 @@ float4 PsDither(PixelInput input, bool frontFace:SV_IsFrontFace):SV_TARGET {
 // --- インポスター -----------------------------------------------------------------
 // カメラを向く四角形 1 枚。ピクセルごとに、視線に近い 3 方向の画像それぞれの平面（中心を通り、
 // その方向に垂直）へ視線を当て、当たった位置の画素を重みで混ぜる。
-struct ImpostorInput { float4 clip:SV_POSITION; float3 position:POSITION; };
+// 株ごとの置き方は補間せずに渡し、ピクセルでは視線をモデル空間へ戻して画像を選ぶ。
+// origin / scale は「モデル空間の点 → ワールド」の変換（InstancePlacement と同じ）。
+struct ImpostorInput {
+    float4 clip:SV_POSITION; float3 position:POSITION;
+    nointerpolation float3 origin:ORIGIN; nointerpolation float3 axisX:AXISX; nointerpolation float3 up:AXISY;
+    nointerpolation float scale:SCALE; nointerpolation float fade:FADE;
+};
 
-ImpostorInput VsImpostor(uint vertex : SV_VertexID) {
+ImpostorInput VsImpostor(uint vertex : SV_VertexID, uint instance : SV_InstanceID) {
     static const float2 kCorners[6] = {float2(-1, -1), float2(1, -1), float2(1, 1),
                                        float2(-1, -1), float2(1, 1), float2(-1, 1)};
-    const float3 center = g_model.impostorCenter;
-    const float radius = g_model.impostorRadius;
+    InstancePlacement placement = IdentityPlacement();
+    if (g_model.sceneMode != 0) placement = LoadInstance(instance);
+    const float3 center = PlacePoint(placement, g_model.impostorCenter);
+    const float radius = g_model.impostorRadius * placement.scale;
     const float3 toCamera = g_model.cameraPosition - center;
     const float cameraDistance = length(toCamera);
     float3 right, up;
@@ -298,8 +330,10 @@ ImpostorInput VsImpostor(uint vertex : SV_VertexID) {
         ? radius * cameraDistance / sqrt(cameraDistance * cameraDistance - radius * radius)
         : radius * 8;
     ImpostorInput output;
-    output.position = center + (right * kCorners[vertex].x + up * kCorners[vertex].y) * extent;
+    output.position = center + (right * kCorners[vertex % 6].x + up * kCorners[vertex % 6].y) * extent;
     output.clip = mul(float4(output.position, 1), g_model.viewProjection);
+    output.origin = placement.origin; output.axisX = placement.axisX; output.up = placement.up;
+    output.scale = placement.scale; output.fade = placement.fade;
     return output;
 }
 
@@ -308,8 +342,13 @@ float4 PsImpostor(ImpostorInput input):SV_TARGET {
     const float radius = g_model.impostorRadius;
     const uint frames = g_model.impostorFrames;
     const bool fullSphere = g_model.impostorFullSphere != 0;
-    const float3 camera = g_model.cameraPosition;
-    const float3 ray = normalize(input.position - camera);
+    // ワールドの点をモデル空間へ戻す（PlacePoint の逆）。
+    const float3 axisZ = cross(input.axisX, input.up);
+    const float3 origin = input.origin + input.up * g_model.offset;
+    const float3 cameraRelative = g_model.cameraPosition - origin, pointRelative = input.position - origin;
+    const float3 camera = float3(dot(cameraRelative, input.axisX), dot(cameraRelative, input.up), dot(cameraRelative, axisZ)) / input.scale + g_model.pivot;
+    const float3 target = float3(dot(pointRelative, input.axisX), dot(pointRelative, input.up), dot(pointRelative, axisZ)) / input.scale + g_model.pivot;
+    const float3 ray = normalize(target - camera);
     const ImpostorFrames selected = SelectImpostorFrames(normalize(camera - center), frames, fullSphere);
     Texture2D<float4> colorMap = ResourceDescriptorHeap[g_model.impostorColor];
     Texture2D<float4> normalMap = ResourceDescriptorHeap[g_model.impostorNormal];
@@ -345,8 +384,18 @@ float4 PsImpostor(ImpostorInput input):SV_TARGET {
     clip(coverage * (1 + max(lod, 0) * kAlphaMipScale) - 0.5f);
     color /= max(coverage, 1e-4f);
     normalDepth /= max(coverage, 1e-4f);
-    const float3 normal = DecodeImpostorNormal(normalDepth.xy * 2 - 1);
+    const float3 local = DecodeImpostorNormal(normalDepth.xy * 2 - 1);
+    const float3 normal = normalize(input.axisX * local.x + input.up * local.y + axisZ * local.z);
     float3 baseColor = color;
     if (g_model.lodView != 0) baseColor = g_model.baseColorTint;
-    return ShadeModel(input.position, normal, -ray, baseColor, normalDepth.w, 0, 1);
+    return ShadeModel(input.position, normal, normalize(g_model.cameraPosition - input.position), baseColor,
+                      normalDepth.w, 0, 1);
+}
+
+// インポスター段の切り替え中の区画（PsDither と同じ相補的なディザ）。
+float4 PsImpostorDither(ImpostorInput input):SV_TARGET {
+    const float threshold = LodDitherThreshold(uint2(input.clip.xy));
+    if (input.fade > 1.5f) clip(threshold - (input.fade - 2));
+    else clip(input.fade - threshold);
+    return PsImpostor(input);
 }
