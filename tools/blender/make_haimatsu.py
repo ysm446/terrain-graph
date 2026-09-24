@@ -2,7 +2,7 @@
 #
 # 使い方（Blender 5.x）:
 #   blender -b --factory-startup --python-exit-code 1 --python tools/blender/make_haimatsu.py -- \
-#       --out data/models/Haimatsu [--root data] [--variants 3] [--seed 1]
+#       --out data/Models/Haimatsu [--root data] [--variants 3] [--seed 1]
 #
 # 出力（--out の下）:
 #   Haimatsu_VarN.fbx        幹・枝（Bark）、葉のカード（Needles）、芯（Core）の 3 スロット。

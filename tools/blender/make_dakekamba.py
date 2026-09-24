@@ -2,7 +2,7 @@
 #
 # 使い方（Blender 5.x）:
 #   blender -b --factory-startup --python-exit-code 1 --python tools/blender/make_dakekamba.py -- \
-#       --out data/models/Dakekamba [--root data] [--variants 3] [--seed 1]
+#       --out data/Models/Dakekamba [--root data] [--variants 3] [--seed 1]
 #
 # 出力（--out の下）:
 #   Dakekamba_VarN.fbx         幹・枝（Bark）、葉のカード（Leaves）、芯（Core）の 3 スロット。
@@ -30,7 +30,7 @@ import numpy as np
 from mathutils import Vector
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from vegetation import (LEAVES, UP, EnvelopeField, Geometry, add_core, add_tube_lod,  # noqa: E402
+from vegetation import (LEAVES, UP, EnvelopeField, Geometry, LeafCanvas, add_core, add_tube_lod,  # noqa: E402
                         along_polyline, asset_ref, build_hull, export_fbx, finish_cutout, grow,
                         height_to_normal, heading, make_core_material, make_material, make_object,
                         parse_args, perpendicular, source_ref, tiling_noise, to_bytes,
@@ -40,87 +40,6 @@ from vegetation import (LEAVES, UP, EnvelopeField, Geometry, add_core, add_tube_
 # --- 葉のカード -----------------------------------------------------------------
 # 画像は正方形（512 × 512）。下端の中央が小枝の付け根で、上へ伸びる小枝に葉が互い違いに付く。
 # 葉は卵形でふちがギザギザ（長さ 5〜10 cm）。カードは 32 cm 角なので、葉 1 枚は 100〜150 px。
-class LeafCanvas:
-    def __init__(self, size):
-        self.size = size
-        self.color = np.zeros((size, size, 3), np.float32)
-        self.alpha = np.zeros((size, size), np.float32)
-        self.normal = np.zeros((size, size, 3), np.float32)
-        self.normal[..., 2] = 1.0
-
-    def _blend(self, view, coverage, rgb, normal):
-        a = coverage[..., None]
-        self.color[view] = self.color[view] * (1 - a) + rgb * a
-        self.alpha[view] = self.alpha[view] * (1 - coverage) + coverage
-        self.normal[view] = self.normal[view] * (1 - a) + normal * a
-
-    def stroke(self, p0, p1, w0, w1, color):
-        """太さが変わる丸い線分（小枝と葉柄）。座標は画素（x 右、y 下）。"""
-        p0, p1 = np.asarray(p0, np.float32), np.asarray(p1, np.float32)
-        d = p1 - p0
-        length = float(np.hypot(*d))
-        if length < 1e-3:
-            return
-        d /= length
-        half = max(w0, w1) * 0.5 + 2
-        x0, x1 = int(max(0, min(p0[0], p1[0]) - half)), int(min(self.size, max(p0[0], p1[0]) + half + 1))
-        y0, y1 = int(max(0, min(p0[1], p1[1]) - half)), int(min(self.size, max(p0[1], p1[1]) + half + 1))
-        if x0 >= x1 or y0 >= y1:
-            return
-        ys, xs = np.mgrid[y0:y1, x0:x1].astype(np.float32)
-        rx, ry = xs + 0.5 - p0[0], ys + 0.5 - p0[1]
-        t = np.clip((rx * d[0] + ry * d[1]) / length, 0.0, 1.0)
-        side = rx * -d[1] + ry * d[0]
-        dist = np.hypot(rx - d[0] * t * length, ry - d[1] * t * length)
-        radius = (w0 + (w1 - w0) * t) * 0.5
-        coverage = np.clip(radius - dist + 0.5, 0.0, 1.0)
-        if not (coverage > 0).any():
-            return
-        across = np.clip(side / np.maximum(radius, 1e-3), -1.0, 1.0)
-        bulge = np.sqrt(np.clip(1.0 - across * across, 0.0, 1.0))
-        rgb = np.asarray(color, np.float32) * (0.7 + 0.3 * bulge)[..., None]
-        n = np.stack([-d[1] * across, -d[0] * across, bulge + 0.35], axis=-1)
-        n /= np.linalg.norm(n, axis=-1, keepdims=True)
-        self._blend((slice(y0, y1), slice(x0, x1)), coverage, rgb, n)
-
-    def leaf(self, base, angle, length, color, rng, underside=False):
-        """付け根 base から角度 angle（上が 0、右回りが正）へ伸びる卵形の葉。"""
-        direction = np.array([math.sin(angle), -math.cos(angle)], np.float32)
-        across_dir = np.array([-direction[1], direction[0]], np.float32)
-        width = length * rng.uniform(0.55, 0.68)
-        reach = length + width
-        x0, x1 = int(max(0, base[0] - reach)), int(min(self.size, base[0] + reach + 1))
-        y0, y1 = int(max(0, base[1] - reach)), int(min(self.size, base[1] + reach + 1))
-        if x0 >= x1 or y0 >= y1:
-            return
-        ys, xs = np.mgrid[y0:y1, x0:x1].astype(np.float32)
-        rx, ry = xs + 0.5 - base[0], ys + 0.5 - base[1]
-        s = (rx * direction[0] + ry * direction[1]) / length  # 付け根 0 → 先 1
-        v = rx * across_dir[0] + ry * across_dir[1]           # 中肋からの距離（px）
-        sc = np.clip(s, 0, 1)
-        # 卵形（付け根寄りが広く、先がとがる）。ふちに細かいギザギザ（重鋸歯）。
-        profile = np.power(np.clip(np.sin(np.pi * np.power(sc, 0.72)), 0, 1), 0.85) * (1 - 0.25 * sc)
-        serration = 1 + 0.07 * np.abs(np.sin(sc * 46)) - 0.03
-        half = width * 0.5 * profile * serration
-        coverage = np.clip(half - np.abs(v) + 0.5, 0, 1) * ((s >= 0) & (s <= 1))
-        if not (coverage > 0).any():
-            return
-        across = np.clip(v / np.maximum(half, 1e-3), -1, 1)
-        # 側脈（中肋から先へ斜めに走る筋）と中肋。
-        vein = np.clip(1 - np.abs(np.sin((sc - np.abs(across) * 0.35) * 30)) * 6, 0, 1) * 0.12
-        midrib = np.clip(1.5 - np.abs(v), 0, 1)
-        base_color = np.asarray(color, np.float32)
-        if underside:
-            base_color = base_color * 0.6 + np.array([0.30, 0.34, 0.24], np.float32)
-        shade = 0.82 + 0.18 * (1 - np.abs(across)) + vein * 0.6
-        rgb = base_color * shade[..., None] + np.array([0.08, 0.08, 0.03], np.float32) * midrib[..., None]
-        # 中肋で浅く折れた葉（V 字）として法線を横へ傾ける。
-        tilt = np.sign(v) * 0.22 + vein * 0.3
-        n = np.stack([across_dir[0] * tilt, -across_dir[1] * tilt, np.ones_like(v)], axis=-1)
-        n /= np.linalg.norm(n, axis=-1, keepdims=True)
-        self._blend((slice(y0, y1), slice(x0, x1)), coverage, rgb, n)
-
-
 def make_leaf_texture(rng, size=512):
     canvas = LeafCanvas(size)
     base = np.array([size * 0.5, size - 4], np.float32)

@@ -2,7 +2,7 @@
 #
 # 使い方（Blender 5.x）:
 #   blender -b --factory-startup --python-exit-code 1 --python tools/blender/make_oshirabiso.py -- \
-#       --out data/models/Oshirabiso [--root data] [--variants 3] [--seed 1]
+#       --out data/Models/Oshirabiso [--root data] [--variants 3] [--seed 1]
 #
 # 出力（--out の下）:
 #   Oshirabiso_VarN.fbx         幹・枝（Bark）、針葉のカード（Needles）、芯（Core）の 3 スロット。
