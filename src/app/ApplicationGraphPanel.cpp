@@ -649,8 +649,9 @@ void Application::DrawGraphNode(const graph::Node& node) {
     }
 
     // サムネイル。**繋ぎ替えずに中身が分かる**ようにするためのもの。
-    //   - レイヤーのノード（Heightmap / Surface / Shape / 加工…）: そのレイヤーまで
+    //   - レイヤーのノード（Heightmap / Shape / 加工…）: そのレイヤーまで
     //     合成した結果（アルベドに Height の勾配で陰影を付けたもの）。
+    //   - Surface: 割り当てたマテリアルのサムネイル（未割り当てなら合成結果）。
     //     Mask 出力を持つ加工ノードは、隣に最初の Mask（白黒）も出す。
     //   - マスクのノード: 焼いたマスク（白黒）。
     //   - プレビューしていない枝は評価されないので、枠だけの空き（未評価）になる。
@@ -662,7 +663,15 @@ void Application::DrawGraphNode(const graph::Node& node) {
             ui::ThumbnailImage(static_cast<ImTextureID>(handle.ptr), thumbnailSize);
         } else if (layerSettings != nullptr) {
             ImGui::Dummy(ImVec2(kNodeWidth, 2.0f));
-            const D3D12_GPU_DESCRIPTOR_HANDLE result = GraphLayerThumbnail(node.id);
+            // Surface は割り当てたマテリアル（レイヤーマテリアルを含む）のサムネイルを出す。
+            // 何を貼っているかが一目で分かるように。未割り当てなら合成結果のまま。
+            D3D12_GPU_DESCRIPTOR_HANDLE result{0};
+            if (node.kind == graph::NodeKind::Surface &&
+                layerSettings->layer.material != compositor::kNoMaterialAsset) {
+                result = m_materialLibrary.ThumbnailHandle(layerSettings->layer.material);
+            } else {
+                result = GraphLayerThumbnail(node.id);
+            }
             ui::ThumbnailImage(static_cast<ImTextureID>(result.ptr), thumbnailSize);
             // マテリアル一覧からサムネイルへ落とすと、そのノードに割り当たる
             // （Surface だけ）。ID の無いアイテムでも BeginDragDropTarget は矩形から
