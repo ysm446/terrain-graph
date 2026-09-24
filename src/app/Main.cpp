@@ -25,6 +25,7 @@ namespace {
 //                       [--export <dir>]
 //                       [--screenshot <path>] [--screenshot-ui <path>]
 //                       [--screenshot-frame <n>] [--gpu-validation]
+//                       [--bake-impostors <model.tgmodel | all>]...
 tg::StartupOptions ParseCommandLine() {
     tg::StartupOptions options;
 
@@ -53,6 +54,8 @@ tg::StartupOptions ParseCommandLine() {
             options.previewModelLod = ::_wtoi(argv[++i]);
         } else if (argument == L"--import-model" && i + 1 < argc) {
             options.importModel = argv[++i];
+        } else if (argument == L"--bake-impostors" && i + 1 < argc) {
+            options.bakeImpostors.emplace_back(argv[++i]);
         } else if (argument == L"--save-project" && (i + 1) < argc) {
             options.saveProjectPath = argv[i + 1];
             ++i;

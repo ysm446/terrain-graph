@@ -201,6 +201,67 @@ void Application::ProcessModelWork() {
     }
     ProcessImpostorWork();
 }
+bool Application::BakeRequestedImpostors() {
+    std::vector<uint64_t> targets;
+    for (const auto& request : m_options.bakeImpostors) {
+        if (request == L"all") {
+            for (const auto& asset : m_models) targets.push_back(asset.id);
+            continue;
+        }
+        const auto path = std::filesystem::absolute(request);
+        const auto matches = [&](const renderer::ModelAsset& asset) {
+            std::error_code error;
+            return !asset.assetPath.empty() && std::filesystem::equivalent(asset.assetPath, path, error);
+        };
+        auto found = std::find_if(m_models.begin(), m_models.end(), matches);
+        if (found == m_models.end()) {
+            // シーンで使っていないモデルは、その場で読み込む。
+            const io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks, m_skyLibrary,
+                                       m_renderer, m_graph, &m_models, &m_sceneComponents, -1, &m_sceneAtmosphere};
+            if (!m_workspace.Contains(path) ||
+                !io::LoadSharedAsset(m_workspace, path, m_device, m_pipelineCache, refs)) {
+                TG_LOG_ERROR("インポスターを焼くモデルを読み込めません: %s", ToUtf8Display(path).c_str());
+                return false;
+            }
+            m_materialLibrary.ProcessPendingWork(m_device, m_pipelineCache, m_textureLibrary, false);
+            found = std::find_if(m_models.begin(), m_models.end(), matches);
+            if (found == m_models.end()) {
+                TG_LOG_ERROR("インポスターを焼くモデルが見つかりません: %s", ToUtf8Display(path).c_str());
+                return false;
+            }
+        }
+        targets.push_back(found->id);
+    }
+    std::sort(targets.begin(), targets.end());
+    targets.erase(std::unique(targets.begin(), targets.end()), targets.end());
+    for (const uint64_t id : targets) {
+        auto asset = std::find_if(m_models.begin(), m_models.end(), [&](const auto& a) { return a.id == id; });
+        if (asset == m_models.end() || !asset->geometry || asset->assetPath.empty()) continue;
+        // アプリの「作成」ボタン（ProcessImpostorWork）と同じ焼き方・置き場所。
+        std::filesystem::path colorPath, normalPath, variationPath;
+        renderer::ImpostorPaths(*asset, colorPath, normalPath, variationPath);
+        renderer::ModelImpostor result;
+        std::string error;
+        if (!m_impostors.Bake(m_device, m_pipelineCache, *asset, m_materialLibrary, m_textureLibrary,
+                              colorPath, normalPath, variationPath, result, error)) {
+            TG_LOG_ERROR("インポスターを作れませんでした: %s（%s）", asset->name.c_str(), error.c_str());
+            return false;
+        }
+        asset->impostor = result;
+        // .tgmodel だけを保存する（シーンや他のアセットは書かない）。
+        io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks, m_skyLibrary,
+                             m_renderer, m_graph, &m_models, &m_sceneComponents, -1, &m_sceneAtmosphere};
+        refs.saveSharedAssets = false;
+        const auto target = asset->assetPath;
+        if (!io::SaveSharedAssets(m_workspace, refs, &target)) {
+            TG_LOG_ERROR("モデルを保存できませんでした: %s", ToUtf8Display(target).c_str());
+            return false;
+        }
+    }
+    TG_LOG_INFO("インポスターを焼き直しました: %zu モデル", targets.size());
+    return true;
+}
+
 void Application::ProcessImpostorWork() {
     const auto find = [&](uint64_t id) {
         const auto found = std::find_if(m_models.begin(), m_models.end(), [&](const auto& a) { return a.id == id; });

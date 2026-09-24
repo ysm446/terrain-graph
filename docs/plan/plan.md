@@ -1,7 +1,7 @@
 # plan — 実装方針と優先順位
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-25 00:56
+更新日時: 2026-09-25 06:58
 
 ## 植生の色むらと季節（2026-09-25 00:56、1〜3 実装済み）
 
@@ -288,9 +288,12 @@ terrain_graph.exe [--project <path>] [--save-project <path>]
                    [--screenshot <path>] [--screenshot-ui <path>]
                    [--screenshot-frame <n>] [--select-node <id>]
                    [--show-unsaved] [--gpu-validation]
+                   [--bake-impostors <model.tgmodel | all>]...
 ```
 
 `--texture` は繰り返し指定でき、起動時にテクスチャライブラリへ読み込む。
+
+`--bake-impostors` は `--project` のシーンを開いて `--screenshot-frame` のフレーム数だけ描いた後、指定したモデル（`.tgmodel` のパス、繰り返し指定可。`all` でシーンの全モデル）のインポスターを、モデルのプロパティの「作成」と同じ設定・置き場所で焼き直し、`.tgmodel` だけを保存して終了する。シーンで使っていないモデルはその場で読み込む。植生の生成スクリプトで形や法線、マテリアルの色むらを変えたあとの焼き直しに使う。
 
 `--project` は起動時にプロジェクトを開く。`--save-project` は数フレーム描いてから
 プロジェクトを保存して終了する。対話せずに保存と読み込みを往復させて確かめるための開発用。

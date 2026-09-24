@@ -82,6 +82,9 @@ struct StartupOptions {
     int previewModel = -1;
     int previewModelLod = 0;
     std::filesystem::path importModel; // 開発用。読み込みとプレビューの確認。
+    // 開発用。指定したモデル（.tgmodel のパス、または "all" でシーンの全モデル）の
+    // インポスターを焼き直し、.tgmodel を保存して終了する。--project と一緒に使う。
+    std::vector<std::filesystem::path> bakeImpostors;
     std::filesystem::path revealAsset; // 開発用。参照元への移動を画面確認する。
     graph::GraphId selectNode = 0; // 開発用。読み込んだグラフのプロパティを画像で確認する。
     // 開発用。読み込んだシーンの全項目を未保存扱いにし、階層の印と保存ボタンを画像で確認する。
@@ -170,6 +173,8 @@ private:
     void CollectModelScatterStats();
     // インポスターの作成・削除と画像の読み込み。フレームの外で呼ぶ。
     void ProcessImpostorWork();
+    // --bake-impostors の処理。焼いて保存できたら true。
+    bool BakeRequestedImpostors();
     void DrawImpostorSection(renderer::ModelAsset& asset);
     // Snow Plume ノードを集め、Source のマスクを評価するスロットを揃える。フレームの外で呼ぶ。
     void PrepareSnowPlumes();

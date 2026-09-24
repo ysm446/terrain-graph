@@ -370,6 +370,13 @@ int Application::Run() {
             break;
         }
 
+        // 開発用: 指定したモデルのインポスターを焼き直し、.tgmodel を保存して終了する。
+        // 素材とテクスチャの読み込みを待つため、数フレーム描いてから焼く。
+        if (!m_options.bakeImpostors.empty() && m_frameCounter >= m_options.screenshotFrame) {
+            if (!BakeRequestedImpostors()) return 1;
+            break;
+        }
+
         // 選択中の天球をレンダラへ渡す。**毎フレーム渡してよい。**
         // 中身が変わっていれば、必要な作り直しだけが予約される。
         m_skyLibrary.EnsureDefault();
