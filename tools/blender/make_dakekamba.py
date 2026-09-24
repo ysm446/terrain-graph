@@ -167,20 +167,21 @@ def make_leaf_texture(rng, size=512):
 
 # --- 樹皮 ---------------------------------------------------------------------
 def make_bark_texture(rng, size=512):
-    """白〜淡い桃色の樹皮。横に伸びる黒い皮目と、薄くはがれた茶色の部分。上下左右に繰り返す。
-    画像の x が幹の周、y が幹の長さ（筒の UV と同じ）。"""
+    """灰褐色〜桃褐色の樹皮。横に伸びる黒い皮目と、薄くはがれた茶色の部分。上下左右に繰り返す。
+    画像の x が幹の周、y が幹の長さ（筒の UV と同じ）。
+    シラカバほど白くしない（白いと遠目に幹だけが浮いて目立つ）。"""
     ys, xs = np.mgrid[0:size, 0:size].astype(np.float32)
-    # 地の色のむら（桃色がかった所と灰色がかった所）。
+    # 地の色のむら（桃褐色がかった所と灰色がかった所）。
     tone = tiling_noise(rng, size, 0.02, 0.012)
     pink = np.clip(tone * 0.5 + 0.5, 0, 1)[..., None]
-    base = np.array([0.86, 0.85, 0.82]) * (1 - pink) + np.array([0.88, 0.78, 0.74]) * pink
+    base = np.array([0.70, 0.65, 0.58]) * (1 - pink) + np.array([0.72, 0.58, 0.50]) * pink
     grain = tiling_noise(rng, size, 0.35, 0.08)[..., None] * 0.025
     color = base * (1 + grain)
     height = np.zeros((size, size), np.float32)
     # はがれた部分: 横に長いまだらを閾値で切る。縁を少し持ち上げる。
     peel_field = tiling_noise(rng, size, 0.012, 0.045)
-    peel = np.clip((peel_field - 1.1) * 2.5, 0, 1)[..., None]
-    color = color * (1 - peel) + np.array([0.62, 0.44, 0.34]) * peel
+    peel = np.clip((peel_field - 0.95) * 2.5, 0, 1)[..., None]
+    color = color * (1 - peel) + np.array([0.56, 0.38, 0.28]) * peel
     height += np.clip((peel_field - 0.9) * 3, 0, 1) * 0.6 - peel[..., 0] * 0.4
     # 皮目: 横に細長い黒い筋。周（x）と長さ（y）の両方で繰り返すよう、距離は周期で測る。
     for _ in range(170):
@@ -332,7 +333,10 @@ def add_branches(geo, points, radii, rng, order, lod):
 
 
 # --- 樹冠の法線と芯 ---------------------------------------------------------------
-ENVELOPE_RADIUS_SCALE = 3.0   # 房の半径に対する外形のメタボールの半径
+# 這い松ほど丸めない。外形を樹冠全体ではなく房のこぶに沿わせ、房ごとに陰影を付ける
+# （まばらな広葉樹の樹冠が 1 つの塊に見えないように）。寄せる割合は下げない。
+# カードの法線はもともと上寄りなので、下げると全体が上を向いて平板になり、下面の暗さも消える。
+ENVELOPE_RADIUS_SCALE = 1.8   # 房の半径に対する外形のメタボールの半径
 ENVELOPE_RESOLUTION = 0.12
 ENVELOPE_SMOOTH = 8
 ENVELOPE_NORMAL_WEIGHT = 0.75  # 葉の法線を外形の法線へ寄せる割合
