@@ -622,6 +622,9 @@ private:
         uint64_t checkedRevision = 0;  // この改版で上流を確かめた（改版ごとに 1 回）
         bool valid = false;
         compositor::CpuHeightfield heightfield;
+        // Avoid に繋いだマスク（登山道が避ける所）。繋いでいなければ空。
+        // 地形と同じ解像度に揃えてある。
+        compositor::CpuHeightfield avoid;
         float sizeMeters = 1024.0f;
         float heightMeters = 200.0f;
     };

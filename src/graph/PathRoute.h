@@ -15,6 +15,9 @@
 // ペナルティなら必ず何かは返る。
 //   道路: 長さ × (1 + k × 超過^2)、超過 = max(0, |勾配| − 許容) / 許容
 //   流れ: 長さ × (1 + k1 × 上り勾配^2 + k2 × 相対高さ)。上りを嫌い、低い所（谷底）を好む
+//   登山道: 長さ × (1 + k × 超過^2 + 横断勾配 + 稜線の好み × 谷らしさ + 避ける強さ × マスク)
+//     横断勾配は進む向きと直交する斜面の傾き（急な斜面を横切る区間を嫌う）。
+//     谷らしさは周り（半径 40 m）の平均より低いほど 1（稜線を通らせる）。
 // 結果の折れ線は Douglas–Peucker で間引いて内部点にする。
 //
 // UI / D3D12 には依存しない。地形は生の配列で受ける（compositor::CpuHeightfield を
@@ -27,6 +30,8 @@ struct PathRouteTerrain {
     const float* heights = nullptr;  // resolution^2。行優先、0〜1
     float sizeMeters = 1024.0f;      // 地形の一辺（m）
     float heightMeters = 200.0f;     // ハイト 0〜1 の全幅（m）
+    // 登山道が避ける所（0〜1、heights と同じ並び）。無ければ nullptr。
+    const float* avoid = nullptr;
 
     bool IsValid() const { return resolution >= 2 && heights != nullptr; }
 };
@@ -38,7 +43,9 @@ struct PathRouteQuery {
     float toU = 0.0f;
     float toV = 0.0f;
     PathRoute mode = PathRoute::Road;
-    float maxGradePercent = 10.0f;  // 道路のときだけ使う
+    float maxGradePercent = 10.0f;  // 道路 / 登山道のときだけ使う
+    float ridgeWeight = 1.0f;       // 登山道のときだけ使う
+    float avoidWeight = 4.0f;       // 登山道のときだけ使う
     // 結果の折れ線を間引く許容差（UV）。0 ならセル 1.5 個ぶん。
     float simplifyToleranceUv = 0.0f;
 };

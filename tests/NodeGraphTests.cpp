@@ -7,6 +7,7 @@
 #include "graph/NodeGraph.h"
 #include "graph/CloudMapGenerator.h"
 #include "graph/CloudShapeGenerator.h"
+#include "graph/PathRoute.h"
 #include "renderer/CloudMotion.h"
 #include "renderer/CloudSpatialIndex.h"
 #include "renderer/CloudShapeCache.h"
@@ -152,6 +153,64 @@ void RunNodeGraphTests() {
             Check(layer.mask.maskOp >= 0, "散布の分布マスクを解決する");
             Check(withPoints.layerSources[2] == 0, "点だけのレイヤーはノードの出どころにしない");
         }
+    }
+
+    {
+        Section("登山道の経路探索は稜線を好み、避ける所を避ける");
+        constexpr int kSize = 128;
+        const auto routeSpread = [&](const std::vector<float>& heights, const std::vector<float>* avoid,
+                                     float ridgeWeight, float avoidWeight, int fromX, int fromY,
+                                     int toX, int toY) {
+            tg::graph::PathRouteTerrain terrain;
+            terrain.resolution = kSize;
+            terrain.heights = heights.data();
+            terrain.sizeMeters = 1024.0f;  // 1 セル 8 m
+            terrain.heightMeters = 200.0f;
+            terrain.avoid = avoid ? avoid->data() : nullptr;
+            tg::graph::PathRouteQuery query;
+            query.fromU = (fromX + 0.5f) / kSize;
+            query.fromV = (fromY + 0.5f) / kSize;
+            query.toU = (toX + 0.5f) / kSize;
+            query.toV = (toY + 0.5f) / kSize;
+            query.mode = tg::graph::PathRoute::Trail;
+            query.maxGradePercent = 25.0f;
+            query.ridgeWeight = ridgeWeight;
+            query.avoidWeight = avoidWeight;
+            std::vector<tg::graph::PathRouteWaypoint> waypoints;
+            const bool found = tg::graph::FindPathRoute(terrain, query, waypoints);
+            // 両端を結ぶ直線（y = fromY）から、どれだけ離れたか（セル）。
+            float spread = 0.0f;
+            for (const auto& waypoint : waypoints)
+                spread = std::max(spread, std::abs(waypoint.v * kSize - (fromY + 0.5f)));
+            return found ? spread : -1.0f;
+        };
+
+        // 半円の尾根（中心 (64, 100)、半径 50 セル、幅 ±4 セルで 10 m 高い）と、
+        // 両端を結ぶ直線に沿った谷（幅 ±6 セルで 10 m 低い）。勾配は許容の内側に収まる。
+        std::vector<float> ridge(kSize * kSize);
+        for (int y = 0; y < kSize; ++y) {
+            for (int x = 0; x < kSize; ++x) {
+                const float distance = std::hypot(static_cast<float>(x - 64), static_cast<float>(y - 100));
+                float h = 100.0f;
+                if (y <= 100) h += 10.0f * std::max(0.0f, 1.0f - std::abs(distance - 50.0f) / 4.0f);
+                if (x > 30 && x < 98) h -= 10.0f * std::max(0.0f, 1.0f - std::abs(static_cast<float>(y - 100)) / 6.0f);
+                ridge[static_cast<size_t>(y) * kSize + x] = h / 200.0f;
+            }
+        }
+        const float straight = routeSpread(ridge, nullptr, 0.0f, 0.0f, 14, 100, 114, 100);
+        const float onRidge = routeSpread(ridge, nullptr, 5.0f, 0.0f, 14, 100, 114, 100);
+        Check(straight >= 0.0f && straight < 10.0f, "稜線の好み 0 なら、谷をまっすぐ通る");
+        Check(onRidge > 30.0f, "稜線の好みを上げると、尾根を回って通る");
+
+        // 平らな地形の真ん中に、避ける四角。
+        std::vector<float> flat(kSize * kSize, 0.5f);
+        std::vector<float> avoid(kSize * kSize, 0.0f);
+        for (int y = 40; y <= 88; ++y)
+            for (int x = 50; x <= 78; ++x) avoid[static_cast<size_t>(y) * kSize + x] = 1.0f;
+        const float through = routeSpread(flat, &avoid, 1.0f, 0.0f, 10, 64, 118, 64);
+        const float around = routeSpread(flat, &avoid, 1.0f, 20.0f, 10, 64, 118, 64);
+        Check(through >= 0.0f && through < 4.0f, "避ける強さ 0 なら、マスクを突っ切る");
+        Check(around > 24.0f, "避ける強さを上げると、マスクを回り込む");
     }
 
     {

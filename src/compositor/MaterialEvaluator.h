@@ -282,6 +282,9 @@ public:
     // 経路探索のように、プレビューとは別の評価器で焼いた地形を読むためのもの。
     // 解像度は評価器のもの。
     bool ReadbackHeight(rhi::Device& device, CpuHeightfield& out);
+    // マスクの op の結果をその場で CPU へ読み戻す（同期。**フレームの外で呼ぶこと**）。
+    // 解像度は op のもの（川筋は自前の解像度を持つ）。値は 0〜1。
+    bool ReadbackMaskOp(rhi::Device& device, size_t opIndex, CpuHeightfield& out);
 
     uint32_t TileSize() const { return m_tileSize; }
 

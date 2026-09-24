@@ -4,6 +4,7 @@
 #include "compositor/MultiScaleBreaching.h"
 
 #include <pix3.h>
+#include <DirectXPackedVector.h>
 
 #include <algorithm>
 #include <cstring>
@@ -582,6 +583,61 @@ bool MaterialEvaluator::ReadbackHeight(rhi::Device& device, CpuHeightfield& out)
         std::memcpy(out.values.data() + static_cast<size_t>(y) * m_resolution,
                     base + static_cast<size_t>(y) * footprint.Footprint.RowPitch,
                     sizeof(float) * m_resolution);
+    }
+    const D3D12_RANGE writtenRange = {0, 0};
+    readback.resource->Unmap(0, &writtenRange);
+    device.DeferRelease(readback);
+    return true;
+}
+
+bool MaterialEvaluator::ReadbackMaskOp(rhi::Device& device, size_t opIndex, CpuHeightfield& out) {
+    if (opIndex >= m_maskOpTextures.size() || !m_maskOpTextures[opIndex].IsValid()) {
+        return false;
+    }
+    rhi::GpuTexture& texture = m_maskOpTextures[opIndex];
+    const uint32_t resolution = m_maskOpResolutions[opIndex];
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+    UINT rowCount = 0;
+    UINT64 rowBytes = 0;
+    UINT64 totalBytes = 0;
+    const D3D12_RESOURCE_DESC desc = texture.resource->GetDesc();
+    device.GetDevice()->GetCopyableFootprints(&desc, 0, 1, 0, &footprint, &rowCount, &rowBytes,
+                                              &totalBytes);
+    rhi::GpuBuffer readback;
+    if (!device.Allocator().CreateReadbackBuffer(totalBytes, L"MaskOpReadbackNow", readback)) {
+        return false;
+    }
+    const bool executed = device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {
+        PIXBeginEvent(commandList, PIX_COLOR(120, 140, 160), "MaskOpReadbackNow");
+        TransitionIfNeeded(commandList, texture, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        const CD3DX12_TEXTURE_COPY_LOCATION destination(readback.resource.Get(), footprint);
+        const CD3DX12_TEXTURE_COPY_LOCATION source(texture.resource.Get(), 0);
+        commandList->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+        TransitionIfNeeded(commandList, texture, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        PIXEndEvent(commandList);
+    });
+    if (!executed) {
+        device.DeferRelease(readback);
+        return false;
+    }
+    void* mapped = nullptr;
+    const D3D12_RANGE readRange = {0, static_cast<SIZE_T>(totalBytes)};
+    if (!TG_CHECK_HR(readback.resource->Map(0, &readRange, &mapped))) {
+        device.DeferRelease(readback);
+        return false;
+    }
+    // マスクは R16_FLOAT（kMaskFormat）。
+    out.resolution = resolution;
+    out.values.resize(static_cast<size_t>(resolution) * resolution);
+    const auto* base = static_cast<const uint8_t*>(mapped) + footprint.Offset;
+    const uint32_t rows = std::min<uint32_t>(rowCount, resolution);
+    for (uint32_t y = 0; y < rows; ++y) {
+        const auto* row = reinterpret_cast<const DirectX::PackedVector::HALF*>(
+            base + static_cast<size_t>(y) * footprint.Footprint.RowPitch);
+        for (uint32_t x = 0; x < resolution; ++x) {
+            out.values[static_cast<size_t>(y) * resolution + x] =
+                std::clamp(DirectX::PackedVector::XMConvertHalfToFloat(row[x]), 0.0f, 1.0f);
+        }
     }
     const D3D12_RANGE writtenRange = {0, 0};
     readback.resource->Unmap(0, &writtenRange);

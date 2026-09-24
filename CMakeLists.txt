@@ -322,6 +322,8 @@ add_executable(terrain_graph_tests
     src/graph/NodeGraph.h
     src/graph/Path.cpp
     src/graph/Path.h
+    src/graph/PathRoute.cpp
+    src/graph/PathRoute.h
     src/ui/UiStyle.cpp
     src/ui/UiStyle.h
 )

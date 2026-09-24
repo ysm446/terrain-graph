@@ -500,6 +500,9 @@ public:
     // 合流する所の直後へ「点だけ」のレイヤーとして差し込む（Height へは書かない）。
     // プレビューの評価器 1 本で点まで作り、元ごとに評価器を持たずに済ませるためのもの。
     CompiledGraph CompileLayersWithPoints() const;
+    // Path の経路探索が読むもの。Base に繋いだチェーン（CompileLayersTo と同じ）と、
+    // Avoid に繋いだマスクの op（チェーンの天面の Height から焼く）。avoidOp は無ければ -1。
+    CompiledGraph CompilePathRouteInputs(GraphId pathNodeId, int& avoidOp) const;
     CompiledCloud CompileCloud() const;
     std::vector<CompiledModelScatter> CompileModelScatters() const;
     // Snow Plume ノードをすべて集める。Source の上流に Wind Field があればその風を使う。

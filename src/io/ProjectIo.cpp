@@ -749,9 +749,13 @@ json WritePath(const graph::PathSettings& path) {
         }
         // 経路探索。内部点は導出したものだが保存する（地形を評価しないと作れないため）。
         if (edge.route != graph::PathRoute::None) {
-            static const char* const kPathRouteNames[] = {"none", "road", "flow"};
+            static const char* const kPathRouteNames[] = {"none", "road", "flow", "trail"};
             item["route"] = EnumName(kPathRouteNames, static_cast<uint32_t>(edge.route));
             item["maxGrade"] = edge.maxGradePercent;
+            if (edge.route == graph::PathRoute::Trail) {
+                item["ridgeWeight"] = edge.ridgeWeight;
+                item["avoidWeight"] = edge.avoidWeight;
+            }
             if (edge.routed) {
                 item["routedFrom"] = json::array({edge.routedFromU, edge.routedFromV});
                 item["routedTo"] = json::array({edge.routedToU, edge.routedToV});
@@ -826,10 +830,12 @@ graph::PathSettings ReadPath(const json& parent, const char* key) {
                 edge.featherMeters = ReadFloat(item, "feather", path.defaultFeatherMeters);
                 edge.intensity = ReadFloat(item, "intensity", path.defaultIntensity);
             }
-            static const char* const kPathRouteNames[] = {"none", "road", "flow"};
+            static const char* const kPathRouteNames[] = {"none", "road", "flow", "trail"};
             edge.route = static_cast<graph::PathRoute>(EnumValue(
                 kPathRouteNames, item, "route", static_cast<uint32_t>(graph::PathRoute::None)));
             edge.maxGradePercent = std::clamp(ReadFloat(item, "maxGrade", 10.0f), 0.1f, 100.0f);
+            edge.ridgeWeight = std::clamp(ReadFloat(item, "ridgeWeight", 1.0f), 0.0f, 10.0f);
+            edge.avoidWeight = std::clamp(ReadFloat(item, "avoidWeight", 4.0f), 0.0f, 100.0f);
             // 内部点は「計算時の両端」が揃っているときだけ生かす。
             const json* routedFrom = FindMember(item, "routedFrom");
             const json* routedTo = FindMember(item, "routedTo");

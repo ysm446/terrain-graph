@@ -1406,6 +1406,8 @@ bool Application::DrawPathSettings(graph::Node& node) {
             float clothoidRatio = edges.front()->clothoidRatio;
             graph::PathRoute route = edges.front()->route;
             float maxGrade = edges.front()->maxGradePercent;
+            float ridgeWeight = edges.front()->ridgeWeight;
+            float avoidWeight = edges.front()->avoidWeight;
             bool overrideValues = edges.front()->overrideValues;
             float edgeWidth = edges.front()->widthMeters;
             float edgeFeather = edges.front()->featherMeters;
@@ -1415,6 +1417,8 @@ bool Application::DrawPathSettings(graph::Node& node) {
                 if (edge->curve != curve || std::abs(edge->rounding - rounding) > 1e-4f ||
                     std::abs(edge->clothoidRatio - clothoidRatio) > 1e-4f ||
                     edge->route != route || std::abs(edge->maxGradePercent - maxGrade) > 1e-4f ||
+                    std::abs(edge->ridgeWeight - ridgeWeight) > 1e-4f ||
+                    std::abs(edge->avoidWeight - avoidWeight) > 1e-4f ||
                     edge->overrideValues != overrideValues ||
                     std::abs(edge->widthMeters - edgeWidth) > 1e-4f ||
                     std::abs(edge->featherMeters - edgeFeather) > 1e-4f ||
@@ -1482,25 +1486,48 @@ bool Application::DrawPathSettings(graph::Node& node) {
                 }
                 // 経路探索。鎖のエッジ全部に同じ設定を入れ、変えたらすぐ計算し直す。
                 static const char* const kRouteLabels[] = {"なし", "道路（許容勾配で探す）",
-                                                           "流れ（下る。川 / 氷河）"};
+                                                           "流れ（下る。川 / 氷河）",
+                                                           "登山道（稜線を通り、避ける所を避ける）"};
                 int routeIndex = static_cast<int>(route);
                 bool routeChanged = ui::PropertyCombo(
                     "経路探索", &routeIndex, kRouteLabels, IM_ARRAYSIZE(kRouteLabels), 0,
                     "両端の点の間の経路を Base に繋いだ地形から探し、内部の点を自動で打つ。"
                     "置いた点は動かない。点を動かすと作り直す。上流の地形を変えたときは"
                     "再計算のボタンで。道路は許容勾配を超えた分をペナルティにし、上りも下りも"
-                    "同じ扱い。流れは向き（from → to）に下り、上りを嫌って低い所（谷底）を好む");
+                    "同じ扱い。流れは向き（from → to）に下り、上りを嫌って低い所（谷底）を好む。"
+                    "登山道は道路より急な勾配を許し、稜線を好み、急な斜面の横切りと"
+                    "Avoid に繋いだマスク（岩場・崖・水流など）を嫌う");
+                const graph::PathRoute previousRoute = route;
                 route = static_cast<graph::PathRoute>(routeIndex);
-                if (route == graph::PathRoute::Road) {
+                // 登山道へ切り替えたら、許容勾配を登山道の目安へ（道路の 10% では直登を嫌いすぎる）。
+                if (route == graph::PathRoute::Trail && previousRoute != graph::PathRoute::Trail) {
+                    maxGrade = 25.0f;
+                }
+                if (route == graph::PathRoute::Road || route == graph::PathRoute::Trail) {
                     routeChanged |= ui::PropertyFloat(
-                        "許容勾配", &maxGrade, 0.5f, 60.0f, 10.0f,
+                        "許容勾配", &maxGrade, 0.5f, 100.0f,
+                        route == graph::PathRoute::Trail ? 25.0f : 10.0f,
                         "これを超える勾配にペナルティ（%）。超えるほど遠回り（つづら折れ）を選ぶ",
                         "%.1f %%", ImGuiSliderFlags_Logarithmic);
+                }
+                if (route == graph::PathRoute::Trail) {
+                    routeChanged |= ui::PropertyFloat(
+                        "稜線の好み", &ridgeWeight, 0.0f, 10.0f, 1.0f,
+                        "周り（半径 40 m）より低い谷や窪みほど通りにくくする強さ。"
+                        "上げるほど稜線を通る。0 で地形の凹凸を気にしない",
+                        "%.2f");
+                    routeChanged |= ui::PropertyFloat(
+                        "避ける強さ", &avoidWeight, 0.0f, 100.0f, 4.0f,
+                        "Avoid に繋いだマスクが 1 の所を、何倍通りにくくするか。"
+                        "マスクが繋がっていなければ効かない",
+                        "%.1f", ImGuiSliderFlags_Logarithmic);
                 }
                 if (routeChanged) {
                     for (graph::PathEdge* edge : edges) {
                         edge->route = route;
                         edge->maxGradePercent = maxGrade;
+                        edge->ridgeWeight = ridgeWeight;
+                        edge->avoidWeight = avoidWeight;
                         edge->routed = false;
                         if (route == graph::PathRoute::None) {
                             edge->waypoints.clear();
@@ -1578,9 +1605,11 @@ bool Application::BakePathRouteTerrain(const graph::Node& node) {
         cache.stackHash = 0;
         return false;
     }
-    // Base のチェーンをレイヤー列へ落とす（プレビューと同じ経路）。実寸はチェーンの根の
-    // Heightmap が持つ。無ければプレビュー設定のジオメトリの値。
-    graph::CompiledGraph compiled = m_graph.CompileLayersTo(node.id);
+    // Base のチェーンをレイヤー列へ落とす（プレビューと同じ経路）。Avoid にマスクが
+    // 繋がっていれば、その op も一緒に焼く。実寸はチェーンの根の Heightmap が持つ。
+    // 無ければプレビュー設定のジオメトリの値。
+    int avoidOp = -1;
+    graph::CompiledGraph compiled = m_graph.CompilePathRouteInputs(node.id, avoidOp);
     compositor::MaterialStack stack;
     stack.Layers() = std::move(compiled.layers);
     stack.MaskOps() = std::move(compiled.maskOps);
@@ -1591,7 +1620,9 @@ bool Application::BakePathRouteTerrain(const graph::Node& node) {
         heightMeters = scale->heightMeters;
     }
     stack.SetTerrainScale(sizeMeters, heightMeters);
-    const uint64_t hash = compositor::HashStackHeightState(stack);
+    // op の中身はハッシュに入る。どの op を Avoid として読むかも混ぜる。
+    uint64_t hash = compositor::HashStackHeightState(stack);
+    hash ^= (static_cast<uint64_t>(avoidOp + 2) * 0x9E3779B97F4A7C15ull);
     if (cache.valid && cache.stackHash == hash) {
         return true;
     }
@@ -1628,6 +1659,27 @@ bool Application::BakePathRouteTerrain(const graph::Node& node) {
         TG_LOG_WARN("経路探索用の地形を焼けませんでした");
         cache.valid = false;
         return false;
+    }
+    // Avoid のマスク。解像度が地形と違えば（川筋は自前の解像度を持つ）最寄りで揃える。
+    cache.avoid = {};
+    if (avoidOp >= 0) {
+        compositor::CpuHeightfield mask;
+        if (m_pathRouteEvaluator.ReadbackMaskOp(m_device, static_cast<size_t>(avoidOp), mask) &&
+            mask.IsValid()) {
+            const uint32_t size = cache.heightfield.resolution;
+            cache.avoid.resolution = size;
+            cache.avoid.values.resize(static_cast<size_t>(size) * size);
+            for (uint32_t y = 0; y < size; ++y) {
+                for (uint32_t x = 0; x < size; ++x) {
+                    const uint32_t mx = std::min(mask.resolution - 1, x * mask.resolution / size);
+                    const uint32_t my = std::min(mask.resolution - 1, y * mask.resolution / size);
+                    cache.avoid.values[static_cast<size_t>(y) * size + x] =
+                        mask.values[static_cast<size_t>(my) * mask.resolution + mx];
+                }
+            }
+        } else {
+            TG_LOG_WARN("経路探索の Avoid のマスクを焼けませんでした（避ける所なしで探します）");
+        }
     }
     cache.valid = true;
     cache.stackHash = hash;
@@ -1704,6 +1756,9 @@ void Application::RecomputePathRoutes(graph::Node& node, bool force,
     terrain.heights = cache.heightfield.values.data();
     terrain.sizeMeters = cache.sizeMeters;
     terrain.heightMeters = cache.heightMeters;
+    if (cache.avoid.IsValid() && cache.avoid.resolution == terrain.resolution) {
+        terrain.avoid = cache.avoid.values.data();
+    }
     const size_t routed = graph::RoutePathEdges(path, terrain, force, edges);
     if (routed > 0) {
         m_graph.MarkDirty();

@@ -140,10 +140,12 @@ constexpr std::array<PinDefinition, 3> kMaskBlendPins = {{
     {PinKind::Output, ValueType::Mask, "Mask"},
 }};
 
-// パスのピン。Base は「どの時点の地形に沿うか」（表示とプレビューに使う。
-// パスの座標は 2D なので評価には効かない）。出力はパスそのもの。
-constexpr std::array<PinDefinition, 2> kPathPins = {{
+// パスのピン。Base は「どの時点の地形に沿うか」（表示とプレビューと経路探索に使う。
+// パスの座標は 2D なので評価には効かない）。Avoid は登山道の経路探索が避ける所
+// （岩場・崖・水流など。明るいほど避ける）。出力はパスそのもの。
+constexpr std::array<PinDefinition, 3> kPathPins = {{
     {PinKind::Input, ValueType::Material, "Base"},
+    {PinKind::Input, ValueType::Mask, "Avoid"},
     {PinKind::Output, ValueType::Path, "Path"},
 }};
 
@@ -1785,6 +1787,23 @@ CompiledGraph NodeGraph::CompileLayers() const {
 
 CompiledGraph NodeGraph::CompileLayersWithPoints() const {
     return CompileChainFrom(ChainTop(), nullptr, true);
+}
+
+CompiledGraph NodeGraph::CompilePathRouteInputs(GraphId pathNodeId, int& avoidOp) const {
+    avoidOp = -1;
+    const Node* node = FindNode(pathNodeId);
+    if (node == nullptr || node->kind != NodeKind::Path) {
+        return CompileLayers();
+    }
+    ChainTrace trace;
+    CompiledGraph compiled = CompileChainFrom(PreviewTop(pathNodeId), &trace);
+    const MaskSourceRef avoid = UpstreamMaskOf(*node);
+    if (avoid.node != nullptr) {
+        const int top = compiled.layers.empty() ? 0 : static_cast<int>(compiled.layers.size()) - 1;
+        avoidOp = EmitMaskOps(avoid, top, trace.layerNodes, compiled.maskOps, trace.emitted, 0);
+        RecordMaskOpSources(trace.emitted, compiled);
+    }
+    return compiled;
 }
 
 CompiledGraph NodeGraph::CompileLayersTo(GraphId nodeId, GraphId outputPin) const {

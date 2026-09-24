@@ -56,6 +56,9 @@ enum class PathRoute : uint32_t {
     // 流れ（川 / 氷河）。from → to へ下る。上りに強いペナルティ、低い所（谷底）を好む。
     // 向きに依存するので、反転すると計算し直しになる。
     Flow = 2,
+    // 登山道。道路より急な勾配を許し（既定 25%）、稜線（周りより高い所）を好み、
+    // 急な斜面を横切る区間と、Path の Avoid に繋いだマスク（岩場・崖・水流など）を嫌う。
+    Trail = 3,
 };
 
 struct PathRouteWaypoint {
@@ -85,7 +88,10 @@ struct PathEdge {
 
     // --- 経路探索 ---
     PathRoute route = PathRoute::None;
-    float maxGradePercent = 10.0f;  // 道路の許容勾配（%）
+    float maxGradePercent = 10.0f;  // 道路 / 登山道の許容勾配（%）
+    // 登山道のときだけ使う。
+    float ridgeWeight = 1.0f;   // 稜線の好み。谷・窪みほどコストを上げる強さ（0 で気にしない）
+    float avoidWeight = 4.0f;   // Avoid のマスクが 1 の所のコストの上乗せ（倍。0 で無視）
     // 経路探索の結果（from → to の順。両端は含まない）。**導出したものだが保存する。**
     // 地形は評価しないと分からず、上流を触るたびに勝手に追従させない方針のため
     // （作り直すのは両端が動いたときと、再計算のボタン）。ユーザーは触れない。
