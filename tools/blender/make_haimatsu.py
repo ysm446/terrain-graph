@@ -10,11 +10,18 @@
 #   T_Haimatsu_Needles_*.png 枝先のカード（RGBA、A でアルファ抜き）と法線（OpenGL 規約）
 #   T_Haimatsu_Bark_*.png    樹皮（縦方向に繰り返す）と法線
 #   Haimatsu.blend           全バリエーション（手直し用）
-#   *.tgmat / *.tgmodel / *.meta  terrain-graph のアセット。既にあれば上書きしない（UID を保つ）
+#   *.tgmat / *.tgmodel / *.meta  terrain-graph のアセット。既にあれば上書きしない（UID を保つ）。
+#                                 .tgmodel のマテリアルの並びだけは、足りない分を書き足す
 #
 # 形: 根元から放射状に地面を這う幹が伸び、先で立ち上がる。枝の外側半分と先端に
-# 上向きの枝先（十字に組んだカード 3 枚）を付ける。法線は株の外側・上へ曲げて、
-# 板の向きが目立たないようにする。
+# 上向きの枝先（十字に組んだカード 3 枚）を付ける。
+# 遠目に苔のような一塊の群落に見えるよう、
+# (1) 枝先の上端の高さを上から見た格子へ書いてぼかした「樹冠の高さの場」を作り、
+#     葉のカードの法線をその勾配の法線へ寄せる（カードごとの明暗を消し、株のうねりで陰影を付ける。
+#     マット状の株なので常に上半球を向き、群落の縁では外へ傾く）。
+# (2) 枝先ごとのメタボールを溶け合わせて内側へ縮めた「芯」を、暗い不透明な面として入れる
+#     （葉の隙間を埋めて量感を出す）。
+# どちらも LOD0 の枝先から 1 度だけ作り、全 LOD で共有する（段で陰影が変わらないように）。
 import json
 import math
 import os
@@ -24,9 +31,11 @@ import sys
 import uuid
 import zlib
 
+import bmesh
 import bpy
 import numpy as np
-from mathutils import Vector
+from mathutils import Vector, interpolate
+from mathutils.bvhtree import BVHTree
 
 UP = Vector((0.0, 0.0, 1.0))  # Blender は Z-up。FBX 書き出しで Y-up へ変換する。
 
@@ -235,6 +244,7 @@ class Geometry:
     def __init__(self):
         self.verts, self.faces, self.face_mat = [], [], []
         self.loop_uvs, self.loop_normals = [], []
+        self.shoots = []  # 枝先の中心と半径（外形のメタボールに使う）
 
     def add_face(self, indices, material, uvs, normals):
         self.faces.append(tuple(indices))
@@ -243,7 +253,7 @@ class Geometry:
         self.loop_normals.append([tuple(n) for n in normals])
 
 
-BARK, NEEDLES = 0, 1
+BARK, NEEDLES, CORE = 0, 1, 2
 # 枝先の房のカード（m）。テクスチャの縦横比 2:1 に合わせる。実物の房（長さ 10〜15 cm）に揃えた大きさ。
 CARD_LENGTH, CARD_WIDTH = 0.14, 0.07
 # 房の間隔はカードの長さに比例させる（カードを変えても枝あたりの覆い方が変わらない）。
@@ -316,6 +326,7 @@ def add_shoot(geo, base, axis, rng, scale=1.0, cards=3):
     tip = base + axis * length
     reference = perpendicular(axis)
     start = rng.uniform(0, math.pi)
+    geo.shoots.append((base + axis * length * 0.5, length * 0.5))
     outward = Vector((base.x, base.y, 0.0))
     outward = outward.normalized() if outward.length > 1e-4 else Vector((1, 0, 0))
     for k in range(cards):
@@ -457,6 +468,129 @@ def add_foliage(geo, points, seed, start, spacing, lod):
                   rng.uniform(0.8, 1.0) * lod["scale"], lod["cards"])
 
 
+# --- 樹冠の法線と芯 ---------------------------------------------------------------
+CANOPY_CELL = 0.05         # 樹冠の高さの場の格子（m）
+CANOPY_BLUR = 0.25         # 高さの場をぼかす幅（m、ガウスの標準偏差）
+CANOPY_NORMAL_WEIGHT = 0.8  # 葉の法線を樹冠の法線へ寄せる割合
+CORE_RESOLUTION = 0.05     # 芯のメタボールを面にするときの格子（m）
+CORE_RADIUS_SCALE = 1.0    # 枝先の半径に対する芯のメタボールの半径
+CORE_INSET = 0.04          # 芯をさらに内側へ縮める量（m）
+CORE_TRIANGLES = (1600, 700, 300)  # LOD ごとの芯の面の数の目安
+
+
+class CanopyField:
+    """枝先の上端の高さを上から見た格子へ書き、ぼかした樹冠の高さの場。法線は常に上半球を向く。"""
+
+    def __init__(self, shoots):
+        points = np.array([[c.x, c.y, c.z + r] for c, r in shoots], np.float64)
+        radii = np.array([r for _, r in shoots], np.float64)
+        margin = CANOPY_BLUR * 4 + radii.max() * 2
+        self.origin = points[:, :2].min(axis=0) - margin
+        size = np.ceil((points[:, :2].max(axis=0) + margin - self.origin) / CANOPY_CELL).astype(int) + 1
+        height = np.zeros((size[1], size[0]))  # 地面は 0
+        # 枝先の円の中へ上端の高さを max で書く。
+        for (x, y, z), r in zip(points, radii):
+            reach = max(1, int(np.ceil(r * 1.5 / CANOPY_CELL)))
+            cx, cy = int(round((x - self.origin[0]) / CANOPY_CELL)), int(round((y - self.origin[1]) / CANOPY_CELL))
+            y0, y1, x0, x1 = cy - reach, cy + reach + 1, cx - reach, cx + reach + 1
+            yy, xx = np.mgrid[y0:y1, x0:x1]
+            inside = (xx - cx) ** 2 + (yy - cy) ** 2 <= reach * reach
+            view = height[y0:y1, x0:x1]
+            view[inside] = np.maximum(view[inside], z)
+        # ガウスでぼかす（FFT、縁は余白で吸収）。
+        sigma = CANOPY_BLUR / CANOPY_CELL
+        fy = np.fft.fftfreq(height.shape[0])[:, None]
+        fx = np.fft.fftfreq(height.shape[1])[None, :]
+        kernel = np.exp(-2 * (np.pi * sigma) ** 2 * (fx * fx + fy * fy))
+        self.height = np.fft.ifft2(np.fft.fft2(height) * kernel).real
+        gy, gx = np.gradient(self.height, CANOPY_CELL)
+        self.gradient = (gx, gy)
+
+    def normal(self, point):
+        u = (point.x - self.origin[0]) / CANOPY_CELL
+        v = (point.y - self.origin[1]) / CANOPY_CELL
+        i = int(np.clip(np.floor(u), 0, self.height.shape[1] - 2))
+        j = int(np.clip(np.floor(v), 0, self.height.shape[0] - 2))
+        fu, fv = np.clip(u - i, 0, 1), np.clip(v - j, 0, 1)
+
+        def sample(grid):
+            return ((grid[j, i] * (1 - fu) + grid[j, i + 1] * fu) * (1 - fv) +
+                    (grid[j + 1, i] * (1 - fu) + grid[j + 1, i + 1] * fu) * fv)
+
+        return Vector((-sample(self.gradient[0]), -sample(self.gradient[1]), 1.0)).normalized()
+
+
+def transfer_canopy_normals(geo, field):
+    """葉のカードの法線を樹冠の法線へ寄せる。幹と芯はそのまま。"""
+    for f, face in enumerate(geo.faces):
+        if geo.face_mat[f] != NEEDLES:
+            continue
+        normals = []
+        for corner, vertex in enumerate(face):
+            original = Vector(geo.loop_normals[f][corner])
+            canopy = field.normal(Vector(geo.verts[vertex]))
+            n = canopy * CANOPY_NORMAL_WEIGHT + original * (1 - CANOPY_NORMAL_WEIGHT)
+            normals.append(tuple(n.normalized()))
+        geo.loop_normals[f] = normals
+
+
+def build_hull(name, shoots):
+    """枝先ごとのメタボールを溶け合わせた滑らかな塊（bpy.types.Mesh）。芯の元にする。"""
+    metaball = bpy.data.metaballs.new(name)
+    metaball.resolution = metaball.render_resolution = CORE_RESOLUTION
+    metaball.threshold = 0.6
+    obj = bpy.data.objects.new(name, metaball)
+    bpy.context.scene.collection.objects.link(obj)
+    for center, radius in shoots:
+        element = metaball.elements.new()
+        element.co = center
+        element.radius = radius * CORE_RADIUS_SCALE
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    mesh = bpy.data.meshes.new_from_object(obj.evaluated_get(depsgraph))
+    bpy.data.objects.remove(obj)
+    bpy.data.metaballs.remove(metaball)
+    # 格子の段差をならす。
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    for _ in range(4):
+        bmesh.ops.smooth_vert(bm, verts=bm.verts, factor=0.5, use_axis_x=True, use_axis_y=True, use_axis_z=True)
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
+    return mesh
+
+
+def add_core(geo, hull, triangles):
+    """外形を縮めて面を減らした芯を足す。葉の隙間から見える、株の内側の詰まった塊。"""
+    source = bpy.data.objects.new("CoreSource", hull.copy())
+    bpy.context.scene.collection.objects.link(source)
+    total = sum(len(p.vertices) - 2 for p in hull.polygons)
+    decimate = source.modifiers.new("Decimate", "DECIMATE")
+    decimate.ratio = min(1.0, triangles / max(total, 1))
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    mesh = bpy.data.meshes.new_from_object(source.evaluated_get(depsgraph))
+    source_mesh = source.data
+    bpy.data.objects.remove(source)
+    bpy.data.meshes.remove(source_mesh)
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    bpy.data.meshes.remove(mesh)
+    bmesh.ops.triangulate(bm, faces=bm.faces)
+    bm.normal_update()
+    for vertex in bm.verts:
+        vertex.co -= vertex.normal * CORE_INSET
+    bm.normal_update()
+    first = len(geo.verts)
+    bm.verts.index_update()
+    for vertex in bm.verts:
+        geo.verts.append(tuple(vertex.co))
+    for face in bm.faces:
+        indices = [first + v.index for v in face.verts]
+        uvs = [(v.co.x * 0.5, v.co.y * 0.5) for v in face.verts]
+        geo.add_face(indices, CORE, uvs, [tuple(v.normal) for v in face.verts])
+    bm.free()
+
+
 # --- Blender ------------------------------------------------------------------
 def make_material(name, color_path, normal_path, alpha):
     material = bpy.data.materials.new(name)
@@ -475,6 +609,14 @@ def make_material(name, color_path, normal_path, alpha):
     links.new(normal_map.outputs["Normal"], shader.inputs["Normal"])
     if alpha:
         material.use_backface_culling = False
+    return material
+
+
+def make_core_material():
+    material = bpy.data.materials.new("Core")
+    shader = material.node_tree.nodes.get("Principled BSDF")
+    shader.inputs["Base Color"].default_value = (*CORE_COLOR, 1.0)
+    shader.inputs["Roughness"].default_value = 0.9
     return material
 
 
@@ -540,12 +682,16 @@ def asset_ref(path, root):
     return {"path": os.path.relpath(path, root).replace("\\", "/"), "uid": uid}
 
 
-def write_material(path, name, color, normal, roughness, alpha_cutoff, two_sided):
+# 芯の色（リニア）。葉より暗くし、隙間から覗く茂みの奥に見せる。
+CORE_COLOR = (0.02, 0.04, 0.016)
+
+
+def write_material(path, name, color, normal, roughness, alpha_cutoff, two_sided, tint=(1.0, 1.0, 1.0)):
     if os.path.exists(path):
         return  # 手で調整した値を消さない
     empty = {"channel": "r", "texture": None}
     write_json(path, {
-        "alphaCutoff": alpha_cutoff, "ambientOcclusion": 1.0, "baseColorTint": [1.0, 1.0, 1.0],
+        "alphaCutoff": alpha_cutoff, "ambientOcclusion": 1.0, "baseColorTint": list(tint),
         "brightness": 1.0, "flipNormalGreen": True, "format": "terrain-graph.material-asset",
         "hueShift": 0.0,
         "maps": {"ambientOcclusion": empty, "baseColor": color, "height": empty, "metallic": empty,
@@ -556,6 +702,13 @@ def write_material(path, name, color, normal, roughness, alpha_cutoff, two_sided
 
 def write_model(path, name, source, materials):
     if os.path.exists(path):
+        # 手で直した値やインポスターの記録は残し、足りないマテリアルの並びだけを書き足す。
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        slots = data.setdefault("materials", [])
+        if len(slots) < len(materials):
+            slots.extend(materials[len(slots):])
+            write_json(path, data)
         return
     write_json(path, {"format": "terrain-graph.model-asset", "materials": materials, "name": name,
                       "source": source, "uid": new_uid(), "version": 1})
@@ -579,7 +732,8 @@ def main():
 
     bpy.ops.wm.read_factory_settings(use_empty=True)
     materials = [make_material("Bark", paths["Bark_D"], paths["Bark_N"], False),
-                 make_material("Needles", paths["Needles_D"], paths["Needles_N"], True)]
+                 make_material("Needles", paths["Needles_D"], paths["Needles_N"], True),
+                 make_core_material()]
 
     bark_mat = os.path.join(out, "MI_Haimatsu_Bark.tgmat")
     needle_mat = os.path.join(out, "MI_Haimatsu_Needles.tgmat")
@@ -587,23 +741,34 @@ def main():
                    source_ref(paths["Bark_N"], root), 0.85, 0.0, False)
     write_material(needle_mat, "MI_Haimatsu_Needles", source_ref(paths["Needles_D"], root),
                    source_ref(paths["Needles_N"], root), 0.6, 0.5, True)
+    core_mat = os.path.join(out, "MI_Haimatsu_Core.tgmat")
+    write_material(core_mat, "MI_Haimatsu_Core", None, None, 0.9, 0.0, False, CORE_COLOR)
 
     for index in range(1, options["variants"] + 1):
         name = f"Haimatsu_Var{index}"
         objects = []
+        seed = options["seed"] * 1000 + index
+        # 樹冠の場と芯は LOD0 の枝先から 1 度だけ作り、全 LOD で共有する（段で陰影が変わらないように）。
+        shoots = build_plant(seed, LODS[0]).shoots
+        field = CanopyField(shoots)
+        hull = build_hull(f"Hull_{name}", shoots)
         for level, lod in enumerate(LODS):
-            geo = build_plant(options["seed"] * 1000 + index, lod)
+            geo = build_plant(seed, lod)
+            transfer_canopy_normals(geo, field)
+            add_core(geo, hull, CORE_TRIANGLES[level])
             # .blend では段を奥へ並べて見比べられるようにする。
             objects.append(make_object(f"{name}_LOD{level}", geo, materials,
                                        ((index - 1) * 5.0, level * 5.0, 0)))
             triangles = sum(len(f) - 2 for f in geo.faces)
             cards = geo.face_mat.count(NEEDLES)
-            print(f"{name}_LOD{level}: {triangles} triangles, {cards} cards")
+            core = geo.face_mat.count(CORE)
+            print(f"{name}_LOD{level}: {triangles} triangles, {cards} cards, core {core}")
         fbx = os.path.join(out, name + ".fbx")
         export_fbx(objects, fbx)
         # スロットの並びは FBX で最初に現れた順（幹が先）。
         write_model(os.path.join(out, name + ".tgmodel"), name, source_ref(fbx, root),
-                    [asset_ref(bark_mat, root), asset_ref(needle_mat, root)])
+                    [asset_ref(bark_mat, root), asset_ref(needle_mat, root), asset_ref(core_mat, root)])
+        bpy.data.meshes.remove(hull)
 
     bpy.ops.wm.save_as_mainfile(filepath=os.path.join(out, "Haimatsu.blend"))
 
