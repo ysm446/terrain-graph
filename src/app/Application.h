@@ -206,6 +206,7 @@ private:
     void DrawAssetDeleteDialog();
     // 未保存のアセットを、保存されている内容へ戻す確認。
     void DrawAssetRevertDialog();
+    void DrawSceneDuplicateDialog();
     // アセット 1 つを、ファイルの内容へ戻す。**読み込みを伴うのでフレームの外で呼ぶ。**
     void RevertAsset(const std::filesystem::path& path);
     bool IsAssetLoaded(const std::filesystem::path& path) const;
@@ -699,6 +700,11 @@ private:
     std::filesystem::path m_assetRevertTarget;
     bool m_assetRevertDialog = false;
     std::filesystem::path m_pendingAssetRevert;
+    // 「シーンを複製…」。複製元のシーン、新しい名前の入力、失敗したときの理由。
+    std::filesystem::path m_sceneDuplicateSource;
+    bool m_sceneDuplicateDialog = false;
+    char m_sceneDuplicateName[128] = {};
+    std::string m_sceneDuplicateError;
     // 削除対象の代わりに参照元へ割り当てるアセット。空なら参照切れのまま削除する。
     std::filesystem::path m_assetReplacement;
     // 代わりを選ぶピッカー。候補は開いたときに集め、絞り込みの条件が変わったら集め直す。

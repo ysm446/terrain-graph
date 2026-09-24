@@ -250,6 +250,91 @@ int main() {
     fs::rename(moved, backup, error);
     check(!workspace.ReadScene(migrated, expanded), "missing component prevents scene load");
     fs::rename(backup, moved, error);
+    // シーンを部品ごと複製する。部品とペイントは ID の違う独立したコピーになり、シーンはそれを参照する。
+    {
+        check(workspace.Scan() && workspace.ReadScene(migrated, expanded), "reopen before duplicate");
+        json source;
+        check(ProjectWorkspace::ReadJson(migrated, source), "read scene to duplicate");
+        // テストのデータは前回の実行の分も残るので、毎回まだ無い名前を使う。
+        const std::string name = workspace.UniquePath(root, "duplicated", "").filename().string();
+        std::string reason;
+        const auto copy = DuplicateScene(workspace, migrated, name, reason);
+        check(!copy.empty() && copy.parent_path().filename().string() == name &&
+              copy.filename().string() == name + ".tgscene", "duplicate scene into a folder with the new name");
+        json copied, duplicated;
+        check(ProjectWorkspace::ReadJson(copy, copied) && copied["sceneUid"].is_string() &&
+              copied["sceneUid"] != source["sceneUid"], "duplicate gets a new scene ID");
+        // この時点で地形と空は Moved へ移してあり、シーンと同じフォルダにあるのは雲だけ。
+        // 同じフォルダの部品はコピー（新しい ID と名前）、別のフォルダの部品は共有のまま。
+        const auto isLocal = [&](const json& reference) {
+            const auto path = workspace.Resolve(reference);
+            return !path.empty() && fs::equivalent(path.parent_path(), migrated.parent_path(), error);
+        };
+        std::vector<json> references;
+        for (const auto& entry : source["components"]) references.push_back(entry["asset"]);
+        references.push_back(source["atmosphere"]);
+        std::vector<json> results;
+        for (const auto& entry : copied["components"]) results.push_back(entry["asset"]);
+        results.push_back(copied["atmosphere"]);
+        bool localCopied = results.size() == references.size(), sharedKept = localCopied, anyLocal = false, anyShared = false;
+        for (size_t i = 0; i < references.size() && i < results.size(); ++i) {
+            const auto path = workspace.Resolve(results[i]);
+            if (isLocal(references[i])) {
+                anyLocal = true;
+                localCopied = localCopied && results[i]["uid"] != references[i]["uid"] && !path.empty() &&
+                              fs::equivalent(path.parent_path(), copy.parent_path(), error) &&
+                              path.stem().string().starts_with(name + "_");
+            } else {
+                anyShared = true;
+                sharedKept = sharedKept && results[i] == references[i];
+            }
+        }
+        check(anyLocal && localCopied, "components in the scene folder are copied with new IDs and names");
+        check(anyShared && sharedKept, "components in other folders stay shared");
+        check(workspace.Scan() && workspace.ReadScene(copy, duplicated) &&
+              duplicated["graph"]["nodes"].size() == expanded["graph"]["nodes"].size(), "duplicate opens");
+        check(workspace.ReadScene(migrated, expanded), "original still opens after duplicate");
+        check(DuplicateScene(workspace, migrated, name, reason).empty() && !reason.empty(), "existing folder is refused");
+        check(DuplicateScene(workspace, migrated, "bad/name", reason).empty(), "invalid folder name is refused");
+    }
+    // 部品が全部シーンと同じフォルダにあるシーン。ペイントも複製先の部品の横へコピーする。
+    {
+        const auto localFolder = workspace.UniquePath(root, "duplicate-source", "");
+        fs::create_directories(localFolder, error);
+        const auto localTerrain = CreateGraphAsset(workspace, localFolder, false);
+        const auto paint = workspace.UniquePath(localFolder, "paint", ".png");
+        std::ofstream(paint).put('p');
+        json terrainBody;
+        check(!localTerrain.empty() && workspace.ReadAsset(localTerrain, "terrain-graph", terrainBody), "read local terrain");
+        terrainBody["paintMasks"] = json::array({{{"id", 1}, {"source", workspace.Reference(paint)}, {"resolution", 1}}});
+        auto localTerrainPath = localTerrain;
+        check(workspace.SaveAsset(localTerrainPath, "terrain-graph", terrainBody), "save terrain with paint");
+        auto localSkyPath = localFolder / L"local_sky.tgatmosphere";
+        json localSkyBody = AtmosphereAssetBody(json::object(), "local_sky");
+        check(workspace.SaveAsset(localSkyPath, "atmosphere-sky", localSkyBody), "save local sky");
+        const auto localScene = localFolder / L"local.tgscene";
+        json sceneBody = {{"format", "terrain-graph.scene"}, {"version", 3},
+            {"components", json::array({{{"role", "terrain"}, {"asset", workspace.Reference(localTerrain)}}})},
+            {"atmosphere", workspace.Reference(localSkyPath)}, {"preview", json::object()}, {"sceneUid", "{LOCAL}"}};
+        check(ProjectWorkspace::WriteJson(localScene, sceneBody), "write local scene");
+        const std::string name = workspace.UniquePath(root, "local-copy", "").filename().string();
+        std::string reason;
+        const auto copy = DuplicateScene(workspace, localScene, name, reason);
+        json copied, copiedTerrain;
+        check(!copy.empty() && ProjectWorkspace::ReadJson(copy, copied), "duplicate local scene");
+        const auto copiedTerrainPath = workspace.Resolve(copied["components"][0]["asset"]);
+        check(copiedTerrainPath.filename().string() == name + "_" + localTerrain.filename().string() &&
+              workspace.Resolve(copied["atmosphere"]).filename().string() == name + "_sky.tgatmosphere",
+              "names replace the scene name or get the new name as prefix");
+        check(workspace.ReadAsset(copiedTerrainPath, "terrain-graph", copiedTerrain) &&
+              copiedTerrain["uid"] != terrainBody["uid"], "terrain copy has a new ID");
+        const auto copiedPaint = workspace.Resolve(copiedTerrain["paintMasks"][0]["source"]);
+        check(!copiedPaint.empty() && copiedPaint != paint && fs::exists(paint) &&
+              copiedTerrain["paintMasks"][0]["source"]["uid"] != terrainBody["paintMasks"][0]["source"]["uid"],
+              "paint is copied, not shared");
+        json localReopened;
+        check(workspace.Scan() && workspace.ReadScene(copy, localReopened), "local duplicate opens");
+    }
     std::cout << failures << " failures\n";
     return failures ? 1 : 0;
 }

@@ -49,6 +49,7 @@ std::string ProjectWorkspace::String(const json& value, const char* key) {
     const auto it = value.find(key);
     return it != value.end() && it->is_string() ? it->get<std::string>() : std::string{};
 }
+std::string ProjectWorkspace::NewId() { return NewUid(); }
 bool ProjectWorkspace::ReadJson(const fs::path& path, json& document) {
     std::ifstream stream(path, std::ios::binary);
     if (!stream) return false;

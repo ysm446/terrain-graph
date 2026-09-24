@@ -132,6 +132,52 @@ void Application::DrawAssetRevertDialog() {
     ImGui::EndPopup();
 }
 
+// シーンを部品ごと複製する。新しい名前はフォルダ名とファイル名の頭になる。
+void Application::DrawSceneDuplicateDialog() {
+    const char* title = "シーンの複製";
+    if (m_sceneDuplicateDialog && !ImGui::IsPopupOpen(title)) ImGui::OpenPopup(title);
+    if (!ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    const auto& source = m_sceneDuplicateSource;
+    ImGui::TextUnformatted(ToUtf8Display(source.lexically_relative(m_workspace.Root())).c_str());
+    if (ui::BeginPropertyTable("sceneDuplicateRows")) {
+        ui::PropertyTextInput("新しい名前", m_sceneDuplicateName, sizeof(m_sceneDuplicateName),
+                              "フォルダ名になり、ファイル名の元のシーン名の部分もこの名前に置き換える");
+        ui::EndPropertyTable();
+    }
+    const auto sceneDirectory = source.parent_path();
+    std::error_code error;
+    const bool atRoot = std::filesystem::equivalent(sceneDirectory, m_workspace.Root(), error) && !error;
+    const auto folder = (atRoot ? sceneDirectory : sceneDirectory.parent_path()) / FromUtf8(m_sceneDuplicateName);
+    ui::HintText("作成先: %s", ToUtf8Display(folder.lexically_relative(m_workspace.Root())).c_str());
+    ui::HintText("シーンと同じフォルダにある地形・雲・空（とペイント）をコピーし、ID を振り直す。");
+    ui::HintText("別のフォルダの部品、マテリアル・モデル・テクスチャは共有のまま。");
+    if (!m_sceneDuplicateError.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::WarnColor());
+        ImGui::TextUnformatted(m_sceneDuplicateError.c_str());
+        ImGui::PopStyleColor();
+    }
+    ImGui::Separator();
+    ImGui::BeginDisabled(m_sceneDuplicateName[0] == '\0');
+    if (ImGui::Button("複製") || (ImGui::IsKeyPressed(ImGuiKey_Enter, false) && m_sceneDuplicateName[0] != '\0')) {
+        std::string reason;
+        const auto created = io::DuplicateScene(m_workspace, source, m_sceneDuplicateName, reason);
+        if (created.empty()) {
+            m_sceneDuplicateError = reason;
+            TG_LOG_ERROR("シーンを複製できませんでした: %s", reason.c_str());
+        } else {
+            m_pendingAssetReveal = created;
+            m_assetRefresh = true;
+            m_sceneDuplicateDialog = false;
+            ImGui::CloseCurrentPopup();
+        }
+    }
+    ImGui::EndDisabled(); ImGui::SameLine();
+    if (ImGui::Button("キャンセル") || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+        m_sceneDuplicateDialog = false; ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
 void Application::DrawAssetDeleteDialog() {
     if (m_assetDeleteDialog && !ImGui::IsPopupOpen("アセットファイルの削除")) ImGui::OpenPopup("アセットファイルの削除");
     if (!ImGui::BeginPopupModal("アセットファイルの削除", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
@@ -1074,6 +1120,14 @@ void Application::DrawAssetBrowser() {
                             TG_LOG_INFO("アセットを複製しました: %s", ToUtf8Display(copy.filename()).c_str());
                         } else TG_LOG_ERROR("アセットを複製できませんでした");
                     } else TG_LOG_ERROR("複製できない形式です: %s", ToUtf8Display(path.filename()).c_str());
+                }
+                // シーンは部品（地形・雲・空）ごと、新しい名前のフォルダへ複製する。
+                if (ext == ".tgscene" && ImGui::MenuItem("シーンを複製…")) {
+                    m_sceneDuplicateSource = path;
+                    const std::string initial = ToUtf8Display(path.stem()) + "_copy";
+                    std::snprintf(m_sceneDuplicateName, sizeof(m_sceneDuplicateName), "%s", initial.c_str());
+                    m_sceneDuplicateError.clear();
+                    m_sceneDuplicateDialog = true;
                 }
                 if (ImGui::MenuItem("エクスプローラで表示")) RevealFileInExplorer(path);
                 if (path.filename() != L"project.tgproj" && ImGui::MenuItem("名前を変更…", "F2")) OpenAssetRename(path);

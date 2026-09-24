@@ -42,6 +42,8 @@ public:
     static bool ReadJson(const std::filesystem::path& path, nlohmann::json& document);
     static bool WriteJson(const std::filesystem::path& path, const nlohmann::json& document);
     static std::string String(const nlohmann::json& value, const char* key);
+    // 新しい永続 ID（シーンの sceneUid など、SaveAsset を通さずに振るもの）。
+    static std::string NewId();
 private:
     std::filesystem::path m_root;
     nlohmann::json m_project;
