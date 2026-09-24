@@ -1,13 +1,14 @@
 # vegetation-assets — 植生アセットのルール
 
 作成日時: 2026-09-24 15:00
-更新日時: 2026-09-24 22:14
+更新日時: 2026-09-25 04:34
 
 草・低木・樹木など、Model Scatter で地形に並べる植生モデルを作るときの決まりごと。
 這い松（マット状の低木、`tools/blender/make_haimatsu.py`、出力は `data/Models/Haimatsu/`）、
 ダケカンバ（背の高い木、`tools/blender/make_dakekamba.py`、出力は `data/Models/Dakekamba/`）、
 オオシラビソ（針葉樹、`tools/blender/make_oshirabiso.py`、出力は `data/Models/Oshirabiso/`）、
-ミヤマハンノキ（株立ちの広葉樹の低木、`tools/blender/make_miyamahannoki.py`、出力は `data/Models/Miyamahannoki/`）で確かめた内容をもとにしている。
+ミヤマハンノキ（株立ちの広葉樹の低木、`tools/blender/make_miyamahannoki.py`、出力は `data/Models/Miyamahannoki/`）、
+ササ（群落のひとまとまり、`tools/blender/make_sasa.py`、出力は `data/Models/Sasa/`）で確かめた内容をもとにしている。
 共通の部品は `tools/blender/vegetation.py`。数値の正は生成スクリプトの定数で、ここには意味と目安を書く。
 
 ## 1. 基本方針
@@ -22,6 +23,7 @@
   ダケカンバ（森林限界付近の姿）の例: 高さ 4〜7 m、幹 2〜5 本、根元の直径 16〜28 cm。
   オオシラビソ（林の中の木）の例: 高さ 9〜16 m、幹 1 本、下の 2〜3 割は枝なし、一番下の枝は高さの 17〜22%。
   ミヤマハンノキ（森林限界付近の藪）の例: 高さ 2〜3.5 m、幅 3〜5 m、幹 8〜14 本（根元で寝てから 40〜62° へ立ち上がる）。
+  ササ（伊豆スカイラインのような背丈ほどの群落）の例: 稈 58〜74 本を半径 0.85 m の円に散らし、高さ 0.9〜1.3 m、上面はほぼ平ら。1 本ずつではなく、約 2 m のまとまりを 1 モデルにする。
 - **葉のカード（枝先の房）は実物の房の大きさに合わせる。** 這い松は 14 × 7 cm（針葉 3〜8 cm、房の長さ 10〜15 cm）。
   ダケカンバは葉 10〜14 枚の付いた小枝で 32 × 32 cm（葉の長さ 5〜10 cm）。オオシラビソは扁平な針葉の付いた小枝で 40 × 20 cm（針葉 1.4〜2.6 cm）。ミヤマハンノキは幅の広い葉 9〜12 枚の付いた小枝で 30 × 30 cm。大きなカードを少なく置くと、粗く大きな植物に見える。
 - **葉のテクスチャの覆い率（アルファが 0.5 以上の割合）を測る。** 這い松・ダケカンバで 22〜23%、密な針葉樹・ミヤマハンノキは 30% 前後。低いと樹冠が透けてまばらに見える。
@@ -106,6 +108,13 @@
 
 ## 9. 負荷の目安
 
+### 群落（ササ）
+- 一面に広がる群落は、株のまとまり（約 2 m）を 1 モデルにし、**隣と重なる間隔**で置く（間隔 2 m、直径 3.2〜3.6 m。「ポイントの大きさ」をオン）。重なりが足りないと、まとまりごとに丸いクッションが並んで見える。上面はほぼ平らにし、まとまりの縁で法線を外へ倒しすぎない（場の法線を上へ半分寄せる）。
+- 群落は中景で見ることが多く、そこでは LOD2 が描かれる。LOD2 のカードを大きく少なくすると粒が粗く丸く見えるので、カードの枚数を保ったまま間隔だけ広げる。
+- Scatter は地形全体に点の格子を作るので、**地形の一辺 ÷ 間隔が約 2,046 を超えると点を作れない**（一辺 3,970 m なら間隔 1.94 m 以上）。
+- 株の数が極端に多く、確認用シーンの中景では約 3.5 万株が LOD2 のまま影の各段にも描かれ、GPU が 16 ms から 53 ms（Debug）に増えた。インポスターを焼き、描画距離を詰めて使う。
+
+
 - 配置した株は影の段ごとに描き直すので、影の負荷が大きい。確認用シーン（影 3 段）では、自動 LOD で約 8 ms、全 LOD0 で約 18 ms を影が占めた（インポスター中心なら約 2 ms）。
 - 影用の LOD を粗くする対応を予定している（`docs/plan/plan.md`）。それまでは LOD の距離とインポスターで、影の負荷も抑える。
 - LOD0 の三角形は、低木で 2 万〜3 万、背の高い木で 4 万程度までに収める。
@@ -116,6 +125,7 @@
 - `blender -b --factory-startup --python-exit-code 1 --python tools/blender/make_dakekamba.py -- --out data/Models/Dakekamba`
 - `blender -b --factory-startup --python-exit-code 1 --python tools/blender/make_oshirabiso.py -- --out data/Models/Oshirabiso`
 - `blender -b --factory-startup --python-exit-code 1 --python tools/blender/make_miyamahannoki.py -- --out data/Models/Miyamahannoki`
+- `blender -b --factory-startup --python-exit-code 1 --python tools/blender/make_sasa.py -- --out data/Models/Sasa`
 - 植物の種類に依らない部品（引数、PNG、広葉樹の葉を描く画布 `LeafCanvas`、筒、枝の伸ばし方、樹冠の法線、芯、マテリアル、FBX、アセットの書き出し）は `vegetation.py` に置き、種類ごとのスクリプトはテクスチャと形の作り方だけを持つ。新しい植物もこの形で足す。
 - 共通部分を変えたら、既存の植物の出力が変わらないことを確かめる（テクスチャのハッシュ、三角形数、FBX を読んだ寸法を前後で比べる）。
 - テクスチャ・FBX・`.blend` は毎回作り直す。**既存の .tgmat / .tgmodel / .meta は上書きしない**（UID と手で直した値を保つ）。ただし .tgmodel のマテリアルの並びが足りないときは、足りない分だけ書き足す。
