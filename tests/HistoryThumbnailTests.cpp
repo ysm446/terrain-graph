@@ -173,6 +173,19 @@ int main() {
     const auto renamedFolder = tg::io::RenameAsset(moving, moveRoot / "Textures", "Images");
     check(renamedFolder == moveRoot / "Images" && moving.Resolve(movedRef) == moveRoot / "Images" / "ground.png", "folder rename keeps references");
     check(tg::io::RenameAsset(moving, moveRoot, "Other").empty() && fs::exists(moveRoot / "project.tgproj"), "root cannot be renamed");
+    // 大文字・小文字だけの改名（Windows では同じ場所を指すが、綴りは変わること）。
+    const auto spelledOnDisk = [](const fs::path& path) {
+        std::error_code ignored;
+        for (const auto& entry : fs::directory_iterator(path.parent_path(), ignored))
+            if (_wcsicmp(entry.path().filename().c_str(), path.filename().c_str()) == 0) return entry.path().filename().wstring();
+        return std::wstring();
+    };
+    const auto lowerFolder = tg::io::RenameAsset(moving, renamedFolder, "images");
+    check(lowerFolder == moveRoot / "images" && spelledOnDisk(lowerFolder) == L"images" &&
+          moving.Resolve(movedRef) == moveRoot / "images" / "ground.png", "case-only folder rename");
+    const auto upperImage = tg::io::RenameAsset(moving, lowerFolder / "ground.png", "Ground.png");
+    check(upperImage == lowerFolder / "Ground.png" && spelledOnDisk(upperImage) == L"Ground.png" &&
+          spelledOnDisk(fs::path(upperImage.wstring() + L".meta")) == L"Ground.png.meta", "case-only file rename keeps metadata");
     // 削除前の付け替え。参照元の文書が代わりのIDへ書き換わり、以後は参照元が無くなる。
     tg::io::ProjectWorkspace replacing;
     const auto replaceRoot = directory / "replace-root";

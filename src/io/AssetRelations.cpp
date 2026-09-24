@@ -18,6 +18,31 @@ bool SamePath(const fs::path& a, const fs::path& b) {
     const auto ca = fs::weakly_canonical(a, ea), cb = fs::weakly_canonical(b, eb);
     return !ea && !eb && _wcsicmp(ca.c_str(), cb.c_str()) == 0;
 }
+// 大文字・小文字だけが違う改名か（Windows では同じ場所を指す）。
+bool CaseOnlyRename(const fs::path& from, const fs::path& to) {
+    return SamePath(from, to) && from.filename().wstring() != to.filename().wstring();
+}
+// 改名する。大文字・小文字だけの改名は一時的な名前を経由する（そのままでは
+// 同じ名前への改名として扱われ、綴りが変わらないことがある）。
+void RenamePath(const fs::path& from, const fs::path& to, std::error_code& error) {
+    if (!CaseOnlyRename(from, to)) {
+        fs::rename(from, to, error);
+        return;
+    }
+    fs::path temporary = from;
+    temporary += L".renaming";
+    for (int i = 1; fs::exists(temporary, error); ++i) {
+        temporary = from;
+        temporary += L".renaming" + std::to_wstring(i);
+    }
+    fs::rename(from, temporary, error);
+    if (error) return;
+    fs::rename(temporary, to, error);
+    if (error) {
+        std::error_code rollback;
+        fs::rename(temporary, from, rollback);
+    }
+}
 bool IsDocument(const fs::path& path) {
     const auto ext = path.extension().wstring();
     for (const auto* value : {L".tgterrain", L".tgcloud", L".tgatmosphere", L".tgscene", L".tgmat", L".tglayer", L".tgsky", L".tgmodel", L".tgproj", L".mmproj", L".mmmat"})
@@ -260,11 +285,13 @@ fs::path RelocateAsset(ProjectWorkspace& workspace, const fs::path& target, cons
         TG_LOG_WARN("移動できないファイルまたは移動先です");
         return {};
     }
-    if (SamePath(target, destination)) return target;
+    // 大文字・小文字だけの改名は、同じ場所でも綴りを変える（Windows では「既にある」と見える）。
+    const bool caseOnly = CaseOnlyRename(target, destination);
+    if (SamePath(target, destination) && !caseOnly) return target;
     // 未保存の素材も移動前にIDを確定し、古いパスを持つ参照から追跡できるようにする。
     // 移動先のサイドカーとの衝突は、ID発行より先に確認する。
-    if (fs::exists(destination, error) || error ||
-        fs::exists(destination.wstring() + L".meta", error) || error) return {};
+    if (!caseOnly && (fs::exists(destination, error) || error ||
+                      fs::exists(destination.wstring() + L".meta", error) || error)) return {};
     if (!IsDocument(target) && workspace.Reference(target).is_null()) return {};
     std::vector<std::pair<fs::path, fs::path>> files{{target, destination}};
     const fs::path meta = target.wstring() + L".meta";
@@ -275,14 +302,14 @@ fs::path RelocateAsset(ProjectWorkspace& workspace, const fs::path& target, cons
             files.emplace_back(paint, destination.parent_path() / (destination.stem().wstring() + L".assets"));
     }
     for (const auto& [from, to] : files) {
-        if (fs::exists(to, error) || !workspace.Contains(to)) {
+        if ((fs::exists(to, error) && !SamePath(from, to)) || !workspace.Contains(to)) {
             TG_LOG_WARN("移動先に同じ名前のファイルがあります: %s", ToUtf8Display(to).c_str());
             return {};
         }
     }
     size_t moved = 0;
     for (; moved < files.size(); ++moved) {
-        fs::rename(files[moved].first, files[moved].second, error);
+        RenamePath(files[moved].first, files[moved].second, error);
         if (error) break;
     }
     if (error) {
@@ -290,7 +317,7 @@ fs::path RelocateAsset(ProjectWorkspace& workspace, const fs::path& target, cons
         while (moved > 0) {
             --moved;
             std::error_code rollback;
-            fs::rename(files[moved].second, files[moved].first, rollback);
+            RenamePath(files[moved].second, files[moved].first, rollback);
             if (rollback) TG_LOG_ERROR("移動したファイルを元に戻せません: %s", ToUtf8Display(files[moved].first).c_str());
         }
         return {};
@@ -322,12 +349,13 @@ fs::path RenameAsset(ProjectWorkspace& workspace, const fs::path& target, const 
             TG_LOG_WARN("このフォルダは改名できません");
             return {};
         }
-        if (SamePath(target, destination)) return target;
-        if (fs::exists(destination, error)) {
+        const bool caseOnly = CaseOnlyRename(target, destination);
+        if (SamePath(target, destination) && !caseOnly) return target;
+        if (!caseOnly && fs::exists(destination, error)) {
             TG_LOG_WARN("同じ名前のフォルダがあります: %s", ToUtf8Display(destination).c_str());
             return {};
         }
-        fs::rename(target, destination, error);
+        RenamePath(target, destination, error);
         if (error) { TG_LOG_ERROR("フォルダを改名できませんでした: %s", ToUtf8Display(target).c_str()); return {}; }
         workspace.Scan();
         return destination;
