@@ -127,7 +127,7 @@ void Application::DrawMaterialPanel() {
         }
 
         ui::SectionHeader("カメラ");
-        if (ui::BeginPropertyTable("cameraRows")) {
+        if (ui::BeginPropertyTable("cameraRows", "ニア / ファー")) {
             // 露出を絞り / シャッター / ISO で決めているので、レンズも同じ言葉で扱う。
             // ラジアンのままだと何 mm 相当なのか分からない。
             renderer::Camera& camera = m_renderer.GetCamera();
@@ -146,6 +146,29 @@ void Application::DrawMaterialPanel() {
                               "絞り。小さいほどボケが強く、露出は明るくなる", "F%.1f",
                               ImGuiSliderFlags_Logarithmic);
             ui::PropertyValue("画角", "%.1f 度（垂直）", RadiansToDegrees(camera.FovY()));
+            // クリップ面。自動は被写体の大きさから決めるので、地形では近くの物が切れることがある。
+            bool autoClip = camera.AutoClip();
+            if (ui::PropertyBool("クリップ自動", &autoClip, kDefaultCamera.autoClip,
+                                 "ニア / ファーを被写体（地形や雲）の大きさから決める。"
+                                 "切ると値を指定できる（近くの物を寄って見るときはニアを下げる）")) {
+                // 手動へ切り替えた直後は、いまの自動の値から始める。
+                camera.SetClip(autoClip, autoClip ? camera.NearZ() : camera.AutoNearZ(),
+                               autoClip ? camera.FarZ() : camera.AutoFarZ());
+            }
+            if (autoClip) {
+                ui::PropertyValue("ニア / ファー", "%.2f m / %.0f m", camera.NearZ(), camera.FarZ());
+            } else {
+                constexpr const char* kPrecision =
+                    "深度の精度はファー ÷ ニアの比で決まる。比が 100 万を超えると遠くの面がちらつきやすい";
+                float nearZ = camera.NearZ(), farZ = camera.FarZ();
+                bool clipChanged = ui::PropertyFloat("ニア", &nearZ, renderer::kMinClipNear, renderer::kMaxClipNear,
+                                                     kDefaultCamera.nearZ, kPrecision, "%.3f m",
+                                                     ImGuiSliderFlags_Logarithmic);
+                clipChanged |= ui::PropertyFloat("ファー", &farZ, 1.0f, renderer::kMaxClipFar,
+                                                 kDefaultCamera.farZ, kPrecision, "%.0f m",
+                                                 ImGuiSliderFlags_Logarithmic);
+                if (clipChanged) camera.SetClip(false, nearZ, farZ);
+            }
             ui::PropertyLabelEmpty("cameraReset");
             if (ui::Button("視点をリセット", ui::kWideButtonWidth)) {
                 m_renderer.GetCamera().Reset();

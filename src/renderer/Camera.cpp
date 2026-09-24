@@ -115,12 +115,27 @@ float Camera::MaxDistance() const {
     return kMaxDistance * SceneScale();
 }
 
-float Camera::NearZ() const {
+float Camera::AutoNearZ() const {
     return kNearZ * SceneScale();
 }
 
-float Camera::FarZ() const {
+float Camera::AutoFarZ() const {
     return kFarZ * SceneScale();
+}
+
+float Camera::NearZ() const {
+    return m_autoClip ? AutoNearZ() : m_nearZ;
+}
+
+float Camera::FarZ() const {
+    return m_autoClip ? AutoFarZ() : m_farZ;
+}
+
+void Camera::SetClip(bool automatic, float nearZ, float farZ) {
+    m_autoClip = automatic;
+    // 0 や負のニアは投影行列を壊すので、絶対の範囲で受け止める。
+    m_nearZ = std::clamp(std::isfinite(nearZ) ? nearZ : kMinClipNear, kMinClipNear, kMaxClipNear);
+    m_farZ = std::clamp(std::isfinite(farZ) ? farZ : kMaxClipFar, m_nearZ * 10.0f, kMaxClipFar);
 }
 
 void Camera::Reset() {
@@ -131,7 +146,7 @@ void Camera::Reset() {
 }
 
 CameraState Camera::State() const {
-    return CameraState{m_target, m_distance, m_yaw, m_pitch, m_fovY};
+    return CameraState{m_target, m_distance, m_yaw, m_pitch, m_fovY, m_autoClip, m_nearZ, m_farZ};
 }
 
 void Camera::SetState(const CameraState& state) {
@@ -144,6 +159,7 @@ void Camera::SetState(const CameraState& state) {
     m_yaw = state.yaw;
     m_pitch = std::clamp(state.pitch, -kPitchLimit, kPitchLimit);
     m_fovY = std::clamp(state.fovY, kMinFovY, kMaxFovY);
+    SetClip(state.autoClip, state.nearZ, state.farZ);
 }
 
 void Camera::SetViewportSize(uint32_t width, uint32_t height) {

@@ -36,7 +36,16 @@ struct CameraState {
     float yaw = 0.6f;
     float pitch = 0.35f;
     float fovY = 0.7853981634f;
+    // クリップ面。autoClip なら被写体の大きさから決める（NearZ / FarZ の説明を参照）。
+    // 偽なら nearZ / farZ（m）をそのまま使う。
+    bool autoClip = true;
+    float nearZ = 0.1f;
+    float farZ = 100000.0f;
 };
+// 手動のクリップ面の範囲（m）。ファーはニアの 10 倍以上にする。
+inline constexpr float kMinClipNear = 0.001f;
+inline constexpr float kMaxClipNear = 10000.0f;
+inline constexpr float kMaxClipFar = 10000000.0f;
 
 // 注視点を中心に回る軌道カメラ。マテリアルプレビューではこれで十分。
 //
@@ -79,10 +88,17 @@ public:
 
     float FovY() const { return m_fovY; }
     // 被写界深度が深度からカメラ前方距離を戻すのに使う。
-    // **被写体の大きさに比例する。** 近 / 遠の比は一定なので、
+    // 自動のときは**被写体の大きさに比例する。** 近 / 遠の比は一定なので、
     // 地形スケールでも深度の精度は素材スケールと変わらない。
+    // 手動のときは設定した値（近くの物を寄って見るときにニアを下げる）。
     float NearZ() const;
     float FarZ() const;
+    // 自動で決めたときの値。手動に切り替える直前の初期値や、UI の表示に使う。
+    float AutoNearZ() const;
+    float AutoFarZ() const;
+    bool AutoClip() const { return m_autoClip; }
+    // 手動のクリップ面。範囲へ丸め、ファーはニアの 10 倍以上に保つ。
+    void SetClip(bool automatic, float nearZ, float farZ);
     // SetState と同じ範囲に丸める。UI からの直接代入でクランプを迂回させない
     // （0 や負の画角は投影行列と焦点距離換算のゼロ除算を壊す）。
     void SetFovY(float fovY);
@@ -99,6 +115,8 @@ private:
     float m_yaw = 0.6f;
     float m_pitch = 0.35f;
     float m_fovY = 0.7853981634f;  // 45 度
+    bool m_autoClip = true;
+    float m_nearZ = 0.1f, m_farZ = 100000.0f;
     // 被写体の大きさ。SetSceneRadius が入れる。既定は 2m 平面の対角の半分。
     float m_sceneRadius = 1.41421356f;
     uint32_t m_width = 1;

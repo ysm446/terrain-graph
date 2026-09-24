@@ -2266,6 +2266,9 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     cameraNode["yaw"] = camera.yaw;
     cameraNode["pitch"] = camera.pitch;
     cameraNode["fovY"] = camera.fovY;
+    cameraNode["autoClip"] = camera.autoClip;
+    cameraNode["nearZ"] = camera.nearZ;
+    cameraNode["farZ"] = camera.farZ;
     node["camera"] = std::move(cameraNode);
 
     const renderer::LightSettings& light = renderer.LegacyLight();
@@ -2423,6 +2426,10 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
         state.yaw = ReadFloat(camera, "yaw", state.yaw);
         state.pitch = ReadFloat(camera, "pitch", state.pitch);
         state.fovY = ReadFloat(camera, "fovY", state.fovY);
+        // キーの無い既存ファイルは自動のまま（見え方を変えない）。
+        state.autoClip = ReadBool(camera, "autoClip", state.autoClip);
+        state.nearZ = ReadFloat(camera, "nearZ", state.nearZ);
+        state.farZ = ReadFloat(camera, "farZ", state.farZ);
         renderer.GetCamera().SetState(state);
     }
 
