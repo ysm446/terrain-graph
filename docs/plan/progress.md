@@ -1,7 +1,13 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-24 12:40
+更新日時: 2026-09-24 12:47
+
+## LOD の色分け表示（2026-09-24 12:47）
+
+`DebugView::Lod`（11）を追加し、陰影を付ける表示（`IsShadedView`）に含めた。配置モデルは `ModelInstanceDraw::lodView` を受け、ModelConstants の `lodView` が真なら、ベースカラーのマップを色に使わず（アルファ抜きには使う）ティントを `kLodDebugColors`（UE5 の LOD Coloration の 8 色、リニア）の段の色にする。色相・彩度・明度は中立に戻す。段は用意した段の中の番号に先頭の段を足した、モデル全体での番号。地形（MeshPbr）は `TG_VIEW_LOD` をクレイと同じ扱いにする。凡例は `Display` ボタンの右に、Stats と同じ下地で描く（下地と文字色を定数へまとめた）。
+
+検証: Debug / Release ビルド（警告なし）、CTest 6 件、DXC で ModelPreview（VsMain / PsMain / PsDither）と MeshPbr の PsMain。確認用シーンで、起動時に LOD 表示へ切り替える一時的な行（除去済み）を入れて Release で撮影した。倍率 1 で近くが白・遠くが赤、境目がディザで混ざる。倍率 0.3 で白・赤・緑の 3 段と切り替え帯を確認。凡例と Stats の段ごとの株数も表示された（`data/Test/haimatsu-qa/lodview-*.png`）。**未確認**: LOD 表示での Debug のデバッグレイヤー（シェーダ定数の追加のみで、リソースの扱いは通常表示と同じ）、メニューからの実際の切り替え操作。
 
 ## 配置モデルの描画量を実数で表示（2026-09-24 12:40）
 

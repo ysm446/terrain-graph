@@ -36,7 +36,8 @@ struct ModelConstants
     // clearIrradianceIndex: 雲なしの環境の irradiance（0xFFFFFFFF なら混ぜない）。ambientOcclusion: 遮蔽の強さ。
     uint cloudNoiseIndex, atmosphericMode, clearIrradianceIndex; float ambientOcclusion;
     // visibleOffset: 可視リストの区画の先頭（SV_InstanceID は StartInstance を含まない）。
-    uint visibleOffset; uint3 padding;
+    // lodView: LOD の色分け表示。ベースカラーのマップは色に使わず（アルファ抜きには使う）、ティントが段の色。
+    uint visibleOffset, lodView; uint2 padding;
 };
 
 ConstantBuffer<ModelConstants> g_model : register(b1);
@@ -156,7 +157,7 @@ float4 PsMain(PixelInput input, bool frontFace:SV_IsFrontFace):SV_TARGET {
         const float lod = MapLod(g_model.baseColorIndex, deltaX, deltaY);
         const float4 sampled = SampleMap(g_model.baseColorIndex, uv, lod);
         ClipAlpha(sampled.a, lod);
-        baseColor *= sampled.rgb;
+        if (g_model.lodView == 0) baseColor *= sampled.rgb;
     }
     baseColor = AdjustBaseColor(baseColor, g_model.colorAdjust.x, g_model.colorAdjust.y,
                                 g_model.brightness);

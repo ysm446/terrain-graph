@@ -37,7 +37,8 @@ struct ModelConstants {
     float ambientOcclusion;
     // 可視リストの区画の先頭（インスタンス描画）。SV_InstanceID は StartInstance を含まないので定数で渡す。
     uint32_t visibleOffset;
-    uint32_t padding[3];
+    uint32_t lodView;  // 真ならベースカラーのマップを使わず、ティントを段の色にする
+    uint32_t padding[2];
 };
 static_assert(sizeof(ModelConstants) == 1040);
 
@@ -432,6 +433,16 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
             constants.pivot[0] = (lo.x+hi.x)*0.5f; constants.pivot[1] = lo.y;
             constants.pivot[2] = (lo.z+hi.z)*0.5f;
             constants.visibleOffset = static_cast<uint32_t>(segment * draw.count);
+            if (draw.lodView) {
+                const size_t lod = std::min<size_t>(m_firstLod + m_parts[i].lod, std::size(kLodDebugColors) - 1);
+                constants.lodView = 1;
+                constants.baseColorTint[0] = kLodDebugColors[lod].x;
+                constants.baseColorTint[1] = kLodDebugColors[lod].y;
+                constants.baseColorTint[2] = kLodDebugColors[lod].z;
+                constants.colorAdjust[0] = 0.0f;
+                constants.colorAdjust[1] = 1.0f;
+                constants.brightness = 1.0f;
+            }
             constants.modelSize = std::max({hi.x-lo.x,hi.y-lo.y,hi.z-lo.z,0.0001f});
             DirectX::XMStoreFloat4x4(&constants.viewProjection,
                 DirectX::XMMatrixTranspose(DirectX::XMLoadFloat4x4(&draw.viewProjection)));

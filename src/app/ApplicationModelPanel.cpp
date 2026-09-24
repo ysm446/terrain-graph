@@ -104,6 +104,7 @@ void Application::DrawModelScatters(ID3D12GraphicsCommandList* commandList,
             draw.maxDistance=scatter.settings.maxDistance;
             draw.lodBias=scatter.settings.lodBias;
             draw.usePointSize=scatter.settings.usePointSize; draw.shadow=shadow;
+            draw.lodView=m_renderer.Debug()==renderer::DebugView::Lod;
             draw.viewProjection=viewProjection; draw.cameraPosition=m_renderer.GetCamera().Position();
             if (!shadow) {
                 draw.shadows=m_renderer.InstanceShadows();

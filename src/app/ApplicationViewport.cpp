@@ -41,6 +41,10 @@ compositor::MaterialLayer* Application::CurrentPaintLayer() {
     return layer;
 }
 
+// ビューポートに重ねる描き込み（統計・凡例）の下地と文字。明るい素材の上でも読めるように暗く敷く。
+constexpr ImU32 kOverlayBackground = IM_COL32(8, 10, 12, 190);
+constexpr ImU32 kOverlayText = IM_COL32(235, 235, 235, 255);
+
 // 3 桁ごとに区切る。**桁数の多い数はそのままだと読めない。**
 std::string GroupDigits(uint64_t value) {
     std::string digits = std::to_string(value);
@@ -106,6 +110,37 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
             m_settings.Save();
         }
         ImGui::EndPopup();
+    }
+
+    // --- LOD の凡例 ----------------------------------------------------------
+    // 色分け表示のときだけ、ボタンの右に段の色を並べる。色は描画と同じ定数から取る。
+    if (current == renderer::DebugView::Lod) {
+        const ImVec2 buttonMin = ImGui::GetItemRectMin(), buttonMax = ImGui::GetItemRectMax();
+        const float swatch = ImGui::GetTextLineHeight();
+        const float gap = ImGui::GetStyle().ItemInnerSpacing.x;
+        const ImVec2 legendPadding(ui::Scaled(8.0f), ui::Scaled(4.0f));
+        const float left = buttonMax.x + ImGui::GetStyle().ItemSpacing.x;
+        const float top = buttonMin.y + (buttonMax.y - buttonMin.y - swatch) * 0.5f;
+        char name[8] = {};
+        float width = 0.0f;
+        for (size_t lod = 0; lod < renderer::kMaxInstanceLods; ++lod) {
+            std::snprintf(name, sizeof(name), "LOD%zu", lod);
+            width += (lod ? gap * 3.0f : 0.0f) + swatch + gap + ImGui::CalcTextSize(name).x;
+        }
+        ImDrawList* legendList = ImGui::GetWindowDrawList();
+        legendList->AddRectFilled(ImVec2(left, top - legendPadding.y),
+                                  ImVec2(left + width + legendPadding.x * 2.0f, top + swatch + legendPadding.y),
+                                  kOverlayBackground, ui::Scaled(4.0f));
+        float x = left + legendPadding.x;
+        for (size_t lod = 0; lod < renderer::kMaxInstanceLods; ++lod) {
+            const auto& color = renderer::kLodDebugColors[lod];
+            legendList->AddRectFilled(ImVec2(x, top), ImVec2(x + swatch, top + swatch),
+                                      ImGui::ColorConvertFloat4ToU32(ImVec4(color.x, color.y, color.z, 1.0f)));
+            x += swatch + gap;
+            std::snprintf(name, sizeof(name), "LOD%zu", lod);
+            legendList->AddText(ImVec2(x, top), kOverlayText, name);
+            x += ImGui::CalcTextSize(name).x + gap * 3.0f;
+        }
     }
 
     // --- FPS と描画の量 ------------------------------------------------------
@@ -189,14 +224,14 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
 
     // 明るい素材の上でも読めるように、暗い下地を敷く。
     ImDrawList* drawList = ImGui::GetWindowDrawList();
-    drawList->AddRectFilled(boxMin, boxMax, IM_COL32(8, 10, 12, 190), ui::Scaled(4.0f));
+    drawList->AddRectFilled(boxMin, boxMax, kOverlayBackground, ui::Scaled(4.0f));
 
     float y = boxMin.y + padding.y;
     for (const std::string& line : lines) {
         // **右へ揃える。** 桁数が変わるたびに数字の頭が動くと、目で追えない。
         const float width = ImGui::CalcTextSize(line.c_str()).x;
         drawList->AddText(ImVec2(boxMax.x - padding.x - width, y),
-                          IM_COL32(235, 235, 235, 255), line.c_str());
+                          kOverlayText, line.c_str());
         y += lineHeight + spacing;
     }
 }

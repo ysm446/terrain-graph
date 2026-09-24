@@ -9,11 +9,17 @@ namespace tg::renderer {
 // Prepare に渡すと全 LOD（先頭から kMaxInstanceLods 段まで）を用意し、距離で選んで描く。
 inline constexpr int kAllLods = -1;
 inline constexpr size_t kMaxInstanceLods = 4;
+// LOD の色分け表示の色（リニア）。UE5 の LOD Coloration と同じ並び。固定 LOD は 8 段目以降も最後の色。
+inline constexpr DirectX::XMFLOAT3 kLodDebugColors[] = {
+    {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f},
+    {1.0f, 1.0f, 0.0f}, {1.0f, 0.0f, 1.0f}, {0.0f, 1.0f, 1.0f}, {1.0f, 0.5f, 0.0f},
+};
 struct ModelInstanceDraw {
     uint32_t points = 0, rows = 0, count = 0, seed = 1;
     float weightStart = 0, weightEnd = 1;
     float scaleMin = 1, scaleMax = 1, align = 1, offset = 0;
     bool usePointSize = true, shadow = false;
+    bool lodView = false;  // LOD の色分け表示（ベースカラーを段の色にする）
     float maxDistance = 0;
     // 全 LOD を用意したときだけ使う。lodBias はモデルの切り替え距離に掛ける倍率。
     // fadeBand は切り替え距離に対する重ね合わせの幅（0.15 なら距離の 15% をかけて移る）。

@@ -228,7 +228,7 @@ struct TonemapConstants {
 // 陰影は本物なので、背景・被写界深度・露出・トーンマップはシェーディングと同じ）。
 // チャンネルを覗く表示だけが、値をそのまま画面へ出す。
 bool IsShadedView(DebugView view) {
-    return view == DebugView::Shaded || view == DebugView::Clay;
+    return view == DebugView::Shaded || view == DebugView::Clay || view == DebugView::Lod;
 }
 
 }  // namespace

@@ -273,7 +273,7 @@ inline const char* const kChannelLabels[] = {"BaseColor", "Normal", "Surface", "
 inline const char* const kDebugViewLabels[] = {
     "Shaded",           "Base Color", "Normal (Camera)", "Normal (World)",
     "Roughness",        "Metalness",  "AO",              "Height",
-    "Height (Local)",   "Wireframe",  "Clay",
+    "Height (Local)",   "Wireframe",  "Clay",            "LOD",
 };
 // ペイントマスクの解像度。
 inline const char* const kResolutionLabels[] = {"512", "1024", "2048", "4096"};

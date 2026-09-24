@@ -108,6 +108,7 @@ static const float kLocalHeightGain = 16.0f;
 #define TG_VIEW_HEIGHT_LOCAL    8
 #define TG_VIEW_WIREFRAME       9
 #define TG_VIEW_CLAY            10
+#define TG_VIEW_LOD             11
 
 ConstantBuffer<MeshConstants> g_mesh : register(b1);
 
@@ -390,7 +391,8 @@ PsOutput PsMain(VsOutput input)
 
     // **クレイ表示**は、形（変位）はそのままで陰影だけをテクスチャ抜きにする。
     // 合成の色 / 法線 / サーフェスを読まず、単色マテリアルと面の向きで塗る。
-    const bool clay = (g_mesh.debugView == TG_VIEW_CLAY);
+    // LOD の色分け表示でも地形はクレイで塗る（色は配置モデルだけに付ける）。
+    const bool clay = (g_mesh.debugView == TG_VIEW_CLAY || g_mesh.debugView == TG_VIEW_LOD);
     const bool useMaterialShading = (g_mesh.useMaterialTextures != 0u) && !clay;
 
     if (clay)
