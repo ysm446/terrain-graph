@@ -187,16 +187,18 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
         }
         lines.emplace_back(text);
         // 配置モデルの株数（本描画）を段ごとに。使っていない末尾の段は出さない。
+        // 段は 1 行ずつ縦に並べる。1 行にまとめると箱が横に伸びて画面を塞ぐ。
         if (stats.instances) {
             size_t levels = stats.instancesPerLod.size();
             while (levels > 1 && stats.instancesPerLod[levels - 1] == 0) --levels;
             uint64_t total = 0;
-            std::string breakdown;
             for (size_t lod = 0; lod < levels; ++lod) {
                 total += stats.instancesPerLod[lod];
-                breakdown += (lod ? " / LOD" : "LOD") + std::to_string(lod) + " " + GroupDigits(stats.instancesPerLod[lod]);
             }
-            lines.emplace_back("Instances " + GroupDigits(total) + " (" + breakdown + ")");
+            lines.emplace_back("Instances " + GroupDigits(total));
+            for (size_t lod = 0; lod < levels; ++lod) {
+                lines.emplace_back("LOD" + std::to_string(lod) + " " + GroupDigits(stats.instancesPerLod[lod]));
+            }
         }
         // VRAM はプロセス全体の使用量とバジェット。合成の解像度を上げたときに
         // どれだけ余裕が残っているかを、その場で見えるようにする。
