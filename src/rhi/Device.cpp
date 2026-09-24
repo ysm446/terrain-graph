@@ -20,8 +20,10 @@ namespace {
 // ディスクリプタは 1 枠 32 バイト程度（8192 枠で 256KB ほど）、上限は
 // Tier 1 でも 100 万枠なので、ここは余裕を持たせるほうが安い。
 constexpr uint32_t kSrvHeapCapacity = 8192;
-constexpr uint32_t kRtvHeapCapacity = 64;
-constexpr uint32_t kDsvHeapCapacity = 32;
+// RTV はマテリアルのサムネイルが 1 枚ずつ持ち続けるので、マテリアルの数だけ要る。
+// 64 では植生のマテリアルを足しただけで尽き、その後の描画先が作れず地形が出なくなった。
+constexpr uint32_t kRtvHeapCapacity = 1024;
+constexpr uint32_t kDsvHeapCapacity = 64;
 
 // 1 フレームあたりのアップロード容量。定数バッファと小さめの転送を想定した初期値。
 constexpr uint64_t kUploadBytesPerFrame = 16ull * 1024 * 1024;
