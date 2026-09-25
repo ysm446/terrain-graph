@@ -85,8 +85,8 @@ def draw_blade(canvas, x0, sway, length_px, width_px, color, rng):
 def make_leaf_texture(rng, width=256, height=2048):
     canvas = TallCanvas(width, height)
     cm = height / 120.0
-    # 明るい緑（写真の夏の株）。株元の方は少し暗く、葉先は少し黄みがかる。
-    greens = [(0.30, 0.52, 0.14), (0.34, 0.56, 0.16), (0.27, 0.48, 0.12), (0.37, 0.58, 0.18)]
+    # 夏の株の緑。アルベドは G でリニア 0.14〜0.16（ハコネダケより少し暗い。ほかの植生と釣り合わせる）。
+    greens = [(0.27, 0.43, 0.14), (0.30, 0.46, 0.16), (0.25, 0.40, 0.12), (0.32, 0.48, 0.17)]
     blades = []
     for k in range(rng.randint(8, 11)):
         x0 = width * 0.5 + rng.uniform(-0.22, 0.22) * width
