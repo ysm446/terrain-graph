@@ -1,7 +1,7 @@
 # vegetation-assets — 植生アセットのルール
 
 作成日時: 2026-09-24 15:00
-更新日時: 2026-09-26 03:49
+更新日時: 2026-09-26 04:57
 
 草・低木・樹木など、Model Scatter で地形に並べる植生モデルを作るときの決まりごと。
 這い松（マット状の低木、`tools/blender/make_haimatsu.py`、出力は `data/Models/Haimatsu/`）、
@@ -35,6 +35,9 @@
 - **針葉樹の枝の間隔が広いと、モミのような水平な棚に見える。** スギは 0.15〜0.3 m ごとに枝を出し、房の 1 枚目のカードも水平に揃えずに傾けて、上下の房を重ねる。
 - **広葉樹の低木は、ハイマツと色で見分けがつくようにする。** ハイマツは暗い青緑で艶がなく、ミヤマハンノキは明るい黄緑で艶がある（ラフネス 0.45）。遠景で広葉樹の塊が明るく浮くのが、実際の森林限界付近の見え方。
 - カードを小さくしたら、間隔も比例して詰めて覆い方を保つ（`STEM_SHOOT_SPACING` / `BRANCH_SHOOT_SPACING` はカードの長さに比例）。枝の節の間にも置けるよう、枝の長さに沿って連続に配置する。
+
+- **同じササでも場所で姿が違う。** 伊豆スカイライン（`make_sasa.py`）は上面が平らで葉が横へ開く群落、西天城のハコネダケ（`make_hakonedake.py`）は細い葉が上へ立ってざらざらした群落。写真を見て、葉の幅・扇の開き・カードの立て方を変える。
+- **草の株（ススキ）は、葉を数枚描いた縦長のカードを曲げて使う**（`make_susuki.py`、20 cm × 1.2 m）。1 枚ずつの葉にするより少ない面で、根元から立ち上がって先が垂れる形が出る。
 
 ## 3. FBX の構成
 
@@ -134,6 +137,8 @@
 - `blender -b --factory-startup --python-exit-code 1 --python tools/blender/make_sasa.py -- --out data/Models/Sasa`
 - `blender -b --factory-startup --python-exit-code 1 --python tools/blender/make_sugi.py -- --out data/Models/Sugi`
 - `blender -b --factory-startup --python-exit-code 1 --python tools/blender/make_buna.py -- --out data/Models/Buna`
+- `blender -b --factory-startup --python-exit-code 1 --python tools/blender/make_hakonedake.py -- --out data/Models/Hakonedake`
+- `blender -b --factory-startup --python-exit-code 1 --python tools/blender/make_susuki.py -- --out data/Models/Susuki`
 - 植物の種類に依らない部品（引数、PNG、広葉樹の葉を描く画布 `LeafCanvas`、筒、枝の伸ばし方、樹冠の法線、芯、マテリアル、FBX、アセットの書き出し）は `vegetation.py` に置き、種類ごとのスクリプトはテクスチャと形の作り方だけを持つ。新しい植物もこの形で足す。
 - 共通部分を変えたら、既存の植物の出力が変わらないことを確かめる（テクスチャのハッシュ、三角形数、FBX を読んだ寸法を前後で比べる）。
 - テクスチャ・FBX・`.blend` は毎回作り直す。**既存の .tgmat / .tgmodel / .meta は上書きしない**（UID と手で直した値を保つ）。ただし .tgmodel のマテリアルの並びが足りないときは、足りない分だけ書き足す。
