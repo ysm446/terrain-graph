@@ -449,6 +449,10 @@ private:
     // マスクの再コンパイルと評価器の作成。作成に失敗したら偽。
     bool PrepareCloudMask(CloudMaskSlot& slot, graph::GraphId maskNode, graph::GraphId maskPin);
     uint64_t m_compiledGraphRevision = 0;
+    // 循環に入っているノード（グラフの版ごとに求め直す）。グラフでエラー色の枠を付ける。
+    const std::vector<graph::GraphId>& GraphCycleNodes();
+    std::vector<graph::GraphId> m_graphCycleNodes;
+    uint64_t m_graphCycleRevision = 0;
     // 前回コンパイルしたプレビュー対象。選択が変わっても再コンパイルするために持つ。
     graph::GraphId m_compiledGraphTarget = 0;
     graph::GraphId m_compiledGraphTargetPin = 0;

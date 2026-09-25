@@ -3,6 +3,7 @@
 #include "graph/CloudShapeGenerator.h"
 
 #include "compositor/MaterialStack.h"
+#include "core/Log.h"
 
 #include <algorithm>
 #include <array>
@@ -533,17 +534,26 @@ bool NodeGraph::ReachesDownstream(GraphId fromNodeId, GraphId targetNodeId) cons
 }
 
 bool NodeGraph::CanCreateLink(GraphId startPin, GraphId endPin) const {
+    return CheckLink(startPin, endPin) == LinkCheck::Ok;
+}
+
+LinkCheck NodeGraph::CheckLink(GraphId startPin, GraphId endPin) const {
     if (startPin == 0 || endPin == 0 || startPin == endPin) {
-        return false;
+        return LinkCheck::Invalid;
     }
     const Pin* start = FindPin(startPin);
     const Pin* end = FindPin(endPin);
-    if (start == nullptr || end == nullptr || start->nodeId == end->nodeId ||
-        start->valueType != end->valueType) {
-        return false;
+    if (start == nullptr || end == nullptr) {
+        return LinkCheck::Invalid;
+    }
+    if (start->nodeId == end->nodeId) {
+        return LinkCheck::SameNode;
     }
     if (start->kind == end->kind) {
-        return false;
+        return LinkCheck::SameKind;
+    }
+    if (start->valueType != end->valueType) {
+        return LinkCheck::TypeMismatch;
     }
     // 出力側 → 入力側へ揃えてから循環を見る。
     if (start->kind == PinKind::Input) {
@@ -551,9 +561,48 @@ bool NodeGraph::CanCreateLink(GraphId startPin, GraphId endPin) const {
     }
     // end（消費側）の下流に start（生産側）がいたら、この接続で輪ができる。
     if (ReachesDownstream(end->nodeId, start->nodeId)) {
-        return false;
+        return LinkCheck::Cycle;
     }
-    return true;
+    return LinkCheck::Ok;
+}
+
+std::vector<GraphId> NodeGraph::FindCycleNodes() const {
+    // ノード → 下流のノード。
+    std::unordered_map<GraphId, std::vector<GraphId>> downstream;
+    for (const Link& link : m_links) {
+        const Pin* start = FindPin(link.startPin);
+        const Pin* end = FindPin(link.endPin);
+        if (start != nullptr && end != nullptr) {
+            downstream[start->nodeId].push_back(end->nodeId);
+        }
+    }
+    // 下流を辿って自分へ戻ってくるノードが循環の中にいる。
+    std::vector<GraphId> cycle;
+    for (const Node& node : m_nodes) {
+        const auto first = downstream.find(node.id);
+        if (first == downstream.end()) {
+            continue;
+        }
+        std::unordered_set<GraphId> visited;
+        std::vector<GraphId> stack = first->second;
+        bool returns = false;
+        while (!stack.empty() && !returns) {
+            const GraphId current = stack.back();
+            stack.pop_back();
+            if (current == node.id) {
+                returns = true;
+            } else if (visited.insert(current).second) {
+                if (const auto next = downstream.find(current); next != downstream.end()) {
+                    stack.insert(stack.end(), next->second.begin(), next->second.end());
+                }
+            }
+        }
+        if (returns) {
+            cycle.push_back(node.id);
+        }
+    }
+    std::sort(cycle.begin(), cycle.end());
+    return cycle;
 }
 
 bool NodeGraph::CreateLink(GraphId startPin, GraphId endPin) {
@@ -944,6 +993,13 @@ void NodeGraph::Replace(std::vector<Node> nodes, std::vector<Link> links) {
     RebuildNextGraphId();
     NormalizeMergeInputs();
     MarkDirty();
+    // 循環は接続のときに弾くので、あるなら読み込んだファイルが壊れている。
+    // 評価は深さで打ち切るだけなので、黙って読むと結果がおかしい理由が分からない。
+    if (const std::vector<GraphId> cycle = FindCycleNodes(); !cycle.empty()) {
+        TG_LOG_WARN("ノードの接続が循環しています（%zu 個のノード）。"
+                    "グラフで赤枠のノードの間の接続を 1 本外してください",
+                    cycle.size());
+    }
 }
 
 void NodeGraph::NormalizeMergeInputs() {

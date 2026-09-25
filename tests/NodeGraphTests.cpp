@@ -1099,6 +1099,45 @@ void RunNodeGraphTests() {
         Check(tg::graph::BuildMeanderPoints(path, 1024, 10).empty(), "閉じた Path を川として評価しない");
     }
 
+    Section("ノードグラフ — 接続の循環");
+    {
+        NodeGraph graph;
+        const auto baseId = graph.CreateNode(NodeKind::Heightmap);
+        const auto firstId = graph.CreateNode(NodeKind::Surface);
+        const auto secondId = graph.CreateNode(NodeKind::Surface);
+        const auto* base = graph.FindNode(baseId);
+        const auto* first = graph.FindNode(firstId);
+        const auto* second = graph.FindNode(secondId);
+        Check(graph.CreateLink(base->outputs[0].id, first->inputs[0].id) &&
+                  graph.CreateLink(first->outputs[0].id, second->inputs[0].id),
+              "Heightmap → Surface → Surface を繋ぐ");
+        Check(graph.FindCycleNodes().empty(), "循環が無ければ FindCycleNodes は空");
+        Check(graph.CheckLink(second->outputs[0].id, first->inputs[0].id) ==
+                  tg::graph::LinkCheck::Cycle,
+              "下流から上流へ戻す接続は Cycle で断る");
+        Check(graph.CheckLink(base->outputs[0].id, second->inputs[1].id) ==
+                  tg::graph::LinkCheck::TypeMismatch,
+              "型の違うピンは TypeMismatch で断る");
+        Check(graph.CheckLink(first->outputs[0].id, second->inputs[0].id) ==
+                  tg::graph::LinkCheck::Ok,
+              "繋げる組み合わせは Ok");
+
+        // 壊れたファイルを読んだときのように、循環したリンクをそのまま流し込む。
+        std::vector<tg::graph::Link> links;
+        for (const tg::graph::Link& link : graph.Links()) {
+            if (link.endPin != first->inputs[0].id) {
+                links.push_back(link);
+            }
+        }
+        links.push_back({9000, second->outputs[0].id, first->inputs[0].id});
+        NodeGraph broken;
+        broken.Replace(graph.Nodes(), links);
+        const std::vector<tg::graph::GraphId> cycle = broken.FindCycleNodes();
+        Check(cycle.size() == 2 && cycle[0] == std::min(firstId, secondId) &&
+                  cycle[1] == std::max(firstId, secondId),
+              "読み込んだ循環は FindCycleNodes が輪の中のノードだけを返す");
+    }
+
     Section("ノードグラフ — 雲グラフの Terrain ノード");
     {
         NodeGraph graph;

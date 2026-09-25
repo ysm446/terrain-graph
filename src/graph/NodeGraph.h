@@ -459,6 +459,16 @@ struct Link {
     GraphId endPin = 0;    // 入力ピン
 };
 
+// 接続できるかの判定結果。繋げない理由をエディタで示すために分けて返す。
+enum class LinkCheck {
+    Ok,
+    Invalid,       // ピンが無い・同じピン
+    SameNode,      // 同じノードの中
+    SameKind,      // 出力どうし / 入力どうし
+    TypeMismatch,  // 型が違う
+    Cycle,         // 繋ぐと循環する
+};
+
 class NodeGraph {
 public:
     // 「サーフェス（ベース）→ 出力」を繋いだ最小構成。
@@ -481,6 +491,12 @@ public:
     // 接続できるか。別ノード・型一致・入出力の組み合わせに加えて、
     // **循環ができる接続は弾く**（評価が回らなくなるため）。
     bool CanCreateLink(GraphId startPin, GraphId endPin) const;
+    // CanCreateLink の中身。繋げないときは理由を返す。
+    LinkCheck CheckLink(GraphId startPin, GraphId endPin) const;
+    // 循環に入っているノード（ID の昇順）。循環が無ければ空。
+    // 接続は CanCreateLink が循環を弾くので、ここに出るのは読み込んだファイルが
+    // 壊れているときだけのはず。見つけたら警告して、どこを外せばよいか示す。
+    std::vector<GraphId> FindCycleNodes() const;
     // 接続する。入力ピンに既にある接続は置き換える。
     bool CreateLink(GraphId startPin, GraphId endPin);
     bool DeleteLink(GraphId linkId);

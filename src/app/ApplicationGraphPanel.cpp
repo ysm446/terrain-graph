@@ -586,6 +586,14 @@ void Application::PasteGraphNodes(const ImVec2& viewCenter) {
     TG_LOG_INFO("ノードを貼り付けました: %zu 個", m_graphClipboard.size());
 }
 
+const std::vector<graph::GraphId>& Application::GraphCycleNodes() {
+    if (m_graphCycleRevision != m_graph.Revision()) {
+        m_graphCycleRevision = m_graph.Revision();
+        m_graphCycleNodes = m_graph.FindCycleNodes();
+    }
+    return m_graphCycleNodes;
+}
+
 void Application::DrawGraphNode(const graph::Node& node) {
     // ノードの幅。**ピンのラベルが重ならない幅まで広げる。**
     // 入力は左、出力は右へ寄せるので、同じ行に並ぶ 2 つのラベルの合計が要る幅になる。
@@ -613,14 +621,17 @@ void Application::DrawGraphNode(const graph::Node& node) {
     const bool isPreview = (node.id == m_previewGraphNode) ||
                            (m_previewGraphNode == 0 && node.kind == graph::NodeKind::Output);
     const auto* missingSettings = std::get_if<graph::MissingNodeSettings>(&node.settings);
-    // 扱えないノードはエラー色の枠で目立たせる。
-    const ImVec4 nodeBorderColor = missingSettings != nullptr ? ImGui::ColorConvertU32ToFloat4(ui::ErrorColor())
+    // 循環に入っているノード。接続では弾くので、壊れたファイルを読んだときだけ出る。
+    const std::vector<graph::GraphId>& cycleNodes = GraphCycleNodes();
+    const bool inCycle = std::binary_search(cycleNodes.begin(), cycleNodes.end(), node.id);
+    // 扱えないノードと循環に入っているノードはエラー色の枠で目立たせる。
+    const ImVec4 nodeBorderColor = (missingSettings != nullptr || inCycle) ? ImGui::ColorConvertU32ToFloat4(ui::ErrorColor())
                                  : isPreview ? ImVec4(0.72f, 0.76f, 0.62f, 1.0f)
                                              : ImVec4(0.22f, 0.22f, 0.22f, 1.0f);
     const ImVec4 activeNodeBorderColor(0.59f, 0.64f, 0.68f, 1.0f);
     ed::PushStyleVar(ed::StyleVar_NodePadding, ImVec4(kNodePaddingX, 10.0f, kNodePaddingX, 10.0f));
     ed::PushStyleVar(ed::StyleVar_NodeRounding, 6.0f);
-    ed::PushStyleVar(ed::StyleVar_NodeBorderWidth, isPreview ? 2.0f : 1.0f);
+    ed::PushStyleVar(ed::StyleVar_NodeBorderWidth, (isPreview || inCycle) ? 2.0f : 1.0f);
     ed::PushStyleVar(ed::StyleVar_SelectedNodeBorderWidth, 1.8f);
     ed::PushStyleColor(ed::StyleColor_NodeBg, kNodeBackground);
     ed::PushStyleColor(ed::StyleColor_NodeBorder, nodeBorderColor);
@@ -924,6 +935,18 @@ void Application::DrawGraphEditor() {
                 }
             } else {
                 ed::RejectNewItem(ImVec4(0.78f, 0.28f, 0.24f, 1.0f), 2.0f);
+                // 繋げない理由。線が赤くなるだけだと、なぜ繋がらないのか分からない。
+                const graph::LinkCheck check = m_graph.CheckLink(startPin, endPin);
+                const char* reason = check == graph::LinkCheck::Cycle
+                                         ? "繋ぐと接続が循環するため繋げません"
+                                     : check == graph::LinkCheck::TypeMismatch
+                                         ? "ピンの型が違うため繋げません"
+                                         : nullptr;
+                if (reason != nullptr) {
+                    ed::Suspend();
+                    ImGui::SetTooltip("%s", reason);
+                    ed::Resume();
+                }
             }
         }
     }
@@ -1418,6 +1441,12 @@ void Application::DrawGraphPanel() {
         ui::HintText("選択したノードまでを表示中（選択を外すと出力まで）");
     } else {
         ui::HintText("出力ノードへ繋いだチェーンがプレビューになる");
+    }
+    if (const size_t cycleCount = GraphCycleNodes().size(); cycleCount > 0) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::ErrorColor());
+        ImGui::TextWrapped("接続が循環しています（%zu 個のノード）。赤枠のノードの間の接続を 1 本外してください",
+                           cycleCount);
+        ImGui::PopStyleColor();
     }
     if (ui::BeginPropertyTable("graphDisplayRows")) {
         if (ui::PropertyBool("メモを表示", &m_settings.Display().showNodeNotes, true,
