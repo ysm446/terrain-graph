@@ -91,8 +91,9 @@ def make_needle_texture(rng, width=512, height=1024):
     canvas = Canvas(width, height)
     base = np.array([width * 0.5, height - 6], np.float32)
     tip = np.array([width * 0.5 + rng.uniform(-12, 12), height * 0.06], np.float32)
-    # 夏の明るい黄緑（柔らかい針葉が光を通す）。
-    greens = [(0.30, 0.44, 0.13), (0.34, 0.48, 0.15), (0.27, 0.41, 0.12), (0.36, 0.50, 0.17)]
+    # 夏の黄緑。ほかの針葉樹より明るいが、アルベドは G でリニア 0.07〜0.08 程度に収める
+    # （以前の 0.16 では、インポスターが明るい塊になって浮いた）。
+    greens = [(0.22, 0.32, 0.095), (0.245, 0.345, 0.11), (0.195, 0.295, 0.085), (0.26, 0.36, 0.12)]
     cm = 25.6
 
     def main_twig(s):
