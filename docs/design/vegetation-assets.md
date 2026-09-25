@@ -1,14 +1,16 @@
 # vegetation-assets — 植生アセットのルール
 
 作成日時: 2026-09-24 15:00
-更新日時: 2026-09-25 06:58
+更新日時: 2026-09-26 03:49
 
 草・低木・樹木など、Model Scatter で地形に並べる植生モデルを作るときの決まりごと。
 這い松（マット状の低木、`tools/blender/make_haimatsu.py`、出力は `data/Models/Haimatsu/`）、
 ダケカンバ（背の高い木、`tools/blender/make_dakekamba.py`、出力は `data/Models/Dakekamba/`）、
 オオシラビソ（針葉樹、`tools/blender/make_oshirabiso.py`、出力は `data/Models/Oshirabiso/`）、
 ミヤマハンノキ（株立ちの広葉樹の低木、`tools/blender/make_miyamahannoki.py`、出力は `data/Models/Miyamahannoki/`）、
-ササ（群落のひとまとまり、`tools/blender/make_sasa.py`、出力は `data/Models/Sasa/`）で確かめた内容をもとにしている。
+ササ（群落のひとまとまり、`tools/blender/make_sasa.py`、出力は `data/Models/Sasa/`）、
+スギ（植林の針葉樹、`tools/blender/make_sugi.py`、出力は `data/Models/Sugi/`）、
+ブナ（樹冠の広い広葉樹の高木、`tools/blender/make_buna.py`、出力は `data/Models/Buna/`）で確かめた内容をもとにしている。
 共通の部品は `tools/blender/vegetation.py`。数値の正は生成スクリプトの定数で、ここには意味と目安を書く。
 
 ## 1. 基本方針
@@ -23,10 +25,14 @@
   ダケカンバ（森林限界付近の姿）の例: 高さ 4〜7 m、幹 2〜5 本、根元の直径 16〜28 cm。
   オオシラビソ（林の中の木）の例: 高さ 9〜16 m、幹 1 本、下の 2〜3 割は枝なし、一番下の枝は高さの 17〜22%。
   ミヤマハンノキ（森林限界付近の藪）の例: 高さ 2〜3.5 m、幅 3〜5 m、幹 8〜14 本（根元で寝てから 40〜62° へ立ち上がる）。
+  スギ（植林の木）の例: 高さ 18〜26 m、幹 1 本、下の 4.5〜5.5 割は枝なし（枝打ちと密植）、一番下の枝は高さの 10〜13%。
+  ブナ（稜線のブナ林）の例: 高さ 14〜20 m、幹 1 本が高さの 3〜4 割で 2〜4 本の大枝に分かれる、樹冠の直径は高さの 6〜7 割。
   ササ（伊豆スカイラインのような背丈ほどの群落）の例: 稈 58〜74 本を半径 0.85 m の円に散らし、高さ 0.9〜1.3 m、上面はほぼ平ら。1 本ずつではなく、約 2 m のまとまりを 1 モデルにする。
 - **葉のカード（枝先の房）は実物の房の大きさに合わせる。** 這い松は 14 × 7 cm（針葉 3〜8 cm、房の長さ 10〜15 cm）。
-  ダケカンバは葉 10〜14 枚の付いた小枝で 32 × 32 cm（葉の長さ 5〜10 cm）。オオシラビソは扁平な針葉の付いた小枝で 40 × 20 cm（針葉 1.4〜2.6 cm）。ミヤマハンノキは幅の広い葉 9〜12 枚の付いた小枝で 30 × 30 cm。大きなカードを少なく置くと、粗く大きな植物に見える。
-- **葉のテクスチャの覆い率（アルファが 0.5 以上の割合）を測る。** 這い松・ダケカンバで 22〜23%、密な針葉樹・ミヤマハンノキは 30% 前後。低いと樹冠が透けてまばらに見える。
+  ダケカンバは葉 10〜14 枚の付いた小枝で 32 × 32 cm（葉の長さ 5〜10 cm）。オオシラビソは扁平な針葉の付いた小枝で 40 × 20 cm（針葉 1.4〜2.6 cm）。ミヤマハンノキは幅の広い葉 9〜12 枚の付いた小枝で 30 × 30 cm。スギは縄のような針葉の小枝が枝分かれした房で 50 × 25 cm。ブナは葉 20〜30 枚の付いた平たい小枝で 50 × 50 cm（葉の長さ 5〜8 cm）。大きなカードを少なく置くと、粗く大きな植物に見える。
+- **葉のテクスチャの覆い率（アルファが 0.5 以上の割合）を測る。** 這い松・ダケカンバで 22〜23%、密な針葉樹・ミヤマハンノキは 30% 前後、スギ・ブナは約 21%（生成スクリプトが出力に表示する）。低いと樹冠が透けてまばらに見える。
+- **背の高い広葉樹は、三角形を枝の筒ではなく葉に使う。** ブナで最初は筒の節を細かく刻み（8〜12 cm）、LOD0 の 8 割が枝で葉がまばらだった。節を 18〜30 cm に粗くし、1 次枝と小枝を増やして葉の房へ回した。
+- **針葉樹の枝の間隔が広いと、モミのような水平な棚に見える。** スギは 0.15〜0.3 m ごとに枝を出し、房の 1 枚目のカードも水平に揃えずに傾けて、上下の房を重ねる。
 - **広葉樹の低木は、ハイマツと色で見分けがつくようにする。** ハイマツは暗い青緑で艶がなく、ミヤマハンノキは明るい黄緑で艶がある（ラフネス 0.45）。遠景で広葉樹の塊が明るく浮くのが、実際の森林限界付近の見え方。
 - カードを小さくしたら、間隔も比例して詰めて覆い方を保つ（`STEM_SHOOT_SPACING` / `BRANCH_SHOOT_SPACING` はカードの長さに比例）。枝の節の間にも置けるよう、枝の長さに沿って連続に配置する。
 
@@ -126,6 +132,8 @@
 - `blender -b --factory-startup --python-exit-code 1 --python tools/blender/make_oshirabiso.py -- --out data/Models/Oshirabiso`
 - `blender -b --factory-startup --python-exit-code 1 --python tools/blender/make_miyamahannoki.py -- --out data/Models/Miyamahannoki`
 - `blender -b --factory-startup --python-exit-code 1 --python tools/blender/make_sasa.py -- --out data/Models/Sasa`
+- `blender -b --factory-startup --python-exit-code 1 --python tools/blender/make_sugi.py -- --out data/Models/Sugi`
+- `blender -b --factory-startup --python-exit-code 1 --python tools/blender/make_buna.py -- --out data/Models/Buna`
 - 植物の種類に依らない部品（引数、PNG、広葉樹の葉を描く画布 `LeafCanvas`、筒、枝の伸ばし方、樹冠の法線、芯、マテリアル、FBX、アセットの書き出し）は `vegetation.py` に置き、種類ごとのスクリプトはテクスチャと形の作り方だけを持つ。新しい植物もこの形で足す。
 - 共通部分を変えたら、既存の植物の出力が変わらないことを確かめる（テクスチャのハッシュ、三角形数、FBX を読んだ寸法を前後で比べる）。
 - テクスチャ・FBX・`.blend` は毎回作り直す。**既存の .tgmat / .tgmodel / .meta は上書きしない**（UID と手で直した値を保つ）。ただし .tgmodel のマテリアルの並びが足りないときは、足りない分だけ書き足す。
