@@ -923,7 +923,7 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                                          defaults.ambientOcclusion, nullptr, "%.2f");
         }
         if (!isShape && !isLiquid && !pathUv) {
-            changed |= ui::PropertyFloat("UV スケール", &layer.uvScale, 0.25f, 16.0f,
+            changed |= ui::PropertyFloat("UV スケール", &layer.uvScale, 0.25f, 32.0f,
                                          defaults.uvScale,
                                          "このレイヤーの模様を何回並べるか", "%.2f", 0, 0.25f);
         }
