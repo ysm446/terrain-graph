@@ -2,6 +2,7 @@
 
 #include <Windows.h>
 
+#include <chrono>
 #include <cstdarg>
 #include <cstdio>
 
@@ -20,9 +21,16 @@ const char* LevelTag(LogLevel level) {
     return "[?] ";
 }
 
+// 起動からの経過秒。起動や読み込みのどこに時間がかかっているかを stderr /
+// デバッガ出力から追えるようにする（UI へ渡す本文には付けない）。
+double ElapsedSeconds() {
+    static const auto start = std::chrono::steady_clock::now();
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+}
+
 void WriteLine(const char* tag, const char* body) {
     char line[2048];
-    std::snprintf(line, sizeof(line), "%s%s\n", tag, body);
+    std::snprintf(line, sizeof(line), "[%8.3f] %s%s\n", ElapsedSeconds(), tag, body);
     ::OutputDebugStringA(line);
     std::fputs(line, stderr);
 }

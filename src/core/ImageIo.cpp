@@ -5,9 +5,15 @@
 #include "core/Log.h"
 
 #include <algorithm>
+#include <cstdarg>
 #include <cstdlib>
 #include <fstream>
+#include <future>
+#include <mutex>
+#include <semaphore>
 #include <string>
+#include <thread>
+#include <unordered_map>
 #include <vector>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -82,15 +88,115 @@ bool SavePng(const std::filesystem::path& path, uint32_t width, uint32_t height,
     return true;
 }
 
+
+std::string FormatMessage(const char* fmt, ...) {
+    char body[1920];
+    va_list args;
+    va_start(args, fmt);
+    std::vsnprintf(body, sizeof(body), fmt, args);
+    va_end(args);
+    return body;
+}
+
 }  // namespace
 
-bool LoadLdrImage(const std::filesystem::path& path, LdrImage& outImage) {
+// 先読みからも呼ぶので無名名前空間の外で宣言する（定義は下）。
+bool DecodeLdrImage(const std::filesystem::path& path, LdrImage& outImage, std::string& message);
+bool DecodeHdrImage(const std::filesystem::path& path, HdrImage& outImage, std::string& message);
+bool DecodeExrImage(const std::filesystem::path& path, HdrImage& outImage, std::string& message);
+
+namespace {
+
+// --- 先読み --------------------------------------------------------------
+//
+// シーンには数十枚の 2K〜4K の画像があり、1 枚ずつ順に読むと EXR のデコードだけで
+// 数秒かかる。先にパスをまとめて渡しておくと裏でデコードし、後の Load* が
+// その結果を受け取る。ログは受け取った側（メインスレッド）で出す。
+// デコードは stb / tinyexr のメモリ API を別々の入力で呼ぶだけなので並列に走らせてよい。
+struct PrefetchedImage {
+    bool ok = false;
+    bool hdr = false;  // .hdr / .exr は HdrImage、それ以外は LdrImage
+    LdrImage ldr;
+    HdrImage hdrImage;
+    std::string message;
+};
+
+std::mutex g_prefetchMutex;
+std::unordered_map<std::wstring, std::shared_future<std::shared_ptr<PrefetchedImage>>> g_prefetched;
+
+std::wstring PrefetchKey(const std::filesystem::path& path) {
+    std::error_code error;
+    const auto absolute = std::filesystem::absolute(path, error);
+    return (error ? path : absolute).lexically_normal().wstring();
+}
+
+std::wstring LowerExtension(const std::filesystem::path& path) {
+    auto ext = path.extension().wstring();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
+    return ext;
+}
+
+// 先読みした結果があれば取り出す（1 回きり）。hdr は呼び出し側が期待する型。
+std::shared_ptr<PrefetchedImage> TakePrefetched(const std::filesystem::path& path, bool hdr) {
+    std::shared_future<std::shared_ptr<PrefetchedImage>> future;
+    {
+        std::lock_guard<std::mutex> lock(g_prefetchMutex);
+        const auto found = g_prefetched.find(PrefetchKey(path));
+        if (found == g_prefetched.end()) return nullptr;
+        future = found->second;
+        g_prefetched.erase(found);
+    }
+    auto image = future.get();
+    return image && image->hdr == hdr ? image : nullptr;
+}
+
+}  // namespace
+
+void PrefetchImages(const std::vector<std::filesystem::path>& paths) {
+    // 同時に走らせる数は CPU のコア数まで。1 枚ずつスレッドを作るが、デコードが
+    // 数百 ms なので生成の費用は無視できる。
+    static std::counting_semaphore<64> slots(
+        static_cast<std::ptrdiff_t>(std::clamp(std::thread::hardware_concurrency(), 2u, 64u)));
+    std::lock_guard<std::mutex> lock(g_prefetchMutex);
+    for (const auto& path : paths) {
+        const auto key = PrefetchKey(path);
+        if (key.empty() || g_prefetched.contains(key)) continue;
+        std::error_code error;
+        if (!std::filesystem::is_regular_file(path, error)) continue;
+        g_prefetched.emplace(key, std::async(std::launch::async, [path]() {
+            slots.acquire();
+            auto image = std::make_shared<PrefetchedImage>();
+            const auto ext = LowerExtension(path);
+            image->hdr = ext == L".hdr" || ext == L".exr";
+            if (!image->hdr) image->ok = DecodeLdrImage(path, image->ldr, image->message);
+            else if (ext == L".exr") image->ok = DecodeExrImage(path, image->hdrImage, image->message);
+            else image->ok = DecodeHdrImage(path, image->hdrImage, image->message);
+            slots.release();
+            return image;
+        }).share());
+    }
+}
+
+void DiscardPrefetchedImages() {
+    std::unordered_map<std::wstring, std::shared_future<std::shared_ptr<PrefetchedImage>>> pending;
+    {
+        std::lock_guard<std::mutex> lock(g_prefetchMutex);
+        pending.swap(g_prefetched);
+    }
+    // 走っているデコードは終わるまで待つ（結果は捨てる）。
+    for (auto& [key, future] : pending) future.wait();
+}
+
+namespace {
+}  // namespace
+
+bool DecodeLdrImage(const std::filesystem::path& path, LdrImage& outImage, std::string& message) {
     outImage = LdrImage{};
 
     const std::string utf8Path = ToUtf8Display(path);
     const std::vector<uint8_t> bytes = ReadFileBytes(path);
     if (bytes.empty()) {
-        TG_LOG_ERROR("画像を読み込めません: %s (ファイルを開けない)", utf8Path.c_str());
+        message = FormatMessage("画像を読み込めません: %s (ファイルを開けない)", utf8Path.c_str());
         return false;
     }
 
@@ -100,7 +206,7 @@ bool LoadLdrImage(const std::filesystem::path& path, LdrImage& outImage) {
     stbi_uc* data = ::stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()),
                                             &width, &height, &channels, 4);
     if (data == nullptr) {
-        TG_LOG_ERROR("画像を読み込めません: %s (%s)", utf8Path.c_str(), ::stbi_failure_reason());
+        message = FormatMessage("画像を読み込めません: %s (%s)", utf8Path.c_str(), ::stbi_failure_reason());
         return false;
     }
 
@@ -109,7 +215,7 @@ bool LoadLdrImage(const std::filesystem::path& path, LdrImage& outImage) {
     outImage.pixels.assign(data, data + static_cast<size_t>(width) * height * 4);
     ::stbi_image_free(data);
 
-    TG_LOG_INFO("画像を読み込みました: %s (%d x %d, %d ch)", utf8Path.c_str(), width, height,
+    message = FormatMessage("画像を読み込みました: %s (%d x %d, %d ch)", utf8Path.c_str(), width, height,
                 channels);
     return true;
 }
@@ -145,13 +251,13 @@ float MedianSkyLuminance(const HdrImage& image) {
     return samples[middle];
 }
 
-bool LoadHdrImage(const std::filesystem::path& path, HdrImage& outImage) {
+bool DecodeHdrImage(const std::filesystem::path& path, HdrImage& outImage, std::string& message) {
     outImage = HdrImage{};
 
     const std::string utf8Path = ToUtf8Display(path);
     const std::vector<uint8_t> bytes = ReadFileBytes(path);
     if (bytes.empty()) {
-        TG_LOG_ERROR("HDR 画像を読み込めません: %s (ファイルを開けない)", utf8Path.c_str());
+        message = FormatMessage("HDR 画像を読み込めません: %s (ファイルを開けない)", utf8Path.c_str());
         return false;
     }
 
@@ -161,7 +267,7 @@ bool LoadHdrImage(const std::filesystem::path& path, HdrImage& outImage) {
     float* data = ::stbi_loadf_from_memory(bytes.data(), static_cast<int>(bytes.size()),
                                            &width, &height, &channels, 4);
     if (data == nullptr) {
-        TG_LOG_ERROR("HDR 画像を読み込めません: %s (%s)", utf8Path.c_str(), ::stbi_failure_reason());
+        message = FormatMessage("HDR 画像を読み込めません: %s (%s)", utf8Path.c_str(), ::stbi_failure_reason());
         return false;
     }
 
@@ -170,18 +276,18 @@ bool LoadHdrImage(const std::filesystem::path& path, HdrImage& outImage) {
     outImage.pixels.assign(data, data + static_cast<size_t>(width) * height * 4);
     ::stbi_image_free(data);
 
-    TG_LOG_INFO("HDR 画像を読み込みました: %s (%d x %d, %d ch)", utf8Path.c_str(), width, height,
+    message = FormatMessage("HDR 画像を読み込みました: %s (%d x %d, %d ch)", utf8Path.c_str(), width, height,
                 channels);
     return true;
 }
 
-bool LoadExrImage(const std::filesystem::path& path, HdrImage& outImage) {
+bool DecodeExrImage(const std::filesystem::path& path, HdrImage& outImage, std::string& message) {
     outImage = HdrImage{};
 
     const std::string utf8Path = ToUtf8Display(path);
     const std::vector<uint8_t> bytes = ReadFileBytes(path);
     if (bytes.empty()) {
-        TG_LOG_ERROR("EXR を読み込めません: %s (ファイルを開けない)", utf8Path.c_str());
+        message = FormatMessage("EXR を読み込めません: %s (ファイルを開けない)", utf8Path.c_str());
         return false;
     }
 
@@ -193,7 +299,7 @@ bool LoadExrImage(const std::filesystem::path& path, HdrImage& outImage) {
     const int result =
         ::LoadEXRFromMemory(&data, &width, &height, bytes.data(), bytes.size(), &error);
     if (result != TINYEXR_SUCCESS) {
-        TG_LOG_ERROR("EXR を読み込めません: %s (%s)", utf8Path.c_str(),
+        message = FormatMessage("EXR を読み込めません: %s (%s)", utf8Path.c_str(),
                      (error != nullptr) ? error : "原因不明");
         if (error != nullptr) {
             ::FreeEXRErrorMessage(error);
@@ -206,7 +312,7 @@ bool LoadExrImage(const std::filesystem::path& path, HdrImage& outImage) {
     outImage.pixels.assign(data, data + static_cast<size_t>(width) * height * 4);
     ::free(data);
 
-    TG_LOG_INFO("EXR を読み込みました: %s (%d x %d)", utf8Path.c_str(), width, height);
+    message = FormatMessage("EXR を読み込みました: %s (%d x %d)", utf8Path.c_str(), width, height);
     return true;
 }
 
@@ -258,6 +364,48 @@ bool SaveExr(const std::filesystem::path& path, uint32_t width, uint32_t height,
     TG_LOG_INFO("EXR を書き出しました: %s (%u x %u, %d ch)", ToUtf8Display(path).c_str(), width,
                 height, channels);
     return true;
+}
+
+bool LoadLdrImage(const std::filesystem::path& path, LdrImage& outImage) {
+    std::string message;
+    bool ok = false;
+    if (const auto prefetched = TakePrefetched(path, false)) {
+        ok = prefetched->ok;
+        outImage = std::move(prefetched->ldr);
+        message = std::move(prefetched->message);
+    } else {
+        ok = DecodeLdrImage(path, outImage, message);
+    }
+    if (ok) TG_LOG_INFO("%s", message.c_str()); else TG_LOG_ERROR("%s", message.c_str());
+    return ok;
+}
+
+bool LoadHdrImage(const std::filesystem::path& path, HdrImage& outImage) {
+    std::string message;
+    bool ok = false;
+    if (const auto prefetched = TakePrefetched(path, true)) {
+        ok = prefetched->ok;
+        outImage = std::move(prefetched->hdrImage);
+        message = std::move(prefetched->message);
+    } else {
+        ok = DecodeHdrImage(path, outImage, message);
+    }
+    if (ok) TG_LOG_INFO("%s", message.c_str()); else TG_LOG_ERROR("%s", message.c_str());
+    return ok;
+}
+
+bool LoadExrImage(const std::filesystem::path& path, HdrImage& outImage) {
+    std::string message;
+    bool ok = false;
+    if (const auto prefetched = TakePrefetched(path, true)) {
+        ok = prefetched->ok;
+        outImage = std::move(prefetched->hdrImage);
+        message = std::move(prefetched->message);
+    } else {
+        ok = DecodeExrImage(path, outImage, message);
+    }
+    if (ok) TG_LOG_INFO("%s", message.c_str()); else TG_LOG_ERROR("%s", message.c_str());
+    return ok;
 }
 
 }  // namespace tg

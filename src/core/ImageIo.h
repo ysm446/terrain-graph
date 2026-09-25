@@ -45,6 +45,14 @@ bool LoadHdrImage(const std::filesystem::path& path, HdrImage& outImage);
 // Megascans のテクスチャは EXR で配られることが多い。
 bool LoadExrImage(const std::filesystem::path& path, HdrImage& outImage);
 
+// 画像をまとめて裏で先読みする。この後の LoadLdrImage / LoadHdrImage / LoadExrImage は、
+// 同じパスなら先読みした結果を受け取る（1 回取り出したら捨てる）。
+// シーンを開くときのように、読む画像が先に分かっている場面で使う。
+// 型は拡張子で決める（.hdr / .exr は HDR、それ以外は LDR）。無いファイルは無視する。
+void PrefetchImages(const std::vector<std::filesystem::path>& paths);
+// 先読みしたまま受け取られなかった結果を捨てる（走っている分は終わるまで待つ）。
+void DiscardPrefetchedImages();
+
 // RGBA8 のピクセル列を PNG として保存する。rowPitch はバイト単位。
 bool SaveRgba8Png(const std::filesystem::path& path, uint32_t width, uint32_t height,
                   uint32_t rowPitch, const uint8_t* pixels);

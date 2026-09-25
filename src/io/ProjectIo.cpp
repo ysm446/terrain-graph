@@ -2943,6 +2943,15 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
     std::unordered_map<int, compositor::TextureId> textureIds;
     if (const json* textures = FindMember(document, "textures");
         textures != nullptr && textures->is_array()) {
+        // 画像は先にまとめて裏でデコードしておく。1 枚ずつ順に読むと、2K〜4K の EXR が
+        // 数十枚あるシーンでは数秒かかる（読み込み時間の大半）。
+        std::vector<fs::path> prefetch;
+        for (const json& node : *textures) {
+            if (!node.is_object() || ReadInt(node, "id", 0) <= 0) continue;
+            const fs::path texturePath = ResolvePath(ReadString(node, "path"), baseDir);
+            if (!texturePath.empty()) prefetch.push_back(texturePath);
+        }
+        PrefetchImages(prefetch);
         for (const json& node : *textures) {
             if (!node.is_object()) {
                 continue;
@@ -2972,6 +2981,8 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
                 entry->name = name;
             }
         }
+        // 受け取られなかった先読み（リンク切れ等）を捨てる。
+        DiscardPrefetchedImages();
     }
     const TextureReader readTexture = [&textureIds](const json& node) {
         if (!node.is_number_integer()) {

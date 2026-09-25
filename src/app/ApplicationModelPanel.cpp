@@ -7,6 +7,7 @@
 #include "app/Application.h"
 #include "app/ApplicationUiHelpers.h"
 #include "core/FileDialog.h"
+#include "core/ImageIo.h"
 #include "core/Log.h"
 #include "io/AssetRelations.h"
 #include "ui/UiStyle.h"
@@ -299,7 +300,18 @@ void Application::ProcessImpostorWork() {
         MarkDocumentChanged(false);
     }
     // 焼いた画像を GPU へ（読み込み済みなら何もしない）。
+    // まだ読んでいないモデルの画像（3072² の PNG が 1 モデル 2〜3 枚）は先にまとめて
+    // 裏でデコードしておく。順に読むと数十本の木で数秒かかる。
+    std::vector<std::filesystem::path> prefetch;
+    for (const auto& asset : m_models) {
+        if (!asset.impostor.baked || m_impostors.Find(asset.id) != nullptr) continue;
+        prefetch.push_back(asset.impostor.colorPath);
+        prefetch.push_back(asset.impostor.normalPath);
+        if (!asset.impostor.variationPath.empty()) prefetch.push_back(asset.impostor.variationPath);
+    }
+    if (!prefetch.empty()) PrefetchImages(prefetch);
     for (const auto& asset : m_models) m_impostors.Sync(m_device, m_pipelineCache, asset);
+    if (!prefetch.empty()) DiscardPrefetchedImages();
 }
 void Application::RenderModelPreviews(ID3D12GraphicsCommandList* commandList) {
     for (const auto& asset : m_models) {
