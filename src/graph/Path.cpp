@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace tg::graph {
@@ -11,33 +12,36 @@ float Lerp(float a, float b, float t) {
     return a + (b - a) * t;
 }
 
+// ID で引く。点とエッジは ID を振った順に足すので、ふつうは ID の昇順に並んでいる。
+// 二分探索で当たればそれを返し、外れたら（並びが崩れているとき）端から探す。
+// 数千の点を毎フレーム引くので、全件探索だと編集中の表示が重くなる。
+template <typename T>
+const T* FindById(const std::vector<T>& items, PathElementId id) {
+    const auto it = std::lower_bound(items.begin(), items.end(), id,
+                                     [](const T& item, PathElementId key) { return item.id < key; });
+    if (it != items.end() && it->id == id) {
+        return &*it;
+    }
+    for (const T& item : items) {
+        if (item.id == id) {
+            return &item;
+        }
+    }
+    return nullptr;
+}
+
 }  // namespace
 
 const PathPoint* PathSettings::FindPoint(PathElementId id) const {
-    for (const PathPoint& point : points) {
-        if (point.id == id) {
-            return &point;
-        }
-    }
-    return nullptr;
+    return FindById(points, id);
 }
 
 PathPoint* PathSettings::FindPoint(PathElementId id) {
-    for (PathPoint& point : points) {
-        if (point.id == id) {
-            return &point;
-        }
-    }
-    return nullptr;
+    return const_cast<PathPoint*>(FindById(points, id));
 }
 
 const PathEdge* PathSettings::FindEdge(PathElementId id) const {
-    for (const PathEdge& edge : edges) {
-        if (edge.id == id) {
-            return &edge;
-        }
-    }
-    return nullptr;
+    return FindById(edges, id);
 }
 
 const PathEdge* PathSettings::FindEdgeBetween(PathElementId a, PathElementId b) const {
@@ -542,19 +546,43 @@ PathElementId OtherEndOf(const PathEdge& edge, PathElementId pointId) {
     return (edge.from == pointId) ? edge.to : edge.from;
 }
 
-// pointId に付いているエッジのうち、まだ使っていないもの。
-const PathEdge* NextUnvisitedEdge(const PathSettings& path, PathElementId pointId,
-                                  const std::unordered_set<PathElementId>& visited) {
+// 点ごとの付いているエッジ（path.edges の並び順）。鎖を辿るたびに全エッジを
+// 見て回らないよう、先に 1 回だけ作る。
+using PathAdjacency = std::unordered_map<PathElementId, std::vector<const PathEdge*>>;
+
+PathAdjacency BuildAdjacency(const PathSettings& path) {
+    PathAdjacency adjacency;
     for (const PathEdge& edge : path.edges) {
-        if ((edge.from == pointId || edge.to == pointId) && !visited.contains(edge.id)) {
-            return &edge;
+        adjacency[edge.from].push_back(&edge);
+        if (edge.to != edge.from) {
+            adjacency[edge.to].push_back(&edge);
+        }
+    }
+    return adjacency;
+}
+
+size_t AdjacentCount(const PathAdjacency& adjacency, PathElementId pointId) {
+    const auto it = adjacency.find(pointId);
+    return (it == adjacency.end()) ? 0 : it->second.size();
+}
+
+// pointId に付いているエッジのうち、まだ使っていないもの。
+const PathEdge* NextUnvisitedEdge(const PathAdjacency& adjacency, PathElementId pointId,
+                                  const std::unordered_set<PathElementId>& visited) {
+    const auto it = adjacency.find(pointId);
+    if (it == adjacency.end()) {
+        return nullptr;
+    }
+    for (const PathEdge* edge : it->second) {
+        if (!visited.contains(edge->id)) {
+            return edge;
         }
     }
     return nullptr;
 }
 
 // start から edge を通って、エッジが 2 本だけの点を辿り続ける。
-PathStrand WalkStrand(const PathSettings& path, PathElementId start, const PathEdge* edge,
+PathStrand WalkStrand(const PathAdjacency& adjacency, PathElementId start, const PathEdge* edge,
                       std::unordered_set<PathElementId>& visited) {
     PathStrand strand;
     strand.points.push_back(start);
@@ -568,10 +596,10 @@ PathStrand WalkStrand(const PathSettings& path, PathElementId start, const PathE
             strand.closed = true;
             break;
         }
-        if (path.EdgeCount(current) != 2) {
+        if (AdjacentCount(adjacency, current) != 2) {
             break;
         }
-        edge = NextUnvisitedEdge(path, current, visited);
+        edge = NextUnvisitedEdge(adjacency, current, visited);
     }
     return strand;
 }
@@ -720,13 +748,14 @@ bool PastePathClip(PathSettings& path, const PathClip& clip, float du, float dv,
 std::vector<PathStrand> BuildPathStrands(const PathSettings& path) {
     std::vector<PathStrand> strands;
     std::unordered_set<PathElementId> visited;
+    const PathAdjacency adjacency = BuildAdjacency(path);
     // 端と分岐から出る鎖。
     for (const PathPoint& point : path.points) {
-        if (path.EdgeCount(point.id) == 2) {
+        if (AdjacentCount(adjacency, point.id) == 2) {
             continue;
         }
-        while (const PathEdge* edge = NextUnvisitedEdge(path, point.id, visited)) {
-            strands.push_back(WalkStrand(path, point.id, edge, visited));
+        while (const PathEdge* edge = NextUnvisitedEdge(adjacency, point.id, visited)) {
+            strands.push_back(WalkStrand(adjacency, point.id, edge, visited));
         }
     }
     // 残りは分岐の無い輪。
@@ -734,7 +763,7 @@ std::vector<PathStrand> BuildPathStrands(const PathSettings& path) {
         if (visited.contains(edge.id)) {
             continue;
         }
-        strands.push_back(WalkStrand(path, edge.from, &edge, visited));
+        strands.push_back(WalkStrand(adjacency, edge.from, &edge, visited));
     }
     return strands;
 }

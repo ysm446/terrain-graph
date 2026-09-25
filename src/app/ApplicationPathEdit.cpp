@@ -48,6 +48,7 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace tg {
@@ -115,14 +116,19 @@ struct PathScreenCache {
     std::vector<PathScreenEdge> edges;
     std::vector<graph::PathStrand> strands;
     std::vector<PathScreenCurve> curves;  // strands と同じ並び。直線の鎖は空
+    // 引くための表。点が数千あると、毎フレームの全件探索で編集中の表示が重くなる。
+    std::unordered_map<graph::PathElementId, size_t> pointIndex;  // 点の ID → points の添字
+    std::unordered_map<graph::PathElementId, size_t> strandOfEdge;  // エッジの ID → strands の添字
+    std::vector<bool> strandIsCurve;  // strands と同じ並び。曲線の鎖（エッジはガイド）なら真
 
     const PathScreenPoint* Find(graph::PathElementId id) const {
-        for (const PathScreenPoint& point : points) {
-            if (point.id == id) {
-                return &point;
-            }
-        }
-        return nullptr;
+        const auto it = pointIndex.find(id);
+        return (it == pointIndex.end()) ? nullptr : &points[it->second];
+    }
+    // エッジが曲線の鎖のガイドか。
+    bool IsGuideEdge(graph::PathElementId edgeId) const {
+        const auto it = strandOfEdge.find(edgeId);
+        return it != strandOfEdge.end() && strandIsCurve[it->second];
     }
 };
 
@@ -132,14 +138,25 @@ PathScreenCache BuildPathScreenCache(const graph::PathSettings& path, const XMMA
                                      const WorldFn& worldOf, float sizeMeters) {
     PathScreenCache cache;
     cache.points.reserve(path.points.size());
+    cache.pointIndex.reserve(path.points.size());
     for (const graph::PathPoint& point : path.points) {
         const ProjectedPoint projected = ProjectToViewport(
             viewProjection, worldOf(point.u, point.v, point.heightOffsetMeters), viewportMin,
             size);
+        cache.pointIndex.emplace(point.id, cache.points.size());
         cache.points.push_back({point.id, projected.screen, projected.visible});
     }
     // 鎖を先に導出しておく（エッジがガイドか結果かで描き方が変わる）。
     cache.strands = graph::BuildPathStrands(path);
+    cache.strandOfEdge.reserve(path.edges.size());
+    cache.strandIsCurve.resize(cache.strands.size());
+    for (size_t i = 0; i < cache.strands.size(); ++i) {
+        cache.strandIsCurve[i] =
+            graph::StrandCurve(path, cache.strands[i], nullptr, nullptr) != graph::PathCurve::Line;
+        for (const graph::PathElementId edgeId : cache.strands[i].edges) {
+            cache.strandOfEdge.emplace(edgeId, i);
+        }
+    }
     cache.edges.reserve(path.edges.size());
     for (const graph::PathEdge& edge : path.edges) {
         const graph::PathPoint* a = path.FindPoint(edge.from);
@@ -156,10 +173,7 @@ PathScreenCache BuildPathScreenCache(const graph::PathSettings& path, const XMMA
         // **曲線の鎖のエッジはガイド（制御の骨組み）なので、地形に沿わせず点と点を
         // 3D の直線で結ぶ。** 結果である曲線のほうが地形に沿う。役割の違いが一目で分かり、
         // ハイトを引かないぶん軽い。直線の鎖のエッジはそれ自体が結果なので地形に沿わせる。
-        const graph::PathStrand* strand = graph::FindStrandOfEdge(cache.strands, edge.id);
-        const bool guide =
-            strand != nullptr &&
-            graph::StrandCurve(path, *strand, nullptr, nullptr) != graph::PathCurve::Line;
+        const bool guide = cache.IsGuideEdge(edge.id);
         // 制御点列（from、経路の内部点…、to）。経路が古ければ両端だけ。
         // t は UV の道のりの割合（点の挿入がこれを使う）。
         const std::vector<graph::PathPoint> control = graph::PathEdgeControlPoints(path, edge);
@@ -216,8 +230,7 @@ PathScreenCache BuildPathScreenCache(const graph::PathSettings& path, const XMMA
                                            ? nullptr
                                            : path.FindEdge(cache.strands[i].edges.front());
         const bool meander = first != nullptr && first->meanderMeters > 0.0f;
-        if (!meander &&
-            graph::StrandCurve(path, cache.strands[i], nullptr, nullptr) == graph::PathCurve::Line) {
+        if (!meander && !cache.strandIsCurve[i]) {
             continue;
         }
         constexpr int kSamplesPerSpan = 12;
@@ -231,6 +244,99 @@ PathScreenCache BuildPathScreenCache(const graph::PathSettings& path, const XMMA
         }
     }
     return cache;
+}
+
+// 入力処理と描画は同じフレームに同じキャッシュを使う。点が数千あると作るだけで
+// 1 ms を超えるので、中身とカメラが同じなら 2 回目は作らずに使い回す。
+// 使い回すのは同じフレームの中だけ（地形の高さはフレームをまたぐと変わりうる）。
+struct SharedPathScreenCache {
+    int frame = -1;
+    uint64_t key = 0;
+    PathScreenCache cache;
+};
+
+SharedPathScreenCache& SharedScreenCache() {
+    static SharedPathScreenCache shared;
+    return shared;
+}
+
+// 画面上の形に効くものだけを混ぜたハッシュ（FNV-1a）。
+class PathCacheHasher {
+public:
+    template <typename T>
+    void Add(const T& value) {
+        const auto* bytes = reinterpret_cast<const unsigned char*>(&value);
+        for (size_t i = 0; i < sizeof(T); ++i) {
+            m_hash = (m_hash ^ bytes[i]) * 1099511628211ull;
+        }
+    }
+    uint64_t Value() const { return m_hash; }
+
+private:
+    uint64_t m_hash = 14695981039346656037ull;
+};
+
+uint64_t PathScreenCacheKey(const graph::PathSettings& path, const XMMATRIX& viewProjection,
+                            const ImVec2& viewportMin, const ImVec2& size, float planeSize,
+                            float displacementScale) {
+    PathCacheHasher hasher;
+    XMFLOAT4X4 matrix;
+    XMStoreFloat4x4(&matrix, viewProjection);
+    hasher.Add(matrix);
+    hasher.Add(viewportMin.x);
+    hasher.Add(viewportMin.y);
+    hasher.Add(size.x);
+    hasher.Add(size.y);
+    hasher.Add(planeSize);
+    hasher.Add(displacementScale);
+    hasher.Add(path.points.size());
+    for (const graph::PathPoint& point : path.points) {
+        hasher.Add(point.id);
+        hasher.Add(point.u);
+        hasher.Add(point.v);
+        hasher.Add(point.heightOffsetMeters);
+    }
+    hasher.Add(path.edges.size());
+    for (const graph::PathEdge& edge : path.edges) {
+        hasher.Add(edge.id);
+        hasher.Add(edge.from);
+        hasher.Add(edge.to);
+        hasher.Add(edge.curve);
+        hasher.Add(edge.rounding);
+        hasher.Add(edge.clothoidRatio);
+        hasher.Add(edge.meanderMeters);
+        hasher.Add(edge.meanderWavelengthMeters);
+        hasher.Add(edge.route);
+        hasher.Add(edge.routed);
+        hasher.Add(edge.routedFromU);
+        hasher.Add(edge.routedFromV);
+        hasher.Add(edge.routedToU);
+        hasher.Add(edge.routedToV);
+        hasher.Add(edge.waypoints.size());
+        for (const graph::PathRouteWaypoint& waypoint : edge.waypoints) {
+            hasher.Add(waypoint.u);
+            hasher.Add(waypoint.v);
+        }
+    }
+    return hasher.Value();
+}
+
+template <typename WorldFn>
+const PathScreenCache& AcquirePathScreenCache(const graph::PathSettings& path,
+                                              const XMMATRIX& viewProjection,
+                                              const ImVec2& viewportMin, const ImVec2& size,
+                                              float planeSize, float displacementScale,
+                                              const WorldFn& worldOf) {
+    SharedPathScreenCache& shared = SharedScreenCache();
+    const int frame = ImGui::GetFrameCount();
+    const uint64_t key =
+        PathScreenCacheKey(path, viewProjection, viewportMin, size, planeSize, displacementScale);
+    if (shared.frame != frame || shared.key != key) {
+        shared.cache = BuildPathScreenCache(path, viewProjection, viewportMin, size, worldOf, planeSize);
+        shared.frame = frame;
+        shared.key = key;
+    }
+    return shared.cache;
 }
 
 // 最寄りの点（半径内）。exclude は除外する点。
@@ -524,8 +630,9 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
     const auto worldOf = [this](float u, float v, float offset) {
         return PathWorldPosition(u, v, offset);
     };
-    const PathScreenCache cache =
-        BuildPathScreenCache(path, viewProjection, viewportMin, size, worldOf, m_renderer.PlaneSize());
+    const PathScreenCache& cache =
+        AcquirePathScreenCache(path, viewProjection, viewportMin, size, m_renderer.PlaneSize(),
+                               m_renderer.DisplacementScale(), worldOf);
 
     const ImVec2 mouse = io.MousePos;
     const bool mouseInside = itemHovered;
@@ -1024,8 +1131,9 @@ void Application::DrawPathOverlay(const graph::Node& node, const ImVec2& viewpor
     const auto worldOf = [this](float u, float v, float offset) {
         return PathWorldPosition(u, v, offset);
     };
-    const PathScreenCache cache =
-        BuildPathScreenCache(path, viewProjection, viewportMin, size, worldOf, m_renderer.PlaneSize());
+    const PathScreenCache& cache =
+        AcquirePathScreenCache(path, viewProjection, viewportMin, size, m_renderer.PlaneSize(),
+                               m_renderer.DisplacementScale(), worldOf);
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     drawList->PushClipRect(viewportMin, viewportMax, true);
@@ -1048,10 +1156,7 @@ void Application::DrawPathOverlay(const graph::Node& node, const ImVec2& viewpor
             std::find(state.selectedEdges.begin(), state.selectedEdges.end(), edge.id) !=
             state.selectedEdges.end();
         // 曲線の鎖のエッジはガイド。薄く細く描き、本線は曲線のほうに任せる。
-        const graph::PathStrand* strand = graph::FindStrandOfEdge(cache.strands, edge.id);
-        const bool guide =
-            strand != nullptr &&
-            graph::StrandCurve(path, *strand, nullptr, nullptr) != graph::PathCurve::Line;
+        const bool guide = cache.IsGuideEdge(edge.id);
         const ImU32 baseColor = guide ? IM_COL32(120, 200, 240, 110) : lineColor;
         const ImU32 color = snapping ? snapColor
                                      : ((hovered || selectedEdge) ? hoverColor : baseColor);

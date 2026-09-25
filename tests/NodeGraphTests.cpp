@@ -1469,6 +1469,26 @@ void RunNodeGraphTests() {
         noRoute.route = tg::graph::PathRoute::None;
         Check(tg::graph::ApplyPathEdgeStyle(*target, noRoute) && target->waypoints.empty(),
               "経路探索なしを貼ると内部点を捨てる");
+
+        // ID の検索は二分探索を使うが、並びが ID 順でなくても引ける。
+        tg::graph::PathSettings shuffled = path;
+        std::reverse(shuffled.points.begin(), shuffled.points.end());
+        std::reverse(shuffled.edges.begin(), shuffled.edges.end());
+        bool allFound = true;
+        for (const tg::graph::PathPoint& point : path.points) {
+            const tg::graph::PathPoint* found = shuffled.FindPoint(point.id);
+            allFound &= found != nullptr && found->id == point.id;
+        }
+        for (const tg::graph::PathEdge& edge : path.edges) {
+            const tg::graph::PathEdge* found = shuffled.FindEdge(edge.id);
+            allFound &= found != nullptr && found->id == edge.id;
+        }
+        Check(allFound && shuffled.FindPoint(path.nextId) == nullptr &&
+                  shuffled.FindEdge(path.nextId) == nullptr,
+              "FindPoint / FindEdge は並びが ID 順でなくても引け、無い ID は nullptr");
+        Check(tg::graph::BuildPathStrands(shuffled).size() ==
+                  tg::graph::BuildPathStrands(path).size(),
+              "BuildPathStrands は並びが変わっても同じ本数の鎖を作る");
     }
 
     Section("パス — 面の線分列と Mask Area");
