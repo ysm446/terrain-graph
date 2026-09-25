@@ -132,6 +132,13 @@ float SmoothMax(float a, float b, float k)
     return lerp(b, a, h) + k * h * (1.0f - h);
 }
 
+// 散布セルの座標を UV へ直す。マスク op のテクスチャは合成解像度と違うことがある
+// （Fluvial は独自の解像度を持つ）ので、マスクはテクセルではなく UV で読む。
+float2 ScatterCellToUv(float2 cell)
+{
+    return (float2(ScatterCellToTexel(cell)) + 0.5f) / float(ScatterResolution());
+}
+
 // 散布点の中心（散布セル座標）で配置マスクを読む。
 // **個体の中心 1 点だけ**を見る。テクセルごとに読むと、マスクの縁で個体が
 // 切り取られて形が崩れる（半分だけの半球が並ぶ）。
@@ -142,7 +149,7 @@ float SamplePlacementMask(float cellX, float cellZ)
         return 1.0f;
     }
     Texture2D<float> placement = ResourceDescriptorHeap[g_scatter.indices0.z];
-    return saturate(placement.Load(int3(ScatterCellToTexel(float2(cellX, cellZ)), 0)));
+    return saturate(placement.SampleLevel(g_samplerPointClamp, ScatterCellToUv(float2(cellX, cellZ)), 0.0f));
 }
 
 [numthreads(8, 8, 1)]
@@ -386,6 +393,6 @@ void CsPoints(uint3 id : SV_DispatchThreadID)
     if (g_scatter.attributes.y != kInvalidTextureIndex)
     {
         Texture2D<float> variation = ResourceDescriptorHeap[g_scatter.attributes.y];
-        attributes[address] = float4(saturate(variation.Load(int3(ScatterCellToTexel(center), 0))), 0, 0, 0);
+        attributes[address] = float4(saturate(variation.SampleLevel(g_samplerPointClamp, ScatterCellToUv(center), 0.0f)), 0, 0, 0);
     }
 }

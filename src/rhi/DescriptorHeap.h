@@ -30,7 +30,6 @@ public:
     DescriptorHandle At(uint32_t index) const;
 
     ID3D12DescriptorHeap* Heap() const { return m_heap.Get(); }
-    uint32_t Capacity() const { return m_capacity; }
     uint32_t DescriptorSize() const { return m_descriptorSize; }
 
 private:

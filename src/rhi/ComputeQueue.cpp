@@ -4,13 +4,6 @@
 #include "rhi/Device.h"
 
 namespace tg::rhi {
-namespace {
-
-uint64_t AlignUp(uint64_t value, uint64_t alignment) {
-    return (value + alignment - 1) & ~(alignment - 1);
-}
-
-}  // namespace
 
 bool ComputeQueue::Create(Device& device, uint64_t uploadBytes, const wchar_t* debugName) {
     Destroy(device);

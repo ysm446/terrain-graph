@@ -431,14 +431,4 @@ void ResourceAllocator::ReleaseDescriptors(GpuTexture& texture) {
     texture.dsv = DescriptorHandle{};
 }
 
-void ResourceAllocator::ReleaseDescriptors(GpuBuffer& buffer) {
-    if (m_srvHeap == nullptr) {
-        return;
-    }
-    m_srvHeap->Free(buffer.srv);
-    m_srvHeap->Free(buffer.uav);
-    buffer.srv = DescriptorHandle{};
-    buffer.uav = DescriptorHandle{};
-}
-
 }  // namespace tg::rhi

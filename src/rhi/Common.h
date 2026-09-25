@@ -17,6 +17,11 @@ using ComPtr = Microsoft::WRL::ComPtr<T>;
 // 同時に GPU が処理しうるフレーム数。スワップチェーンのバッファ数と一致させる。
 inline constexpr uint32_t kFrameCount = 3;
 
+// alignment は 2 冪であること（呼び出し側で確かめる）。
+inline uint64_t AlignUp(uint64_t value, uint64_t alignment) {
+    return (value + alignment - 1) & ~(alignment - 1);
+}
+
 inline constexpr DXGI_FORMAT kBackBufferFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
 
 // HRESULT を検査し、失敗ならログを出して false を返す。例外は投げない。

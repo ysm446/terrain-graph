@@ -153,6 +153,8 @@ bool ProjectWorkspace::Scan() {
         }
         m_knownUids[ToUtf8Portable(Absolute(target))] = uid;
     }
+    // 消えた ID への対応は捨てる（移動前のパスは移動先の ID が生きている間だけ追う）。
+    std::erase_if(m_knownUids, [&](const auto& entry) { return !m_paths.contains(entry.second); });
     return !error;
 }
 fs::path ProjectWorkspace::StartupScene() const {
@@ -256,6 +258,8 @@ bool ProjectWorkspace::SaveAsset(fs::path& path, const char* kind, json& body) {
     if (!WriteJson(path, body)) return false;
     path = Absolute(path);
     m_paths[uid] = path;
+    // 同じパスに前の ID が残っていると、次の Reference が移動先の別アセットへ付け替えてしまう。
+    m_knownUids[ToUtf8Portable(path)] = uid;
     return true;
 }
 fs::path ProjectWorkspace::FindIdenticalAsset(const char* kind, const json& body,

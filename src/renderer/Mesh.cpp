@@ -1,7 +1,5 @@
 #include "renderer/Mesh.h"
 
-#include "core/Log.h"
-
 #include <cstring>
 
 using namespace DirectX;
@@ -73,7 +71,6 @@ bool Mesh::Create(rhi::Device& device, const MeshData& data, const wchar_t* debu
     m_indexBufferView.SizeInBytes = static_cast<UINT>(indexBytes);
     m_indexBufferView.Format = DXGI_FORMAT_R32_UINT;
 
-    m_vertexCount = static_cast<uint32_t>(data.vertices.size());
     m_indexCount = static_cast<uint32_t>(data.indices.size());
     return true;
 }
@@ -90,7 +87,6 @@ void Mesh::Release(rhi::Device& device) {
     m_vertexBuffer = rhi::GpuBuffer{};
     m_indexBuffer = rhi::GpuBuffer{};
     m_indexCount = 0;
-    m_vertexCount = 0;
 }
 
 void Mesh::DrawIndirect(ID3D12GraphicsCommandList* list, ID3D12CommandSignature* signature,

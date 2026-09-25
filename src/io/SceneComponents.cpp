@@ -11,6 +11,41 @@ namespace tg::io {
 namespace fs = std::filesystem;
 using nlohmann::json;
 namespace {
+// 同じアセットのバックアップは直近の数世代だけ残す（保存のたびに増やさない）。
+constexpr size_t kComponentBackupsToKeep = 5;
+void PruneBackups(const fs::path& directory, const std::wstring& stem, const std::wstring& extension, const fs::path& justWritten) {
+    std::error_code error;
+    std::vector<std::pair<fs::file_time_type, fs::path>> backups;
+    for (const auto& entry : fs::directory_iterator(directory, error)) {
+        if (error || !entry.is_regular_file(error)) continue;
+        const auto name = entry.path().filename().wstring();
+        if (entry.path().extension().wstring() != extension) continue;
+        if (name != stem + extension && !name.starts_with(stem + L"_")) continue;
+        backups.emplace_back(entry.last_write_time(error), entry.path());
+    }
+    std::sort(backups.begin(), backups.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    for (size_t i = kComponentBackupsToKeep; i < backups.size(); ++i)
+        if (backups[i].second != justWritten) fs::remove(backups[i].second, error);
+}
+// コンポーネントの .assets にあるペイントのコピーのうち、本体から参照されていないものを消す。
+void PruneUnreferencedPaints(const ProjectWorkspace& workspace, const fs::path& component, const json& body) {
+    const auto directory = component.parent_path() / (component.stem().wstring() + L".assets");
+    std::error_code error;
+    if (!fs::is_directory(directory, error)) return;
+    std::set<fs::path> keep;
+    if (body.contains("paintMasks") && body["paintMasks"].is_array())
+        for (const auto& paint : body["paintMasks"])
+            if (paint.contains("source")) keep.insert(workspace.Resolve(paint["source"]).filename());
+    for (const auto& entry : fs::directory_iterator(directory, error)) {
+        if (error || !entry.is_regular_file(error)) continue;
+        auto file = entry.path();
+        const bool meta = file.extension() == L".meta";
+        if (meta) file.replace_extension();
+        if (!file.filename().wstring().starts_with(L"paint") || file.extension() != L".png") continue;
+        if (keep.contains(file.filename())) continue;
+        fs::remove(entry.path(), error);
+    }
+}
 bool Integer(const json& j) { return j.is_number_integer() && j >= 0 && j < 100000000; }
 bool GraphValid(const json& graph) {
     if (!graph.is_object() || !graph.contains("nodes") || !graph["nodes"].is_array() ||
@@ -265,8 +300,10 @@ bool SaveSceneComponents(ProjectWorkspace& workspace, const fs::path& scene, jso
         std::error_code error;
         if (fs::exists(item.path, error)) {
             if (!ProjectWorkspace::ReadJson(item.path, original)) return false;
-            const auto backup = workspace.UniquePath(workspace.Root() / L".terrain-graph/component-backups", ToUtf8Display(item.path.stem()), ToUtf8Portable(item.path.extension()).c_str());
+            const auto backupDirectory = workspace.Root() / L".terrain-graph/component-backups";
+            const auto backup = workspace.UniquePath(backupDirectory, ToUtf8Display(item.path.stem()), ToUtf8Portable(item.path.extension()).c_str());
             if (backup.empty() || !ProjectWorkspace::WriteJson(backup, original)) return false;
+            PruneBackups(backupDirectory, item.path.stem().wstring(), item.path.extension().wstring(), backup);
         }
         originals.emplace_back(item.path, original);
     }
@@ -310,6 +347,10 @@ bool SaveSceneComponents(ProjectWorkspace& workspace, const fs::path& scene, jso
             rollback(); return false;
         }
     }
+    // ここまで来れば戻すことはない。前回までにコピーしたペイントで、今回の本体から参照されなく
+    // なったものを消す（毎回 UniquePath で新しい名前へコピーするので、消さないと保存のたびに
+    // 増え続ける）。ロールバックの前に消すと、戻した本体が無いファイルを指す。
+    for (const auto& item : pending) PruneUnreferencedPaints(workspace, item.path, item.body);
     return true;
 }
 

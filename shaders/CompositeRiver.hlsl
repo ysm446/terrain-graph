@@ -549,8 +549,11 @@ void CsWaterNormal(uint3 dispatchThreadId : SV_DispatchThreadID)
     const float scale = g_river.params4.w;
     const float3 water = normalize(float3(-dx * scale, -dy * scale, 1.0f));
 
-    const float2 existing = normalTarget[texel];
-    normalTarget[texel] = lerp(existing, EncodeTangentNormal(water), cover);
+    // 被覆に応じて地形の法線を平坦へ寄せ、水面側も弱めてから RNM で合成する
+    // （CompositeLayer の重み付き合成と同じ形。lerp は使わない）。
+    const float3 existing = DecodeTangentNormal(normalTarget[texel]);
+    const float3 blended = ReorientNormal(FlattenNormal(existing, 1.0f - cover), FlattenNormal(water, cover));
+    normalTarget[texel] = EncodeTangentNormal(blended);
 }
 
 // --- マスク ------------------------------------------------------------------------

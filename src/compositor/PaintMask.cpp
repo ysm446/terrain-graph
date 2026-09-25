@@ -535,6 +535,10 @@ bool PaintMaskStore::Process(rhi::Device& device, rhi::PipelineCache& pipelineCa
 
     bool recorded = false;
     std::vector<rhi::GpuTexture> releaseAfterRecord;
+    const auto uavBarrier = [commandList](ID3D12Resource* resource) {
+        const D3D12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::UAV(resource);
+        commandList->ResourceBarrier(1, &barrier);
+    };
 
     for (Op& op : m_pending) {
         PaintMaskEntry* entry = FindMutable(op.target);
@@ -560,6 +564,10 @@ bool PaintMaskStore::Process(rhi::Device& device, rhi::PipelineCache& pipelineCa
                 commandList->SetComputeRoot32BitConstants(0, sizeof(constants) / sizeof(uint32_t),
                                                           &constants, 0);
                 commandList->Dispatch(DispatchCount(m_resolution), DispatchCount(m_resolution), 1);
+                // 同じマスクへ続けて描く（Fill → Stroke、同じフレームの複数ストローク）と
+                // 状態遷移は起きないので、UAV バリアで前のディスパッチの書き込みを待つ。
+                // ブラシは読み書き（read-modify-write）なので、無いと描画が欠ける。
+                uavBarrier(entry->texture.resource.Get());
                 recorded = true;
                 break;
             }
@@ -617,6 +625,7 @@ bool PaintMaskStore::Process(rhi::Device& device, rhi::PipelineCache& pipelineCa
                 commandList->SetComputeRoot32BitConstants(0, sizeof(constants) / sizeof(uint32_t),
                                                           &constants, 0);
                 commandList->Dispatch(DispatchCount(m_resolution), DispatchCount(m_resolution), 1);
+                uavBarrier(entry->texture.resource.Get());
                 recorded = true;
                 break;
             }

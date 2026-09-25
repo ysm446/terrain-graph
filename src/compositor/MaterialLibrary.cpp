@@ -58,10 +58,6 @@ uint32_t PackMaterialChannels(const MaterialAsset& asset) {
            PackChannel(asset.ambientOcclusion.channel, 2) | PackChannel(asset.height.channel, 3);
 }
 
-namespace {
-
-}  // namespace
-
 LayerMaterialGpu MaterialLibrary::CompileLayerMaterial(const MaterialAsset& asset, const TextureLibrary& textures, std::string& error) const {
     LayerMaterialGpu result;
     error.clear();

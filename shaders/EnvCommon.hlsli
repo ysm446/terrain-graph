@@ -5,7 +5,6 @@
 
 // キューブマップの面の並びは D3D の規約に従う。
 //   0: +X, 1: -X, 2: +Y, 3: -Y, 4: +Z, 5: -Z
-static const uint kCubeFaceCount = 6;
 
 // 面インデックスと面内 UV（[-1, 1]、v は下向き）から方向ベクトルを得る。
 float3 CubeFaceDirection(uint face, float2 uv)

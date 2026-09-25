@@ -79,6 +79,19 @@ find_package(nlohmann_json CONFIG REQUIRED)
 find_package(tinyexr CONFIG REQUIRED)
 find_package(unofficial-imgui-node-editor CONFIG REQUIRED)
 
+# --- 全ターゲット共通のコンパイル設定 ---------------------------------------
+# 警告レベル、文字コード、Windows ヘッダの抑制はアプリとテストで揃える。
+# /MP で 1 プロジェクト内の翻訳単位を並列にコンパイルする（VS ジェネレータは
+# 既定でプロジェクト単位にしか並列化しない）。
+add_library(tg_common_options INTERFACE)
+target_compile_options(tg_common_options INTERFACE /W4 /permissive- /utf-8 /Zc:preprocessor /MP)
+target_compile_definitions(tg_common_options INTERFACE
+    UNICODE
+    _UNICODE
+    WIN32_LEAN_AND_MEAN
+    NOMINMAX
+)
+
 set(tg_sources
     src/rhi/TextureReadback.cpp
     src/io/AssetRelations.cpp
@@ -216,10 +229,6 @@ target_include_directories(terrain_graph PRIVATE
 )
 
 target_compile_definitions(terrain_graph PRIVATE
-    UNICODE
-    _UNICODE
-    WIN32_LEAN_AND_MEAN
-    NOMINMAX
     # PIX マーカーを有効にする。未定義だと pix3.h の呼び出しが消え、
     # Release で PIX による計測ができなくなる。
     USE_PIX
@@ -235,9 +244,8 @@ target_compile_definitions(terrain_graph PRIVATE
     $<$<CONFIG:Debug>:TG_DEBUG=1>
 )
 
-target_compile_options(terrain_graph PRIVATE /W4 /permissive- /utf-8 /Zc:preprocessor)
-
 target_link_libraries(terrain_graph PRIVATE
+    tg_common_options
     ufbx::ufbx
     Microsoft::DirectX-Headers
     Microsoft::DirectX-Guids
@@ -329,10 +337,10 @@ add_executable(terrain_graph_tests
 )
 
 target_include_directories(terrain_graph_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_compile_options(terrain_graph_tests PRIVATE /W4 /permissive- /utf-8 /Zc:preprocessor)
-target_link_libraries(terrain_graph_tests PRIVATE imgui::imgui)
+target_link_libraries(terrain_graph_tests PRIVATE tg_common_options imgui::imgui)
 
-add_test(NAME ui-interaction COMMAND terrain_graph_tests)
+# UI の相互作用のほか、ノードグラフ・アンドゥ・大気・影など GPU 不要の単体テストをまとめて走らせる。
+add_test(NAME unit COMMAND terrain_graph_tests)
 
 set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT terrain_graph)
 set_target_properties(terrain_graph PROPERTIES
@@ -341,8 +349,7 @@ set_target_properties(terrain_graph PROPERTIES
 
 add_executable(model_import_tests tests/ModelImportTests.cpp src/renderer/ModelAsset.cpp)
 target_include_directories(model_import_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_compile_options(model_import_tests PRIVATE /W4 /permissive- /utf-8)
-target_link_libraries(model_import_tests PRIVATE ufbx::ufbx)
+target_link_libraries(model_import_tests PRIVATE tg_common_options ufbx::ufbx)
 add_test(NAME model-import COMMAND model_import_tests)
 
 # ファイル入出力のテストで共通の実装は一度だけコンパイルする。
@@ -354,12 +361,10 @@ add_library(terrain_graph_test_io STATIC
     src/core/Log.cpp
 )
 target_include_directories(terrain_graph_test_io PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_compile_options(terrain_graph_test_io PRIVATE /W4 /permissive- /utf-8)
-target_link_libraries(terrain_graph_test_io PUBLIC nlohmann_json::nlohmann_json ole32)
+target_link_libraries(terrain_graph_test_io PUBLIC tg_common_options nlohmann_json::nlohmann_json ole32)
 
 function(tg_add_io_test target name)
     add_executable(${target} ${ARGN})
-    target_compile_options(${target} PRIVATE /W4 /permissive- /utf-8)
     target_link_libraries(${target} PRIVATE terrain_graph_test_io)
     # 直接 exe を実行した場合も、生成物はソースツリー直下へ置かない。
     target_compile_definitions(${target} PRIVATE

@@ -143,8 +143,9 @@ void CsNormalFromHeight(uint3 dispatchThreadId : SV_DispatchThreadID)
     // （強さと反復は収束の速さを変えるだけなので、ここには持ち込まない）。
     if (amount < 1.0f)
     {
+        // 重みに応じて元の法線を平坦へ寄せ、新しい法線も弱めてから RNM で合成する（lerp は使わない）。
         const float3 previous = DecodeTangentNormal(normalTarget[uint2(texel)]);
-        normal = normalize(lerp(previous, normal, amount));
+        normal = ReorientNormal(FlattenNormal(previous, 1.0f - amount), FlattenNormal(normal, amount));
     }
     normalTarget[uint2(texel)] = EncodeTangentNormal(normal);
 }

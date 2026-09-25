@@ -2,7 +2,6 @@
 // x = NdotV、y = roughness。RG に (スケール, バイアス) を入れる。
 // シェーディング側では F0 * scale + bias を掛ける。
 
-#include "EnvCommon.hlsli"
 #include "Brdf.hlsli"
 
 struct BrdfLutConstants

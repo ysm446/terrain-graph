@@ -25,9 +25,6 @@ struct MaterialTextureSet {
     bool IsValid() const { return baseColor.IsValid(); }
 };
 
-// 川筋（フロー累積）マスクの作業リソース。**合成解像度とは別のグリッド**で
-// 計算する（反復回数が解像度に比例するので、川筋の形が決まる粗さで足りる）。
-// 使うレイヤーが 1 枚も無ければ作らない。
 // 風の場（Wind Field）の作業用。1 組を順に使い回す。構造化バッファに
 // (k * res + j) * res + i の並びで置く。
 struct WindResources {
@@ -319,7 +316,6 @@ public:
     //
     // 添字はスタックの index。並べ替えても次の評価で作り直されるので追従する。
     // ImGui へ渡すハンドル。まだ無ければ ptr が 0。
-    D3D12_GPU_DESCRIPTOR_HANDLE MaskThumbnailHandle(size_t layerIndex) const;
 
     // --- ノードのマスクサムネイル ------------------------------------------
     // マスクの op ごとの結果を小さく落としたもの。グラフのノードに出す。
@@ -594,7 +590,6 @@ private:
 
     void ReleaseTextures(rhi::Device& device);
     // レイヤー枚数ぶんのマスクサムネイルを用意する。増減した枚数だけ作る / 捨てる。
-    void EnsureMaskThumbnails(rhi::Device& device, size_t layerCount);
     // op の数ぶんのノード用サムネイル（評価先＝裏側）を用意する。
     void EnsureMaskOpThumbnails(rhi::Device& device, size_t opCount);
     // 焼き終えた op を全部サムネイルへ落とす。評価の最後に呼ぶ。
@@ -643,7 +638,6 @@ private:
     // 近傍を読むパスの作業用。マスク生成（合成パスがここを読む）と、
     // ブラーの水平パスが使う。Height と同じ形式。評価先と一緒に使うので 1 枚でよい。
     rhi::GpuTexture m_scratch;
-    std::vector<rhi::GpuTexture> m_maskThumbnails;
     // ノード用のマスクサムネイル。評価先（裏側）と描画が読む表側を、
     // 合成結果と一緒に入れ替える（評価中に ImGui が読む側へ書かないため）。
     std::vector<MaskOpThumbnail> m_maskOpThumbnails;

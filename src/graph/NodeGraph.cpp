@@ -17,9 +17,6 @@
 namespace tg::graph {
 namespace {
 
-// 楕円体の表面積を球面上の面積要素から数値積分する。球では4πr²に一致する。
-// 形状はm単位なので、密度の単位に合わせてkmへ変換して積分する。
-
 // --- 定義テーブル ---------------------------------------------------------
 // ノードの種類・保存名・表示名・ピン構成。CreateNode() がここからピンを作る。
 
@@ -785,8 +782,9 @@ CompiledCloud NodeGraph::CompileCloud() const {
                 }
             }
         }
-        if (source && source->kind == NodeKind::CloudWeatherLayer) {
-            const auto& weather = std::get<CloudWeatherSettings>(source->settings);
+        if (const auto* weatherSettings = source && source->kind == NodeKind::CloudWeatherLayer
+                ? std::get_if<CloudWeatherSettings>(&source->settings) : nullptr) {
+            const auto& weather = *weatherSettings;
             result.connected = true;
             result.layer = true;
             result.weather = true;
@@ -839,8 +837,9 @@ CompiledCloud NodeGraph::CompileCloud() const {
                 }
             }
         }
-        if (source && source->kind == NodeKind::CloudNoise) {
-            const auto& noise = std::get<CloudNoiseSettings>(source->settings);
+        if (const auto* noiseSettings = source && source->kind == NodeKind::CloudNoise
+                ? std::get_if<CloudNoiseSettings>(&source->settings) : nullptr) {
+            const auto& noise = *noiseSettings;
             const auto* shape=UpstreamOf(*source,ValueType::CloudShape);
             result=CompileCloudShapes(shape ? shape->id : 0);
             result.hasOutput=true;
@@ -876,8 +875,9 @@ CompiledCloud NodeGraph::CompileCloud() const {
                 cloud.width=hiX-loX; cloud.thickness=hiY-loY; cloud.depth=hiZ-loZ;
             }
         }
-        if (animation && result.connected) {
-            result.animation=std::get<CloudAnimationSettings>(animation->settings);
+        if (const auto* animationSettings = animation && result.connected
+                ? std::get_if<CloudAnimationSettings>(&animation->settings) : nullptr) {
+            result.animation=*animationSettings;
             result.animation.width=std::clamp(result.animation.width,100.0f,100000.0f);
             result.animation.depth=std::clamp(result.animation.depth,100.0f,100000.0f);
             result.cloud.animate=result.animation.playing;
@@ -893,7 +893,8 @@ CompiledCloud NodeGraph::CompileCloud() const {
 }
 
 GraphId NodeGraph::CreateNode(NodeKind kind) {
-    if (kind == NodeKind::CloudOutput && CompileCloud().hasOutput) return 0;
+    if (kind == NodeKind::CloudOutput &&
+        std::any_of(m_nodes.begin(), m_nodes.end(), [](const Node& n) { return n.kind == NodeKind::CloudOutput; })) return 0;
     const NodeDefinition* definition = FindNodeDefinition(kind);
     if (definition == nullptr) {
         return 0;

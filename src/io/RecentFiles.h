@@ -20,6 +20,8 @@ public:
     const std::vector<RootEntry>& Roots() const { return m_roots; }
     const std::vector<std::filesystem::path>& Entries(const std::filesystem::path& root) const;
 private:
+    // ルートを先頭へ入れる（保存はしない。Add / AddRoot が 1 回だけ書く）。
+    void InsertRoot(const std::filesystem::path& root);
     void Save() const;
     std::filesystem::path m_storage;
     std::vector<RootEntry> m_roots;

@@ -3,13 +3,6 @@
 #include "core/Log.h"
 
 namespace tg::rhi {
-namespace {
-
-uint64_t AlignUp(uint64_t value, uint64_t alignment) {
-    return (value + alignment - 1) & ~(alignment - 1);
-}
-
-}  // namespace
 
 bool UploadRing::Create(ResourceAllocator& allocator, uint64_t bytesPerFrame) {
     // フレーム境界自体を最大要求アライメント（テクスチャコピーの 512）に合わせておく。

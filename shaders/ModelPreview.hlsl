@@ -1,7 +1,6 @@
 #include "AtmosphereCommon.hlsli"
 #include "Brdf.hlsli"
 #include "CompositeCommon.hlsli"
-#include "EnvCommon.hlsli"
 #include "Tonemap.hlsli"
 #include "ImpostorCommon.hlsli"
 
@@ -55,7 +54,7 @@ ConstantBuffer<ModelConstants> g_model : register(b1);
 
 float ModelShadow(float3 position, float nDotL, uint cascade) {
     uint index = g_model.shadows.indices[cascade];
-    if (index == 0xffffffffu) return 1;
+    if (index == kInvalidTextureIndex) return 1;
     float4 clip = mul(g_model.shadows.matrices[cascade],float4(position,1));
     float3 ndc = clip.xyz/clip.w;
     float2 uv = ndc.xy*float2(0.5,-0.5)+0.5;
@@ -217,7 +216,7 @@ float4 ShadeModel(float3 position, float3 normal, float3 viewDirection, float3 b
         // 雲の上に置かれたモデルは、雲なしの環境で照らす（地形の MeshPbr と同じ）。
         const bool blendAmbient = g_model.sceneMode != 0 && g_model.atmosphericMode != 0;
         const float3 irradiance = SampleAmbientIrradiance(
-            g_model.irradianceIndex, blendAmbient ? g_model.clearIrradianceIndex : 0xffffffffu, normal,
+            g_model.irradianceIndex, blendAmbient ? g_model.clearIrradianceIndex : kInvalidTextureIndex, normal,
             position.y, g_model.ambientLow, g_model.ambientHigh, g_model.ambientOcclusion);
         const float3 fresnel = FresnelSchlickRoughness(f0, nDotV, clampedRoughness);
         const float3 diffuseIbl = (1.0f - fresnel) * diffuseColor * irradiance;

@@ -661,7 +661,6 @@ private:
     bool m_scrollToSelectedTexture = false;
     // 追加・複製した直後のマテリアルを一覧の枠内へ送る要求。上と同じ理由。
     bool m_scrollToSelectedMaterial = false;
-    // 追加・複製した直後の天球を一覧の枠内へ送る要求。上と同じ理由。
 
     // ステータスバーに出す直近の通知。ログから受け取る。
     // 時刻は ImGui に依存させない（ログはコンテキストが無い時期にも来る）。
@@ -840,7 +839,6 @@ private:
     // 削除要求のあったマテリアル。一覧の描画中に消すと、描画側が erase 済みの
     // 要素を読んでしまうため、フレームの外で処理する。
     compositor::MaterialAssetId m_pendingMaterialRemove = compositor::kNoMaterialAsset;
-    // 削除要求のあった天球。マテリアルと同じ理由でフレームの外で処理する。
     // 確認待ちのテクスチャ。参照が残っているときだけ入る。
     compositor::TextureId m_textureRemoveCandidate = compositor::kNoTexture;
     std::vector<std::string> m_textureRemoveUsers;

@@ -8,7 +8,6 @@
 
 #include "Brdf.hlsli"
 #include "CompositeCommon.hlsli"
-#include "EnvCommon.hlsli"
 
 struct MeshConstants
 {
@@ -168,7 +167,7 @@ struct VsOutput
 float SampleShadow(float3 worldPosition, float nDotL, uint shadowIndex, float texelSize,
                    float bias, float4x4 lightViewProjection)
 {
-    if (shadowIndex == 0xFFFFFFFFu)
+    if (shadowIndex == kInvalidTextureIndex)
     {
         return 1.0f;
     }
@@ -211,7 +210,7 @@ float SampleCascadedShadow(float3 worldPosition, float nDotL)
     if (g_mesh.shadowCascadeCount == 0)
         return SampleShadow(worldPosition, nDotL, g_mesh.shadowIndex,
                             g_mesh.shadowTexelSize, g_mesh.shadowBias, g_mesh.lightViewProjection);
-    if (g_mesh.cascadeShadowIndices.x == 0xFFFFFFFFu) return 1.0f;
+    if (g_mesh.cascadeShadowIndices.x == kInvalidTextureIndex) return 1.0f;
     if (g_mesh.shadowCascadeCount == 1)
         return SampleShadow(worldPosition, nDotL, g_mesh.cascadeShadowIndices.x,
             g_mesh.shadowTexelSize, g_mesh.cascadeBiases.x, g_mesh.cascadeViewProjections[0]);

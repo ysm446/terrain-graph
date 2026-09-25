@@ -4,15 +4,10 @@
 #include "app/Application.h"
 
 #include "app/ApplicationUiHelpers.h"
-#include "core/FileDialog.h"
 #include "core/Log.h"
 #include "io/ProjectIo.h"
-#include "ui/UiStyle.h"
 
 #include <imgui.h>
-#include <imgui_internal.h>
-
-#include <DirectXMath.h>
 
 #include <algorithm>
 #include <cmath>

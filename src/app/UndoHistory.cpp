@@ -13,7 +13,7 @@ void UndoHistory::Push(const DocumentSnapshot& before, uint32_t editId) {
     m_undo.push_back(before);
     if (m_undo.size() > kMaxDepth) {
         // 古い段から捨てる。
-        m_undo.erase(m_undo.begin());
+        m_undo.pop_front();
     }
 
     // 新しい編集が入ったらリドゥは無効になる。

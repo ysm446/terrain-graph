@@ -9,7 +9,6 @@ static const float kAtmHeightR          = 7994.0;   // Rayleigh scale height (m)
 static const float kAtmHeightM          = 1200.0;   // Mie scale height (m)
 static const float3 kAtmBetaR           = float3(5.802e-6, 13.558e-6, 33.1e-6);  // Rayleigh β_λ
 static const float kAtmBetaM            = 21e-6;
-static const float kAtmSunIntensity     = 1.0;
 static const int   kAtmNumViewSteps = 32;
 static const int   kAtmNumSunSteps  = 32;
 

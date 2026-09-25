@@ -55,8 +55,7 @@ void RecentFiles::Load(const fs::path& storage) {
         m_roots.push_back(std::move(root));
     }
 }
-void RecentFiles::AddRoot(const fs::path& root) {
-    if (root.empty()) return;
+void RecentFiles::InsertRoot(const fs::path& root) {
     RootEntry entry{Normalize(root), {}};
     const auto found = std::find_if(m_roots.begin(), m_roots.end(), [&](const auto& r) { return SamePath(r.path, root); });
     if (found != m_roots.end()) { entry = *found; m_roots.erase(found); }
@@ -81,11 +80,15 @@ void RecentFiles::AddRoot(const fs::path& root) {
     });
     m_roots.insert(m_roots.begin(), std::move(entry));
     if (m_roots.size() > kMaxEntries) m_roots.resize(kMaxEntries);
+}
+void RecentFiles::AddRoot(const fs::path& root) {
+    if (root.empty()) return;
+    InsertRoot(root);
     Save();
 }
 void RecentFiles::Add(const fs::path& root, const fs::path& scene) {
     if (root.empty() || scene.empty()) return;
-    AddRoot(root); Insert(m_roots.front().scenes, scene); Save();
+    InsertRoot(root); Insert(m_roots.front().scenes, scene); Save();
 }
 const std::vector<fs::path>& RecentFiles::Entries(const fs::path& root) const {
     static const std::vector<fs::path> empty;

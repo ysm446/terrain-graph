@@ -10,6 +10,11 @@ int main() {
     using namespace tg::io;
     ProjectWorkspace workspace;
     const auto root = fs::path(TG_TEST_DATA_DIR) / "component-test-data";
+    {
+        // 前回の残骸を消してから始める。
+        std::error_code cleanupError;
+        fs::remove_all(fs::path(TG_TEST_DATA_DIR), cleanupError);
+    }
     int failures = 0;
     const auto check = [&](bool ok, const char* name) { if (!ok) { ++failures; std::cerr << name << '\n'; } };
     check(workspace.Open(root), "open root");

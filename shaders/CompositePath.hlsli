@@ -119,10 +119,6 @@ PathFrame ComputePathFrameRange(ByteAddressBuffer segments, uint begin, uint end
     return frame;
 }
 
-PathFrame ComputePathFrame(ByteAddressBuffer segments, uint count, float2 position, float sizeMeters) {
-    return ComputePathFrameRange(segments, 0, count, position, sizeMeters);
-}
-
 // BuildPathSegments は鎖ごとに弧長を0へ戻す。隣接する曲線分割を別のパスとして混ぜない。
 uint PathStrandEnd(ByteAddressBuffer segments, uint begin, uint count, float sizeMeters) {
     uint end = begin + 1;

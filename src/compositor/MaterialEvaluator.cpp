@@ -468,17 +468,22 @@ uint64_t HashMaskOpParams(uint64_t seed, const MaskOp& op) {
     }
 }
 
-bool CreateChannelTexture(rhi::Device& device, uint32_t resolution, DXGI_FORMAT format,
+bool CreateChannelTexture(rhi::Device& device, uint32_t width, uint32_t height, DXGI_FORMAT format,
                           const wchar_t* debugName, rhi::GpuTexture& outTexture) {
     rhi::TextureDesc desc;
-    desc.width = resolution;
-    desc.height = resolution;
+    desc.width = width;
+    desc.height = height;
     desc.format = format;
     desc.allowUnorderedAccess = true;
     desc.createSrv = true;
     desc.initialState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     desc.debugName = debugName;
     return device.Allocator().CreateTexture2D(desc, outTexture);
+}
+
+bool CreateChannelTexture(rhi::Device& device, uint32_t resolution, DXGI_FORMAT format,
+                          const wchar_t* debugName, rhi::GpuTexture& outTexture) {
+    return CreateChannelTexture(device, resolution, resolution, format, debugName, outTexture);
 }
 
 bool CreateTextureSet(rhi::Device& device, uint32_t resolution, MaterialTextureSet& set) {
@@ -1061,10 +1066,6 @@ void MaterialEvaluator::Destroy(rhi::Device& device) {
     m_maskOpResolutions.clear();
     m_maskOpHashes.clear();
     ReleaseTextures(device);
-    for (rhi::GpuTexture& thumbnail : m_maskThumbnails) {
-        device.DeferRelease(thumbnail);
-    }
-    m_maskThumbnails.clear();
     ReleaseMaskOpThumbnails(device, m_maskOpThumbnails);
     ReleaseMaskOpThumbnails(device, m_frontMaskOpThumbnails);
     for (rhi::GpuTexture& thumbnail : m_layerThumbnails) {
@@ -1077,33 +1078,6 @@ void MaterialEvaluator::Destroy(rhi::Device& device) {
     m_frontLayerThumbnails.clear();
     m_resolution = 0;
     m_evaluatedRevision = 0;
-}
-
-// マスクサムネイルは合成解像度に依らないので、Create / Resize では作り直さない。
-void MaterialEvaluator::EnsureMaskThumbnails(rhi::Device& device, size_t layerCount) {
-    // 減ったぶんは捨てる。GPU がまだ見ているかもしれないので Defer を通す。
-    while (m_maskThumbnails.size() > layerCount) {
-        device.DeferRelease(m_maskThumbnails.back());
-        m_maskThumbnails.pop_back();
-    }
-
-    while (m_maskThumbnails.size() < layerCount) {
-        rhi::TextureDesc desc;
-        desc.width = kMaskThumbnailSize;
-        desc.height = kMaskThumbnailSize;
-        desc.format = kMaskThumbnailFormat;
-        desc.allowUnorderedAccess = true;
-        desc.createSrv = true;
-        desc.initialState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-        desc.debugName = L"LayerMaskThumbnail";
-
-        rhi::GpuTexture thumbnail;
-        if (!device.Allocator().CreateTexture2D(desc, thumbnail)) {
-            TG_LOG_WARN("レイヤーのマスクサムネイルを作れませんでした");
-            return;
-        }
-        m_maskThumbnails.push_back(std::move(thumbnail));
-    }
 }
 
 // ノード用のサムネイルは op の数に合わせる。合成解像度に依らないので作り直しは増減分だけ。
@@ -1257,13 +1231,6 @@ D3D12_GPU_DESCRIPTOR_HANDLE MaterialEvaluator::MaskOpThumbnailHandle(size_t opIn
         return D3D12_GPU_DESCRIPTOR_HANDLE{0};
     }
     return thumbnails[opIndex].grayView.gpu;
-}
-
-D3D12_GPU_DESCRIPTOR_HANDLE MaterialEvaluator::MaskThumbnailHandle(size_t layerIndex) const {
-    if (layerIndex >= m_maskThumbnails.size() || !m_maskThumbnails[layerIndex].IsValid()) {
-        return D3D12_GPU_DESCRIPTOR_HANDLE{0};
-    }
-    return m_maskThumbnails[layerIndex].srv.gpu;
 }
 
 void MaterialEvaluator::ReleaseTextures(rhi::Device& device) {
@@ -2292,6 +2259,7 @@ void MaterialEvaluator::RebuildNormalsFromHeight(rhi::Device& device,
     if (pipeline == nullptr) {
         return;
     }
+    PIXBeginEvent(commandList, PIX_COLOR(120, 160, 220), "NormalFromHeight");
     BlurConstants constants = {};
     constants.sourceIndex = m_textures.height.SrvIndex();
     constants.outputIndex = m_textures.normal.UavIndex();
@@ -2325,6 +2293,7 @@ void MaterialEvaluator::RebuildNormalsFromHeight(rhi::Device& device,
         CD3DX12_RESOURCE_BARRIER::UAV(m_textures.normal.resource.Get()),
     };
     commandList->ResourceBarrier(_countof(barriers), barriers);
+    PIXEndEvent(commandList);
 }
 
 // 堆積。terrain-editor の Sediment を移植したもの。
@@ -3258,15 +3227,6 @@ bool MaterialEvaluator::ApplyRiverMask(rhi::Device& device, rhi::PipelineCache& 
     return true;
 }
 
-// 崩落レイヤー 1 枚ぶん。発生源のマスクから岩片を生み、斜面を下らせて積む。
-//
-// **合成解像度でそのまま回す。** 岩片は m 単位の小さな形なので、堆積のように
-// 粗いグリッドで回すと形にならない。歩行は 1 スレッド 1 粒子で、
-// 読むのは合成の Height（この時点までの合成結果）だけ。
-
-// 水滴侵食の定数。シェーダ側の DropletConstants と一致させること。
-// 論文の E / T / D を各解像度で順番に走らせる。作業領域は GPU に常駐する。
-
 namespace {
 struct FluvialErosionConstants {
     uint32_t state[4]{}, work[4]{}, grid[4]{}, masks[4]{};
@@ -3645,7 +3605,8 @@ bool MaterialEvaluator::ApplySnowCover(rhi::Device& device, rhi::PipelineCache& 
             !CreateChannelTexture(device,n,DXGI_FORMAT_R32G32B32A32_FLOAT,L"SnowCoverWeather",r.weather) ||
             !CreateChannelTexture(device,n,DXGI_FORMAT_R32G32B32A32_FLOAT,L"SnowCoverOutput",r.output) ||
             !CreateChannelTexture(device,n,DXGI_FORMAT_R32G32B32A32_FLOAT,L"SnowCoverParticles",r.particles) ||
-            !CreateChannelTexture(device,n*2,DXGI_FORMAT_R32_UINT,L"SnowCoverSums",r.sums)) return false;
+            // シェーダは [x + n, y] までしか使わない（幅 2n × 高さ n）。
+            !CreateChannelTexture(device,n*2,n,DXGI_FORMAT_R32_UINT,L"SnowCoverSums",r.sums)) return false;
         r.allocation = n;
     }
     const wchar_t* entries[] = {L"CsWindHorizontal",L"CsWindVertical",L"CsWeather",L"CsInit",
@@ -5078,15 +5039,11 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         pipelineCache.GetCompute(L"CompositeBlur.hlsl", L"CsBlur");
     ID3D12PipelineState* blurNormalPipeline =
         pipelineCache.GetCompute(L"CompositeBlur.hlsl", L"CsNormalFromHeight");
-    // マスクのサムネイルは合成と同じ定数を使うので、同じシェーダの別エントリ。
-    ID3D12PipelineState* thumbnailPipeline =
-        pipelineCache.GetCompute(L"CompositeLayer.hlsl", L"CsMaskThumbnail");
     if (layerPipeline == nullptr || maskPipeline == nullptr) {
         return false;
     }
 
-    // 有効なレイヤーが 1 枚も無いときは npos。合成はしないが、
-    // マスクのサムネイルはレイヤーの有無に関わらず作り直す。
+    // 有効なレイヤーが 1 枚も無いときは npos。
     const size_t baseIndex = stack.FirstEnabledIndex();
 
     bool complete = true;
@@ -5099,11 +5056,6 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
     TransitionIfNeeded(commandList, m_textures.normal, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     TransitionIfNeeded(commandList, m_textures.surface, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-
-    EnsureMaskThumbnails(device, stack.Layers().size());
-    for (rhi::GpuTexture& thumbnail : m_maskThumbnails) {
-        TransitionIfNeeded(commandList, thumbnail, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    }
 
     // --- マスクの段取り -----------------------------------------------------
     // マスクはノードグラフを落とした op の列（`MaskProgram`）で来る。
@@ -5119,8 +5071,9 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
     EnsureLayerThumbnails(device, stack.Layers().size());
     ID3D12PipelineState* layerThumbnailPipeline =
         pipelineCache.GetCompute(L"CompositeThumbnail.hlsl", L"CsMain");
+    // op が 0 になったときも呼ぶ（余った作業テクスチャを捨てる）。
+    maskOpsReady = EnsureMaskOpTextures(device, maskOps);
     if (!maskOps.empty()) {
-        maskOpsReady = EnsureMaskOpTextures(device, maskOps);
         if (!maskOpsReady) {
             complete = false;
         }
@@ -5662,33 +5615,6 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             ++m_evaluatedLayerCount;
         }
 
-        // --- マスクのサムネイル ---------------------------------------------
-        // 中間結果由来のマスクはこのレイヤーを合成する直前の下地からしか作れない。
-        // 一覧側で後から焼き直せないので、合成ループの中でここに置く。
-        if (thumbnailPipeline != nullptr && layerIndex < m_maskThumbnails.size() &&
-            m_maskThumbnails[layerIndex].IsValid()) {
-            LayerConstants thumbnailConstants = constants;
-            thumbnailConstants.outputIndices[0] = m_maskThumbnails[layerIndex].UavIndex();
-            thumbnailConstants.resolution[0] = kMaskThumbnailSize;
-            thumbnailConstants.resolution[1] = kMaskThumbnailSize;
-            thumbnailConstants.tile[0] = 0;
-            thumbnailConstants.tile[1] = 0;
-            thumbnailConstants.tile[2] = kMaskThumbnailSize;
-            thumbnailConstants.tile[3] = kMaskThumbnailSize;
-
-            const rhi::UploadAllocation cb =
-                AllocateConstants(device, sizeof(LayerConstants));
-            if (!cb.IsValid()) {
-                complete = false;
-            } else {
-                std::memcpy(cb.cpu, &thumbnailConstants, sizeof(thumbnailConstants));
-                commandList->SetPipelineState(thumbnailPipeline);
-                commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
-                commandList->Dispatch(DispatchCount(kMaskThumbnailSize),
-                                      DispatchCount(kMaskThumbnailSize), 1);
-            }
-        }
-
         BakeLayerThumbnail(device, layerThumbnailPipeline, commandList, stack, layerIndex);
         // このレイヤーまで合成し終えた Height を見るマスクを焼く。
         // **上のレイヤーが使うので、ここで焼いておかないと間に合わない。**
@@ -5706,11 +5632,6 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
     TransitionIfNeeded(commandList, m_textures.surface, kOutputReadState);
     TransitionIfNeeded(commandList, m_textures.height, kOutputReadState);
 
-    // サムネイルも同じ理由で NON_PIXEL まで。ImGui（ピクセルシェーダ）から読むなら
-    // グラフィックス側で PIXEL へ遷移させること（いまは読み手が無い）。
-    for (rhi::GpuTexture& thumbnail : m_maskThumbnails) {
-        TransitionIfNeeded(commandList, thumbnail, kOutputReadState);
-    }
     // ノード用のマスクサムネイル。焼けた op を全部落としてから NON_PIXEL へ。
     // 表側へ入れ替えたときに Update がグラフィックス側で PIXEL へ遷移させる。
     if (maskOpsReady) {
@@ -5723,12 +5644,17 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         TransitionIfNeeded(commandList, thumbnail, kOutputReadState);
     }
 
-    for (auto& [id, set] : m_placementPoints) {
-        if (set.touched) continue;
-        set.count = 0;
-        set.activeCount = 0;
-        set.countFence = nullptr;
-        set.countReady = true;
+    // 今回の評価で使われなかった配置点セット（ノードの削除・切断）は資源ごと捨てる。
+    // 残しておくと候補テクスチャ（数十 MB になりうる）が Destroy まで居座る。
+    for (auto it = m_placementPoints.begin(); it != m_placementPoints.end();) {
+        if (it->second.touched) { ++it; continue; }
+        PlacementPointSet& set = it->second;
+        device.DeferRelease(set.candidates);
+        device.DeferRelease(set.points);
+        device.DeferRelease(set.grid);
+        device.DeferRelease(set.attributes);
+        device.DeferRelease(set.countReadback);
+        it = m_placementPoints.erase(it);
     }
 
     // プレビュー用の評価器だけ、Height を CPU へ写す（パスの編集に使う）。
@@ -5821,6 +5747,17 @@ void MaterialEvaluator::Update(rhi::Device& device, rhi::PipelineCache& pipeline
         const uint64_t bytes = m_compute.UploadBytes() * 2;
         TG_LOG_INFO("合成の評価の定数の置き場を %llu KB へ広げます",
                     static_cast<unsigned long long>(bytes / 1024));
+        // 読み戻しはキューのフェンスを生ポインタで指している。作り直す前に完了を
+        // 待って回収し、回収できなかったものは古いフェンスを指したままにしない。
+        m_compute.Wait();
+        CollectHeightfieldReadback();
+        CollectWindReadback();
+        CollectPlacementPointCount();
+        if (m_heightfieldFence == m_compute.Fence()) { m_heightfieldFence = nullptr; m_heightfieldPending = false; }
+        if (m_windFence == m_compute.Fence()) { m_windFence = nullptr; m_windPending = false; }
+        for (auto& [id, set] : m_placementPoints) {
+            if (set.countFence == m_compute.Fence()) set.countFence = nullptr;
+        }
         m_compute.Destroy(device);
         if (!m_compute.Create(device, bytes, L"MaterialEvaluatorCompute")) {
             m_compute.Destroy(device);

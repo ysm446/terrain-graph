@@ -327,11 +327,6 @@ float PlumeDensity(float3 world) {
     return sum / norm;
 }
 
-float HenyeyGreenstein(float cosTheta, float g) {
-    const float denominator = 1.0 + g * g - 2.0 * g * cosTheta;
-    return (1.0 - g * g) / (4.0 * kPi * denominator * sqrt(denominator));
-}
-
 float LinearDepth(float z) {
     return g_plume.nearZ * g_plume.farZ / (g_plume.farZ - z * (g_plume.farZ - g_plume.nearZ));
 }
@@ -399,7 +394,7 @@ float4 PsMain(VsOutput input) : SV_Target {
     // 等方なら 4 × HG = 1/π で、白いランバート面と同じ明るさになる。
     const float3 viewRay = normalize(input.world - g_plume.cameraPosition);
     const float cosTheta = dot(viewRay, normalize(g_plume.lightDirection));
-    const float phase = lerp(HenyeyGreenstein(cosTheta, -0.2), HenyeyGreenstein(cosTheta, g_plume.anisotropy), 0.7);
+    const float phase = lerp(CloudHg(cosTheta, -0.2), CloudHg(cosTheta, g_plume.anisotropy), 0.7);
     const float albedo = 0.9;
     // 濃い所は自分の影で少し暗い。
     const float selfShadow = lerp(1.0, 0.7, puffs);

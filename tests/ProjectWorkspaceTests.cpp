@@ -11,6 +11,8 @@ int main() {
     // テスト用の独立ルート。実データへ触れない。
     const auto root = fs::path(TG_TEST_DATA_DIR) / "workspace-test-data";
     std::error_code error;
+    // 前回の残骸（移動後のルートも含む）を消してから始める。実行ごとに増やさない。
+    fs::remove_all(root.parent_path(), error);
     fs::create_directories(root, error);
     ProjectWorkspace workspace;
     int failures = 0;
@@ -84,11 +86,7 @@ int main() {
     check(workspace.Scan(), "recover after duplicate removed");
     json malformed = {{"materials", json::array({42})}};
     check(!workspace.Expand(malformed), "reject malformed asset table");
-    fs::path relocated;
-    for (unsigned i = 0; ; ++i) {
-        relocated = root.parent_path() / ("workspace-relocated-" + std::to_string(i));
-        if (!fs::exists(relocated, error)) break;
-    }
+    const auto relocated = root.parent_path() / "workspace-relocated";
     fs::rename(root, relocated, error);
     ProjectWorkspace movedWorkspace;
     check(!error && movedWorkspace.Open(relocated), "move entire project root");
@@ -97,20 +95,21 @@ int main() {
     check(movedScene["textures"][0]["path"] == tg::ToUtf8Portable(relocated / movedImage.lexically_relative(root)),
           "source resolves within relocated root");
     // 同じ中身のアセットは増やさない。中身が一致するファイルを引き当て、そのIDを返す。
+    // ルートは移動済みなので、移動後のワークスペースで確かめる（元の root はもう無い）。
     std::string adoptedUid;
     json sameBody = {{"name", "sky"}, {"iblIntensity", 1.5}};
-    auto skyPath = workspace.UniquePath(root, "sky", ".tgsky");
-    check(workspace.SaveAsset(skyPath, "sky-asset", sameBody), "save sky for adoption");
+    auto skyPath = movedWorkspace.UniquePath(relocated, "sky", ".tgsky");
+    check(movedWorkspace.SaveAsset(skyPath, "sky-asset", sameBody), "save sky for adoption");
     const auto savedUid = ProjectWorkspace::String(sameBody, "uid");
-    check(workspace.Scan(), "scan after sky save");
+    check(movedWorkspace.Scan(), "scan after sky save");
     json fresh = {{"name", "sky"}, {"iblIntensity", 1.5}};
-    check(workspace.FindIdenticalAsset("sky-asset", fresh, adoptedUid) == skyPath && adoptedUid == savedUid,
+    check(movedWorkspace.FindIdenticalAsset("sky-asset", fresh, adoptedUid) == skyPath && adoptedUid == savedUid,
           "identical asset is adopted with its ID");
     json renamed = {{"name", "other"}, {"iblIntensity", 1.5}};
-    check(workspace.FindIdenticalAsset("sky-asset", renamed, adoptedUid).empty(), "different name is a different asset");
+    check(movedWorkspace.FindIdenticalAsset("sky-asset", renamed, adoptedUid).empty(), "different name is a different asset");
     json edited = {{"name", "sky"}, {"iblIntensity", 2.0}};
-    check(workspace.FindIdenticalAsset("sky-asset", edited, adoptedUid).empty(), "edited body is a different asset");
-    check(workspace.FindIdenticalAsset("material-asset", fresh, adoptedUid).empty(), "other kind is never adopted");
+    check(movedWorkspace.FindIdenticalAsset("sky-asset", edited, adoptedUid).empty(), "edited body is a different asset");
+    check(movedWorkspace.FindIdenticalAsset("material-asset", fresh, adoptedUid).empty(), "other kind is never adopted");
     std::cout << failures << " failures\n";
     return failures ? 1 : 0;
 }

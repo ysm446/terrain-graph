@@ -759,7 +759,8 @@ bool Application::Headless() const {
 }
 
 void Application::DrawUi() {
-    RememberAssetStates();
+    // アセットの未保存判定（RememberAssetStates）は編集の確定時に RefreshSceneDirty が
+    // 更新する。毎フレーム全アセットを JSON へ書き出してハッシュを取り直さない。
     m_assetSelections.root = m_workspace.Root();
     m_assetSelections.owner = static_cast<uint64_t>(m_selectedGraphNode) ^
         (static_cast<uint64_t>(m_selectedMaterial + 1) << 32) ^ (static_cast<uint64_t>(m_selectedModel) << 16);

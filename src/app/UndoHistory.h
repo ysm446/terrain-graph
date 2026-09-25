@@ -12,6 +12,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -119,12 +120,13 @@ public:
     size_t RedoCount() const { return m_redo.size(); }
 
     // 履歴に残っているすべての段。ペイントマスクの掃除で参照を数えるのに使う。
-    const std::vector<DocumentSnapshot>& UndoStack() const { return m_undo; }
-    const std::vector<DocumentSnapshot>& RedoStack() const { return m_redo; }
+    const std::deque<DocumentSnapshot>& UndoStack() const { return m_undo; }
+    const std::deque<DocumentSnapshot>& RedoStack() const { return m_redo; }
 
 private:
-    std::vector<DocumentSnapshot> m_undo;
-    std::vector<DocumentSnapshot> m_redo;
+    // 上限に達したら古い段を先頭から捨てるので deque（vector だと毎回全段を詰め直す）。
+    std::deque<DocumentSnapshot> m_undo;
+    std::deque<DocumentSnapshot> m_redo;
     uint32_t m_lastEditId = 0;
 };
 

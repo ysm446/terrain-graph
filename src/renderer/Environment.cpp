@@ -342,7 +342,7 @@ bool Environment::BuildFromAtmosphere(rhi::Device& device, rhi::PipelineCache& p
     // アニメーション更新では同じターゲットを再使用する。毎秒の再確保・ディスクリプタ再利用を避ける。
     if ((!m_ready || m_equirect.width != 512 || m_equirect.height != 256) &&
         !CreateTargets(device, 512, 256)) return false;
-    struct Constants { AtmosphereSettings settings; uint32_t output, lut, noise, pad; uint32_t lighting; };
+    struct Constants { AtmosphereSettings settings; uint32_t output, lut, noise, skyOutput; uint32_t lighting; };
     const Constants constants{settings, m_equirect.UavIndex(), lutIndex, noiseIndex, skyOutputIndex, cloudLightingIndex};
     const auto allocation = device.Upload().Allocate(sizeof(Constants), 256);
     if (!allocation.IsValid()) return false;

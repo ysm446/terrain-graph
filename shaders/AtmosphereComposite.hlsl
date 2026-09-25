@@ -47,7 +47,6 @@ float TerrainRayVisibility(float3 position) {
 float4 CombineFarCloud(float4 near, float2 pixel, float limit) {
     if (farCloudIndex==0xffffffff || limit<=farDistance || near.a<=0.001) return near;
     Texture2D<float4> far=ResourceDescriptorHeap[farCloudIndex];
-    uint2 farSize=(fullSize+3)/4;
     float2 uv=(pixel/float2(fullSize));
     float4 f=far.SampleLevel(g_samplerLinearClamp,uv,0);
     return float4(near.rgb+near.a*f.rgb,near.a*f.a);

@@ -462,7 +462,8 @@ void Atmosphere::UpdateFrameLighting(rhi::Device& device, rhi::PipelineCache& pi
         commands->SetComputeRootSignature(pipelines.GlobalRootSignature());
         commands->SetComputeRootConstantBufferView(1, allocation.gpuAddress);
         commands->SetPipelineState(pipeline);
-        commands->Dispatch((m_opticalCacheSize & 0xffffu) / 8, (m_opticalCacheSize >> 16) / 4, (m_opticalCacheSize & 0xffffu) / 4);
+        commands->Dispatch(rhi::DispatchCount(m_opticalCacheSize & 0xffffu, 8), rhi::DispatchCount(m_opticalCacheSize >> 16, 4),
+                           rhi::DispatchCount(m_opticalCacheSize & 0xffffu, 4));
         TransitionIfNeeded(commands, m_opticalDepth, ReadState);
         PIXEndEvent(commands);
         m_opticalSettings = settings;

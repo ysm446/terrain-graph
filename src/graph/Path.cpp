@@ -301,7 +301,6 @@ bool SplitPathPoint(PathSettings& path, PathElementId pointId, float offsetUv,
     if (origin == nullptr || path.EdgeCount(pointId) < 2) {
         return false;
     }
-    const PathPoint original = *origin;
 
     // 出ていくエッジ（下流）を 1 本だけ元の点に残す。無ければ最初のエッジ。
     PathElementId keepEdge = 0;
@@ -332,7 +331,6 @@ bool SplitPathPoint(PathSettings& path, PathElementId pointId, float offsetUv,
             outCreated->push_back(created);
         }
     }
-    (void)original;
     return !edgeIds.empty();
 }
 

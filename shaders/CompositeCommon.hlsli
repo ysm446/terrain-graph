@@ -64,7 +64,9 @@ float3 ReorientNormal(float3 base, float3 detail)
 // 法線を平坦方向へ寄せる。合成の重みに応じて base / detail を弱めるのに使う。
 float3 FlattenNormal(float3 normal, float amount)
 {
-    return normalize(float3(normal.xy * amount, normal.z));
+    // z が 0（半精度の丸めで |xy| >= 1 になった急斜面）のまま amount = 0 で呼ぶと
+    // normalize(0) が NaN になり、Normal ターゲットが二度と戻らない。z に下限を置く。
+    return normalize(float3(normal.xy * amount, max(normal.z, 1e-4f)));
 }
 
 // ハイトベースブレンド。

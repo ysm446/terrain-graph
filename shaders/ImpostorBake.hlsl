@@ -7,7 +7,6 @@
 //   色むら : r = 色むらを受ける割合（色むらを持つマテリアルで 1）、gba は予約（0）。
 //            色むらそのものは焼かず、描画で株ごとに掛ける（ModelPreview.hlsl の PsImpostor）
 // 焼いた後、抜けた画素へ近くの色を広げる（CsDilate）。ミップで縁が黒ずまないように。
-#include "Common.hlsli"
 #include "CompositeCommon.hlsli"
 #include "ImpostorCommon.hlsli"
 

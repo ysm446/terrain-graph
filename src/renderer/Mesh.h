@@ -23,7 +23,6 @@ public:
 
     bool IsValid() const { return m_indexCount > 0; }
     uint32_t IndexCount() const { return m_indexCount; }
-    uint32_t VertexCount() const { return m_vertexCount; }
 
 private:
     rhi::GpuBuffer m_vertexBuffer;
@@ -31,7 +30,6 @@ private:
     D3D12_VERTEX_BUFFER_VIEW m_vertexBufferView = {};
     D3D12_INDEX_BUFFER_VIEW m_indexBufferView = {};
     uint32_t m_indexCount = 0;
-    uint32_t m_vertexCount = 0;
 };
 
 // プレビューのジオメトリ。**平面 1 種類だけ。**（このツールが扱うのは地形で、

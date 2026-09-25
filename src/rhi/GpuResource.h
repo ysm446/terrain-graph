@@ -148,7 +148,6 @@ public:
     // ディスクリプタを即座にフリーリストへ返す。GPU がまだ参照している可能性がある場合は
     // これを直接使わず、Device::DeferRelease() で遅延解放すること。
     void ReleaseDescriptors(GpuTexture& texture);
-    void ReleaseDescriptors(GpuBuffer& buffer);
 
     D3D12MA::Allocator* Raw() const { return m_allocator.Get(); }
 

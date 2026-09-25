@@ -1158,8 +1158,9 @@ void Application::DrawGraphEditor() {
     // エディタ側の選択がまだ無く、ここで 0 に戻すと「追加 → 選択」が消える
     // （エディタへの選択の反映は次のフレームの流し込みで行う）。
     // コピーは複数選択（枠で囲む）にも効かせたいので、全部控えておく。
-    ed::NodeId selectedNodes[64];
-    const int selectedCount = ed::GetSelectedNodes(selectedNodes, IM_ARRAYSIZE(selectedNodes));
+    std::vector<ed::NodeId> selectedNodes(static_cast<size_t>(std::max(ed::GetSelectedObjectCount(), 0)));
+    const int selectedCount = selectedNodes.empty() ? 0
+        : ed::GetSelectedNodes(selectedNodes.data(), static_cast<int>(selectedNodes.size()));
     // 起動引数で指定したノード（--select-node）は、エディタがそのノードを選ぶまで
     // 毎フレーム選び直す。エディタがまだノードを知らないフレームでは選択が付かない。
     if (m_pendingSelectGraphNode != 0) {

@@ -2,14 +2,15 @@
 #include "io/ThumbnailStore.h"
 #include "io/AssetRelations.h"
 #include "core/PathUtf8.h"
-#include <chrono>
 #include <fstream>
 #include <iostream>
 namespace fs = std::filesystem;
 namespace tg::io { fs::path AppDataDirectory() { return {}; } }
 int main() {
-    const auto directory = fs::path(TG_TEST_DATA_DIR) / ("history-thumbnail-tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    // 毎回同じ場所を使い、前回の残骸を消してから始める（実行ごとに増やさない）。
+    const auto directory = fs::path(TG_TEST_DATA_DIR) / "history-thumbnail-tests";
     std::error_code error;
+    fs::remove_all(directory, error);
     fs::create_directories(directory, error);
     int failures = 0;
     const auto check = [&](bool value, const char* name) { if (!value) { ++failures; std::cerr << "FAIL: " << name << '\n'; } };

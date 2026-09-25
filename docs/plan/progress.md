@@ -1,7 +1,32 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-25 19:34
+更新日時: 2026-09-25 20:06
+
+## コードレビューに基づく修正と整理（2026-09-25 20:06）
+
+全体を領域ごと（rhi / renderer、compositor / graph、app / ui / io、shaders / tests / CMake）にレビューし、検証できた指摘を直した。直したものは changelog の「コードレビューに基づく修正と整理」を参照。主なもの:
+
+- **PaintMask**: 同じマスクへ続けてディスパッチするとき UAV バリアが無かった（ブラシは read-modify-write）。
+- **CompositeScatter**: 配置 / 色むらマスクをテクセル添字で読んでいたが、マスク op のテクスチャは合成解像度と違いうる（Fluvial）。UV で読むようにした。
+- **法線**: River の水面と Blur の法線合成を lerp から RNM へ。`FlattenNormal` の z に下限（NaN の伝播止め）。
+- **SceneComponents**: 保存のたびにペイントのコピーとバックアップが増え続けていた。整理はシーン本体の書き込みが成功した後に行う（ロールバックの前に消すと戻した本体が無いファイルを指す。テストで発覚）。
+- **ProjectWorkspace**: `m_knownUids` が移動前のパスを持ち続け、同じパスへ保存した新アセットが古い ID に付け替わる。`SaveAsset` で更新し、`Scan` で消えた ID の対応を捨てる。
+- **MaterialEvaluator**: 読み手の無いマスクサムネイルを削除、配置点セットの解放漏れ、op 0 個のときの作業テクスチャ、積雪の集計テクスチャの大きさ、キュー作り直し時のフェンスの生ポインタ。
+- **テスト / CMake**: 一時ディレクトリの増殖を止めた。共通コンパイル設定を `tg_common_options` に集約し `/MP` を足した。
+
+**見送ったもの（レビューで挙がったが今回は直していない）**:
+
+- `NodeGraph::CompileCloud` / `CompileCloudShapes` の版ごとのメモ化。試したが、`FindMutableNode` で設定を書き換えて版を上げずに再コンパイルする使い方（テストが実際にそうしている）があり、古い結果を返す危険があるので戻した。やるなら設定の書き換え経路を版に結びつけてから。
+- `Atmosphere::Update` の環境マップ再構築で `ExecuteImmediate`（GPU 待ち）が 5〜9 回走る件、`PreviewRenderer::Resize` の 3 回の同期。構造の変更になるので別作業。
+- Fluvial Erosion の反復ごとの定数バッファ確保（反復 × 5 パス）。ルート定数へ移す案。
+- MultiScaleBreach の CPU 処理が UI スレッドで同期に走る件。
+- Droplet の流量カウンタ（int32、4096 刻み）が 52 万回以上の到達で溢れる件。
+- シェーダの重複ヘルパ（MapLod / SampleMap の 3 重定義、InstanceHash の 2 重定義、Fluvial と River の共通関数、IBL の split-sum ブロック）。まとめる価値はあるが描画結果に関わるので別作業。
+- `.gitignore` の `docs/reference/*` が CLAUDE.md の運用（設計資料は docs/reference へ）と食い違っている件。意図（再配布できない資料を外す）があるはずなので判断待ち。
+- ノードエディタと各オーバーレイの直書きの色（`ApplyTheme()` 集約のルールから外れている）。
+
+検証: Debug ビルド（警告 0）、CTest 6 件、変更したシェーダは DXC で単体コンパイル。天狗岳とベルニナのシーンを `--screenshot` で撮り、描画が崩れていないこととデバッグレイヤーの警告が無いことを確認（`data/screenshots/review/`）。River の水面法線と Blur の法線は変更前との比較はしていない（合成式の違いは部分被覆の所だけ）。
 
 ## 最低標高と Height Range の実寸（2026-09-25 19:34）
 

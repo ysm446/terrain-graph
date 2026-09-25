@@ -30,6 +30,11 @@ int main(int argc, char** argv) {
         return 0;
     }
     const auto path = fs::temp_directory_path() / L"terrain_graph_model_import_test.fbx";
+    // 途中で return しても一時ファイルを残さない。
+    struct TempFileRemover {
+        fs::path target;
+        ~TempFileRemover() { std::error_code ec; fs::remove(target, ec); }
+    } remover{path};
     {
         std::ofstream out(path);
         out << R"(; FBX 7.4.0 project file
@@ -185,8 +190,6 @@ C: "OO",21,0
     }
     ModelAsset invalid;
     if (LoadModel(path, invalid) || invalid.error.empty()) return 5;
-    std::error_code ec;
-    fs::remove(path, ec);
     std::cout << "Model import tests passed\n";
     return 0;
 }
