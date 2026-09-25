@@ -93,12 +93,29 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
     // --- 重ねる情報の切り替え ------------------------------------------------
     // FPS / 統計 / ハイトの範囲。どれもビューポートに重ねて出すものなので、
     // トップメニューではなくここに置く。切り替えたその場で設定に覚える。
+    // 作業中だけ隠すもの（インスタンス / 雲 / 雪煙）もここ。ハイトマップの編集中に邪魔なものを
+    // どけるための一時的な切り替えで、シーンにもアプリの設定にも保存しない（再起動で戻る）。
+    // 隠している間はボタンの文字を強調し、隠したまま忘れないようにする。
+    renderer::PreviewRenderer::WorkHide& workHide = m_renderer.WorkHidden();
     ImGui::SameLine();
+    const bool hiding = workHide.Any();
+    if (hiding) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::WarnColor());
+    }
     if (ImGui::Button("Display")) {
         ImGui::OpenPopup("##viewportDisplayMenu");
     }
+    if (hiding) {
+        ImGui::PopStyleColor();
+    }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("ビューポートに重ねる情報");
+        if (hiding) {
+            ImGui::SetTooltip("ビューポートに重ねる情報と、作業中だけ隠すもの。\nいま隠しているもの:%s%s%s",
+                              workHide.instances ? " インスタンス" : "", workHide.clouds ? " 雲" : "",
+                              workHide.snowPlumes ? " 雪煙" : "");
+        } else {
+            ImGui::SetTooltip("ビューポートに重ねる情報と、作業中だけ隠すもの");
+        }
     }
     if (ImGui::BeginPopup("##viewportDisplayMenu")) {
         io::DisplaySettings& settings = m_settings.Display();
@@ -109,6 +126,21 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
         if (changed) {
             m_settings.Save();
         }
+        ImGui::SeparatorText("Hide");
+        const auto hideItem = [](const char* label, bool* value, const char* tooltip) {
+            ImGui::MenuItem(label, nullptr, value);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                ImGui::SetTooltip("%s", tooltip);
+            }
+        };
+        hideItem("Instances", &workHide.instances,
+                 "配置したモデル（Model Scatter）を作業中だけ隠す。影も落とさない。"
+                 "シーンには保存せず、再起動で戻る");
+        hideItem("Clouds", &workHide.clouds,
+                 "雲と雲影を作業中だけ隠す。シーン階層の目（シーンの表示設定）とは別で、"
+                 "シーンには保存せず、再起動で戻る");
+        hideItem("Snow Plumes", &workHide.snowPlumes,
+                 "稜線の雪煙を作業中だけ隠す。シーンには保存せず、再起動で戻る");
         ImGui::EndPopup();
     }
 

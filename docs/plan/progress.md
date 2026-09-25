@@ -1,7 +1,13 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-25 15:53
+更新日時: 2026-09-25 17:48
+
+## 作業中だけ隠すもの（2026-09-25 17:48）
+
+ハイトマップの編集中にインスタンスが邪魔になるので、ビューポートの Display メニューに「Hide」の Instances / Clouds / Snow Plumes を足した。`renderer::PreviewRenderer::WorkHide`（`WorkHidden()`）に持ち、保存しない。インスタンスは影パスと本描画の `drawInstances`、雲は大気に渡す `effective.clouds`、雪煙は描画の条件で、シーンの表示（`ShowTerrain` / `ShowClouds`）に加えて見る。隠している間は Display ボタンを警告色にし、シーン階層の目のツールチップに一時的に隠していることを添える。
+
+検証: Debug / Release ビルド。天狗岳の確認用シーン（`data/Test/backlit-qa/frontlit.tgscene`）を、既定値を一時的に「隠す」にしたビルドと通常のビルドで撮り比べ、木と雲・雲影が消えること、Display ボタンが警告色になること、GPU 10.9 → 1.6 ms、デバッグレイヤーの警告なしを確認（`hide-compare.png`。既定値は戻した）。**未確認**: メニューの開いた見た目と、ツールチップ（マウス操作が要る）。
 
 ## ノードの循環の警告（2026-09-25 15:53）
 

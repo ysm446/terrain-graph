@@ -1342,8 +1342,16 @@ void Application::DrawSceneHierarchy() {
     const auto graphEntry = [&](int component) {
         ImGui::PushID(component);
         const bool dirty = components && (m_sceneDirty & (component ? kDirtyCloud : kDirtyTerrain));
-        if (component) eye("##eyeCloud", &m_renderer.ShowClouds(), "雲と雲影の表示。雲グラフの設定は保持する");
-        else eye("##eyeTerrain", &m_renderer.ShowTerrain(), "地形と配置したモデルの表示。影も一緒に消える");
+        // Display メニューで作業中だけ隠しているときは、目が開いていても見えない理由を添える。
+        const auto& workHide = m_renderer.WorkHidden();
+        if (component) eye("##eyeCloud", &m_renderer.ShowClouds(),
+                           workHide.clouds ? "雲と雲影の表示。雲グラフの設定は保持する\n"
+                                             "いまはビューポートの Display で一時的に隠しています"
+                                           : "雲と雲影の表示。雲グラフの設定は保持する");
+        else eye("##eyeTerrain", &m_renderer.ShowTerrain(),
+                 workHide.instances ? "地形と配置したモデルの表示。影も一緒に消える\n"
+                                      "配置したモデルは、いまビューポートの Display で一時的に隠しています"
+                                    : "地形と配置したモデルの表示。影も一緒に消える");
         std::filesystem::path placed;
         if (components) for (const auto& entry : m_sceneComponents)
             if (io::ProjectWorkspace::String(entry, "role") == (component ? "cloud" : "terrain"))

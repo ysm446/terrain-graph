@@ -223,6 +223,15 @@ public:
     GodRaySettings& GodRays() { return m_atmosphere.GodRays(); }
     bool& CloudLightingCache() { return m_cloudLightingCache; }
     bool& ShowClouds() { return m_showClouds; }
+    // 作業中だけ隠すもの（ビューポートの Display メニュー）。シーンの表示設定とは別に持ち、
+    // 保存しない。シーンで表示していて、ここで隠していないものだけを描く。
+    struct WorkHide {
+        bool instances = false;   // Model Scatter の配置（本描画と影）
+        bool clouds = false;      // 雲と雲影
+        bool snowPlumes = false;  // 雪煙
+        bool Any() const { return instances || clouds || snowPlumes; }
+    };
+    WorkHide& WorkHidden() { return m_workHide; }
     bool& CloudCurvature() { return m_cloudCurvature; } // 天候層を球殻状に曲げる。
     bool& CloudFarPass() { return m_cloudFarPass; } // 遠景を 1/4 解像度の別パスで描く。
     bool& FullResolutionClouds() { return m_atmosphere.FullResolutionClouds(); }
@@ -430,6 +439,7 @@ private:
     Atmosphere m_atmosphere;
     bool m_cloudLightingCache = true;
     bool m_showClouds = kPreviewDefaults.showClouds;
+    WorkHide m_workHide;
     bool m_cloudCurvature = true;
     bool m_cloudFarPass = true;
     AtmosphereSettings m_atmosphereSettings;
