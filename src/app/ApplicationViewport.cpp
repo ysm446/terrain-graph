@@ -668,11 +668,63 @@ void Application::DrawHeightGuide(const ImVec2& viewportMin, const ImVec2& viewp
         return;
     }
 
-    const float half = m_renderer.PlaneSize() * 0.5f;
+    const float planeSize = m_renderer.PlaneSize();
+    const float half = planeSize * 0.5f;
     const float scale = m_renderer.DisplacementScale();
+    // 地形の実寸を持つノード（Heightmap）があれば、その最低標高で高さを標高にする。
+    // 無ければ底からの高さ（最低標高 0 と同じ）。
+    const graph::TerrainScale* terrainScale = m_graph.FindChainScale(m_previewGraphNode);
+    const float baseElevation = terrainScale != nullptr ? terrainScale->baseElevationMeters : 0.0f;
+
+    // 実寸の書式。地形の大きさ（数百 m〜数 km）は桁区切りの整数、素材の大きさ（数 m 以下）は小数。
+    const auto formatMeters = [](float meters, char* out, size_t outSize) {
+        if (std::abs(meters) < 100.0f) {
+            std::snprintf(out, outSize, std::abs(meters) < 10.0f ? "%.2f m" : "%.1f m", meters);
+            return;
+        }
+        const long long rounded = std::llround(meters);
+        const std::string grouped = GroupDigits(static_cast<uint64_t>(rounded < 0 ? -rounded : rounded));
+        std::snprintf(out, outSize, "%s%s m", rounded < 0 ? "-" : "", grouped.c_str());
+    };
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     drawList->PushClipRect(viewportMin, viewportMax, true);
+    // 雲や明るい地面の上でも読めるよう、1 px の暗い影を敷いてから文字を置く。
+    const auto addLabel = [drawList](const ImVec2& position, ImU32 color, const char* text) {
+        drawList->AddText(ImVec2(position.x + 1.0f, position.y + 1.0f), IM_COL32(0, 0, 0, 150), text);
+        drawList->AddText(position, color, text);
+    };
+
+    // ラベルは**画面に収まる角のうち、カメラに一番近いもの**へ寄せる。奥の角は地形に
+    // 隠れやすく、一番近い角は寄ったときに画面の外へ出やすい。
+    const XMFLOAT3 eye = camera.Position();
+    float cornerX = eye.x >= 0.0f ? half : -half;
+    float cornerZ = eye.z >= 0.0f ? half : -half;
+    {
+        struct Corner {
+            float x, z, distance;
+        };
+        Corner corners[4] = {{half, half, 0}, {-half, half, 0}, {half, -half, 0}, {-half, -half, 0}};
+        for (Corner& corner : corners) {
+            corner.distance = std::hypot(corner.x - eye.x, corner.z - eye.z);
+        }
+        std::sort(std::begin(corners), std::end(corners),
+                  [](const Corner& a, const Corner& b) { return a.distance < b.distance; });
+        const auto onScreen = [&](const XMFLOAT3& point) {
+            const ProjectedPoint projected = ProjectToViewport(viewProjection, point, viewportMin, size);
+            return projected.visible && projected.screen.x >= viewportMin.x &&
+                   projected.screen.x <= viewportMax.x && projected.screen.y >= viewportMin.y &&
+                   projected.screen.y <= viewportMax.y;
+        };
+        for (const Corner& corner : corners) {
+            if (onScreen(XMFLOAT3{corner.x, -0.5f * scale, corner.z}) &&
+                onScreen(XMFLOAT3{corner.x, 0.5f * scale, corner.z})) {
+                cornerX = corner.x;
+                cornerZ = corner.z;
+                break;
+            }
+        }
+    }
 
     struct Level {
         float height;
@@ -688,13 +740,36 @@ void Application::DrawHeightGuide(const ImVec2& viewportMin, const ImVec2& viewp
 
     for (const Level& level : levels) {
         const float y = (level.height - 0.5f) * scale;
-        // ラベルは手前の角（+X, +Z）へ。線と重ならないよう少し外へずらす。
+        // 線と重ならないよう少し外へずらす。正規化した値（マスクのパラメータで使う）と標高を並べる。
         const ProjectedPoint corner =
-            ProjectToViewport(viewProjection, XMFLOAT3{half, y, half}, viewportMin, size);
+            ProjectToViewport(viewProjection, XMFLOAT3{cornerX, y, cornerZ}, viewportMin, size);
         if (corner.visible) {
-            drawList->AddText(ImVec2(corner.screen.x + ui::Scaled(6.0f),
-                                     corner.screen.y - ImGui::GetTextLineHeight() * 0.5f),
-                              level.color, level.label);
+            char meters[32] = {};
+            formatMeters(baseElevation + level.height * scale, meters, sizeof(meters));
+            char text[64] = {};
+            std::snprintf(text, sizeof(text), "%s  %s", level.label, meters);
+            addLabel(ImVec2(corner.screen.x + ui::Scaled(6.0f),
+                            corner.screen.y - ImGui::GetTextLineHeight() * 0.5f),
+                     level.color, text);
+        }
+    }
+
+    // 底の枠の手前の 2 辺に一辺の長さ。辺の中央に、文字の中心を合わせて置く。
+    {
+        char length[32] = {};
+        formatMeters(planeSize, length, sizeof(length));
+        const float bottom = -0.5f * scale;
+        const XMFLOAT3 midpoints[2] = {XMFLOAT3{0.0f, bottom, cornerZ},
+                                       XMFLOAT3{cornerX, bottom, 0.0f}};
+        const ImVec2 textSize = ImGui::CalcTextSize(length);
+        for (const XMFLOAT3& midpoint : midpoints) {
+            const ProjectedPoint projected =
+                ProjectToViewport(viewProjection, midpoint, viewportMin, size);
+            if (projected.visible) {
+                addLabel(ImVec2(projected.screen.x - textSize.x * 0.5f,
+                                projected.screen.y + ui::Scaled(4.0f)),
+                         IM_COL32(150, 160, 175, 200), length);
+            }
         }
     }
 

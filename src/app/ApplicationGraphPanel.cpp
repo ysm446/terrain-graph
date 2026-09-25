@@ -1583,6 +1583,14 @@ void Application::DrawGraphPanel() {
                     std::max(1.0f, settings->scale.sizeMeters * 0.5f), defaults.heightMeters,
                     "ハイト 0〜1 の全幅が何 m になるか（最低地点から最高地点までの差）",
                     "%.1f m", ImGuiSliderFlags_Logarithmic);
+                changed |= ui::PropertyFloat(
+                    "最低標高", &settings->scale.baseElevationMeters, -12000.0f, 9000.0f,
+                    defaults.baseElevationMeters,
+                    "ハイト 0 の所の標高（m）。ビューポートの Height Range のラベルを標高で出す。"
+                    "形や評価には効かない",
+                    "%.1f m");
+                ui::PropertyValue("最高標高", "%.1f m",
+                                  settings->scale.baseElevationMeters + settings->scale.heightMeters);
                 ui::EndPropertyTable();
             }
             ui::HintText("読み込んだ地形の実寸。プレビュー設定の平面のサイズと変位量はこれに従う");

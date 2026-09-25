@@ -64,6 +64,9 @@ void Application::DrawMaterialPanel() {
                     // 同じ値を 2 か所から編集できると、どちらが効くのか分からなくなる。
                     ui::PropertyValue("平面のサイズ", "%.1f m", m_renderer.PlaneSize());
                     ui::PropertyValue("変位量", "%.1f m", m_renderer.DisplacementScale());
+                    if (const graph::TerrainScale* scale = m_graph.FindChainScale(m_previewGraphNode)) {
+                        ui::PropertyValue("最低標高", "%.1f m", scale->baseElevationMeters);
+                    }
                 } else {
                     const float displacementMax =
                         std::max(1.0f, m_renderer.PlaneSize() * 0.5f);

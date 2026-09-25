@@ -1595,6 +1595,11 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
                 json scale;
                 scale["size"] = settings->scale.sizeMeters;
                 scale["height"] = settings->scale.heightMeters;
+                // 最低標高は 0（未設定）なら書かない。古いファイルを開いただけで
+                // 中身が変わった扱いにならないように。
+                if (settings->scale.baseElevationMeters != 0.0f) {
+                    scale["baseElevation"] = settings->scale.baseElevationMeters;
+                }
                 item["scale"] = std::move(scale);
             }
         } else if (const auto* mask = std::get_if<graph::MaskNodeSettings>(&node.settings)) {
@@ -1883,6 +1888,8 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                         ReadFloat(*scale, "size", scaleFallback.sizeMeters);
                     settings.scale.heightMeters =
                         ReadFloat(*scale, "height", scaleFallback.heightMeters);
+                    settings.scale.baseElevationMeters =
+                        std::clamp(ReadFloat(*scale, "baseElevation", 0.0f), -12000.0f, 9000.0f);
                 }
                 // 種類とレイヤー種別は常に一致させる（ファイルの食い違いは種類を信じる）。
                 settings.layer.kind = graph::LayerKindFor(created.kind);

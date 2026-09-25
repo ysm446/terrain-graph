@@ -175,6 +175,9 @@ struct Pin {
 struct TerrainScale {
     float sizeMeters = 1024.0f;
     float heightMeters = 200.0f;
+    // ハイト 0 の所の標高（m）。最高地点は baseElevationMeters + heightMeters。
+    // 表示（Height Range のラベル）に使うだけで、評価には効かない。
+    float baseElevationMeters = 0.0f;
 };
 
 // サーフェス / シェイプ / 水面 / ハイトマップ。既存のレイヤーそのもの
