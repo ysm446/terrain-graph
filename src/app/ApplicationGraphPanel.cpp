@@ -17,6 +17,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <utility>
 #include <variant>
@@ -1595,6 +1597,54 @@ void Application::DrawGraphPanel() {
                 ui::EndPropertyTable();
             }
             ui::HintText("読み込んだ地形の実寸。プレビュー設定の平面のサイズと変位量はこれに従う");
+
+            // 現実の場所。記録だけで評価には効かない。外部のツールや LLM が
+            // OSM などから周辺の情報を引く手がかりにする。
+            ui::SectionHeader("位置");
+            if (ui::BeginPropertyTable("graphNodeLocationRows")) {
+                const graph::TerrainScale defaults;
+                changed |= ui::PropertyBool(
+                    "位置を持つ", &settings->scale.hasLocation, defaults.hasLocation,
+                    "地形の現実の場所（中心の緯度・経度）を記録する。形や評価には効かない");
+                if (settings->scale.hasLocation) {
+                    // **スライダーではなく文字で入れる。** float のスライダーだと経度 138 度で
+                    // 刻みが約 1.5 m になり、打った値がそのまま残らない。範囲いっぱいを
+                    // ドラッグして合わせる値でもない。
+                    // 緯度の行へ「36.0183, 138.3642」（地図アプリからのコピー）を入れると両方が入る。
+                    char latitudeText[64] = {};
+                    std::snprintf(latitudeText, sizeof(latitudeText), "%.6f", settings->scale.latitude);
+                    if (ui::PropertyTextInput("緯度", latitudeText, sizeof(latitudeText),
+                                              "地形の中心の緯度（度）。北緯が正。\n"
+                                              "「緯度, 経度」の形で貼ると経度も入る")) {
+                        char* end = nullptr;
+                        const double latitude = std::strtod(latitudeText, &end);
+                        if (end != latitudeText) {
+                            settings->scale.latitude = std::clamp(latitude, -90.0, 90.0);
+                            changed = true;
+                            while (*end == ' ' || *end == ',') {
+                                ++end;
+                            }
+                            char* lonEnd = nullptr;
+                            const double longitude = std::strtod(end, &lonEnd);
+                            if (lonEnd != end) {
+                                settings->scale.longitude = std::clamp(longitude, -180.0, 180.0);
+                            }
+                        }
+                    }
+                    char longitudeText[64] = {};
+                    std::snprintf(longitudeText, sizeof(longitudeText), "%.6f", settings->scale.longitude);
+                    if (ui::PropertyTextInput("経度", longitudeText, sizeof(longitudeText),
+                                              "地形の中心の経度（度）。東経が正")) {
+                        char* end = nullptr;
+                        const double longitude = std::strtod(longitudeText, &end);
+                        if (end != longitudeText) {
+                            settings->scale.longitude = std::clamp(longitude, -180.0, 180.0);
+                            changed = true;
+                        }
+                    }
+                }
+                ui::EndPropertyTable();
+            }
         }
         if (changed) {
             m_graph.MarkDirty();

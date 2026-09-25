@@ -93,6 +93,11 @@ float ReadFloat(const json& node, const char* key, float fallback) {
     return (member != nullptr && member->is_number()) ? member->get<float>() : fallback;
 }
 
+double ReadDouble(const json& node, const char* key, double fallback) {
+    const json* member = FindMember(node, key);
+    return (member != nullptr && member->is_number()) ? member->get<double>() : fallback;
+}
+
 int ReadInt(const json& node, const char* key, int fallback) {
     const json* member = FindMember(node, key);
     return (member != nullptr && member->is_number_integer()) ? member->get<int>() : fallback;
@@ -1600,6 +1605,13 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
                 if (settings->scale.baseElevationMeters != 0.0f) {
                     scale["baseElevation"] = settings->scale.baseElevationMeters;
                 }
+                // 現実の場所（中心の緯度・経度）。持っていなければ書かない。
+                if (settings->scale.hasLocation) {
+                    json location;
+                    location["latitude"] = settings->scale.latitude;
+                    location["longitude"] = settings->scale.longitude;
+                    scale["location"] = std::move(location);
+                }
                 item["scale"] = std::move(scale);
             }
         } else if (const auto* mask = std::get_if<graph::MaskNodeSettings>(&node.settings)) {
@@ -1890,6 +1902,14 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                         ReadFloat(*scale, "height", scaleFallback.heightMeters);
                     settings.scale.baseElevationMeters =
                         std::clamp(ReadFloat(*scale, "baseElevation", 0.0f), -12000.0f, 9000.0f);
+                    if (const json* location = FindMember(*scale, "location");
+                        location != nullptr && location->is_object()) {
+                        settings.scale.hasLocation = true;
+                        settings.scale.latitude =
+                            std::clamp(ReadDouble(*location, "latitude", 0.0), -90.0, 90.0);
+                        settings.scale.longitude =
+                            std::clamp(ReadDouble(*location, "longitude", 0.0), -180.0, 180.0);
+                    }
                 }
                 // 種類とレイヤー種別は常に一致させる（ファイルの食い違いは種類を信じる）。
                 settings.layer.kind = graph::LayerKindFor(created.kind);

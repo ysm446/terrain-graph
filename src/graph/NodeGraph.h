@@ -178,6 +178,12 @@ struct TerrainScale {
     // ハイト 0 の所の標高（m）。最高地点は baseElevationMeters + heightMeters。
     // 表示（Height Range のラベル）に使うだけで、評価には効かない。
     float baseElevationMeters = 0.0f;
+    // 地形の中心の緯度・経度（度。北緯・東経が正）。どこの地形かの記録で、評価には効かない。
+    // 範囲は中心と sizeMeters で決まるので、東西南北の端は持たない。hasLocation が false なら持たない。
+    // double なのは、float だと経度 138 度で刻みが約 1.5 m になり、入れた値が保存で崩れるため。
+    bool hasLocation = false;
+    double latitude = 0.0;
+    double longitude = 0.0;
 };
 
 // サーフェス / シェイプ / 水面 / ハイトマップ。既存のレイヤーそのもの
