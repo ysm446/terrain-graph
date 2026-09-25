@@ -1428,6 +1428,47 @@ void RunNodeGraphTests() {
               "PastePathClip は新しい ID で同じ形を、ずらした位置に貼る");
         Check(tg::graph::BuildPathStrands(path).size() == 2,
               "貼った鎖は元の鎖と別の鎖になる");
+
+        // 鎖の設定のコピーと貼り付け。形・向き・つながりは変えず、設定だけを写す。
+        tg::graph::PathEdge source;
+        source.curve = tg::graph::PathCurve::Clothoid;
+        source.clothoidRatio = 0.3f;
+        source.overrideValues = true;
+        source.widthMeters = 8.0f;
+        source.meanderMeters = 2.0f;
+        source.route = tg::graph::PathRoute::Trail;
+        source.maxGradePercent = 25.0f;
+        const tg::graph::PathEdgeStyle style = tg::graph::GetPathEdgeStyle(source);
+        tg::graph::PathEdge* target = nullptr;
+        for (tg::graph::PathEdge& edge : path.edges) {
+            if (edge.id == pastedEdges.front()) {
+                target = &edge;
+            }
+        }
+        const PathElementId targetFrom = target->from;
+        const PathElementId targetTo = target->to;
+        target->route = tg::graph::PathRoute::Road;
+        target->routed = true;
+        target->waypoints.push_back({0.5f, 0.5f});
+        Check(tg::graph::ApplyPathEdgeStyle(*target, style) &&
+                  target->curve == tg::graph::PathCurve::Clothoid &&
+                  target->clothoidRatio == 0.3f && target->overrideValues &&
+                  target->widthMeters == 8.0f && target->meanderMeters == 2.0f &&
+                  target->route == tg::graph::PathRoute::Trail &&
+                  target->maxGradePercent == 25.0f && target->from == targetFrom &&
+                  target->to == targetTo && !target->routed,
+              "ApplyPathEdgeStyle は設定だけを写し、経路探索が変われば経路を古くする");
+        Check(!tg::graph::ApplyPathEdgeStyle(*target, style),
+              "同じ設定を貼り直しても変更にならない");
+        target->routed = true;
+        tg::graph::PathEdgeStyle curveOnly = style;
+        curveOnly.rounding = 0.5f;
+        Check(tg::graph::ApplyPathEdgeStyle(*target, curveOnly) && target->routed,
+              "経路探索の設定が同じなら経路は作り直さない");
+        tg::graph::PathEdgeStyle noRoute = style;
+        noRoute.route = tg::graph::PathRoute::None;
+        Check(tg::graph::ApplyPathEdgeStyle(*target, noRoute) && target->waypoints.empty(),
+              "経路探索なしを貼ると内部点を捨てる");
     }
 
     Section("パス — 面の線分列と Mask Area");

@@ -396,6 +396,59 @@ bool ReversePathEdgesAt(PathSettings& path, PathElementId pointId) {
     return any;
 }
 
+// --- 鎖の設定のコピーと貼り付け -----------------------------------------------
+
+PathEdgeStyle GetPathEdgeStyle(const PathEdge& edge) {
+    PathEdgeStyle style;
+    style.curve = edge.curve;
+    style.rounding = edge.rounding;
+    style.clothoidRatio = edge.clothoidRatio;
+    style.overrideValues = edge.overrideValues;
+    style.widthMeters = edge.widthMeters;
+    style.featherMeters = edge.featherMeters;
+    style.intensity = edge.intensity;
+    style.meanderMeters = edge.meanderMeters;
+    style.meanderWavelengthMeters = edge.meanderWavelengthMeters;
+    style.route = edge.route;
+    style.maxGradePercent = edge.maxGradePercent;
+    style.ridgeWeight = edge.ridgeWeight;
+    style.avoidWeight = edge.avoidWeight;
+    return style;
+}
+
+bool ApplyPathEdgeStyle(PathEdge& edge, const PathEdgeStyle& style) {
+    const bool routeChanged = edge.route != style.route ||
+                              edge.maxGradePercent != style.maxGradePercent ||
+                              edge.ridgeWeight != style.ridgeWeight ||
+                              edge.avoidWeight != style.avoidWeight;
+    const bool otherChanged =
+        edge.curve != style.curve || edge.rounding != style.rounding ||
+        edge.clothoidRatio != style.clothoidRatio || edge.overrideValues != style.overrideValues ||
+        edge.widthMeters != style.widthMeters || edge.featherMeters != style.featherMeters ||
+        edge.intensity != style.intensity || edge.meanderMeters != style.meanderMeters ||
+        edge.meanderWavelengthMeters != style.meanderWavelengthMeters;
+    edge.curve = style.curve;
+    edge.rounding = style.rounding;
+    edge.clothoidRatio = style.clothoidRatio;
+    edge.overrideValues = style.overrideValues;
+    edge.widthMeters = style.widthMeters;
+    edge.featherMeters = style.featherMeters;
+    edge.intensity = style.intensity;
+    edge.meanderMeters = style.meanderMeters;
+    edge.meanderWavelengthMeters = style.meanderWavelengthMeters;
+    edge.route = style.route;
+    edge.maxGradePercent = style.maxGradePercent;
+    edge.ridgeWeight = style.ridgeWeight;
+    edge.avoidWeight = style.avoidWeight;
+    if (routeChanged) {
+        edge.routed = false;
+        if (style.route == PathRoute::None) {
+            edge.waypoints.clear();
+        }
+    }
+    return routeChanged || otherChanged;
+}
+
 // --- 経路の内部点 -----------------------------------------------------------
 
 bool IsPathEdgeRouteCurrent(const PathSettings& path, const PathEdge& edge) {

@@ -933,6 +933,22 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
             if (ImGui::MenuItem("鎖をコピー", "Ctrl+C")) {
                 copySelection();
             }
+            // 設定だけを写す（形はそのまま）。貼った先の経路は下で計算し直す。
+            if (ImGui::MenuItem("鎖の設定をコピー")) {
+                if (const graph::PathEdge* edge = path.FindEdge(edgeId)) {
+                    m_pathStyleClipboard = graph::GetPathEdgeStyle(*edge);
+                }
+            }
+            ImGui::BeginDisabled(!m_pathStyleClipboard.has_value());
+            if (ImGui::MenuItem("鎖の設定を貼り付け")) {
+                for (graph::PathEdge& edge : path.edges) {
+                    if (std::find(state.selectedEdges.begin(), state.selectedEdges.end(),
+                                  edge.id) != state.selectedEdges.end()) {
+                        changed |= graph::ApplyPathEdgeStyle(edge, *m_pathStyleClipboard);
+                    }
+                }
+            }
+            ImGui::EndDisabled();
             // 輪にする（Mask Area の面）。末尾から先頭へ繋ぐので、向きは鎖に沿う。
             {
                 const graph::PathStrand* strand = graph::FindStrandOfEdge(cache.strands, edgeId);
@@ -1572,6 +1588,25 @@ bool Application::DrawPathSettings(graph::Node& node) {
                     }
                     ui::PropertyEnd();
                 }
+                // 鎖の設定（曲線 / 幅 / 蛇行 / 経路探索）を別の鎖へ写す。形と向きは写さない。
+                ui::PropertyLabelEmpty("pathEdgeStyle");
+                if (ui::Button("設定をコピー")) {
+                    m_pathStyleClipboard = graph::GetPathEdgeStyle(*edges.front());
+                }
+                ImGui::SameLine();
+                ImGui::BeginDisabled(!m_pathStyleClipboard.has_value());
+                if (ui::Button("設定を貼り付け")) {
+                    bool pasted = false;
+                    for (graph::PathEdge* edge : edges) {
+                        pasted |= graph::ApplyPathEdgeStyle(*edge, *m_pathStyleClipboard);
+                    }
+                    if (pasted) {
+                        changed = true;
+                        RecomputePathRoutes(node, false, &m_pathEdit.selectedEdges);
+                    }
+                }
+                ImGui::EndDisabled();
+                ui::PropertyEnd();
                 ui::PropertyLabelEmpty("pathEdgeButtons");
                 if (ui::Button("向きを反転")) {
                     for (graph::PathEdge* edge : edges) {

@@ -33,6 +33,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -618,6 +619,8 @@ private:
     // パスのクリップボード（アプリ内）。鎖や点の集合をコピーして、カーソルの所へ貼る。
     // 別の Path ノードへも貼れる。
     graph::PathClip m_pathClipboard;
+    // 鎖の設定（曲線 / 幅 / 蛇行 / 経路探索）のクリップボード。選んだ鎖へ上書きで貼る。
+    std::optional<graph::PathEdgeStyle> m_pathStyleClipboard;
     // 経路探索が読む地形。**Path ノードの Base に繋いだチェーン**を、プレビューとは別に
     // 焼いた Height の写し（プレビューが別の地形を見ていても Base を使う）。
     // 上流を変えても経路は勝手に作り直さないが、写し自体は編集中に追従させておく

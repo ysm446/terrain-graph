@@ -185,6 +185,29 @@ bool ReversePathEdge(PathSettings& path, PathElementId edgeId);
 // 点に付いているエッジを全部反転する。
 bool ReversePathEdgesAt(PathSettings& path, PathElementId pointId);
 
+// --- 鎖の設定のコピーと貼り付け -----------------------------------------------
+// 鎖の設定（曲線 / 幅の上書き / 蛇行 / 経路探索）。つながり・向き・経路の結果は持たない。
+// 道路の見た目と探し方を、ほかの鎖へそのまま写すのに使う。
+struct PathEdgeStyle {
+    PathCurve curve = PathCurve::Line;
+    float rounding = 1.0f;
+    float clothoidRatio = 0.5f;
+    bool overrideValues = false;
+    float widthMeters = 24.0f;
+    float featherMeters = 12.0f;
+    float intensity = 1.0f;
+    float meanderMeters = 0.0f;
+    float meanderWavelengthMeters = 20.0f;
+    PathRoute route = PathRoute::None;
+    float maxGradePercent = 10.0f;
+    float ridgeWeight = 1.0f;
+    float avoidWeight = 4.0f;
+};
+PathEdgeStyle GetPathEdgeStyle(const PathEdge& edge);
+// エッジへ設定を入れる。経路探索の設定が変わったら経路を古くする（なしなら内部点も捨てる）。
+// 何か変わったら真。
+bool ApplyPathEdgeStyle(PathEdge& edge, const PathEdgeStyle& style);
+
 // --- 経路の内部点 -----------------------------------------------------------
 // エッジの経路が今の両端の位置に合っているか。route が None なら常に真。
 bool IsPathEdgeRouteCurrent(const PathSettings& path, const PathEdge& edge);
