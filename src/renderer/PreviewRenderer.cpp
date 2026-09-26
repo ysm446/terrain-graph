@@ -533,6 +533,7 @@ void PreviewRenderer::ResetSettings() {
 
     // 各節の既定値は構造体の初期値。数値を直接書かない。
     m_camera.SetState(CameraState{});
+    m_cameraBookmarks = CameraBookmarks{};
     m_light = LightSettings{};
     m_exposure = ExposureSettings{};
     m_dof = DofSettings{};

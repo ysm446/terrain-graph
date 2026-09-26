@@ -2,8 +2,10 @@
 
 #include <DirectXMath.h>
 
+#include <array>
 #include <cmath>
 #include <cstdint>
+#include <optional>
 
 namespace tg::renderer {
 
@@ -42,6 +44,12 @@ struct CameraState {
     float nearZ = 0.1f;
     float farZ = 100000.0f;
 };
+// カメラのブックマーク。Ctrl + 数字キーで今の視点を保存し、数字キーで呼び出す
+// （Unreal Engine のブックマークと同じ操作）。添字は数字キーそのもの（0〜9）。
+// 空きは std::nullopt。プロジェクトに一緒に保存する。
+inline constexpr int kCameraBookmarkCount = 10;
+using CameraBookmarks = std::array<std::optional<CameraState>, kCameraBookmarkCount>;
+
 // 手動のクリップ面の範囲（m）。ファーはニアの 10 倍以上にする。
 inline constexpr float kMinClipNear = 0.001f;
 inline constexpr float kMaxClipNear = 10000.0f;

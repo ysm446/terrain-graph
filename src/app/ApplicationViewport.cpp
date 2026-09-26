@@ -347,15 +347,35 @@ bool Application::HandleLightDrag(bool itemActive) {
 // 修飾キーは付けない（Ctrl は数値の直接入力、Alt は軌道に使っている）。
 // カーソルがビューポートの上にあるときだけ効かせ、
 // **テキスト入力中は無視する**。レイヤー名を打っている最中に視点が飛ぶのを防ぐ。
+//
+// 数字キーはカメラのブックマーク（Unreal Engine と同じ操作）。
+// Ctrl + 数字で今の視点を保存し、数字だけで呼び出す。
 void Application::HandleCameraShortcuts(bool itemHovered) {
     const ImGuiIO& io = ImGui::GetIO();
-    if (!itemHovered || io.WantTextInput || io.KeyCtrl || io.KeyShift || io.KeyAlt) {
+    if (!itemHovered || io.WantTextInput || io.KeyShift || io.KeyAlt) {
+        return;
+    }
+
+    renderer::Camera& camera = m_renderer.GetCamera();
+    renderer::CameraBookmarks& bookmarks = m_renderer.GetCameraBookmarks();
+    for (int i = 0; i < renderer::kCameraBookmarkCount; ++i) {
+        if (!ImGui::IsKeyPressed(static_cast<ImGuiKey>(ImGuiKey_0 + i), false)) continue;
+        if (io.KeyCtrl) {
+            bookmarks[i] = camera.State();
+            TG_LOG_INFO("カメラのブックマーク %d に保存しました", i);
+        } else if (bookmarks[i]) {
+            camera.SetState(*bookmarks[i]);
+        } else {
+            TG_LOG_INFO("ブックマーク %d は空です（Ctrl + %d で保存）", i, i);
+        }
+        return;
+    }
+    if (io.KeyCtrl) {
         return;
     }
 
     // プレビューのメッシュはどれも原点中心（モデル行列は単位行列）。
     constexpr DirectX::XMFLOAT3 kMeshCenter{0.0f, 0.0f, 0.0f};
-    renderer::Camera& camera = m_renderer.GetCamera();
 
     if (ImGui::IsKeyPressed(ImGuiKey_F, false)) {
         camera.Focus(kMeshCenter);

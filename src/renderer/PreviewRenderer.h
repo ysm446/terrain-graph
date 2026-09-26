@@ -294,6 +294,8 @@ public:
 
     Camera& GetCamera() { return m_camera; }
     const Camera& GetCamera() const { return m_camera; }
+    CameraBookmarks& GetCameraBookmarks() { return m_cameraBookmarks; }
+    const CameraBookmarks& GetCameraBookmarks() const { return m_cameraBookmarks; }
     ExposureSettings& Exposure() { return m_exposure; }
     LightSettings& Light() { return m_atmosphericMode ? m_atmosphericLight : m_light; }
     LightSettings& LegacyLight() { return m_light; }
@@ -429,6 +431,7 @@ private:
     std::array<rhi::GpuTexture, kShadowCascadeCount> m_shadowCascades;
 
     Camera m_camera;
+    CameraBookmarks m_cameraBookmarks;
     ExposureSettings m_exposure;
     rhi::GpuBuffer m_meterHistogram, m_meterResult, m_meterReadback;
     bool m_meterPending[rhi::kFrameCount] = {};

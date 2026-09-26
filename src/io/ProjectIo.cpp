@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <fstream>
 #include <functional>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <unordered_map>
@@ -141,6 +142,34 @@ DirectX::XMFLOAT3 ReadFloat3(const json& node, const char* key,
         }
     }
     return value;
+}
+
+// カメラの状態。現在の視点とブックマークで同じ形を使う。
+json WriteCameraState(const renderer::CameraState& camera) {
+    json node;
+    node["target"] = WriteFloat3(camera.target);
+    node["distance"] = camera.distance;
+    node["yaw"] = camera.yaw;
+    node["pitch"] = camera.pitch;
+    node["fovY"] = camera.fovY;
+    node["autoClip"] = camera.autoClip;
+    node["nearZ"] = camera.nearZ;
+    node["farZ"] = camera.farZ;
+    return node;
+}
+
+renderer::CameraState ReadCameraState(const json& camera) {
+    renderer::CameraState state;
+    state.target = ReadFloat3(camera, "target", state.target);
+    state.distance = ReadFloat(camera, "distance", state.distance);
+    state.yaw = ReadFloat(camera, "yaw", state.yaw);
+    state.pitch = ReadFloat(camera, "pitch", state.pitch);
+    state.fovY = ReadFloat(camera, "fovY", state.fovY);
+    // キーの無い既存ファイルは自動のまま（見え方を変えない）。
+    state.autoClip = ReadBool(camera, "autoClip", state.autoClip);
+    state.nearZ = ReadFloat(camera, "nearZ", state.nearZ);
+    state.farZ = ReadFloat(camera, "farZ", state.farZ);
+    return state;
 }
 
 // --- 列挙 -----------------------------------------------------------------
@@ -2347,17 +2376,14 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     // 環境そのもの（HDRI・較正値・空のパラメータ）は天球アセットが持つ。
     // ここには「見え方」だけを書く。
 
-    const renderer::CameraState camera = renderer.GetCamera().State();
-    json cameraNode;
-    cameraNode["target"] = WriteFloat3(camera.target);
-    cameraNode["distance"] = camera.distance;
-    cameraNode["yaw"] = camera.yaw;
-    cameraNode["pitch"] = camera.pitch;
-    cameraNode["fovY"] = camera.fovY;
-    cameraNode["autoClip"] = camera.autoClip;
-    cameraNode["nearZ"] = camera.nearZ;
-    cameraNode["farZ"] = camera.farZ;
-    node["camera"] = std::move(cameraNode);
+    node["camera"] = WriteCameraState(renderer.GetCamera().State());
+    // ブックマークは埋まっている番号だけを書く。キーは数字キーの文字（"1" など）。
+    json bookmarksNode = json::object();
+    const renderer::CameraBookmarks& bookmarks = renderer.GetCameraBookmarks();
+    for (int i = 0; i < renderer::kCameraBookmarkCount; ++i) {
+        if (bookmarks[i]) bookmarksNode[std::to_string(i)] = WriteCameraState(*bookmarks[i]);
+    }
+    if (!bookmarksNode.empty()) node["cameraBookmarks"] = std::move(bookmarksNode);
 
     const renderer::LightSettings& light = renderer.LegacyLight();
     json lightNode;
@@ -2507,18 +2533,16 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
     };
 
     {
-        const json& camera = section("camera");
-        renderer::CameraState state;
-        state.target = ReadFloat3(camera, "target", state.target);
-        state.distance = ReadFloat(camera, "distance", state.distance);
-        state.yaw = ReadFloat(camera, "yaw", state.yaw);
-        state.pitch = ReadFloat(camera, "pitch", state.pitch);
-        state.fovY = ReadFloat(camera, "fovY", state.fovY);
-        // キーの無い既存ファイルは自動のまま（見え方を変えない）。
-        state.autoClip = ReadBool(camera, "autoClip", state.autoClip);
-        state.nearZ = ReadFloat(camera, "nearZ", state.nearZ);
-        state.farZ = ReadFloat(camera, "farZ", state.farZ);
-        renderer.GetCamera().SetState(state);
+        renderer.GetCamera().SetState(ReadCameraState(section("camera")));
+        // 無い番号は空に戻す（前のプロジェクトのブックマークを残さない）。
+        const json& bookmarksNode = section("cameraBookmarks");
+        renderer::CameraBookmarks& bookmarks = renderer.GetCameraBookmarks();
+        for (int i = 0; i < renderer::kCameraBookmarkCount; ++i) {
+            const json* bookmark = FindMember(bookmarksNode, std::to_string(i).c_str());
+            bookmarks[i] = (bookmark != nullptr && bookmark->is_object())
+                               ? std::optional(ReadCameraState(*bookmark))
+                               : std::nullopt;
+        }
     }
 
     {
