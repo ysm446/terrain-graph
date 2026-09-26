@@ -888,6 +888,7 @@ void Application::DrawViewportPanel() {
             renderer::Camera& camera = m_renderer.GetCamera();
             const bool itemActive = ImGui::IsItemActive();
             const bool itemHovered = ImGui::IsItemHovered();
+            const ImGuiID viewportInputId = ImGui::GetItemID();
 
             // L + 左ドラッグはライトの向き。ブラシや軌道より先に見る。
             const bool lightDragging = HandleLightDrag(itemActive);
@@ -925,6 +926,11 @@ void Application::DrawViewportPanel() {
             // Alt を押している間はブラシもライトも無効になる（上の brushEnabled と
             // HandleLightDrag が !io.KeyAlt を見る）ので、ここで競合は起きない。
             if (itemActive && io.KeyAlt) {
+                // Alt をビューポートの持ち物にする。持ち主がいないと、ドラッグを終えた後の
+                // Alt の離し方で ImGui のナビがメニュー層へ切り替わり、ビューポートの
+                // ホバーが外れる（クリックするまで F / A / 数字キーが効かなくなる）。
+                // 持ち主は Alt を離すと自動で外れる。
+                ImGui::SetKeyOwner(ImGuiMod_Alt, viewportInputId);
                 if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
                     camera.Orbit(io.MouseDelta.x * 0.006f, io.MouseDelta.y * 0.006f);
                 } else if (ImGui::IsMouseDown(ImGuiMouseButton_Middle)) {
