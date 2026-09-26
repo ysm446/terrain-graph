@@ -1004,6 +1004,7 @@ void RunNodeGraphTests() {
         NodeKind::MultiScaleErosion,
         NodeKind::FluvialErosion,
         NodeKind::FlattenBorders,
+        NodeKind::HeightLevels,
     };
     for (const NodeKind kind : kOperationKinds) {
         NodeGraph graph;

@@ -265,7 +265,7 @@ constexpr std::array<PinDefinition, 1> kModelOutputPins = {{
 constexpr std::array<PinDefinition, 1> kSnowPlumePins = {{
     {PinKind::Input, ValueType::Mask, "Source"},
 }};
-constexpr std::array<NodeDefinition, 51> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 52> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kSurfacePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -281,6 +281,7 @@ constexpr std::array<NodeDefinition, 51> kNodeDefinitions = {{
     {NodeKind::Droplet, "droplet", "Droplet Erosion", kDropletPins},
     {NodeKind::FluvialErosion, "fluvialErosion", "Fluvial Erosion", kFluvialErosionPins},
     {NodeKind::FlattenBorders, "flattenBorders", "Flatten Borders", kBlurPins},
+    {NodeKind::HeightLevels, "heightLevels", "Height Levels", kBlurPins},
     {NodeKind::MultiScaleErosion, "multiScaleErosion", "Multi-Scale Erosion", kBlurPins},
     {NodeKind::Scatter, "scatter", "Scatter", kScatterPins},
     {NodeKind::MaskImage, "maskImage", "Mask Image", kMaskSourcePins},
@@ -347,7 +348,8 @@ bool IsLayerNodeKind(NodeKind kind) {
            kind == NodeKind::Sediment || kind == NodeKind::Crumbling ||
            kind == NodeKind::Snow || kind == NodeKind::SnowCover || kind == NodeKind::Lake || kind == NodeKind::MeanderingRivers || kind == NodeKind::River || kind == NodeKind::Droplet ||
            kind == NodeKind::Scatter || kind == NodeKind::MultiScaleErosion ||
-           kind == NodeKind::FluvialErosion || kind == NodeKind::FlattenBorders;
+           kind == NodeKind::FluvialErosion || kind == NodeKind::FlattenBorders ||
+           kind == NodeKind::HeightLevels;
 }
 
 bool IsSourceNodeKind(NodeKind kind) {
@@ -388,6 +390,8 @@ compositor::LayerKind LayerKindFor(NodeKind kind) {
             return compositor::LayerKind::FluvialErosion;
         case NodeKind::FlattenBorders:
             return compositor::LayerKind::FlattenBorders;
+        case NodeKind::HeightLevels:
+            return compositor::LayerKind::HeightLevels;
         case NodeKind::MultiScaleErosion:
             return compositor::LayerKind::MultiScaleErosion;
         // ハイトマップは合成規則としてはシェイプ（高さへの加算）。

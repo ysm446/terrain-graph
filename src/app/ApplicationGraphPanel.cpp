@@ -127,6 +127,7 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
             return ImVec4(0.48f, 0.64f, 0.72f, 1.0f);
         case graph::NodeKind::FluvialErosion:
         case graph::NodeKind::FlattenBorders:
+        case graph::NodeKind::HeightLevels:
         case graph::NodeKind::MultiScaleErosion:
         case graph::NodeKind::Droplet:
             return ImVec4(0.56f, 0.66f, 0.62f, 1.0f);
@@ -1061,6 +1062,7 @@ void Application::DrawGraphEditor() {
                         "River — 川筋から河床を掘り、下流へ下がる水面を張る");
         addNodeMenuItem(graph::NodeKind::FluvialErosion, "Fluvial Erosion — 流れに沿って谷を刻み、細部を戻しながら侵食する");
         addNodeMenuItem(graph::NodeKind::FlattenBorders, "Flatten Borders — 地形の外周を指定した標高へならす");
+        addNodeMenuItem(graph::NodeKind::HeightLevels, "Height Levels — 高さの範囲を引き伸ばす（侵食で縮んだ範囲を元の全幅へ戻す）");
         addNodeMenuItem(graph::NodeKind::MultiScaleErosion,
                         "Multi-Scale Erosion — 大きな谷から細かな溝まで段階的に侵食する");
         addNodeMenuItem(graph::NodeKind::Droplet,

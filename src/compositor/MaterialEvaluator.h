@@ -506,6 +506,9 @@ private:
     float m_windPendingSpeed = 0.0f;
     // 標高マスクの「全範囲」用（R32_UINT）。InterlockedMin / Max でためる。
     rhi::GpuTexture m_maskHeightRange;
+    // Height Levels の「自動」の範囲用（R32_UINT 2×1）。標高マスクの集計とは別に持つ
+    // （マスクの評価と順番が入れ替わっても値を取り違えないように）。
+    rhi::GpuTexture m_heightLevelsRange;
     SedimentResources m_sediment;
     CrumblingResources m_crumbling;
     // 候補の置き場を用意する（数が変わったら作り直す）。
@@ -563,6 +566,9 @@ private:
     bool ApplyFluvialErosionMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
         ID3D12GraphicsCommandList* commandList, const MaskOp& op, rhi::GpuTexture& target, bool enabled);
     bool ApplyFlattenBorders(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+        ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
+        const MaterialStack& stack, uint32_t maskIndex);
+    bool ApplyHeightLevels(rhi::Device& device, rhi::PipelineCache& pipelineCache,
         ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
         const MaterialStack& stack, uint32_t maskIndex);
 

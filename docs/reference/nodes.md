@@ -1,7 +1,7 @@
 # nodes — ノードのリファレンス
 
 作成日時: 2026-09-03 17:30
-更新日時: 2026-09-26 02:46
+更新日時: 2026-09-26 15:36
 
 ## Model Merge
 
@@ -59,6 +59,7 @@ Cloud Shape Generate（`cloudShapeGenerate`）または Cloud Map Generate（`cl
 | **Shape** | `shape` | Base, Mask | Result | 高さへ起伏を加算する |
 | **Liquid** | `liquid` | Base, Mask | Result | 水位より低い所に水を張る |
 | **Heightmap Blur** | `heightmapBlur` | Base, Mask | Result | ハイトをぼかしてならす |
+| **Height Levels** | `heightLevels` | Base, Mask | Result | 高さの範囲を写し直す（侵食で縮んだ範囲を元の全幅へ戻す） |
 | **Sediment** | `sediment` | Base, Emission | Result, **Mask** | 土砂を重力で再分配する。Emission で供給する場所を絞れる |
 | **Crumbling** | `crumbling` | Base, Emission | Result, **Mask**, **Unique**, **Points** | 岩屑を斜面下へ流して積む |
 | **Snow** | `snow` | Base, Mask | Result, **Mask** | 雪を降らせ、急な雪面から落として積もらせる。Mask で降らせる場所を絞れる |
@@ -989,6 +990,26 @@ Surface / Shape / Liquid / Heightmap が共通で持つ節。
 - 地質年代は細かい段階の反復倍率に作用する。特徴サイズは開始する粗さ、基準のセル幅は距離・速度の基準。
 - Wear / Deposit / Age は `1-exp(-量/最終セル幅)` で 0〜1 に変換する。生の標高や秒数ではない。
 - 粒子が提案した変更量を GPU で集計し、セルごとの平均を地形へ反映する。
+
+## Height Levels
+
+高さの**範囲**を写し直す（ハイトの Levels）。入力の範囲を出力の範囲へ直線で写し、
+ガンマで中間を曲げる。侵食（Fluvial Erosion など）で山頂が削られ谷底が埋まって縮んだ
+高さの範囲を、**既定のまま挟むだけで元の全幅へ戻せる**。
+
+| パラメータ | 既定 | 意味 |
+| --- | --- | --- |
+| 入力の範囲 / 自動 | 入 | 今の地形の最低〜最高を入力の範囲にする（評価のたびに GPU で集計する） |
+| 入力の範囲 / 最低・最高 | 0 / 1000 m | 自動を切ったときだけ。範囲の外は出力の端へ寄せる |
+| 出力の範囲 / 全幅 | 入 | 出力を 0〜標高差（地形の全幅）にする |
+| 出力の範囲 / 最低・最高 | 0 / 1000 m | 全幅を切ったときだけ |
+| ガンマ | 1.00 | 1 で直線。1 より大きいと中間の高さが下がり、小さいと上がる（Mask Levels と同じ向き） |
+
+- 高さは **m で、地形の底からの高さ**（Mask Height と同じ基準。Heightmap ノードの `最低標高` は足さない）。
+- Mask の白い所だけに効く。黒い所は元の高さのまま。
+- 例（赤岳、1,900〜2,874 m）: Fluvial Erosion の後は 1,933〜2,794 m（山頂が 80 m 下がる）。
+  既定の Height Levels を挟むと 1,900〜2,874 m に戻る。
+- 下流に Snow などの高さを変えるノードがあると、そこでまた範囲は変わる。戻したい位置の直後に置く。
 
 ## Flatten Borders
 

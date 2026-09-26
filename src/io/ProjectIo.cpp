@@ -163,7 +163,7 @@ const char* const kCurvatureModeNames[] = {"ridges", "valleys", "absolute"};
 const char* const kMaskBlendModeNames[] = {"add", "multiply", "min", "max", "subtract"};
 const char* const kChannelNames[] = {"baseColor", "normal", "surface", "height"};
 const char* const kLayerKindNames[] = {"surface",   "shape", "liquid", "blur",    "sediment",
-                                       "crumbling", "snow",  "river",  "droplet", "scatter", "multiScaleErosion", "fluvialErosion", "flattenBorders", "snowCover", "lake", "meanderingRivers"};
+                                       "crumbling", "snow",  "river",  "droplet", "scatter", "multiScaleErosion", "fluvialErosion", "flattenBorders", "snowCover", "lake", "meanderingRivers", "heightLevels"};
 // 散布の形 / 向き。compositor::ScatterShape / ScatterOrientation の並びと一致させること。
 const char* const kScatterShapeNames[] = {"hemisphere", "cone"};
 const char* const kScatterOrientationNames[] = {"flat", "followGround", "slopeOriented"};
@@ -1130,6 +1130,19 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     flattenBorders["upperZ"] = layer.flattenBorders.upperZ;
     node["flattenBorders"] = std::move(flattenBorders);
 
+    // Height Levels の設定は、その種類のレイヤーだけに書く（ほかのレイヤーの保存内容を変えない）。
+    if (layer.kind == compositor::LayerKind::HeightLevels) {
+        json heightLevels;
+        heightLevels["autoInput"] = layer.heightLevels.autoInput;
+        heightLevels["inputMinMeters"] = layer.heightLevels.inputMinMeters;
+        heightLevels["inputMaxMeters"] = layer.heightLevels.inputMaxMeters;
+        heightLevels["fullOutput"] = layer.heightLevels.fullOutput;
+        heightLevels["outputMinMeters"] = layer.heightLevels.outputMinMeters;
+        heightLevels["outputMaxMeters"] = layer.heightLevels.outputMaxMeters;
+        heightLevels["gamma"] = layer.heightLevels.gamma;
+        node["heightLevels"] = std::move(heightLevels);
+    }
+
     json multiScaleErosion;
     multiScaleErosion["resolution"] = layer.multiScaleErosion.resolution;
     multiScaleErosion["baseResolution"] = layer.multiScaleErosion.baseResolution;
@@ -1450,6 +1463,16 @@ compositor::MaterialLayer ReadLayer(
         layer.flattenBorders.upperX = ReadBool(*value, "upperX", defaults.flattenBorders.upperX);
         layer.flattenBorders.lowerZ = ReadBool(*value, "lowerZ", defaults.flattenBorders.lowerZ);
         layer.flattenBorders.upperZ = ReadBool(*value, "upperZ", defaults.flattenBorders.upperZ);
+    }
+    if (const json* value = FindMember(node, "heightLevels"); value != nullptr && value->is_object()) {
+        const auto& d = defaults.heightLevels;
+        layer.heightLevels.autoInput = ReadBool(*value, "autoInput", d.autoInput);
+        layer.heightLevels.inputMinMeters = ReadFloat(*value, "inputMinMeters", d.inputMinMeters);
+        layer.heightLevels.inputMaxMeters = ReadFloat(*value, "inputMaxMeters", d.inputMaxMeters);
+        layer.heightLevels.fullOutput = ReadBool(*value, "fullOutput", d.fullOutput);
+        layer.heightLevels.outputMinMeters = ReadFloat(*value, "outputMinMeters", d.outputMinMeters);
+        layer.heightLevels.outputMaxMeters = ReadFloat(*value, "outputMaxMeters", d.outputMaxMeters);
+        layer.heightLevels.gamma = std::clamp(ReadFloat(*value, "gamma", d.gamma), 0.1f, 10.0f);
     }
     if (const json* mse = FindMember(node, "multiScaleErosion"); mse != nullptr && mse->is_object()) {
         layer.multiScaleErosion.resolution = static_cast<uint32_t>(std::clamp(ReadInt(*mse, "resolution", defaults.multiScaleErosion.resolution), 16, 2048));

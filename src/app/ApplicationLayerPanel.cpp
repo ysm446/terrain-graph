@@ -615,6 +615,52 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
         return changed;
     }
 
+    if (layer.kind == compositor::LayerKind::HeightLevels) {
+        auto& params = layer.heightLevels;
+        const compositor::MaterialLayer::HeightLevelsSettings levelsDefaults;
+        // m の行の上限は地形の標高差（ハイト 0〜1 の全幅）。プレビューの変位量がそれに従う。
+        const float heightMeters = std::max(1.0f, m_renderer.DisplacementScale());
+        ui::SectionHeader("基本");
+        if (ui::BeginPropertyTable("heightLevelsBasicRows")) {
+            char name[128] = {};
+            std::snprintf(name, sizeof(name), "%s", layer.name.c_str());
+            if (ui::PropertyTextInput("名前", name, sizeof(name))) { layer.name = name; changed = true; }
+            ui::EndPropertyTable();
+        }
+        ui::SectionHeader("入力の範囲");
+        if (ui::BeginPropertyTable("heightLevelsInputRows")) {
+            changed |= ui::PropertyBool("自動", &params.autoInput, levelsDefaults.autoInput,
+                                        "今の地形の最低〜最高を入力の範囲にする（評価のたびに集計する）");
+            if (!params.autoInput) {
+                changed |= ui::PropertyFloat("最低", &params.inputMinMeters, 0.0f, heightMeters,
+                                             levelsDefaults.inputMinMeters,
+                                             "地形の底からの高さ（m）。これより低い所は出力の最低になる", "%.1f m");
+                changed |= ui::PropertyFloat("最高", &params.inputMaxMeters, 0.0f, heightMeters,
+                                             std::min(levelsDefaults.inputMaxMeters, heightMeters),
+                                             "地形の底からの高さ（m）。これより高い所は出力の最高になる", "%.1f m");
+            }
+            ui::EndPropertyTable();
+        }
+        ui::SectionHeader("出力の範囲");
+        if (ui::BeginPropertyTable("heightLevelsOutputRows")) {
+            changed |= ui::PropertyBool("全幅", &params.fullOutput, levelsDefaults.fullOutput,
+                                        "出力を 0〜標高差（地形の全幅）にする。侵食で縮んだ範囲を元に戻すときはこのまま");
+            if (!params.fullOutput) {
+                changed |= ui::PropertyFloat("最低", &params.outputMinMeters, 0.0f, heightMeters,
+                                             levelsDefaults.outputMinMeters, "地形の底からの高さ（m）", "%.1f m");
+                changed |= ui::PropertyFloat("最高", &params.outputMaxMeters, 0.0f, heightMeters,
+                                             std::min(levelsDefaults.outputMaxMeters, heightMeters),
+                                             "地形の底からの高さ（m）", "%.1f m");
+            }
+            changed |= ui::PropertyFloat("ガンマ", &params.gamma, 0.1f, 10.0f, levelsDefaults.gamma,
+                                         "1 で直線。1 より大きいと中間の高さが下がり、小さいと上がる", "%.2f",
+                                         ImGuiSliderFlags_Logarithmic);
+            ui::EndPropertyTable();
+        }
+        ui::HintText("Mask の白い所だけに効く（黒い所は元の高さのまま）");
+        return changed;
+    }
+
     if (layer.kind == compositor::LayerKind::MultiScaleErosion) {
         auto& params = layer.multiScaleErosion;
         const compositor::MaterialLayer::MultiScaleErosionSettings mseDefaults;

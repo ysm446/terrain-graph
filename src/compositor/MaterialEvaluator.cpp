@@ -350,6 +350,13 @@ uint64_t HashHeightState(uint64_t seed, const MaterialLayer& layer) {
     hash = HashBytes(hash, &layer.flattenBorders.upperX, sizeof(layer.flattenBorders.upperX));
     hash = HashBytes(hash, &layer.flattenBorders.lowerZ, sizeof(layer.flattenBorders.lowerZ));
     hash = HashBytes(hash, &layer.flattenBorders.upperZ, sizeof(layer.flattenBorders.upperZ));
+    hash = HashBytes(hash, &layer.heightLevels.autoInput, sizeof(layer.heightLevels.autoInput));
+    hash = HashBytes(hash, &layer.heightLevels.inputMinMeters, sizeof(layer.heightLevels.inputMinMeters));
+    hash = HashBytes(hash, &layer.heightLevels.inputMaxMeters, sizeof(layer.heightLevels.inputMaxMeters));
+    hash = HashBytes(hash, &layer.heightLevels.fullOutput, sizeof(layer.heightLevels.fullOutput));
+    hash = HashBytes(hash, &layer.heightLevels.outputMinMeters, sizeof(layer.heightLevels.outputMinMeters));
+    hash = HashBytes(hash, &layer.heightLevels.outputMaxMeters, sizeof(layer.heightLevels.outputMaxMeters));
+    hash = HashBytes(hash, &layer.heightLevels.gamma, sizeof(layer.heightLevels.gamma));
     hash = HashBytes(hash, &layer.multiScaleErosion.resolution, sizeof(layer.multiScaleErosion.resolution));
     hash = HashBytes(hash, &layer.multiScaleErosion.baseResolution, sizeof(layer.multiScaleErosion.baseResolution));
     hash = HashBytes(hash, &layer.multiScaleErosion.erosionIterations, sizeof(layer.multiScaleErosion.erosionIterations));
@@ -1009,6 +1016,7 @@ void MaterialEvaluator::Destroy(rhi::Device& device) {
     ReleaseFluvialResources(device);
     ReleaseWindResources(device);
     device.DeferRelease(m_maskHeightRange);
+    device.DeferRelease(m_heightLevelsRange);
     ReleaseSedimentResources(device);
     ReleaseCrumblingResources(device);
     for (auto& [id, set] : m_placementPoints) {
@@ -3262,6 +3270,54 @@ bool MaterialEvaluator::ApplyFlattenBorders(rhi::Device& device, rhi::PipelineCa
     return true;
 }
 
+// 入力の範囲（自動なら今の地形の最低〜最高）を出力の範囲へ写し直す。
+bool MaterialEvaluator::ApplyHeightLevels(rhi::Device& device, rhi::PipelineCache& cache,
+    ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
+    const MaterialStack& stack, uint32_t maskIndex) {
+    auto* clear = cache.GetCompute(L"CompositeHeightLevels.hlsl", L"CsRangeClear");
+    auto* reduce = cache.GetCompute(L"CompositeHeightLevels.hlsl", L"CsRangeReduce");
+    auto* levels = cache.GetCompute(L"CompositeHeightLevels.hlsl", L"CsLevels");
+    auto* normals = cache.GetCompute(L"CompositeBlur.hlsl", L"CsNormalFromHeight");
+    if (!clear || !reduce || !levels || !normals) return false;
+    const auto& p = layer.heightLevels;
+    if (p.autoInput && !m_heightLevelsRange.IsValid() &&
+        !CreateChannelTexture(device, 2, 1, DXGI_FORMAT_R32_UINT, L"HeightLevelsRange", m_heightLevelsRange)) {
+        TG_LOG_WARN("Height Levels の集計用テクスチャを作れませんでした");
+        return false;
+    }
+    // m はハイト 0〜1 の比へ直す（ハイト 0〜1 の全幅が標高差）。
+    const float heightMeters = std::max(stack.HeightMeters(), 0.001f);
+    const float outLow = p.fullOutput ? 0.0f : p.outputMinMeters / heightMeters;
+    const float outHigh = p.fullOutput ? 1.0f : p.outputMaxMeters / heightMeters;
+    struct Constants { uint32_t indices[4]; float range[4]; float shape[4]; };
+    Constants c{{m_textures.height.UavIndex(), maskIndex,
+                 p.autoInput ? m_heightLevelsRange.UavIndex() : kInvalidTextureIndex, m_resolution},
+                {p.inputMinMeters / heightMeters, p.inputMaxMeters / heightMeters, outLow, outHigh},
+                {std::clamp(p.gamma, 0.1f, 10.0f), p.autoInput ? 1.0f : 0.0f, 0.0f, 0.0f}};
+    const auto cb = AllocateConstants(device, sizeof(c));
+    if (!cb.IsValid()) return false;
+    std::memcpy(cb.cpu, &c, sizeof(c));
+    PIXBeginEvent(commandList, PIX_COLOR_DEFAULT, "HeightLevels");
+    TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+    const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+    if (p.autoInput) {
+        TransitionIfNeeded(commandList, m_heightLevelsRange, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        commandList->SetPipelineState(clear);
+        commandList->Dispatch(1, 1, 1);
+        commandList->ResourceBarrier(1, &barrier);
+        commandList->SetPipelineState(reduce);
+        commandList->Dispatch(DispatchCount(m_resolution), DispatchCount(m_resolution), 1);
+        commandList->ResourceBarrier(1, &barrier);
+    }
+    commandList->SetPipelineState(levels);
+    commandList->Dispatch(DispatchCount(m_resolution), DispatchCount(m_resolution), 1);
+    commandList->ResourceBarrier(1, &barrier);
+    RebuildNormalsFromHeight(device, normals, commandList, stack);
+    PIXEndEvent(commandList);
+    return true;
+}
+
 namespace {
 struct SnowCoverConstants {
     uint32_t textures[4], inputs[4], grid[4], work[4];
@@ -5298,6 +5354,9 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 ++m_evaluatedLayerCount;
             } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::FlattenBorders) {
                 if (!ApplyFlattenBorders(device, pipelineCache, commandList, layer, stack, inputMaskIndex)) complete = false;
+                ++m_evaluatedLayerCount;
+            } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::HeightLevels) {
+                if (!ApplyHeightLevels(device, pipelineCache, commandList, layer, stack, inputMaskIndex)) complete = false;
                 ++m_evaluatedLayerCount;
             } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::MultiScaleErosion) {
                 if (!ApplyMultiScaleErosion(device, pipelineCache, commandList, layer, stack,

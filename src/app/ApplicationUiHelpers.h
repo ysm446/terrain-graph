@@ -193,6 +193,13 @@ inline const compositor::MaterialLayer kDefaultFlattenBordersLayer = [] {
     return layer;
 }();
 
+inline const compositor::MaterialLayer kDefaultHeightLevelsLayer = [] {
+    compositor::MaterialLayer layer;
+    layer.kind = compositor::LayerKind::HeightLevels;
+    layer.name = "Height Levels";
+    return layer;
+}();
+
 inline const compositor::MaterialLayer& DefaultLayerFor(compositor::LayerKind kind) {
     switch (kind) {
         case compositor::LayerKind::Shape:
@@ -219,6 +226,8 @@ inline const compositor::MaterialLayer& DefaultLayerFor(compositor::LayerKind ki
             return kDefaultFluvialErosionLayer;
         case compositor::LayerKind::FlattenBorders:
             return kDefaultFlattenBordersLayer;
+        case compositor::LayerKind::HeightLevels:
+            return kDefaultHeightLevelsLayer;
         case compositor::LayerKind::MultiScaleErosion:
             return kDefaultMultiScaleErosionLayer;
         case compositor::LayerKind::Droplet:

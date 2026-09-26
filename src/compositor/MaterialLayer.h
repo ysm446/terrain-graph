@@ -66,6 +66,8 @@ enum class LayerKind : uint32_t {
     SnowCover = 13,
     Lake = 14,
     MeanderingRivers = 15,
+    // ハイトの Levels。入力の範囲を出力の範囲へ写し直す（侵食で縮んだ高さの範囲を戻すなど）。
+    HeightLevels = 16,
 };
 
 // 散布する形。terrain-editor の ScatterShapeType と同じ。
@@ -96,7 +98,8 @@ inline bool IsHeightOperationKind(LayerKind kind) {
            kind == LayerKind::Crumbling || kind == LayerKind::Snow || kind == LayerKind::SnowCover || kind == LayerKind::Lake || kind == LayerKind::MeanderingRivers ||
            kind == LayerKind::River || kind == LayerKind::Droplet ||
            kind == LayerKind::Scatter || kind == LayerKind::MultiScaleErosion ||
-           kind == LayerKind::FluvialErosion || kind == LayerKind::FlattenBorders;
+           kind == LayerKind::FluvialErosion || kind == LayerKind::FlattenBorders ||
+           kind == LayerKind::HeightLevels;
 }
 
 // ハイトの基準面。ソースの値がこの値のとき、そのテクセルは「基準の高さ」ちょうどになる。
@@ -604,6 +607,21 @@ struct MaterialLayer {
         bool upperZ = true;
     };
     FlattenBordersSettings flattenBorders;
+
+    // ハイトの Levels。値は m（地形の底からの高さ。Mask Height と同じ基準）。
+    struct HeightLevelsSettings {
+        // 真なら入力の範囲を今の地形の最低〜最高にする（評価のたびに GPU で集計する）。
+        bool autoInput = true;
+        float inputMinMeters = 0.0f;
+        float inputMaxMeters = 1000.0f;
+        // 真なら出力の範囲を全幅（0〜標高差）にする。偽なら下の 2 つを使う。
+        bool fullOutput = true;
+        float outputMinMeters = 0.0f;
+        float outputMaxMeters = 1000.0f;
+        // 1 で直線。1 より大きいと中間の高さが下がり、小さいと上がる（Mask Levels と同じ向き）。
+        float gamma = 1.0f;
+    };
+    HeightLevelsSettings heightLevels;
 
     int hardnessMaskOp = -1; // コンパイル時だけ設定する硬度マスク
     // 散布の Variation 入力（配置の点へ書く色むらの値）。コンパイル時だけ設定する。

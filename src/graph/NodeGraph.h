@@ -133,6 +133,8 @@ enum class NodeKind : uint32_t {
     WindField = 50,
     // 稜線から風下へ伸びる雪煙。Source のマスクから帯メッシュを生やして描く（出力を持たない終端）。
     SnowPlume = 51,
+    // ハイトの Levels。入力の範囲（自動なら今の最低〜最高）を出力の範囲へ写し直す。
+    HeightLevels = 52,
 };
 
 struct PinDefinition {
