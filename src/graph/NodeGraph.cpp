@@ -428,6 +428,11 @@ compositor::LayerKind LayerKindFor(NodeKind kind) {
 
 // --- NodeGraph ------------------------------------------------------------
 
+uint64_t NodeGraph::NextIdentity() {
+    static uint64_t next = 0;
+    return ++next;
+}
+
 NodeGraph NodeGraph::CreateDefault() {
     NodeGraph graph;
     const GraphId baseId = graph.CreateNode(NodeKind::Surface);

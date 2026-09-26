@@ -2227,6 +2227,8 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
     }
     // Replace が壊れたリンクの除去と次の採番の再構築を行う。
     graphData.Replace(std::move(nodes), std::move(links));
+    // ファイルの ID は前の文書の ID と重なりうる。別の文書として扱わせる。
+    graphData.RenewIdentity();
     return true;
 }
 
@@ -2807,6 +2809,40 @@ void RemoveStalePaintMasks(const fs::path& directory, const std::vector<fs::path
 }
 
 }  // namespace
+
+// ノードの設定が持つ参照を 1 つずつ置き換える。保存と同じ書き出し / 読み込みを
+// 通すので、レイヤーの中に散らばった参照（マスク・ハイト・マテリアル）を漏れなく辿れる。
+void RemapNodeReferences(graph::NodeSettings& settings, const NodeReferenceRemap& remap) {
+    const auto texture = [&remap](compositor::TextureId id) {
+        return (id != compositor::kNoTexture && remap.texture) ? remap.texture(id) : id;
+    };
+    if (auto* layer = std::get_if<graph::LayerNodeSettings>(&settings)) {
+        const json body = WriteLayer(
+            layer->layer, [](compositor::TextureId id) { return json(id); },
+            [](compositor::MaterialAssetId id) { return json(id); },
+            [](compositor::PaintMaskId id) { return json(id); });
+        const auto id = [](const json& value) {
+            return value.is_number_unsigned() ? value.get<uint32_t>() : 0u;
+        };
+        layer->layer = ReadLayer(
+            body, [&](const json& value) { return texture(id(value)); },
+            [&](const json& value) {
+                const compositor::MaterialAssetId material = id(value);
+                return (material != compositor::kNoMaterialAsset && remap.material)
+                           ? remap.material(material) : material;
+            },
+            [&](const json& value) {
+                const compositor::PaintMaskId paint = id(value);
+                return (paint != compositor::kNoPaintMask && remap.paint) ? remap.paint(paint) : paint;
+            });
+    } else if (auto* mask = std::get_if<graph::MaskNodeSettings>(&settings)) {
+        mask->map.texture = texture(mask->map.texture);
+    } else if (auto* scatter = std::get_if<graph::ModelScatterSettings>(&settings)) {
+        if (remap.model) {
+            for (graph::ModelChoice& choice : scatter->models) choice.model = remap.model(choice.model);
+        }
+    }
+}
 
 bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
                  const ProjectRefs& refs, ProjectWorkspace* workspace) {

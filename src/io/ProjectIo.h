@@ -12,6 +12,7 @@
 #include "rhi/PipelineCache.h"
 
 #include <filesystem>
+#include <functional>
 #include <map>
 
 // プロジェクトとマテリアルのファイル入出力。
@@ -74,6 +75,17 @@ void KeepOnlyActiveSky(rhi::Device& device, renderer::SkyLibrary& skies);
 bool LoadSharedAsset(ProjectWorkspace& workspace, const std::filesystem::path& path,
                      rhi::Device& device, rhi::PipelineCache& pipelineCache, const ProjectRefs& refs,
                      bool reload = false);
+
+// ノードの設定が持つ参照（テクスチャ・マテリアル・ペイントマスク・モデル）の置き換え。
+// 空の関数の種類には触らない。「なし」（0）の参照は関数へ渡さない。
+// 置き換えずに ID を集めたいときは、受け取った ID をそのまま返せばよい。
+struct NodeReferenceRemap {
+    std::function<compositor::TextureId(compositor::TextureId)> texture;
+    std::function<compositor::MaterialAssetId(compositor::MaterialAssetId)> material;
+    std::function<compositor::PaintMaskId(compositor::PaintMaskId)> paint;
+    std::function<uint64_t(uint64_t)> model;
+};
+void RemapNodeReferences(graph::NodeSettings& settings, const NodeReferenceRemap& remap);
 
 // --- プロジェクト (.tgproj) -----------------------------------------------
 //

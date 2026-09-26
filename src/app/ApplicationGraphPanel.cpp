@@ -9,6 +9,7 @@
 
 #include "app/ApplicationUiHelpers.h"
 #include "core/FileDialog.h"
+#include "io/ProjectIo.h"
 #include "io/SceneComponents.h"
 #include "ui/UiStyle.h"
 
@@ -505,6 +506,30 @@ void Application::CopySelectedGraphNodes() {
         }
         m_graphClipboard.push_back(std::move(entry));
     }
+
+    // 別のシーンへ貼ったときに引き直せるよう、参照の中身（パス・uid）を控える。
+    m_graphClipboardIdentity = m_graph.Identity();
+    m_graphClipboardTextures.clear();
+    m_graphClipboardMaterials.clear();
+    m_graphClipboardModels.clear();
+    io::NodeReferenceRemap collect;
+    collect.texture = [this](compositor::TextureId id) {
+        if (const compositor::LibraryTexture* texture = m_textureLibrary.Find(id))
+            m_graphClipboardTextures[id] = {texture->path, {}, texture->name};
+        return id;
+    };
+    collect.material = [this](compositor::MaterialAssetId id) {
+        if (const compositor::MaterialAsset* material = m_materialLibrary.Find(id))
+            m_graphClipboardMaterials[id] = {material->assetPath, material->assetUid, material->name};
+        return id;
+    };
+    collect.model = [this](uint64_t id) {
+        const auto model = std::find_if(m_models.begin(), m_models.end(),
+                                         [id](const renderer::ModelAsset& asset) { return asset.id == id; });
+        if (model != m_models.end()) m_graphClipboardModels[id] = {model->assetPath, model->assetUid, model->name};
+        return id;
+    };
+    for (GraphClipboardNode& entry : m_graphClipboard) io::RemapNodeReferences(entry.settings, collect);
     TG_LOG_INFO("ノードをコピーしました: %zu 個", m_graphClipboard.size());
 }
 
@@ -512,6 +537,15 @@ void Application::PasteGraphNodes(const ImVec2& viewCenter) {
     if (m_graphClipboard.empty()) {
         return;
     }
+    // 別のシーンでコピーしたノードは、参照を読み込みながら貼るのでフレームの外へ回す。
+    if (m_graphClipboardIdentity != m_graph.Identity()) {
+        m_pendingGraphPaste = viewCenter;
+        return;
+    }
+    PlaceGraphClipboard(viewCenter, false);
+}
+
+void Application::PlaceGraphClipboard(const ImVec2& viewCenter, bool foreign) {
     // 貼るたびに少しずらす。同じ場所に重ねると、貼れたのかどうか分からない。
     // **4 回で一巡させる。** 増やし続けると、貼るほど画面の中央から遠ざかる。
     ++m_graphPasteCount;
@@ -533,6 +567,61 @@ void Application::PasteGraphNodes(const ImVec2& viewCenter) {
     const float deltaX = viewCenter.x - (minX + maxX) * 0.5f + offset;
     const float deltaY = viewCenter.y - (minY + maxY) * 0.5f + offset;
 
+    // 別のシーンから来たノードの参照を、このシーンのライブラリで引き直す。
+    // ID はシーンを読むたびに振り直されるので、パス（テクスチャ）と uid（マテリアル・モデル）で探す。
+    // このシーンに無ければ読み込み、読めなければ外す。ペイントの筆跡はシーンの外へ持ち出せない。
+    io::NodeReferenceRemap remap;
+    size_t unresolved = 0;
+    size_t droppedPaint = 0;
+    if (foreign) {
+        const io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks, m_skyLibrary,
+                                   m_renderer, m_graph, &m_models, &m_sceneComponents, -1, &m_sceneAtmosphere};
+        // uid で探し、無ければアセットを読み込んでからもう一度探す。
+        const auto resolveAsset = [&](const GraphClipboardAsset& asset, const auto& findByUid) {
+            if (!asset.uid.empty()) {
+                if (const auto id = findByUid(asset.uid)) return id;
+                if (!asset.path.empty() && m_workspace.Contains(asset.path) &&
+                    io::LoadSharedAsset(m_workspace, asset.path, m_device, m_pipelineCache, refs)) {
+                    m_assetRefresh = true;
+                    if (const auto id = findByUid(asset.uid)) return id;
+                }
+            }
+            ++unresolved;
+            TG_LOG_WARN("貼り付けたノードの参照を外しました（このシーンで読み込めません）: %s", asset.name.c_str());
+            return decltype(findByUid(asset.uid)){};
+        };
+        remap.texture = [&](compositor::TextureId id) {
+            const auto found = m_graphClipboardTextures.find(id);
+            if (found == m_graphClipboardTextures.end()) return compositor::kNoTexture;
+            const GraphClipboardAsset& texture = found->second;
+            const compositor::TextureId loaded = m_textureLibrary.Load(m_device, m_pipelineCache, texture.path);
+            // プロジェクトを開くときと同じく、読めない画像はリンク切れとして参照を残す。
+            return loaded != compositor::kNoTexture ? loaded : m_textureLibrary.AddMissing(texture.path, texture.name);
+        };
+        remap.material = [&](compositor::MaterialAssetId id) {
+            const auto found = m_graphClipboardMaterials.find(id);
+            if (found == m_graphClipboardMaterials.end()) return compositor::kNoMaterialAsset;
+            return resolveAsset(found->second, [this](const std::string& uid) {
+                for (const compositor::MaterialAsset& asset : m_materialLibrary.Entries())
+                    if (asset.assetUid == uid) return asset.id;
+                return compositor::kNoMaterialAsset;
+            });
+        };
+        remap.model = [&](uint64_t id) {
+            const auto found = m_graphClipboardModels.find(id);
+            if (found == m_graphClipboardModels.end()) return uint64_t{0};
+            return resolveAsset(found->second, [this](const std::string& uid) {
+                for (const renderer::ModelAsset& asset : m_models)
+                    if (asset.assetUid == uid) return asset.id;
+                return uint64_t{0};
+            });
+        };
+        remap.paint = [&](compositor::PaintMaskId) {
+            ++droppedPaint;
+            return compositor::kNoPaintMask;
+        };
+    }
+
     std::vector<graph::GraphId> created(m_graphClipboard.size(), 0);
     for (size_t i = 0; i < m_graphClipboard.size(); ++i) {
         const GraphClipboardNode& entry = m_graphClipboard[i];
@@ -542,6 +631,7 @@ void Application::PasteGraphNodes(const ImVec2& viewCenter) {
             continue;
         }
         node->settings = entry.settings;
+        if (foreign) io::RemapNodeReferences(node->settings, remap);
         node->note = entry.note;
         node->component = std::max(0, m_editComponent);
         node->posX = entry.posX + deltaX;
@@ -572,8 +662,9 @@ void Application::PasteGraphNodes(const ImVec2& viewCenter) {
                 if (upstream != nullptr && !upstream->outputs.empty()) {
                     m_graph.CreateLink(upstream->outputs.front().id, endPin);
                 }
-            } else if (source.externalPin != 0) {
+            } else if (source.externalPin != 0 && !foreign) {
                 // 元のノードが消えていれば CanCreateLink が弾く（何も起きない）。
+                // 別の文書では同じ番号のピンが無関係なノードを指しうるので繋がない。
                 m_graph.CreateLink(source.externalPin, endPin);
             }
         }
@@ -586,6 +677,8 @@ void Application::PasteGraphNodes(const ImVec2& viewCenter) {
         }
     }
     MarkDocumentChanged();
+    if (droppedPaint > 0) TG_LOG_WARN("ペイントマスクは別のシーンへ持ち出せないため外しました: %zu 箇所", droppedPaint);
+    if (unresolved > 0 || droppedPaint > 0) return;  // 警告をステータスバーに残す
     TG_LOG_INFO("ノードを貼り付けました: %zu 個", m_graphClipboard.size());
 }
 

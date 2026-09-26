@@ -156,6 +156,8 @@ private:
     // 控えたノードを貼る。viewCenter は今のキャンバスの中央（キャンバス座標）で、
     // 貼った集合の中心をそこへ置く。相対の配置は保つ。
     void PasteGraphNodes(const ImVec2& viewCenter);
+    // 実際に貼る。foreign なら別の文書から来たノードとして参照を引き直す（フレームの外で呼ぶ）。
+    void PlaceGraphClipboard(const ImVec2& viewCenter, bool foreign);
     // ビューポートに出すノードを決める。出力ノードや無効な ID は
     // 「出力ノードのチェーン」（0）に落とす。
     // outputPin は**どの出力を見るか**。0 なら最初の出力（レイヤーなら Result）。
@@ -477,7 +479,7 @@ private:
     // ノードのコピー元。**OS のクリップボードは使わない**（アプリ内だけ）。
     // 位置と設定に加えて、**入力ピンごとの接続元**を覚える。
     // コピーした集合の中を指していれば貼った側どうしで繋ぎ直し、
-    // 外を指していれば**元の親へ繋いだまま**にする。
+    // 外を指していれば**元の親へ繋いだまま**にする（別の文書へ貼るときは繋がない）。
     struct GraphClipboardNode {
         graph::NodeKind kind = graph::NodeKind::Surface;
         graph::NodeSettings settings;
@@ -495,6 +497,21 @@ private:
         std::vector<Source> inputs;
     };
     std::vector<GraphClipboardNode> m_graphClipboard;
+    // コピー元の文書の印（NodeGraph::Identity）。貼る先と違えば別のシーンから来たノードで、
+    // ID で持つ参照（テクスチャ・マテリアル・モデル）を下の控えから引き直す。
+    uint64_t m_graphClipboardIdentity = 0;
+    // コピーした時点の参照の中身。キーはコピー元での ID。
+    struct GraphClipboardAsset {
+        std::filesystem::path path;  // テクスチャは画像、マテリアルとモデルはアセットのファイル
+        std::string uid;
+        std::string name;
+    };
+    std::unordered_map<compositor::TextureId, GraphClipboardAsset> m_graphClipboardTextures;
+    std::unordered_map<compositor::MaterialAssetId, GraphClipboardAsset> m_graphClipboardMaterials;
+    std::unordered_map<uint64_t, GraphClipboardAsset> m_graphClipboardModels;
+    // 別の文書へ貼るのは、参照の読み込み（GPU 待機を伴う）があるのでフレームの外で行う。
+    // 値は貼る先のキャンバスの中央。
+    std::optional<ImVec2> m_pendingGraphPaste;
     // 貼るたびに位置をずらす回数。コピーし直すと 0 に戻す。
     int m_graphPasteCount = 0;
     // メモの印（か省略したメモ）にカーソルが載っているノード。ed::End の後でツールチップを出す。

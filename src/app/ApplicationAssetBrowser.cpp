@@ -730,6 +730,11 @@ void Application::ProcessAssetWork() {
             } else TG_LOG_ERROR("モデルを読み込めませんでした: %s", ToUtf8Display(path).c_str());
         }
     }
+    // 別のシーンでコピーしたノードの貼り付け。参照の読み込みを伴うのでここで行う。
+    if (m_pendingGraphPaste) {
+        const ImVec2 center = *std::exchange(m_pendingGraphPaste, std::nullopt);
+        PlaceGraphClipboard(center, m_graphClipboardIdentity != m_graph.Identity());
+    }
     // 現在のシーンへの配置。差し替える部品が保存済みなら、一時プレビューを挟まずに差し替える
     // （元グラフを失わないので確認は要らない）。未保存の編集があれば従来のプレビューへ回す。
     if (!m_pendingComponentPlace.empty()) {

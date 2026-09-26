@@ -50,6 +50,21 @@ bool StartsWithNeutralPlane(const tg::graph::CompiledGraph& compiled) {
 
 void RunNodeGraphTests() {
     {
+        Section("文書の印（別のシーンへの貼り付けの判定）");
+        NodeGraph original;
+        const NodeGraph copied = original;  // アンドゥの控えと同じ複製
+        Check(copied.Identity() == original.Identity(), "複製は同じ文書の印を引き継ぐ");
+        NodeGraph other;
+        Check(other.Identity() != original.Identity(), "別に作ったグラフは別の印になる");
+        NodeGraph replaced = original;
+        replaced.Replace(std::vector<tg::graph::Node>(original.Nodes()), original.Links());
+        Check(replaced.Identity() == original.Identity(), "Replace（アンドゥ）では印を変えない");
+        const uint64_t before = original.Identity();
+        original.RenewIdentity();
+        Check(original.Identity() != before && original.Identity() != other.Identity(),
+              "読み直しでは新しい印になる");
+    }
+    {
         Section("Model Mergeの可変入力と配置の統合");
         NodeGraph graph;
         const auto merge=graph.CreateNode(NodeKind::ModelMerge);

@@ -570,7 +570,15 @@ public:
     uint64_t TerrainRevision() const { return m_terrainRevision; }
     uint64_t Revision() const { return m_revision; }
 
+    // どの文書のグラフかを表す印。ピンやノードの ID が同じ文書のものかを見分ける
+    // （ノードのコピーを別のシーンへ貼るときに、元の ID を使ってよいかの判定）。
+    // 作ったときと RenewIdentity で新しくなり、コピー（アンドゥの控えなど）では引き継ぐ。
+    uint64_t Identity() const { return m_identity; }
+    // ファイルから読み直したときに呼ぶ。Replace では変えない（アンドゥも Replace を使う）。
+    void RenewIdentity() { m_identity = NextIdentity(); }
+
 private:
+    static uint64_t NextIdentity();
     GraphId AllocateGraphId() { return m_nextGraphId++; }
     void RebuildNextGraphId();
     void NormalizeMergeInputs();
@@ -644,6 +652,7 @@ private:
     GraphId m_nextGraphId = 1;
     uint64_t m_revision = 1;
     uint64_t m_terrainRevision = 1;
+    uint64_t m_identity = NextIdentity();
 };
 
 std::span<const NodeDefinition> NodeDefinitions();
