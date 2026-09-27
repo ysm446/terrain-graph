@@ -186,6 +186,68 @@ void RunRoadPathTests() {
         Check(!BuildRoadMesh(sharp, bent, settings, mesh, &error) && !error.empty(), "折り返すような角は断る");
     }
 
+    Section("Shoulder: 路肩の帯");
+    {
+        const RoadPathSettings road = StraightRoad();
+        const RoadHeightSampler flat = [](float, float) { return 10.0f; };
+        RoadProfileCurve centerline;
+        BuildRoadCenterline(road, kSize, flat, centerline, nullptr);
+        RoadMeshSettings settings;
+        settings.widthMeters = 7.0f;
+        settings.surfaceOffsetMeters = 0.0f;
+        tg::renderer::MeshData surface;
+        BuildRoadMesh(road, centerline, settings, surface, nullptr);
+        const uint32_t stride = RoadMeshStride(settings);
+        Check(stride == 8, "路面の 1 行の頂点数（幅 7 m で 8）");
+
+        RoadShoulderSettings shoulder;
+        shoulder.widthMeters = 2.0f;
+        shoulder.crossSlopePercent = 5.0f;
+        tg::renderer::MeshData left;
+        uint32_t leftStride = 0;
+        std::string error;
+        Check(BuildRoadShoulder(surface, stride, 0, 1, shoulder, left, leftStride, &error), "左の端から路肩を作る");
+        Check(leftStride == 3, "路肩は約 1 m ごと（2 m で 3 頂点）");
+        const auto& edge = surface.vertices[0];
+        const auto& inner = left.vertices[0];
+        const auto& outer = left.vertices[leftStride - 1];
+        Check(Near(inner.position.x, edge.position.x, 1e-5f) && Near(inner.position.y, edge.position.y, 1e-5f) &&
+                  Near(inner.position.z, edge.position.z, 1e-5f),
+              "路肩の内側の端は路面の端と同じ頂点（隙間が無い）");
+        Check(Near(std::abs(outer.position.z - edge.position.z), 2.0f, 1e-3f) && outer.position.z < edge.position.z,
+              "左の路肩は外（左）へ幅の分だけ張り出す");
+        Check(Near(outer.position.y, edge.position.y - 0.1f, 1e-4f), "横断勾配 5% で 2 m 先は 10 cm 下がる");
+        Check(Near(outer.uv.x, 2.0f, 1e-4f) && Near(left.vertices[leftStride * 50].uv.y, surface.vertices[stride * 50].uv.y, 1e-4f),
+              "UV の x は内側の端からの横位置、y は路面と同じ道のり");
+        bool up = true;
+        for (const auto& v : left.vertices) up = up && v.normal.y > 0.99f;
+        Check(up, "路肩の法線は上向き");
+        // 接線（+U）と w から作る従法線は道のりの増える向き（+X）を向く。
+        const auto& v = left.vertices[leftStride * 10 + 1];
+        const float bx = (v.normal.y * v.tangent.z - v.normal.z * v.tangent.y) * v.tangent.w;
+        Check(bx > 0.9f, "左の路肩でも従法線は進行方向");
+
+        tg::renderer::MeshData right;
+        uint32_t rightStride = 0;
+        Check(BuildRoadShoulder(surface, stride, stride - 1, stride - 2, shoulder, right, rightStride, &error) &&
+                  right.vertices[rightStride - 1].position.z > surface.vertices[stride - 1].position.z,
+              "右の端からは右へ張り出す");
+
+        RoadShoulderSettings step = shoulder;
+        step.stepHeightMeters = 0.15f;
+        tg::renderer::MeshData curb;
+        uint32_t curbStride = 0;
+        Check(BuildRoadShoulder(surface, stride, 0, 1, step, curb, curbStride, &error) && curbStride == 4 &&
+                  Near(curb.vertices[1].position.y, edge.position.y - 0.15f - 0.05f * 0.05f, 1e-4f),
+              "段差は面取りの列を足し、そこで段差の分だけ下げる");
+
+        tg::renderer::MeshData outer2;
+        uint32_t outerStride = 0;
+        Check(BuildRoadShoulder(left, leftStride, leftStride - 1, leftStride - 2, shoulder, outer2, outerStride, &error) &&
+                  Near(outer2.vertices[outerStride - 1].position.z, edge.position.z - 4.0f, 1e-3f),
+              "路肩の外側の端からさらに路肩を重ねられる");
+    }
+
     Section("Road Path: ノード");
     {
         NodeGraph graph;
@@ -216,5 +278,15 @@ void RunRoadPathTests() {
         const GraphId modelOutput = graph.CreateNode(NodeKind::ModelOutput);
         Check(!graph.CreateLink(graph.FindNode(meshNode)->outputs[0].id, graph.FindNode(modelOutput)->inputs[0].id),
               "Mesh は Model Output（Instances）へ繋がらない");
+        const GraphId shoulderA = graph.CreateNode(NodeKind::Shoulder);
+        const GraphId shoulderB = graph.CreateNode(NodeKind::Shoulder);
+        graph.CreateLink(graph.FindNode(meshNode)->outputs[0].id, graph.FindNode(shoulderA)->inputs[0].id);
+        graph.CreateLink(graph.FindNode(shoulderA)->outputs[0].id, graph.FindNode(shoulderB)->inputs[0].id);
+        Check(graph.CreateLink(graph.FindNode(shoulderB)->outputs[0].id, graph.FindNode(outputNode)->inputs[0].id),
+              "路肩を 2 つ挟んで Mesh Output へ繋ぐ");
+        const auto chained = graph.CompileRoadMeshes();
+        Check(chained.size() == 1 && chained[0].roadMesh == meshNode && chained[0].shoulders.size() == 2 &&
+                  chained[0].shoulders[0] == shoulderA && chained[0].shoulders[1] == shoulderB,
+              "路肩を Road Mesh に近い順に辿る");
     }
 }

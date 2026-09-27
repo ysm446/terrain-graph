@@ -58,6 +58,12 @@ public:
     bool& CastShadow() { return m_castShadow; }
     float& DisplacementMeters() { return m_displacementMeters; }
     float& LengthMeters() { return m_lengthMeters; }
+    // Layered Material の轍・道路端のマスクを見るための仮の道路（プレビュー専用、保存しない）。
+    // 平面の中央に置く。マスクに道路の形が無い材質には効かない。
+    float& RoadWidthMeters() { return m_roadWidthMeters; }
+    int& RoadLanesForward() { return m_roadLanesForward; }
+    int& RoadLanesBackward() { return m_roadLanesBackward; }
+    bool& RoadLeftHandTraffic() { return m_roadLeftHandTraffic; }
 
 private:
     rhi::GpuTexture m_output;
@@ -77,6 +83,10 @@ private:
     // 既定値は .cpp の kDefault* と揃える（ResetView が入れ直す値）。
     float m_distance = 4.5f;
     float m_lengthMeters = 2.0f;
+    float m_roadWidthMeters = 7.0f;
+    int m_roadLanesForward = 1;
+    int m_roadLanesBackward = 1;
+    bool m_roadLeftHandTraffic = true;
 };
 
 }  // namespace tg::renderer

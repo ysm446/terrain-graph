@@ -29,6 +29,8 @@ struct GeneratedMeshItem {
     bool hasMaterial = false;
     compositor::LayerMaterialGpu material;
     float roadWidthMeters = 0;
+    // 材質が無いときの色（リニア）。
+    float fallbackColor[3] = {0.18f, 0.18f, 0.18f};
 };
 
 // 1 回の描画（本描画か影）で共通の値。
@@ -70,6 +72,7 @@ private:
         bool hasMaterial = false;
         compositor::LayerMaterialGpu material;
         float roadWidthMeters = 0;
+        float fallbackColor[3] = {0.18f, 0.18f, 0.18f};
     };
     std::vector<std::unique_ptr<Entry>> m_entries;
 };

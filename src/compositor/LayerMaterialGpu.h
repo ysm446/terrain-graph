@@ -28,5 +28,11 @@ struct LayerMaterialGpu {
     LayerMaterialSlotGpu slots[4]{};
 };
 static_assert(sizeof(LayerMaterialSlotGpu) == 160);
+// 道路の座標が要るマスク（轍 = 0、道路端 = 1）を持つ層があるか。
+inline bool UsesRoadMasks(const LayerMaterialGpu& material) {
+    for (uint32_t i = 0; i < material.count && i < 4; ++i)
+        if (material.slots[i].mask[0] == 0.0f || material.slots[i].mask[0] == 1.0f) return true;
+    return false;
+}
 static_assert(sizeof(LayerMaterialGpu) == 672);
 }

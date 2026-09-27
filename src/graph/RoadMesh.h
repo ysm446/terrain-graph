@@ -42,5 +42,38 @@ inline constexpr float kRoadMaxWidthMeters = 60.0f;
 // 失敗（点が足りない、角が急すぎて断面が裏返る等）なら偽で、error に理由を入れる。
 bool BuildRoadMesh(const RoadPathSettings& road, const RoadProfileCurve& centerline,
                    const RoadMeshSettings& settings, renderer::MeshData& out, std::string* error);
+// 路面のメッシュの 1 行の頂点数（列 0 が左端、最後の列が右端）。
+uint32_t RoadMeshStride(const RoadMeshSettings& settings);
+
+// 路肩（Shoulder ノード）。路面（か内側の路肩）の端から外へ張り出す帯。
+// road-material-editor の Shoulder（graph/Road.cpp の BuildShoulder）の移植。
+enum class RoadShoulderSide : uint32_t {
+    Both = 0,   // 左右両方（同じ設定）
+    Left = 1,   // 進行方向に向かって左
+    Right = 2,  // 進行方向に向かって右
+};
+struct RoadShoulderSettings {
+    RoadShoulderSide side = RoadShoulderSide::Both;
+    float widthMeters = 1.5f;
+    // 横断勾配（%）。正なら外側へ向かって下がる。
+    float crossSlopePercent = 4.0f;
+    // 内側の端の段差（m）。0 より大きいと、端のすぐ外に stepWidthMeters の面取りの列を挟み、そこで段差ぶん下げる。
+    float stepHeightMeters = 0.0f;
+    float stepWidthMeters = 0.05f;
+    // 材質（Material か Layered Material）。無ければ路肩の灰色で塗る。
+    compositor::MaterialAssetId material = compositor::kNoMaterialAsset;
+    // 通常の Material のとき、模様が 1 周する長さ（m）。
+    float uvRepeatMeters = 2.0f;
+};
+inline constexpr float kShoulderMinWidthMeters = 0.1f;
+inline constexpr float kShoulderMaxWidthMeters = 20.0f;
+
+// 路肩の帯を作る。source は内側の帯（路面か内側の路肩）、sourceStride はその 1 行の頂点数、
+// edgeColumn は張り出す端の列、innerColumn はその隣の列（外向きを決める）。
+// 列 0 は端の頂点をそのまま写す（内側の帯と隙間なくつながる）。UV は実寸: x = 内側の端からの
+// 横位置（0〜幅）、y = 道のり。outStride に 1 行の頂点数を返す（最後の列が外側の端）。
+bool BuildRoadShoulder(const renderer::MeshData& source, uint32_t sourceStride, uint32_t edgeColumn,
+                       uint32_t innerColumn, const RoadShoulderSettings& settings, renderer::MeshData& out,
+                       uint32_t& outStride, std::string* error);
 
 }  // namespace tg::graph

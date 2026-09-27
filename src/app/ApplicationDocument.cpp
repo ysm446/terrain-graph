@@ -175,6 +175,11 @@ void Application::ApplyDocument(const DocumentSnapshot& snapshot) {
     // --- グラフ -------------------------------------------------------------
     std::vector<graph::Node> nodes = snapshot.graphNodes;
     for (graph::Node& node : nodes) {
+        if (auto* shoulder = std::get_if<graph::ShoulderNodeSettings>(&node.settings)) {
+            if (m_materialLibrary.Find(shoulder->shoulder.material) == nullptr)
+                shoulder->shoulder.material = compositor::kNoMaterialAsset;
+            continue;
+        }
         if (auto* roadMesh = std::get_if<graph::RoadMeshNodeSettings>(&node.settings)) {
             if (m_materialLibrary.Find(roadMesh->mesh.material) == nullptr)
                 roadMesh->mesh.material = compositor::kNoMaterialAsset;

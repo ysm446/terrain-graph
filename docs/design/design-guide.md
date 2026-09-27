@@ -1,7 +1,7 @@
 # design-guide — UI の設計ガイド
 
 作成日時: 2026-08-31 14:36
-更新日時: 2026-09-28 04:28
+更新日時: 2026-09-28 05:29
 
 ## Road Path の縦断とバンク角
 
@@ -27,7 +27,7 @@ Road Path を選んだときのプロパティは、Path と同じ「パス」�
 | 整形 | Heightmap Blur / Flatten Borders / Height Levels |
 | マスク | Mask Image / Noise / Flowline / Fluvial / Height / Slope / Curvature / Levels / Blur / Blend、Wind Field |
 | パス | Path / Mask Path / Mask Area |
-| 道路 | Road Path / Road Mesh / Mesh Output（Lane Marking などは移植中） |
+| 道路 | Road Path / Road Mesh / Shoulder / Mesh Output（Lane Marking などは移植中） |
 | 配置 | Scatter / Model Scatter / Model Merge / Model Output |
 | 雲 | Cloud Weather Layer ほか雲グラフ用の種類 |
 
@@ -105,6 +105,10 @@ Model Scatter の設定表で「接地オフセット」の後に PropertyBool �
 ## Road Mesh のプロパティ
 
 Road Mesh を選んだときは「路面」（幅、車線数（進行方向 / 対向）、読み取り専用の車線幅、PropertyCombo の「走行側」（左側通行 / 右側通行）、路面の持ち上げ）、「材質」（DrawMaterialSlotRow の「材質」。Layered Material も選べ、サムネイルを出す。通常の Material のときだけ「繰り返し長」）と HintText、「状態」（作れなかった理由を WarnColor で、延長とメッシュの頂点 / 三角形の数）を並べる。Road Path と Mesh Output が繋がっていなければ「状態」に繋ぎ方を HintText で出す。
+
+マテリアルプレビューの表示の設定では、轍・道路端のマスクを持つ Layered Material のときだけ、「影を落とす」の下に仮の道路の行（PropertyFloat の「道路の幅」（既定 7 m）、PropertyInt の「車線数（進行方向）」「車線数（対向）」、PropertyCombo の「走行側」）を出す。プレビュー専用で保存しない。道路は平面の中央に置き、層のマスク画像も同じ座標で描く（球では位置を合わせない）。
+
+Shoulder を選んだときは「路肩」（PropertyCombo の「側」（左右 / 左 / 右）、幅、横断勾配、段差、段差が 0 より大きいときだけ「段差の幅」）、「材質」（Road Mesh と同じ行）と HintText、「状態」（Road Mesh と同じ節。`DrawRoadNodeStatus`）を並べる。
 
 Layered Material の層のマスクで「轍（道路専用）」を選んだら「車線に合わせる」「対向車線にも」（手入力なら「車線中央の位置」）「タイヤ間隔」「轍の幅」「縁のぼかし」、「道路端（道路専用）」なら「側」（両側 / 左 / 右）「端の幅」「縁のぼかし」を出し、ノイズの行（ノイズ寸法・しきい値・ぼかし）は出さない。Surface に轍・道路端のマスクを持つ Layered Material を割り当てたら、HintText で「Road Mesh の路面でだけ効く（Surface では覆わない）」と出す。
 

@@ -1891,6 +1891,13 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
         } else if (const auto* roadPath = std::get_if<graph::RoadPathNodeSettings>(&node.settings)) {
             item["path"] = WritePath(roadPath->road.path);
             item["roadProfile"] = WriteRoadProfile(roadPath->road);
+        } else if (const auto* shoulder = std::get_if<graph::ShoulderNodeSettings>(&node.settings)) {
+            const graph::RoadShoulderSettings& m = shoulder->shoulder;
+            static const char* const kShoulderSideNames[] = {"both", "left", "right"};
+            item["shoulder"] = {{"side", EnumName(kShoulderSideNames, static_cast<uint32_t>(m.side))},
+                                {"width", m.widthMeters}, {"crossSlope", m.crossSlopePercent},
+                                {"stepHeight", m.stepHeightMeters}, {"stepWidth", m.stepWidthMeters},
+                                {"uvRepeat", m.uvRepeatMeters}, {"material", writeMaterial(m.material)}};
         } else if (const auto* roadMesh = std::get_if<graph::RoadMeshNodeSettings>(&node.settings)) {
             const graph::RoadMeshSettings& m = roadMesh->mesh;
             item["roadMesh"] = {{"width", m.widthMeters}, {"lanesForward", m.lanesForward},
@@ -2262,6 +2269,24 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
             } else if (created.kind == graph::NodeKind::RoadPath) {
                 graph::RoadPathNodeSettings settings;
                 settings.road = ReadRoadPath(item);
+                created.settings = std::move(settings);
+            } else if (created.kind == graph::NodeKind::Shoulder) {
+                graph::ShoulderNodeSettings settings;
+                graph::RoadShoulderSettings& m = settings.shoulder;
+                if (const json* values = FindMember(item, "shoulder"); values != nullptr && values->is_object()) {
+                    const graph::RoadShoulderSettings d;
+                    static const char* const kShoulderSideNames[] = {"both", "left", "right"};
+                    m.side = static_cast<graph::RoadShoulderSide>(
+                        EnumValue(kShoulderSideNames, *values, "side", static_cast<uint32_t>(d.side)));
+                    m.widthMeters = std::clamp(ReadFloat(*values, "width", d.widthMeters), graph::kShoulderMinWidthMeters,
+                                               graph::kShoulderMaxWidthMeters);
+                    m.crossSlopePercent = std::clamp(ReadFloat(*values, "crossSlope", d.crossSlopePercent), -50.0f, 50.0f);
+                    m.stepHeightMeters = std::clamp(ReadFloat(*values, "stepHeight", d.stepHeightMeters), 0.0f, 0.5f);
+                    m.stepWidthMeters = std::clamp(ReadFloat(*values, "stepWidth", d.stepWidthMeters), 0.005f, 1.0f);
+                    m.uvRepeatMeters = std::clamp(ReadFloat(*values, "uvRepeat", d.uvRepeatMeters), 0.1f, 100.0f);
+                    if (const json* material = FindMember(*values, "material"); material != nullptr)
+                        m.material = readMaterial(*material);
+                }
                 created.settings = std::move(settings);
             } else if (created.kind == graph::NodeKind::RoadMesh) {
                 graph::RoadMeshNodeSettings settings;
@@ -2961,6 +2986,9 @@ void RemapNodeReferences(graph::NodeSettings& settings, const NodeReferenceRemap
             });
     } else if (auto* mask = std::get_if<graph::MaskNodeSettings>(&settings)) {
         mask->map.texture = texture(mask->map.texture);
+    } else if (auto* shoulder = std::get_if<graph::ShoulderNodeSettings>(&settings)) {
+        if (shoulder->shoulder.material != compositor::kNoMaterialAsset && remap.material)
+            shoulder->shoulder.material = remap.material(shoulder->shoulder.material);
     } else if (auto* roadMesh = std::get_if<graph::RoadMeshNodeSettings>(&settings)) {
         if (roadMesh->mesh.material != compositor::kNoMaterialAsset && remap.material)
             roadMesh->mesh.material = remap.material(roadMesh->mesh.material);

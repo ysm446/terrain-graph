@@ -148,6 +148,8 @@ enum class NodeKind : uint32_t {
     RoadMesh = 54,
     // ユニークなメッシュ（Road Mesh など）をビューポートへ出す終端。
     MeshOutput = 55,
+    // 路肩。Road Mesh（か内側の路肩）の端から外へ張り出す帯。Mesh を受けて、自分の帯を足した Mesh を出す。
+    Shoulder = 56,
 };
 
 struct PinDefinition {
@@ -242,6 +244,11 @@ struct RoadPathNodeSettings {
 // 道路の路面のメッシュ（Road Mesh ノード）。中身は graph/RoadMesh.h。
 struct RoadMeshNodeSettings {
     RoadMeshSettings mesh;
+};
+
+// 路肩（Shoulder ノード）。中身は graph/RoadMesh.h。
+struct ShoulderNodeSettings {
+    RoadShoulderSettings shoulder;
 };
 
 // グラフを評価器の入力へ落とした結果。レイヤー列と、マスクの op の列。
@@ -428,9 +435,11 @@ struct CompiledModelScatter {
     GraphId node = 0, source = 0;
     ModelScatterSettings settings;
 };
-// Mesh Output から辿った道路のメッシュ。Road Mesh と、その Road Path。
+// Mesh Output から辿った道路のメッシュ。Road Mesh と、その Road Path、間に挟んだ路肩
+// （Road Mesh に近い順。内側の路肩から外側へ張り出す）。
 struct CompiledRoadMesh {
     GraphId output = 0, roadMesh = 0, roadPath = 0;
+    std::vector<GraphId> shoulders;
 };
 // 雪煙（Snow Plume ノード）。Source のマスクが強い所から、風下へ半透明の帯を伸ばす。
 // 帯は評価器ではなくビューポートの描画で作る（頂点シェーダが格子の種から組み立てる）。
@@ -474,7 +483,8 @@ struct MissingNodeSettings { std::string kindName; };
 using NodeSettings =
     std::variant<LayerNodeSettings, MaskNodeSettings, OutputNodeSettings, PathNodeSettings, CloudNodeSettings,
                  CloudMergeSettings, CloudNoiseSettings, CloudTransformSettings, CloudMapSettings, CloudAnimationSettings, CloudShapeGenerateSettings, CloudWeatherSettings, MissingNodeSettings, ModelScatterSettings,
-                 TerrainNodeSettings, SnowPlumeSettings, RoadPathNodeSettings, RoadMeshNodeSettings>;
+                 TerrainNodeSettings, SnowPlumeSettings, RoadPathNodeSettings, RoadMeshNodeSettings,
+                 ShoulderNodeSettings>;
 
 struct Node {
     GraphId id = 0;

@@ -64,6 +64,7 @@ void GeneratedMeshes::Update(rhi::Device& device, const std::vector<GeneratedMes
         entry->hasMaterial = item.hasMaterial;
         entry->material = item.material;
         entry->roadWidthMeters = item.roadWidthMeters;
+        std::copy(std::begin(item.fallbackColor), std::end(item.fallbackColor), entry->fallbackColor);
         next.push_back(std::move(entry));
     }
     for (auto& stale : m_entries) {
@@ -126,6 +127,7 @@ uint32_t GeneratedMeshes::Draw(rhi::Device& device, rhi::PipelineCache& pipeline
         constants.hasMaterial = entry->hasMaterial ? 1u : 0u;
         constants.material = entry->material;
         constants.roadWidth = entry->roadWidthMeters;
+        std::memcpy(constants.fallbackColor, entry->fallbackColor, sizeof(constants.fallbackColor));
         std::memcpy(cb.cpu, &constants, sizeof(constants));
         commandList->SetGraphicsRootConstantBufferView(1, cb.gpuAddress);
         entry->mesh.Draw(commandList);

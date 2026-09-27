@@ -1,7 +1,7 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-09-28 04:28
+更新日時: 2026-09-28 05:12
 
 ## 大気散乱スカイと作業環境（シーン版3）
 
@@ -156,6 +156,7 @@ base' = base + 0.5 * gain     ただしソースが constant のときは base �
 | `blend` | `maskBlend` | `{ mode, intensity }` |
 | `maskPath` | `maskPath` | `{ gamma, invert }` |
 | `path` | `path` | `{ points[], edges[], defaultWidth, defaultFeather, defaultIntensity, nextId }`（下記） |
+| `shoulder` | `shoulder` | `{ side（both / left / right）, width, crossSlope, stepHeight, stepWidth, uvRepeat, material }` |
 | `roadMesh` | `roadMesh` | `{ width, lanesForward, lanesBackward, leftHandTraffic, surfaceOffset, uvRepeat, material }`（`material` は `materials[]` の id、0 ならなし） |
 | `roadPath` | `path`, `roadProfile` | `path` は Path と同じ形。`roadProfile` は `{ verticalPoints[], bankPoints[], bankEnabled, designSpeed, friction, smoothBank, bankSmoothDistance }`（下記） |
 

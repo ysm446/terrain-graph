@@ -13,6 +13,11 @@ constexpr float kMinCornerDot = 0.25f;
 constexpr size_t kMaxRoadVertices = 4u * 1024u * 1024u;
 }  // namespace
 
+uint32_t RoadMeshStride(const RoadMeshSettings& settings) {
+    const float width = std::clamp(settings.widthMeters, kRoadMinWidthMeters, kRoadMaxWidthMeters);
+    return static_cast<uint32_t>(std::max(1, static_cast<int>(std::ceil(width)))) + 1;
+}
+
 bool BuildRoadMesh(const RoadPathSettings& road, const RoadProfileCurve& centerline,
                    const RoadMeshSettings& settings, renderer::MeshData& out, std::string* error) {
     const auto fail = [&](const char* message) { if (error) *error = message; return false; };
@@ -97,6 +102,105 @@ bool BuildRoadMesh(const RoadPathSettings& road, const RoadProfileCurve& centerl
         t = XMVector3Normalize(XMVectorSubtract(t, XMVectorScale(n, XMVectorGetX(XMVector3Dot(n, t)))));
         v.tangent = {XMVectorGetX(t), XMVectorGetY(t), XMVectorGetZ(t), 1.0f};
     }
+    return true;
+}
+
+bool BuildRoadShoulder(const renderer::MeshData& source, uint32_t sourceStride, uint32_t edgeColumn,
+                       uint32_t innerColumn, const RoadShoulderSettings& settings, renderer::MeshData& out,
+                       uint32_t& outStride, std::string* error) {
+    const auto fail = [&](const char* message) { if (error) *error = message; return false; };
+    out.vertices.clear();
+    out.indices.clear();
+    outStride = 0;
+    const float width = std::clamp(settings.widthMeters, kShoulderMinWidthMeters, kShoulderMaxWidthMeters);
+    if (sourceStride < 2 || source.vertices.size() < static_cast<size_t>(sourceStride) * 2 ||
+        source.vertices.size() % sourceStride != 0)
+        return fail("路肩の元になる面がありません");
+    if (edgeColumn >= sourceStride || innerColumn >= sourceStride || edgeColumn == innerColumn)
+        return fail("路肩の端の列が不正です");
+    const size_t rows = source.vertices.size() / sourceStride;
+
+    // 列の横位置。端 0、（段差があれば）面取りの列、以後は約 1 m ごとに外側の端まで。
+    const bool stepped = settings.stepHeightMeters > 0.0f;
+    const float stepLateral = std::min(std::max(settings.stepWidthMeters, 0.005f), width * 0.5f);
+    std::vector<float> laterals{0.0f};
+    if (stepped) laterals.push_back(stepLateral);
+    const int cells = std::max(1, static_cast<int>(std::ceil(width)));
+    for (int cell = 1; cell <= cells; ++cell) {
+        const float lateral = width * static_cast<float>(cell) / static_cast<float>(cells);
+        if (lateral > laterals.back() + 1e-4f) laterals.push_back(lateral);
+    }
+    const uint32_t stride = static_cast<uint32_t>(laterals.size());
+    if (rows * stride > kMaxRoadVertices) return fail("路肩の頂点が多すぎます");
+    const float drop = settings.crossSlopePercent * 0.01f;
+
+    out.vertices.resize(rows * stride);
+    for (size_t row = 0; row < rows; ++row) {
+        const renderer::MeshVertex& edge = source.vertices[row * sourceStride + edgeColumn];
+        const renderer::MeshVertex& inner = source.vertices[row * sourceStride + innerColumn];
+        // 外向きは、端から隣の列を引いた水平成分。
+        float ox = edge.position.x - inner.position.x;
+        float oz = edge.position.z - inner.position.z;
+        const float length = std::hypot(ox, oz);
+        if (length < 1e-5f) return fail("端の幅が 0 の行があります");
+        ox /= length;
+        oz /= length;
+        for (uint32_t column = 0; column < stride; ++column) {
+            const float lateral = laterals[column];
+            renderer::MeshVertex& v = out.vertices[row * stride + column];
+            v.position = edge.position;
+            if (column > 0) {
+                v.position.x += ox * lateral;
+                v.position.z += oz * lateral;
+                v.position.y -= drop * lateral + (stepped ? settings.stepHeightMeters : 0.0f);
+            }
+            v.normal = {0.0f, 0.0f, 0.0f};
+            v.tangent = {ox, 0.0f, oz, 1.0f};
+            v.uv = {lateral, edge.uv.y};
+        }
+    }
+    // 三角形。左右どちらの端かで列の並びの向きが変わるので、法線が上を向くように並べる。
+    out.indices.reserve((rows - 1) * (stride - 1) * 6);
+    for (size_t row = 0; row + 1 < rows; ++row) {
+        for (uint32_t column = 0; column + 1 < stride; ++column) {
+            const uint32_t a = static_cast<uint32_t>(row * stride + column);
+            const uint32_t tris[2][3] = {{a, a + stride, a + 1}, {a + 1, a + stride, a + stride + 1}};
+            for (const auto& tri : tris) {
+                uint32_t x = tri[0], y = tri[1], z = tri[2];
+                const XMVECTOR px = XMLoadFloat3(&out.vertices[x].position);
+                XMVECTOR face = XMVector3Cross(XMVectorSubtract(XMLoadFloat3(&out.vertices[y].position), px),
+                                               XMVectorSubtract(XMLoadFloat3(&out.vertices[z].position), px));
+                if (XMVectorGetY(face) < 0.0f) {
+                    std::swap(y, z);
+                    face = XMVectorNegate(face);
+                }
+                if (XMVectorGetY(face) <= 1e-7f) return fail("幅に対してカーブが急すぎて路肩が裏返ります");
+                for (const uint32_t index : {x, y, z}) {
+                    XMFLOAT3& n = out.vertices[index].normal;
+                    XMStoreFloat3(&n, XMVectorAdd(XMLoadFloat3(&n), face));
+                }
+                out.indices.insert(out.indices.end(), {x, y, z});
+            }
+        }
+    }
+    // 法線と接線。接線は U（内側 → 外側）の向き。従法線 cross(N, T) が道のりの増える向き（+V）に
+    // なるよう w を決める（左の路肩では外向きが左なので w = -1 になる）。
+    for (size_t row = 0; row < rows; ++row) {
+        const size_t next = row + 1 < rows ? row + 1 : row;
+        const size_t prev = row + 1 < rows ? row : row - 1;
+        for (uint32_t column = 0; column < stride; ++column) {
+            renderer::MeshVertex& v = out.vertices[row * stride + column];
+            const XMVECTOR n = XMVector3Normalize(XMLoadFloat3(&v.normal));
+            XMStoreFloat3(&v.normal, n);
+            XMVECTOR t = XMVectorSet(v.tangent.x, v.tangent.y, v.tangent.z, 0.0f);
+            t = XMVector3Normalize(XMVectorSubtract(t, XMVectorScale(n, XMVectorGetX(XMVector3Dot(n, t)))));
+            const XMVECTOR along = XMVectorSubtract(XMLoadFloat3(&out.vertices[next * stride + column].position),
+                                                    XMLoadFloat3(&out.vertices[prev * stride + column].position));
+            const float w = XMVectorGetX(XMVector3Dot(XMVector3Cross(n, t), along)) < 0.0f ? -1.0f : 1.0f;
+            v.tangent = {XMVectorGetX(t), XMVectorGetY(t), XMVectorGetZ(t), w};
+        }
+    }
+    outStride = stride;
     return true;
 }
 

@@ -181,12 +181,15 @@ private:
     // 影の段と本描画で呼ぶ（モデルの配置と同じ所）。
     void DrawGeneratedMeshes(ID3D12GraphicsCommandList* commandList, const DirectX::XMFLOAT4X4& viewProjection,
                              bool shadow);
-    // Road Mesh の材質を GPU の定数へ。通常の Material は 1 層の Layered Material として組む。
-    // 材質が無ければ偽（error は空）。組めなければ偽で error に理由。
-    bool RoadMaterialGpu(const graph::RoadMeshSettings& mesh, compositor::LayerMaterialGpu& out,
-                         std::string* error) const;
-    // Road Mesh のプロパティ。変更があれば true。
+    // 帯（路面・路肩）の材質を GPU の定数へ。通常の Material は 1 層の Layered Material として
+    // 繰り返し長で組む。材質が無ければ偽（error は空）。組めなければ偽で error に理由。
+    bool SurfaceMaterialGpu(compositor::MaterialAssetId material, float uvRepeatMeters,
+                            compositor::LayerMaterialGpu& out, std::string* error) const;
+    // Road Mesh / Shoulder のプロパティ。変更があれば true。
     bool DrawRoadMeshSettings(graph::Node& node);
+    bool DrawShoulderSettings(graph::Node& node);
+    // Road Mesh / Shoulder のプロパティの「状態」節（作れなかった理由、延長、メッシュの量）。
+    void DrawRoadNodeStatus(graph::GraphId nodeId, const char* disconnectedHint);
     // 配置の点の元（散布 / 崩落）の、いま使える点の組。本体の評価器が作っていれば
     // そちらを、無ければ元ごとの評価器を見る。Ready で *out が nullptr なら点は 0。
     enum class PlacementPointsState { Missing, Evaluating, Ready };
@@ -473,15 +476,27 @@ private:
     std::unordered_map<std::string, std::unique_ptr<renderer::ModelPreview>> m_instanceMeshes;
     // Mesh Output が描くユニークなメッシュ（Road Mesh の路面）。
     renderer::GeneratedMeshes m_generatedMeshes;
-    // Road Mesh ごとの作った形。key は形に効く値のハッシュで、変われば作り直す。
-    struct RoadMeshCache {
+    // 作った帯（路面か路肩）。key は形に効く値のハッシュで、変われば作り直す。stride は 1 行の頂点数。
+    struct RoadStrip {
         uint64_t key = 0;
-        renderer::MeshData geometry;
-        float lengthMeters = 0;
-        std::string error;          // 形を作れなかった理由
-        std::string materialError;  // 材質を組めなかった理由
+        renderer::MeshData mesh;
+        uint32_t stride = 0;
+        std::string error;  // 形を作れなかった理由
     };
-    std::unordered_map<graph::GraphId, RoadMeshCache> m_roadMeshCache;
+    // Mesh Output ごと（鎖ごと）の作った形。路肩は作った順（内側から、左右それぞれ）。
+    struct RoadChainCache {
+        RoadStrip road;
+        std::vector<RoadStrip> shoulders;
+        float lengthMeters = 0;
+    };
+    std::unordered_map<graph::GraphId, RoadChainCache> m_roadMeshCache;
+    // ノードごとのプロパティに出す状態（毎フレーム作り直す）。
+    struct RoadNodeStatus {
+        std::string error, materialError;
+        float lengthMeters = 0;
+        size_t vertices = 0, triangles = 0;
+    };
+    std::unordered_map<graph::GraphId, RoadNodeStatus> m_roadNodeStatus;
     CloudMaskSlot m_cloudMasks[2]; // 0: 分布／雲量、1: 雲種。
     // Snow Plume ノードごとの Source マスク（512²）。雲のマスクと同じ評価の仕方。
     struct SnowPlumeSlot {

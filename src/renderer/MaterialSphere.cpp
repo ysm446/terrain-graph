@@ -179,6 +179,13 @@ void MaterialSphere::Render(rhi::Device& device, rhi::PipelineCache& pipelineCac
     constants.heightFieldIndex = m_heightField.SrvIndex();
     constants.heightOutputIndex = m_heightField.UavIndex();
     constants.layerMaterial = asset.layerGpu;
+    // 轍・道路端のマスクを持つ層があれば、仮の道路の文脈を入れる（無ければ覆わないまま）。
+    if (compositor::UsesRoadMasks(asset.layerGpu)) {
+        constants.layerMaterial.road[0] = m_roadWidthMeters;
+        constants.layerMaterial.road[1] = static_cast<float>(std::max(m_roadLanesForward, 1));
+        constants.layerMaterial.road[2] = static_cast<float>(std::max(m_roadLanesBackward, 0));
+        constants.layerMaterial.road[3] = m_roadLeftHandTraffic ? 1.0f : 0.0f;
+    }
     constants.shape = static_cast<uint32_t>(m_shape);
     constants.outputIndex = m_output.UavIndex();
     constants.size = kOutputSize;

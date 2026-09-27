@@ -553,6 +553,21 @@ void Application::DrawMaterialSphereWindow() {
         ui::PropertyBool("影を落とす", &m_materialSphere.CastShadow(), true,
                          "凹凸が自分に落とす影を出す。太陽光にだけ効く。プレビュー専用");
         ImGui::EndDisabled();
+        // 轍・道路端のマスクを見るための仮の道路。平面の中央に置く（球では位置が合わない）。
+        if (layerMaterial && compositor::UsesRoadMasks(asset.layerGpu)) {
+            ui::PropertyFloat("道路の幅", &m_materialSphere.RoadWidthMeters(), 0.5f, 60.0f, 7.0f,
+                              "轍・道路端のマスクを見るための仮の道路の幅（m）。平面の中央に置く。"
+                              "一辺をこれより大きくすると道路の外も見える。プレビュー専用",
+                              "%.1f m");
+            ui::PropertyInt("車線数（進行方向）", &m_materialSphere.RoadLanesForward(), 1, 8, 1,
+                            "仮の道路の進行方向の車線数。プレビュー専用");
+            ui::PropertyInt("車線数（対向）", &m_materialSphere.RoadLanesBackward(), 0, 8, 1,
+                            "仮の道路の対向の車線数。プレビュー専用");
+            static const char* const kTrafficSides[] = {"左側通行", "右側通行"};
+            int side = m_materialSphere.RoadLeftHandTraffic() ? 0 : 1;
+            if (ui::PropertyCombo("走行側", &side, kTrafficSides, 2, 0, "仮の道路の走行側。プレビュー専用"))
+                m_materialSphere.RoadLeftHandTraffic() = side == 0;
+        }
         ui::EndPropertyTable();
     }
     if (ui::Button("視点を戻す", ui::kWideButtonWidth)) {

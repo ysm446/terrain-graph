@@ -1,7 +1,7 @@
 # nodes — ノードのリファレンス
 
 作成日時: 2026-09-03 17:30
-更新日時: 2026-09-28 04:28
+更新日時: 2026-09-28 05:12
 
 ## Model Merge
 
@@ -82,6 +82,7 @@ Cloud Shape Generate（`cloudShapeGenerate`）または Cloud Map Generate（`cl
 | **Mask Area** | `maskArea` | Path | Mask | パスの閉じた鎖の内側をマスクにする（エリア選択） |
 | **Road Path** | `roadPath` | Base, Avoid | Road Path | 道路の線形を引く（縦断曲線・バンク角。平面の編集は Path と同じ） |
 | **Road Mesh** | `roadMesh` | Road Path | Mesh | Road Path から路面のメッシュを作る（材質は画素ごとに評価） |
+| **Shoulder** | `shoulder` | Road（Mesh） | Mesh | 路面（か内側の路肩）の端から外へ路肩の帯を張り出す |
 | **Mesh Output** | `meshOutput` | Mesh | — | 道路などのユニークなメッシュをビューポートへ出す |
 | **Output** | `output` | Material | — | ここに繋いだチェーンが結果になる |
 | **Terrain** | `terrain` | — | Result | **雲グラフ専用。** 地形グラフの Output に繋いだ結果を取り出す |
@@ -910,6 +911,25 @@ Road Path の中心線（縦断を反映、1 m ごと）から路面のメッシ
   均す段（計画の段階 3）が入るまでは、路面が地形に隠れたり浮いたりする。
 - 描くのはモデルの配置と同じ所（影の段と本描画）。インスタンスではないので、ビューポートの Display の「Hide Instances」では隠れない（シーン階層の地形の表示にだけ従う）。
 - 未対応: テセレーションによる変位、路肩・区画線（段階 4）。
+
+## Shoulder
+
+路肩。Road Mesh と Mesh Output の間に挟み、路面の端から外へ帯を張り出す（road-material-editor の Shoulder の移植）。
+続けて繋ぐと、内側の路肩の外側の端からさらに外へ重ねる（例: Road Mesh → Shoulder（舗装の路肩）→ Shoulder（草の帯）→ Mesh Output）。
+左右で材質や幅を変えるときは、「左」と「右」の Shoulder を続けて繋ぐ。
+帯の内側の端は路面（か内側の路肩）の端の頂点をそのまま使うので、隙間はできない。
+
+| パラメータ | 既定 | 意味 |
+| --- | --- | --- |
+| 側 | 左右 | 左右 / 左 / 右（進行方向に向かって） |
+| 幅 | 1.5 m | 路肩の幅（0.1〜20 m）。幅方向は約 1 m ごと |
+| 横断勾配 | 4 % | 外側へ向かって下がる勾配。負なら上がる |
+| 段差 / 段差の幅 | 0 m / 0.05 m | 内側の端で下げる高さ（舗装の端や縁石の段）と、下りきるまでの水平の幅 |
+| 材質 | なし | Material か Layered Material。なしなら砂利色の灰色 |
+| 繰り返し長 | 2.0 m | 通常の Material のとき |
+
+- 材質は Road Mesh と同じく画素ごとに評価する。座標は x = 内側の端からの横位置、y = 道のり（m）。道路端のマスクは帯の幅で測る。
+- 幅に対してカーブが急すぎて帯が裏返るときは、その側はそこで途切れ、プロパティに理由を出す。
 
 ## Mask Path
 

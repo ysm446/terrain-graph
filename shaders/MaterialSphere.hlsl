@@ -138,6 +138,13 @@ float SilhouetteDistance(float3 origin, float3 direction)
 float2 SurfaceUv(float3 p) {
     return g_sphere.shape == 1 ? p.xz * 0.5f + 0.5f : DirectionToEquirectUv(normalize(p));
 }
+// 材質の評価に渡す座標。道路の文脈（Layered Material の轍・道路端）があれば、平面の中央に
+// 幅 road.x の道路を置く（x を道路の左端からの横位置にずらす）。球では模様がつながらないのでずらさない。
+float2 LayerMeters(float2 uv, bool plane) {
+    const float width = g_sphere.layerMaterial.road.x;
+    if (plane && width > 0) uv.x -= (g_sphere.lengthMeters - width) * 0.5f;
+    return uv;
+}
 float HeightAt(float3 p) {
     Texture2D<float> height = ResourceDescriptorHeap[g_sphere.heightFieldIndex];
     float2 uv = SurfaceUv(p);
@@ -214,7 +221,7 @@ void CsHeight(uint3 id : SV_DispatchThreadID) {
     const float2 uv = (float2(id.xy) + 0.5f) / g_sphere.size * scale;
     float value = 0.5f;
     if (g_sphere.layerMaterial.count > 0)
-        value = EvaluateLayerMaterialBase(g_sphere.layerMaterial, uv, uv, scale / g_sphere.size, float2(1,0), float2(0,1)).height;
+        value = EvaluateLayerMaterialBase(g_sphere.layerMaterial, LayerMeters(uv, g_sphere.shape == 1), uv, scale / g_sphere.size, float2(1,0), float2(0,1)).height;
     else if (g_sphere.heightIndex != kInvalidTextureIndex)
         value = SampleScalarMap(g_sphere.heightIndex, TG_CHANNEL_SLOT_HEIGHT, uv,
             MapLod(g_sphere.heightIndex, float2(scale.x / g_sphere.size,0), float2(0,scale.y / g_sphere.size)));
@@ -374,7 +381,7 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     // --- 陰影（ビューポートと同じ式）---------------------------------------
     if (g_sphere.layerMaterial.count > 0) {
-        const LayerMaterialSample material = EvaluateLayerMaterial(g_sphere.layerMaterial, uv, uv, metersScale / g_sphere.size, float2(1,1), float2(1,0), float2(0,1));
+        const LayerMaterialSample material = EvaluateLayerMaterial(g_sphere.layerMaterial, LayerMeters(uv, plane), uv, metersScale / g_sphere.size, float2(1,1), float2(1,0), float2(0,1));
         baseColor = material.color; roughness = material.surface.x; metallic = material.surface.y; ambientOcclusion = material.surface.z;
         if (plane || length(normalGeometric.xz) > 1e-3f) {
             const float3 t = plane ? float3(1,0,0) : normalize(float3(-normalGeometric.z, 0, normalGeometric.x));
@@ -448,7 +455,7 @@ void CsMasks(uint3 id : SV_DispatchThreadID) {
     const uint slot = id.x / g_sphere.size;
     // マスク画像は平面と同じ見え方にする（一辺 lengthMeters の範囲を 1 枚に収める）。
     const float2 uv = (float2(id.x % g_sphere.size, id.y) + 0.5f) / g_sphere.size * g_sphere.lengthMeters;
-    const LayerMaterialSample sample = EvaluateLayerMaterialBase(g_sphere.layerMaterial, uv, uv,
+    const LayerMaterialSample sample = EvaluateLayerMaterialBase(g_sphere.layerMaterial, LayerMeters(uv, true), uv,
         g_sphere.lengthMeters / g_sphere.size, float2(1,0), float2(0,1));
     const float value = slot < g_sphere.layerMaterial.count ? sample.coverage[slot] : 0;
     RWTexture2D<float4> output = ResourceDescriptorHeap[g_sphere.outputIndex];
