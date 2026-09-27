@@ -202,7 +202,7 @@ void MaterialSphere::Render(rhi::Device& device, rhi::PipelineCache& pipelineCac
     constants.roughnessValue = asset.roughnessValue;
     constants.metallicValue = asset.metallicValue;
     constants.aoValue = asset.ambientOcclusionValue;
-    constants.lengthMeters = m_lengthMeters;
+    constants.lengthMeters = PreviewLengthMeters(compositor::UsesRoadMasks(asset.layerGpu));
     constants.colorAdjust[0] = asset.hueShiftDegrees * (kPi / 180.0f);
     constants.colorAdjust[1] = asset.saturation;
     constants.brightness = asset.brightness;

@@ -114,4 +114,34 @@ void RunShadowCascadeTests() {
             std::abs(dx - std::round(dx)) < 0.001f && std::abs(dy - std::round(dy)) < 0.001f,
             "微小なカメラ平行移動では投影がテクセル単位で動く");
     }
+
+    tests::Section("カメラ — フライ（その場で見回す・平行移動）");
+    {
+        renderer::Camera fly;
+        fly.SetSceneRadius(100);
+        renderer::CameraState flyState;
+        flyState.distance = 10;
+        flyState.yaw = 0.0f;
+        flyState.pitch = 0.0f;
+        fly.SetState(flyState);
+        const XMFLOAT3 eye = fly.Position();
+        const renderer::CameraBasis lookBefore = fly.Basis();
+        fly.Look(0.3f, -0.2f);
+        const XMFLOAT3 eyeAfter = fly.Position();
+        const renderer::CameraBasis lookAfter = fly.Basis();
+        tests::Check(std::abs(eyeAfter.x - eye.x) < 1e-4f && std::abs(eyeAfter.y - eye.y) < 1e-4f &&
+                         std::abs(eyeAfter.z - eye.z) < 1e-4f,
+                     "見回しても目の位置は動かない");
+        const float turnedRight = lookAfter.forward.x * lookBefore.right.x + lookAfter.forward.z * lookBefore.right.z;
+        tests::Check(turnedRight > 0.2f, "右へ動かすと右を向く");
+        tests::Check(lookAfter.forward.y > 0.1f, "上へ動かす（負の縦）と上を向く");
+        fly.Translate(XMFLOAT3{1, 2, 3});
+        const XMFLOAT3 flyMoved = fly.Position();
+        tests::Check(std::abs(flyMoved.x - eye.x - 1) < 1e-4f && std::abs(flyMoved.y - eye.y - 2) < 1e-4f &&
+                         std::abs(flyMoved.z - eye.z - 3) < 1e-4f,
+                     "平行移動は目と注視点を一緒に動かす");
+        const renderer::CameraBasis still = fly.Basis();
+        tests::Check(std::abs(still.forward.x - lookAfter.forward.x) < 1e-5f && std::abs(still.forward.y - lookAfter.forward.y) < 1e-5f,
+                     "平行移動で向きは変わらない");
+    }
 }

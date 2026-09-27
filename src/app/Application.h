@@ -551,6 +551,21 @@ private:
     // 次にエディタを描くときに選ぶノード（--select-node）。エディタ側の選択も合わせないと、
     // 毎フレームの選択同期（未選択 → 0）に消されてしまう。
     graph::GraphId m_pendingSelectGraphNode = 0;
+    // フライ（UE5 と同じ）: ビューポートで右ボタンを押している間、マウスで見回し WASD / QE で動く。
+    // 動かさずに放したら右クリック（パスのメニューなど）として扱う。
+    struct FlyCamera {
+        bool held = false;     // ビューポートで右ボタンを押している
+        bool active = false;   // この押下でフライになった（見回したか、キーで動いた）
+        bool flew = false;     // 直前の押下がフライだった（放したときの右クリックを出さない）
+        float dragPixels = 0;  // 押してから動いた量（フライになるまで）
+        int anchorX = 0, anchorY = 0;  // 押した位置（画面座標）。見回す間はここへカーソルを戻す
+        float speedScale = 1;          // ホイールで変える速さの倍率
+        double speedShownUntil = 0;    // 速さを表示する時刻（ImGui::GetTime）
+    } m_fly;
+    // フライの入力。ビューポートの不可視ボタンの直後に呼ぶ。フライ中なら true。
+    bool HandleFlyCamera(bool itemActive, bool enabled);
+    // フライの速さ（m/s、Shift を含まない）。地形の大きさから決める基準 × 倍率。
+    float FlySpeed() const;
     // エディタで選ばれているノード全部。コピーはこれを見る
     // （プロパティに出すのは先頭の 1 つ = m_selectedGraphNode）。
     std::vector<graph::GraphId> m_selectedGraphNodes;

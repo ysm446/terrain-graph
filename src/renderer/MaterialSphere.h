@@ -7,6 +7,8 @@
 #include "rhi/Device.h"
 #include "rhi/PipelineCache.h"
 
+#include <algorithm>
+
 namespace tg::renderer {
 
 // マテリアル 1 つを、回せる球で描く（マテリアルプレビューの窓が使う）。
@@ -58,6 +60,11 @@ public:
     bool& CastShadow() { return m_castShadow; }
     float& DisplacementMeters() { return m_displacementMeters; }
     float& LengthMeters() { return m_lengthMeters; }
+    // 実際に映す長さ（m）。平面で轍・道路端のマスクを見るときは、道路の両端が入るように
+    // 一辺を道路の幅 + 両側 1 m までは広げる（2 m の平面では 7 m の道路の真ん中しか映らない）。
+    float PreviewLengthMeters(bool roadMasks) const {
+        return (roadMasks && m_shape == 1) ? std::max(m_lengthMeters, m_roadWidthMeters + 2.0f) : m_lengthMeters;
+    }
     // Layered Material の轍・道路端のマスクを見るための仮の道路（プレビュー専用、保存しない）。
     // 平面の中央に置く。マスクに道路の形が無い材質には効かない。
     float& RoadWidthMeters() { return m_roadWidthMeters; }

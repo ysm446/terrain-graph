@@ -570,6 +570,11 @@ void Application::DrawMaterialSphereWindow() {
         }
         ui::EndPropertyTable();
     }
+    if (layerMaterial && compositor::UsesRoadMasks(asset.layerGpu) && m_materialSphere.Shape() == 1 &&
+        m_materialSphere.PreviewLengthMeters(true) > m_materialSphere.LengthMeters()) {
+        ui::HintText("一辺が道路より狭いので、道路の両端が入るよう %.1f m で映している",
+                     m_materialSphere.PreviewLengthMeters(true));
+    }
     if (ui::Button("視点を戻す", ui::kWideButtonWidth)) {
         m_materialSphere.ResetView();
     }

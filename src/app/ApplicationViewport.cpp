@@ -13,6 +13,7 @@
 #include <imgui_internal.h>
 
 #include <DirectXMath.h>
+#include <Windows.h>
 
 #include <algorithm>
 #include <cmath>
@@ -342,6 +343,93 @@ bool Application::HandleLightDrag(bool itemActive) {
     // 真下からの光も見たいので、下は -89 度まで許す。
     light.elevation = std::clamp(light.elevation - io.MouseDelta.y * step,
                                  DegreesToRadians(-89.0f), DegreesToRadians(89.0f));
+    return true;
+}
+
+float Application::FlySpeed() const {
+    // 基準は被写体の半径の 1 %（2 km 角の地形で約 14 m/s）。素材の 2 m 角でも止まらないよう下限を置く。
+    const float base = std::max(m_renderer.BoundingRadius() * 0.01f, 0.5f);
+    return base * m_fly.speedScale;
+}
+
+// フライ（UE5 のビューポートと同じ）。右ボタンを押している間:
+// - マウスで見回す（目の位置は動かない）。カーソルは押した位置へ戻して隠し、画面の端で止まらないようにする。
+// - W / S で前後（見ている向き）、A / D で左右、Q / E で下 / 上（ワールドの上下）。Shift で 4 倍。
+// - ホイールで速さを変える（放しても覚えておく）。
+// 押してから動かさずに放したら右クリック（パスのメニューなど）として扱う（m_fly.flew が偽）。
+bool Application::HandleFlyCamera(bool itemActive, bool enabled) {
+    const ImGuiIO& io = ImGui::GetIO();
+    renderer::Camera& camera = m_renderer.GetCamera();
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        m_fly.held = itemActive && enabled;
+        m_fly.active = false;
+        m_fly.flew = false;
+        m_fly.dragPixels = 0.0f;
+        POINT cursor{};
+        if (m_fly.held && ::GetCursorPos(&cursor)) {
+            m_fly.anchorX = cursor.x;
+            m_fly.anchorY = cursor.y;
+        }
+    }
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Right) || !enabled) {
+        m_fly.held = false;
+        m_fly.active = false;
+        return false;
+    }
+    if (!m_fly.held) return false;
+
+    // 見回す量。フライになった後は Win32 のカーソルの位置で測り、押した位置へ戻す。
+    float dx = io.MouseDelta.x, dy = io.MouseDelta.y;
+    const ImGuiKey moveKeys[] = {ImGuiKey_W, ImGuiKey_A, ImGuiKey_S, ImGuiKey_D, ImGuiKey_Q, ImGuiKey_E};
+    bool anyKey = false;
+    for (const ImGuiKey key : moveKeys) anyKey |= ImGui::IsKeyDown(key);
+    if (!m_fly.active) {
+        m_fly.dragPixels += std::abs(dx) + std::abs(dy);
+        // 少し動かすか移動のキーを押したらフライ。それまでは右クリックの候補。
+        if (m_fly.dragPixels > 3.0f || anyKey) {
+            m_fly.active = true;
+            m_fly.flew = true;
+        } else {
+            return false;
+        }
+    } else {
+        POINT cursor{};
+        if (::GetCursorPos(&cursor)) {
+            dx = static_cast<float>(cursor.x - m_fly.anchorX);
+            dy = static_cast<float>(cursor.y - m_fly.anchorY);
+        }
+    }
+    ::SetCursorPos(m_fly.anchorX, m_fly.anchorY);
+    ImGui::SetMouseCursor(ImGuiMouseCursor_None);
+
+    // 見回す。0.003 rad / px（Alt + 左ドラッグの軌道より少し遅い）。
+    camera.Look(dx * 0.003f, dy * 0.003f);
+
+    // 速さ。ホイールで 1 刻み 1.25 倍（0.01〜100 倍）。
+    if (io.MouseWheel != 0.0f) {
+        m_fly.speedScale = std::clamp(m_fly.speedScale * std::pow(1.25f, io.MouseWheel), 0.01f, 100.0f);
+        m_fly.speedShownUntil = ImGui::GetTime() + 1.5;
+    }
+
+    // 移動。前は見ている向き（上下も含む）、右は水平、上下はワールドの Y。
+    const renderer::CameraBasis basis = camera.Basis();
+    float forward = 0.0f, right = 0.0f, up = 0.0f;
+    if (ImGui::IsKeyDown(ImGuiKey_W)) forward += 1.0f;
+    if (ImGui::IsKeyDown(ImGuiKey_S)) forward -= 1.0f;
+    if (ImGui::IsKeyDown(ImGuiKey_D)) right += 1.0f;
+    if (ImGui::IsKeyDown(ImGuiKey_A)) right -= 1.0f;
+    if (ImGui::IsKeyDown(ImGuiKey_E)) up += 1.0f;
+    if (ImGui::IsKeyDown(ImGuiKey_Q)) up -= 1.0f;
+    if (forward != 0.0f || right != 0.0f || up != 0.0f) {
+        const float horizontal = std::hypot(basis.right.x, basis.right.z);
+        const float rx = horizontal > 1e-5f ? basis.right.x / horizontal : 0.0f;
+        const float rz = horizontal > 1e-5f ? basis.right.z / horizontal : 0.0f;
+        DirectX::XMFLOAT3 move{basis.forward.x * forward + rx * right, basis.forward.y * forward + up,
+                               basis.forward.z * forward + rz * right};
+        const float length = std::sqrt(move.x * move.x + move.y * move.y + move.z * move.z);
+        const float step = FlySpeed() * (io.KeyShift ? 4.0f : 1.0f) * io.DeltaTime / std::max(length, 1e-5f);
+        camera.Translate(DirectX::XMFLOAT3{move.x * step, move.y * step, move.z * step});
+    }
     return true;
 }
 
@@ -896,6 +984,9 @@ void Application::DrawViewportPanel() {
 
             // L + 左ドラッグはライトの向き。ブラシや軌道より先に見る。
             const bool lightDragging = HandleLightDrag(itemActive);
+            // 右ボタンのフライ（UE5 と同じ）。ペイント中は右ボタンが消しゴムなので出さない。
+            const bool flying =
+                HandleFlyCamera(itemActive, CurrentPaintLayer() == nullptr && !lightDragging && !io.KeyAlt);
             const ImVec2 imageMax(imageOrigin.x + available.x, imageOrigin.y + available.y);
             // ガイド線は毎フレーム積み直す（選択を外したら消える）。
             m_renderer.ClearGuideLines();
@@ -945,11 +1036,12 @@ void Application::DrawViewportPanel() {
                 }
             }
 
-            if (itemHovered && !cloudDragging && io.MouseWheel != 0.0f) {
+            if (itemHovered && !cloudDragging && !m_fly.held && io.MouseWheel != 0.0f) {
                 camera.Zoom(io.MouseWheel);
             }
 
-            HandleCameraShortcuts(itemHovered);
+            // フライ中の WASD / Q / E を、F / A などの視点のショートカットに渡さない。
+            if (!flying) HandleCameraShortcuts(itemHovered);
 
             DrawAxisGizmo(camera, imageOrigin, imageMax);
             DrawHeightGuide(imageOrigin, imageMax);
@@ -964,6 +1056,21 @@ void Application::DrawViewportPanel() {
 
             // ビューポートに重ねる操作。左上に表示モードの切り替え、右上に FPS。
             DrawViewportOverlay(imageOrigin, imageMax);
+
+            // フライの速さ（ホイールで変えた直後だけ、下の中央に出す）。
+            if (ImGui::GetTime() < m_fly.speedShownUntil) {
+                char text[64] = {};
+                const float speed = FlySpeed();
+                std::snprintf(text, sizeof(text), speed < 10.0f ? "フライの速さ %.1f m/s" : "フライの速さ %.0f m/s", speed);
+                const ImVec2 size = ImGui::CalcTextSize(text);
+                const float pad = ui::Scaled(6.0f);
+                const ImVec2 min((imageOrigin.x + imageMax.x - size.x) * 0.5f - pad,
+                                 imageMax.y - size.y - pad * 2.0f - ui::Scaled(16.0f));
+                const ImVec2 max(min.x + size.x + pad * 2.0f, min.y + size.y + pad * 2.0f);
+                ImDrawList* drawList = ImGui::GetWindowDrawList();
+                drawList->AddRectFilled(min, max, ImGui::GetColorU32(ImGuiCol_PopupBg), ImGui::GetStyle().FrameRounding);
+                drawList->AddText(ImVec2(min.x + pad, min.y + pad), ImGui::GetColorU32(ImGuiCol_Text), text);
+            }
 
             // ブラシの当たる範囲を円で示す。半径はビューポートのピクセル単位なので、
             // 表示倍率で割って ImGui の座標へ戻す。

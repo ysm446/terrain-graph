@@ -965,7 +965,8 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
     }
 
     // --- 右クリックのメニュー --------------------------------------------------------
-    if (mouseInside && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !state.dragging) {
+    // 右ボタンを押している間はフライ（視点）になりうるので、動かさずに放したときに開く（UE5 と同じ）。
+    if (mouseInside && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && !m_fly.flew && !state.dragging) {
         state.menuPoint = state.hoverPoint;
         state.menuEdge = state.hoverEdge;
         state.menuEdgeT = state.hoverEdgeT;

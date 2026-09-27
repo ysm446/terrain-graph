@@ -68,6 +68,11 @@ public:
     void Zoom(float delta);
     // ドラッグ量（ピクセル）でズームする。右へ引くと寄る（Alt + 右ドラッグ）。
     void Dolly(float deltaPixels);
+    // その場で見回す（フライ。右ドラッグ）。目の位置を保ち、向きを変えて注視点を付け直す。
+    // 角度はラジアン。右へ動かすと右を向き、下へ動かすと下を向く。
+    void Look(float deltaYaw, float deltaPitch);
+    // 目と注視点を一緒に平行移動する（フライの WASD）。
+    void Translate(const DirectX::XMFLOAT3& delta);
     void Reset();
 
     // 注視点を center へ戻す。距離と角度は変えない（F キー）。
