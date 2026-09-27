@@ -1,7 +1,26 @@
 # design-guide — UI の設計ガイド
 
 作成日時: 2026-08-31 14:36
-更新日時: 2026-09-28 01:28
+更新日時: 2026-09-28 01:36
+
+## ノードの追加メニュー
+
+ユーザー指定により、グラフの背景の右クリック「ノードを追加」は**まずセクション名を並べ、カーソルを載せると種類が横に開く**2 段のメニューにする（種類が増えて 1 本のリストでは探しきれなくなったため）。セクションは次の順。
+
+| セクション | 種類 |
+| --- | --- |
+| 入出力 | Heightmap / Output / Terrain（雲グラフのときだけ） |
+| 合成 | Surface / Shape / Liquid |
+| 侵食 | Fluvial Erosion / Multi-Scale Erosion / Droplet Erosion / Sediment / Crumbling |
+| 水 | River / Meandering Rivers / Lake |
+| 雪 | Snow Cover / Snow / Snow Plume |
+| 整形 | Heightmap Blur / Flatten Borders / Height Levels |
+| マスク | Mask Image / Noise / Flowline / Fluvial / Height / Slope / Curvature / Levels / Blur / Blend、Wind Field |
+| パス | Path / Mask Path / Mask Area |
+| 配置 | Scatter / Model Scatter / Model Merge / Model Output |
+| 雲 | Cloud Weather Layer ほか雲グラフ用の種類 |
+
+- 項目の表記（「名前 — 説明」）と、編集中のグラフ（地形 / 雲）に合う種類だけを出す絞り込みは従来のまま。出す種類が 1 つも無いセクションは出さない（雲グラフでは侵食などが消える）。
 
 ## ノードの整列
 

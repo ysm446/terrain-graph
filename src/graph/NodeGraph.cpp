@@ -502,8 +502,11 @@ const Node* NodeGraph::FindUpstreamNodeForPin(GraphId inputPinId) const {
     const Node* node = FindLinkedNodeForPin(inputPinId);
     // Terrain は地形グラフの Output に繋がったチェーンの別名。地形側に何も繋がって
     // いなければ未接続と同じ（nullptr）。地形グラフは雲グラフへ繋げないので輪はできない。
+    // **地形グラフの中に置かれた Terrain は未接続と同じにする。** 別名のままだと、
+    // 地形のチェーンの中のマスクが自分を含むチェーンの結果を読む輪になる
+    // （Terrain に入力が無いので、接続時の循環チェックでは見つからない）。
     if (node != nullptr && node->kind == NodeKind::Terrain) {
-        return ChainTop();
+        return node->component == 0 ? nullptr : ChainTop();
     }
     return node;
 }
@@ -1080,9 +1083,9 @@ const Node* NodeGraph::PreviewTop(GraphId nodeId) const {
     if (node != nullptr && IsLayerNodeKind(node->kind)) {
         return node;
     }
-    // Terrain を選んだら地形グラフの結果そのもの。
+    // Terrain を選んだら地形グラフの結果そのもの（雲グラフの Terrain だけ）。
     if (node != nullptr && node->kind == NodeKind::Terrain) {
-        return ChainTop();
+        return node->component == 0 ? nullptr : ChainTop();
     }
     // Path とハイト由来のマスクは、自分ではハイトを作らない。入力に繋いだ
     // チェーンだけを見る。未接続のときに Output 側の別チェーンへ落とすと
