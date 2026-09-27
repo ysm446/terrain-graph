@@ -158,6 +158,12 @@ private:
     void PasteGraphNodes(const ImVec2& viewCenter);
     // 実際に貼る。foreign なら別の文書から来たノードとして参照を引き直す（フレームの外で呼ぶ）。
     void PlaceGraphClipboard(const ImVec2& viewCenter, bool foreign);
+    // 選んだノードの揃え方（ノードの右クリックメニュー）。Stack は縦 / 横に詰めて並べる
+    // （離れた列 / 行は別々に並べるので、複数列のまま整えられる）。
+    enum class GraphAlign { Left, Right, Top, Bottom, CenterX, CenterY, DistributeX, DistributeY, StackX, StackY };
+    // 選んだノードを揃える。2 個未満（等間隔は 3 個未満）なら何もしない。アンドゥ 1 段になる。
+    // ノードエディタを current にした状態で呼ぶ。
+    void AlignSelectedGraphNodes(GraphAlign mode);
     // ビューポートに出すノードを決める。出力ノードや無効な ID は
     // 「出力ノードのチェーン」（0）に落とす。
     // outputPin は**どの出力を見るか**。0 なら最初の出力（レイヤーなら Result）。

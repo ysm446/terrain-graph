@@ -20,6 +20,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <string>
 #include <utility>
 #include <variant>
@@ -32,6 +33,11 @@ namespace {
 
 // ノードに出すメモの行数の上限。長いメモは末尾を「…」にし、全文はツールチップで見せる。
 constexpr int kNodeNoteLines = 3;
+// メモの吹き出しの内側の余白と、ノード上端との隙間（キャンバス座標）。
+// 整列でノードを縦に詰めるときも、この高さぶん上を空ける。
+constexpr float kNotePaddingX = 6.0f;
+constexpr float kNotePaddingY = 3.0f;
+constexpr float kNoteGap = 4.0f;
 
 // width で折り返した先頭の lines 行。収まらなければ最後の行の末尾を「…」にする。
 // **自前で文字ごとに折り返す。** ImGui の折り返しは空白や句読点を区切りに使うので、
@@ -887,14 +893,151 @@ void Application::DrawGraphNode(const graph::Node& node) {
     ed::PopStyleVar(4);
 }
 
+// 選んだノードを揃える / 並べる（ノードの右クリックの「整列」）。
+//
+// 位置はエディタが持つ値（ed::GetNodePosition / GetNodeSize）で計算してエディタへ書く。
+// ノードへの書き戻しはパネルの最後の同期に任せる。
+//
+// **アンドゥは「揃える前」を 1 段にする。** 移動だけでは段を積まない作りなので、
+// 最後に確定した状態（m_committed）は、その後に手で動かした位置を含まない。
+// そのまま積むと、アンドゥで手の移動まで戻ってしまう。先に今の位置で取り直す。
+void Application::AlignSelectedGraphNodes(GraphAlign mode) {
+    struct Item {
+        ed::NodeId id;
+        ImVec2 pos;
+        ImVec2 size;
+        // 上に出すメモの吹き出しの高さ（隙間を含む）。縦に詰めるときはこのぶん上を空ける。
+        float note = 0.0f;
+        float Top() const { return pos.y - note; }
+        float Bottom() const { return pos.y + size.y; }
+        float Right() const { return pos.x + size.x; }
+    };
+    std::vector<ed::NodeId> selected(static_cast<size_t>(std::max(ed::GetSelectedObjectCount(), 0)));
+    const int selectedCount = selected.empty() ? 0
+        : ed::GetSelectedNodes(selected.data(), static_cast<int>(selected.size()));
+    const bool showNotes = m_settings.Display().showNodeNotes;
+    std::vector<Item> items;
+    for (int i = 0; i < selectedCount; ++i) {
+        Item item{selected[i], ed::GetNodePosition(selected[i]), ed::GetNodeSize(selected[i])};
+        // エディタがまだ知らないノード（このフレームに作ったもの）は動かさない。
+        if (!IsValidNodePosition(item.pos.x, item.pos.y) || item.size.x <= 0.0f) continue;
+        const graph::Node* node = m_graph.FindNode(ToGraphId(selected[i].Get()));
+        if (showNotes && node != nullptr && !node->note.empty()) {
+            const std::string excerpt =
+                NoteExcerpt(node->note, item.size.x - kNotePaddingX * 2.0f, kNodeNoteLines);
+            item.note = ImGui::CalcTextSize(excerpt.c_str()).y + kNotePaddingY * 2.0f + kNoteGap;
+        }
+        items.push_back(item);
+    }
+    const bool distribute = (mode == GraphAlign::DistributeX || mode == GraphAlign::DistributeY);
+    if (items.size() < (distribute ? 3u : 2u)) return;
+
+    // 並べるときの隙間（キャンバス座標）。横はリンクが見える幅、縦はノードの間が詰まりすぎない幅。
+    constexpr float kStackGapX = 48.0f;
+    constexpr float kStackGapY = 24.0f;
+    // 等間隔で端の間に収まらない（重なっている）ときも、最低この隙間は空ける。
+    constexpr float kMinGap = 16.0f;
+
+    float left = std::numeric_limits<float>::max(), top = left;
+    float right = std::numeric_limits<float>::lowest(), bottom = right;
+    for (const Item& item : items) {
+        left = std::min(left, item.pos.x);
+        top = std::min(top, item.pos.y);
+        right = std::max(right, item.Right());
+        bottom = std::max(bottom, item.Bottom());
+    }
+
+    // 縦 / 横に詰めて並べる。軸に交わる向きで重なるノードどうしを 1 列（1 行）にまとめ、
+    // 列ごとに詰める。離れて並んでいる列は、それぞれの列のまま整う。
+    const auto stack = [&](bool vertical) {
+        std::sort(items.begin(), items.end(), [vertical](const Item& a, const Item& b) {
+            return vertical ? (a.pos.x + a.size.x * 0.5f) < (b.pos.x + b.size.x * 0.5f)
+                            : (a.Top() + a.Bottom()) < (b.Top() + b.Bottom());
+        });
+        std::vector<std::vector<Item*>> lanes;
+        float laneMin = 0.0f, laneMax = 0.0f;
+        for (Item& item : items) {
+            const float lo = vertical ? item.pos.x : item.Top();
+            const float hi = vertical ? item.Right() : item.Bottom();
+            if (lanes.empty() || lo >= laneMax || hi <= laneMin) {
+                lanes.emplace_back();
+                laneMin = lo;
+                laneMax = hi;
+            } else {
+                laneMin = std::min(laneMin, lo);
+                laneMax = std::max(laneMax, hi);
+            }
+            lanes.back().push_back(&item);
+        }
+        for (std::vector<Item*>& lane : lanes) {
+            std::sort(lane.begin(), lane.end(), [vertical](const Item* a, const Item* b) {
+                return vertical ? a->Top() < b->Top() : a->pos.x < b->pos.x;
+            });
+            float edge = std::numeric_limits<float>::max();
+            for (const Item* item : lane) edge = std::min(edge, vertical ? item->pos.x : item->pos.y);
+            // 先頭のノードは動かさず（軸に交わる向きだけ揃える）、続くノードをその後ろへ詰める。
+            float cursor = vertical ? lane.front()->Top() : lane.front()->pos.x;
+            for (Item* item : lane) {
+                if (vertical) {
+                    item->pos = ImVec2(edge, cursor + item->note);
+                    cursor = item->Bottom() + kStackGapY;
+                } else {
+                    item->pos = ImVec2(cursor, edge);
+                    cursor = item->Right() + kStackGapX;
+                }
+            }
+        }
+    };
+    // 端の 2 つを動かさず、間の隙間を等しくする。
+    const auto spread = [&](bool vertical) {
+        std::sort(items.begin(), items.end(), [vertical](const Item& a, const Item& b) {
+            return vertical ? a.Top() < b.Top() : a.pos.x < b.pos.x;
+        });
+        float extent = 0.0f;
+        for (const Item& item : items) extent += vertical ? item.Bottom() - item.Top() : item.size.x;
+        const float span = vertical ? bottom - items.front().Top() : right - left;
+        const float gap = std::max((span - extent) / static_cast<float>(items.size() - 1), kMinGap);
+        float cursor = vertical ? items.front().Top() : left;
+        for (Item& item : items) {
+            if (vertical) {
+                item.pos.y = cursor + item.note;
+                cursor = item.Bottom() + gap;
+            } else {
+                item.pos.x = cursor;
+                cursor = item.Right() + gap;
+            }
+        }
+    };
+
+    switch (mode) {
+    case GraphAlign::Left: for (Item& item : items) item.pos.x = left; break;
+    case GraphAlign::Right: for (Item& item : items) item.pos.x = right - item.size.x; break;
+    case GraphAlign::Top: for (Item& item : items) item.pos.y = top; break;
+    case GraphAlign::Bottom: for (Item& item : items) item.pos.y = bottom - item.size.y; break;
+    case GraphAlign::CenterX:
+        for (Item& item : items) item.pos.x = (left + right - item.size.x) * 0.5f;
+        break;
+    case GraphAlign::CenterY:
+        for (Item& item : items) item.pos.y = (top + bottom - item.size.y) * 0.5f;
+        break;
+    case GraphAlign::DistributeX: spread(false); break;
+    case GraphAlign::DistributeY: spread(true); break;
+    case GraphAlign::StackX: stack(false); break;
+    case GraphAlign::StackY: stack(true); break;
+    }
+
+    if (!m_documentDirty) m_committed = CaptureDocument();
+    for (const Item& item : items) ed::SetNodePosition(item.id, item.pos);
+    MarkDocumentChanged(false);
+}
+
 // ノードのメモの先頭を、ノードの上端のすぐ上に吹き出しとして出す（グラフパネルの「メモを表示」）。
 // **ノードの外に描く。** 中に描くとメモの有無や表示の切り替えでノードの高さが変わり、配置が崩れる。
 // ed::Begin と ed::End の間で呼ぶ（キャンバス座標で描き、マウスもキャンバス座標で判定する）。
 void Application::DrawGraphNodeNotes() {
     if (!m_settings.Display().showNodeNotes) return;
     ImDrawList* drawList = ImGui::GetWindowDrawList();
-    const ImVec2 padding(6.0f, 3.0f);
-    constexpr float kGap = 4.0f;
+    const ImVec2 padding(kNotePaddingX, kNotePaddingY);
     const ImU32 background = ImGui::GetColorU32(ImGuiCol_PopupBg, 0.92f);
     const ImU32 border = ImGui::GetColorU32(ImGuiCol_Border);
     const ImU32 text = ImGui::GetColorU32(ImGuiCol_TextDisabled);
@@ -906,7 +1049,7 @@ void Application::DrawGraphNodeNotes() {
         if (!IsValidNodePosition(position.x, position.y) || size.x <= 0.0f) continue;
         const std::string excerpt = NoteExcerpt(node.note, size.x - padding.x * 2.0f, kNodeNoteLines);
         const ImVec2 textSize = ImGui::CalcTextSize(excerpt.c_str());
-        const ImVec2 boxMax(position.x + size.x, position.y - kGap);
+        const ImVec2 boxMax(position.x + size.x, position.y - kNoteGap);
         const ImVec2 boxMin(position.x, boxMax.y - textSize.y - padding.y * 2.0f);
         drawList->AddRectFilled(boxMin, boxMax, background, 4.0f);
         drawList->AddRect(boxMin, boxMax, border, 4.0f);
@@ -1095,7 +1238,40 @@ void Application::DrawGraphEditor() {
         ImGui::OpenPopup("addGraphNode");
         ed::Resume();
     }
+    // --- ノードの右クリックで整列 -------------------------------------------
+    // 右クリックしたノードが選択に入っていなければ、そのノードだけを選び直す
+    // （選択の外で開いたメニューが、別の所にある選択へ効かないように）。
+    ed::NodeId contextNodeId;
+    if (ed::ShowNodeContextMenu(&contextNodeId)) {
+        if (!ed::IsNodeSelected(contextNodeId)) ed::SelectNode(contextNodeId, false);
+        ed::Suspend();
+        ImGui::OpenPopup("graphNodeMenu");
+        ed::Resume();
+    }
     ed::Suspend();
+    if (ImGui::BeginPopup("graphNodeMenu")) {
+        std::vector<ed::NodeId> selection(static_cast<size_t>(std::max(ed::GetSelectedObjectCount(), 0)));
+        const int nodeCount = selection.empty() ? 0
+            : ed::GetSelectedNodes(selection.data(), static_cast<int>(selection.size()));
+        ImGui::TextDisabled("整列（%d 個を選択中）", nodeCount);
+        ImGui::Separator();
+        const auto alignItem = [&](const char* label, const char* shortcut, GraphAlign mode, int minimum) {
+            if (ImGui::MenuItem(label, shortcut, false, nodeCount >= minimum)) AlignSelectedGraphNodes(mode);
+        };
+        alignItem("縦に並べる", nullptr, GraphAlign::StackY, 2);
+        alignItem("横に並べる", nullptr, GraphAlign::StackX, 2);
+        ImGui::Separator();
+        alignItem("左揃え", nullptr, GraphAlign::Left, 2);
+        alignItem("右揃え", nullptr, GraphAlign::Right, 2);
+        alignItem("左右の中央揃え", nullptr, GraphAlign::CenterX, 2);
+        alignItem("上揃え", nullptr, GraphAlign::Top, 2);
+        alignItem("下揃え", nullptr, GraphAlign::Bottom, 2);
+        alignItem("上下の中央揃え", nullptr, GraphAlign::CenterY, 2);
+        ImGui::Separator();
+        alignItem("横に等間隔", nullptr, GraphAlign::DistributeX, 3);
+        alignItem("縦に等間隔", nullptr, GraphAlign::DistributeY, 3);
+        ImGui::EndPopup();
+    }
     if (ImGui::BeginPopup("addGraphNode")) {
         ImGui::TextDisabled("ノードを追加");
         ImGui::Separator();
