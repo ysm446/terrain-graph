@@ -205,6 +205,10 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
             std::snprintf(text, sizeof(text), "GPU -- ms");
         }
         lines.emplace_back(text);
+        // 描画解像度（ビューポートの画素数）。GPU 時間はこの画素数に対するものなので、
+        // 並べて出す。ウィンドウの大きさで変わるため、比べるときの前提になる。
+        std::snprintf(text, sizeof(text), "Resolution %u x %u", m_renderer.Width(), m_renderer.Height());
+        lines.emplace_back(text);
         std::snprintf(text, sizeof(text), "Draw calls %u", stats.drawCalls);
         lines.emplace_back(text);
         std::snprintf(text, sizeof(text), "Vertices %s", GroupDigits(stats.vertices).c_str());
