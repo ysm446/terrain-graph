@@ -421,10 +421,12 @@ void Application::DrawMaterialSphereWindow() {
 
     const auto& assets = m_materialLibrary.Entries();
     const int index = std::clamp(m_selectedMaterial, 0, std::max(0, static_cast<int>(assets.size()) - 1));
-    const bool layerLayout = !assets.empty() && assets[index].layerMaterial.has_value();
-    ImGui::SetNextWindowSize(ImVec2(ui::Scaled(layerLayout ? 1000.0f : 420.0f), ui::Scaled(720.0f)),
-        layerLayout != m_materialPreviewLayerLayout ? ImGuiCond_Always : ImGuiCond_FirstUseEver);
-    m_materialPreviewLayerLayout = layerLayout;
+    const bool layerMaterial = !assets.empty() && assets[index].layerMaterial.has_value();
+    // 左にプレビュー、右に編集欄の横並び。どちらも潰れない幅を下限にする
+    // （以前の縦並びの窓幅 420 が ini に残っていても、開いたときに広がる）。
+    ImGui::SetNextWindowSize(ImVec2(ui::Scaled(1000.0f), ui::Scaled(720.0f)), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(ui::Scaled(640.0f), ui::Scaled(360.0f)),
+                                        ImVec2(FLT_MAX, FLT_MAX));
     if (!ImGui::Begin("マテリアルプレビュー", &m_showMaterialSphere,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         ImGui::End();
@@ -442,15 +444,14 @@ void Application::DrawMaterialSphereWindow() {
     compositor::MaterialAsset& asset =
         *m_materialLibrary.FindMutable(assets[static_cast<size_t>(index)].id);
 
-    // レイヤーマテリアルは左にプレビュー、右に独立してスクロールする編集欄。
-    if (layerLayout) {
-        const float width = ImGui::GetContentRegionAvail().x * 0.48f;
-        ImGui::BeginChild("layerMaterialPreview", ImVec2(width, 0), ImGuiChildFlags_None,
-            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-    }
-    const float paneSize = layerLayout
-        ? std::max(ui::Scaled(32), std::min(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y - ui::Scaled(145)))
-        : PreviewPaneSize();
+    // 左にプレビュー（球と表示の設定）、右に独立してスクロールする編集欄。
+    // 左の区画はスクロールしないので、球の上のホイールをズームへ回せる。
+    const float previewWidth = ImGui::GetContentRegionAvail().x * 0.48f;
+    ImGui::BeginChild("materialPreviewPane", ImVec2(previewWidth, 0), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    // 下に表示の設定（約 145px）を残した高さと幅の小さいほうで正方形にする。
+    const float paneSize = std::max(ui::Scaled(32), std::min(ImGui::GetContentRegionAvail().x,
+                                                             ImGui::GetContentRegionAvail().y - ui::Scaled(145)));
 
     // --- 球 ------------------------------------------------------------------
     ImGui::BeginChild("materialSpherePane", ImVec2(0.0f, paneSize), ImGuiChildFlags_None,
@@ -499,8 +500,6 @@ void Application::DrawMaterialSphereWindow() {
 
     ImGui::Separator();
 
-    // --- プロパティ（この区画だけスクロールする）------------------------------
-    if (!layerLayout) ImGui::BeginChild("materialPropertyPane", ImVec2(0.0f, 0.0f));
     ui::HintText("ドラッグ: 回転 / ホイール: ズーム / L＋ドラッグ: 光源");
 
     // 表示だけの設定。マテリアルの設定とは区切り線で分ける。
@@ -516,7 +515,7 @@ void Application::DrawMaterialSphereWindow() {
                                 : "映す球の直径（m）。赤道の模様が同じ長さの平面と揃う。マテリアルには保存しない",
                           "%.2f m");
         ui::PropertyBool("変位を表示", &m_materialSphere.ShowDisplacement(), true, "ハイトで表面の形状と輪郭を変える。プレビュー専用");
-        if (!layerLayout)
+        if (!layerMaterial)
             ui::PropertyFloat("変位量", &m_materialSphere.DisplacementMeters(), 0.0f, 1.0f, 0.1f,
                 "ハイト0〜1の高低差。0.5を基準に表面を変位させる。プレビュー専用", "%.3f m");
         else ui::HintText("凹凸の高さは右側の「変位量」で調整");
@@ -532,13 +531,11 @@ void Application::DrawMaterialSphereWindow() {
     ImGui::SameLine();
     if (ui::Button("光源を戻す", ui::kWideButtonWidth)) m_materialSphere.ResetLight();
 
-    ImGui::Separator();
+    ImGui::EndChild();
+    ImGui::SameLine();
 
-    if (layerLayout) {
-        ImGui::EndChild();
-        ImGui::SameLine();
-        ImGui::BeginChild("materialPropertyPane", ImVec2(0, 0));
-    }
+    // --- マテリアルの設定（この区画だけスクロールする）---------------------------
+    ImGui::BeginChild("materialPropertyPane", ImVec2(0, 0));
 
     if (m_materialEditDraft.id != asset.id) CommitMaterialEdit();
     if (!m_materialEditPending) CopyMaterialValues(asset, m_materialEditDraft);

@@ -537,7 +537,6 @@ private:
     ax::NodeEditor::EditorContext* m_nodeEditor = nullptr;
     uint32_t m_presetEditorId = 0;
     int m_selectedPresetLayer = 0;
-    bool m_materialPreviewLayerLayout = false;
     std::string m_surfacePresetError;
     // グラフパネル内の「エディタ / プロパティ」境界の高さ（96 DPI 基準）。
     float m_graphEditorHeight = 380.0f;
