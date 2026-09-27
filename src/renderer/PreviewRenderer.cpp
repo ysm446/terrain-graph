@@ -939,6 +939,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
                 mesh.Draw(commandList, m_tessellationEnabled);
                 CountMeshDraw(m_stats, mesh, m_tessellationEnabled);
                 if (drawInstances && !m_workHide.instances) drawInstances(commandList, matrix, true);
+                if (drawMeshes) drawMeshes(commandList, matrix, true);
             }
 
             TransitionIfNeeded(commandList, target,
@@ -1039,10 +1040,11 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     m_instanceClouds.atmosphere = constants.atmosphere;
     m_instanceClouds.noiseIndex = constants.cloudNoiseIndex;
     m_instanceClouds.mode = constants.atmosphericMode;
-    if (drawInstances && m_showTerrain && !m_workHide.instances && IsShadedView(m_debugView)) {
+    if (m_showTerrain && IsShadedView(m_debugView)) {
         XMFLOAT4X4 instanceViewProjection;
         XMStoreFloat4x4(&instanceViewProjection, viewProjection);
-        drawInstances(commandList, instanceViewProjection, false);
+        if (drawInstances && !m_workHide.instances) drawInstances(commandList, instanceViewProjection, false);
+        if (drawMeshes) drawMeshes(commandList, instanceViewProjection, false);
     }
 
 

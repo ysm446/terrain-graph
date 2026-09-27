@@ -280,6 +280,9 @@ public:
         for (size_t i = 0; i < instancesPerLod.size(); ++i) m_stats.instancesPerLod[i] += instancesPerLod[i];
     }
     std::function<void(ID3D12GraphicsCommandList*, const DirectX::XMFLOAT4X4&, bool)> drawInstances;
+    // ユニークなメッシュ（Mesh Output の道路など）。描く所はインスタンスと同じ（影の段と本描画）だが、
+    // インスタンスではないので Display の「Hide Instances」では隠さない（地形の表示にだけ従う）。
+    std::function<void(ID3D12GraphicsCommandList*, const DirectX::XMFLOAT4X4&, bool)> drawMeshes;
     // 雪煙（Snow Plume ノード）。Application が毎フレーム積み直す。大気の合成の後に重ねる。
     void SetSnowPlumes(std::vector<SnowPlumeDraw> plumes) { m_snowPlumes = std::move(plumes); }
     void Render(rhi::Device& device, rhi::PipelineCache& pipelineCache,
