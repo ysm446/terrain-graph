@@ -1,7 +1,7 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-09-28 02:47
+更新日時: 2026-09-28 04:28
 
 ## 大気散乱スカイと作業環境（シーン版3）
 
@@ -156,6 +156,7 @@ base' = base + 0.5 * gain     ただしソースが constant のときは base �
 | `blend` | `maskBlend` | `{ mode, intensity }` |
 | `maskPath` | `maskPath` | `{ gamma, invert }` |
 | `path` | `path` | `{ points[], edges[], defaultWidth, defaultFeather, defaultIntensity, nextId }`（下記） |
+| `roadMesh` | `roadMesh` | `{ width, lanesForward, lanesBackward, leftHandTraffic, surfaceOffset, uvRepeat, material }`（`material` は `materials[]` の id、0 ならなし） |
 | `roadPath` | `path`, `roadProfile` | `path` は Path と同じ形。`roadProfile` は `{ verticalPoints[], bankPoints[], bankEnabled, designSpeed, friction, smoothBank, bankSmoothDistance }`（下記） |
 
 **マスクの繋ぎ方そのものは `links` にしかない。** レイヤー側の
@@ -396,6 +397,12 @@ RGB をそのまま使うマップ（ベースカラー / 法線）はテクス�
   }
 }
 ```
+
+不透明度（アルファ抜き）は `blendMode`（`opaque` / `masked` / `translucent`）、`maskThreshold`（切り抜きのしきい値）、
+`opacity`（マップが無いときの不透明度）と `maps.opacity`（MapSlot）。キーは road-material-editor の `.tgmat` と同じ。
+不透明度のマップが無ければベースカラーのアルファを使う。`blendMode` が無い旧版は `alphaCutoff`（0 より大きければ
+`masked` で、その値がしきい値）として読み、保存では `alphaCutoff` を書かない。`mapUvSets` は読まない（terrain-graph の
+モデルは UV を 1 組しか持たない）。
 
 読み込むと、参照している画像をテクスチャライブラリへ読み込み、
 マテリアルを 1 つ**追加**する（既存のマテリアルには触らない）。

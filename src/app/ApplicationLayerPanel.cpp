@@ -42,6 +42,13 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
     const auto* assignedMaterial = m_materialLibrary.Find(layer.material);
     const bool layeredMaterial = assignedMaterial && assignedMaterial->layerMaterial;
     if (layeredMaterial && !assignedMaterial->layerError.empty()) ui::HintText(assignedMaterial->layerError.c_str());
+    if (layeredMaterial && assignedMaterial->layerMaterial &&
+        std::any_of(assignedMaterial->layerMaterial->materials.begin(), assignedMaterial->layerMaterial->materials.end(),
+                    [](const graph::PresetMaterial& m) {
+                        return m.mask && (m.mask->shape == graph::RoadMaskShape::WheelTracks ||
+                                          m.mask->shape == graph::RoadMaskShape::EdgeFalloff);
+                    }))
+        ui::HintText("轍・道路端のマスクは Road Mesh の路面でだけ効く（Surface では覆わない）");
 
     // 堆積は合成レイヤーではなく「下地のハイトを土砂で作り替える加工」。
     if (layer.kind == compositor::LayerKind::Sediment) {

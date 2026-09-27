@@ -31,7 +31,8 @@ struct BakeConstants {
     float colorAdjust[2]; float brightness; float alphaCutoff;
     float center[3]; float radius;
     uint32_t frame[2]; uint32_t frames; uint32_t fullSphere;
-    uint32_t flipNormalGreen; float variationWeight; uint32_t padding[2];
+    uint32_t flipNormalGreen; float variationWeight;
+    uint32_t opacityIndex, opacityChannel;  // 不透明度のマップ（無効ならベースカラーのアルファ）
 };
 static_assert(sizeof(BakeConstants) == 96);
 struct DilateConstants {
@@ -329,7 +330,11 @@ bool ImpostorLibrary::Bake(rhi::Device& device, rhi::PipelineCache& cache, const
             constants.colorAdjust[0] = asset.hueShiftDegrees * (kPi / 180.0f);
             constants.colorAdjust[1] = asset.saturation;
             constants.brightness = asset.brightness;
-            constants.alphaCutoff = constants.baseColorIndex != compositor::kInvalidTextureIndex ? asset.alphaCutoff : 0.0f;
+            constants.opacityIndex = textures.SrvIndex(asset.opacity.texture, false);
+            constants.opacityChannel = static_cast<uint32_t>(asset.opacity.channel);
+            constants.alphaCutoff = (constants.baseColorIndex != compositor::kInvalidTextureIndex ||
+                                     constants.opacityIndex != compositor::kInvalidTextureIndex)
+                                        ? asset.AlphaCutoff() : 0.0f;
             constants.center[0] = center.x; constants.center[1] = center.y; constants.center[2] = center.z;
             constants.radius = radius;
             constants.frames = frames;

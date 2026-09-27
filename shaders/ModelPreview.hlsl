@@ -46,7 +46,8 @@ struct ModelConstants
     uint impostorFrames, impostorFullSphere, impostorShadow, impostorVariation;
     // 色むら（MaterialLibrary.h の ColorVariation）。pointAttributes は点の属性（x = 色むら）で、
     // 無効なら中立の 0.5。variationLow / High は値 0 / 1 の端の調整（色相ラジアン, 彩度, 明度, 未使用）。
-    uint pointAttributes; float variationJitter; uint2 variationPadding;
+    // opacityIndex: 不透明度のマップ（切り抜き用）。無効ならベースカラーのアルファを使う。
+    uint pointAttributes; float variationJitter; uint opacityIndex, opacityChannel;
     float4 variationLow, variationHigh;
 };
 
@@ -245,8 +246,16 @@ void ClipAlpha(float alpha, float lod) {
     if (g_model.alphaCutoff <= 0) return;
     clip(alpha * (1 + max(lod, 0) * kAlphaMipScale) - g_model.alphaCutoff);
 }
+// 不透明度のマップで抜く。マップが無ければ何もしない（ベースカラーのアルファで抜く）。
+bool ClipOpacityMap(float2 uv, float2 deltaX, float2 deltaY) {
+    if (g_model.opacityIndex == kInvalidTextureIndex) return false;
+    const float lod = MapLod(g_model.opacityIndex, deltaX, deltaY);
+    ClipAlpha(SelectChannel(SampleMap(g_model.opacityIndex, uv, lod), g_model.opacityChannel), lod);
+    return true;
+}
 // 影パス（アルファ抜きのパーツだけ）。深度だけを書くので色は返さない。
 void PsShadow(PixelInput input) {
+    if (ClipOpacityMap(input.uv, ddx(input.uv), ddy(input.uv))) return;
     const float lod = MapLod(g_model.baseColorIndex, ddx(input.uv), ddy(input.uv));
     ClipAlpha(SampleMap(g_model.baseColorIndex, input.uv, lod).a, lod);
 }
@@ -258,11 +267,12 @@ float4 PsMain(PixelInput input, bool frontFace:SV_IsFrontFace):SV_TARGET {
     // 面の法線（向きは問わない）。clip より前に微分を取る。
     const float3 faceNormal=normalize(cross(ddx(input.position),ddy(input.position)));
     float3 baseColor = g_model.baseColorTint;
+    const bool clippedByMap = ClipOpacityMap(uv, deltaX, deltaY);
     if (g_model.baseColorIndex != kInvalidTextureIndex)
     {
         const float lod = MapLod(g_model.baseColorIndex, deltaX, deltaY);
         const float4 sampled = SampleMap(g_model.baseColorIndex, uv, lod);
-        ClipAlpha(sampled.a, lod);
+        if (!clippedByMap) ClipAlpha(sampled.a, lod);
         if (g_model.lodView == 0) baseColor *= sampled.rgb;
     }
     baseColor = AdjustBaseColor(baseColor, g_model.colorAdjust.x, g_model.colorAdjust.y,

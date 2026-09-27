@@ -45,7 +45,8 @@ struct ModelConstants {
     // 色むら（ColorVariation）。pointAttributes は点の属性で、無効なら中立。
     uint32_t pointAttributes;
     float variationJitter;
-    uint32_t variationPadding[2];
+    // 不透明度のマップ（切り抜き用）と読むチャンネル。無ければベースカラーのアルファを使う。
+    uint32_t opacityIndex, opacityChannel;
     float variationLow[4], variationHigh[4];  // 色相（ラジアン）, 彩度, 明度, 未使用
 };
 static_assert(sizeof(ModelConstants) == 1120);
@@ -460,7 +461,7 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
         }
         const auto& draw = *instances;
         ModelConstants constants = {};
-        constants.pointAttributes = constants.impostorVariation = compositor::kInvalidTextureIndex;
+        constants.pointAttributes = constants.impostorVariation = constants.opacityIndex = compositor::kInvalidTextureIndex;
         fillScene(constants);
         constants.aoValue = 1.0f;
         constants.points = draw.points; constants.rows = draw.rows;
@@ -519,9 +520,12 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
             slot < model.materials.size() ? materials.Find(model.materials[slot]) : nullptr;
         const compositor::MaterialAsset fallback;
         const auto& asset = material ? *material : fallback;
-        // アルファはベースカラーのマップから読むので、マップが無ければ抜かない。
-        const bool cutout = asset.alphaCutoff > 0.0f &&
-                            textures.SrvIndex(asset.baseColor, true) != compositor::kInvalidTextureIndex;
+        // 不透明度は不透明度のマップ（無ければベースカラーのアルファ）から読むので、
+        // どちらも無ければ抜かない。半透明もモデルでは切り抜きとして描く。
+        const uint32_t opacityIndex = textures.SrvIndex(asset.opacity.texture, false);
+        const bool cutout = asset.AlphaCutoff() > 0.0f &&
+                            (opacityIndex != compositor::kInvalidTextureIndex ||
+                             textures.SrvIndex(asset.baseColor, true) != compositor::kInvalidTextureIndex);
         auto* pipeline = pipelineFor(cutout, asset.twoSided, fade);
         if (!pipeline) return;
         if (pipeline != current) {
@@ -529,7 +533,7 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
             current = pipeline;
         }
         ModelConstants constants = {};
-        constants.pointAttributes = constants.impostorVariation = compositor::kInvalidTextureIndex;
+        constants.pointAttributes = constants.impostorVariation = constants.opacityIndex = compositor::kInvalidTextureIndex;
         // ベースカラーだけ sRGB として読む。それ以外はリニア（サムネイルと同じ）。
         constants.baseColorIndex = textures.SrvIndex(asset.baseColor, true);
         constants.normalIndex = textures.SrvIndex(asset.normal, false);
@@ -547,7 +551,9 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
         constants.colorAdjust[1] = asset.saturation;
         constants.brightness = asset.brightness;
         constants.flipNormalGreen = asset.flipNormalGreen ? 1u : 0u;
-        constants.alphaCutoff = cutout ? asset.alphaCutoff : 0.0f;
+        constants.alphaCutoff = cutout ? asset.AlphaCutoff() : 0.0f;
+        constants.opacityIndex = opacityIndex;
+        constants.opacityChannel = static_cast<uint32_t>(asset.opacity.channel);
         fillScene(constants);
         if (instances) {
             const auto& draw = *instances;
@@ -609,7 +615,7 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
         const auto cb = device.Upload().Allocate(sizeof(ModelConstants), 256);
         if (pipeline && cb.IsValid()) {
             ModelConstants constants = {};
-            constants.pointAttributes = constants.impostorVariation = compositor::kInvalidTextureIndex;
+            constants.pointAttributes = constants.impostorVariation = constants.opacityIndex = compositor::kInvalidTextureIndex;
             fillScene(constants);
             constants.aoValue = 1.0f;
             constants.impostorColor = impostor->color.SrvIndex();

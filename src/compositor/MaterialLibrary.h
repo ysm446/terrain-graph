@@ -18,6 +18,13 @@ namespace tg::compositor {
 //
 // 値が 0.5 から 0 / 1 へ離れるほど、それぞれの端の調整（色相・彩度・明度）へ線形に寄る。
 // 調整の式はベースカラーの調整（AdjustBaseColor）と同じで、テクスチャの明暗は残る。
+// 描き方（不透明度の扱い）。road-material-editor の BlendMode と同じ並び。
+enum class BlendMode : uint32_t {
+    Opaque = 0,       // 不透明
+    Masked = 1,       // 切り抜き（不透明度がしきい値未満の画素を描かない）
+    Translucent = 2,  // 半透明（不透明度で混ぜる）
+};
+
 struct ColorVariation {
     float lowHueDegrees = 0.0f, lowSaturation = 1.0f, lowBrightness = 1.0f;     // 値 0 の端
     float highHueDegrees = 0.0f, highSaturation = 1.0f, highBrightness = 1.0f;  // 値 1 の端
@@ -92,9 +99,15 @@ struct MaterialAsset {
     // そちらで、既定を DirectX にすると読み込んだ素材が軒並み反転して見えるため。
     bool flipNormalGreen = true;
 
-    // **アルファ抜き（モデル用）。** ベースカラーのアルファがこの値未満の画素を捨てる。
-    // 0 で無効（不透明）。葉のカードなどに使う。地形のレイヤー合成には効かない。
-    float alphaCutoff = 0.0f;
+    // **不透明度（アルファ抜き）。** 描き方、切り抜きのしきい値、不透明度のマップと値。
+    // マップが無ければベースカラーのアルファを使う（葉のカードの画像のアルファ）。
+    // 地形のレイヤー合成には効かない。モデルは半透明を持たないので切り抜きとして描く。
+    BlendMode blendMode = BlendMode::Opaque;
+    float maskThreshold = 0.5f;
+    MapSlot opacity;
+    float opacityValue = 1.0f;  // マップもベースカラーのアルファも使わないときの不透明度（半透明用）
+    // 切り抜きのしきい値。不透明なら 0（抜かない）。半透明もモデルでは切り抜きとして扱う。
+    float AlphaCutoff() const { return blendMode == BlendMode::Opaque ? 0.0f : maskThreshold; }
     // 裏面も描く（モデル用）。裏から見たときは法線を反転して陰影を付ける。
     bool twoSided = false;
     // 配置の点の色むらへの応え方（モデル用）。葉のマテリアルに設定し、幹は既定のままにする。

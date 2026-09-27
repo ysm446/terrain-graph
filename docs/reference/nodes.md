@@ -1,7 +1,7 @@
 # nodes — ノードのリファレンス
 
 作成日時: 2026-09-03 17:30
-更新日時: 2026-09-28 02:47
+更新日時: 2026-09-28 04:28
 
 ## Model Merge
 
@@ -42,6 +42,7 @@ Cloud Shape Generate（`cloudShapeGenerate`）または Cloud Map Generate（`cl
 | **Mask** | オレンジ | 0〜1 の 1 チャンネル | Mask 入力どうし |
 | **Path** | 水色 | 地形の上に引いた向き付きの線（点とエッジ） | Path 入力どうし |
 | **Road Path** | 淡い黄色 | 道路の線形（平面の点とエッジ + 縦断曲線・バンク角） | Road Path 入力どうし（Road Mesh が読む。Path とは繋がらない） |
+| **Mesh** | 明るい灰色 | CPU で作ったユニークなメッシュ（道路の路面） | Mesh Output。Instances（Model Output）とは繋がらない |
 
 ピンの丸と線の色は型で決まる。**繋ぎ間違いは色で気づける。**
 
@@ -80,6 +81,8 @@ Cloud Shape Generate（`cloudShapeGenerate`）または Cloud Map Generate（`cl
 | **Mask Path** | `maskPath` | Path | Mask | パスの足跡をマスクにする |
 | **Mask Area** | `maskArea` | Path | Mask | パスの閉じた鎖の内側をマスクにする（エリア選択） |
 | **Road Path** | `roadPath` | Base, Avoid | Road Path | 道路の線形を引く（縦断曲線・バンク角。平面の編集は Path と同じ） |
+| **Road Mesh** | `roadMesh` | Road Path | Mesh | Road Path から路面のメッシュを作る（材質は画素ごとに評価） |
+| **Mesh Output** | `meshOutput` | Mesh | — | 道路などのユニークなメッシュをビューポートへ出す |
 | **Output** | `output` | Material | — | ここに繋いだチェーンが結果になる |
 | **Terrain** | `terrain` | — | Result | **雲グラフ専用。** 地形グラフの Output に繋いだ結果を取り出す |
 | **Wind Field** | `windField` | Base | Speed, Spindrift, Wind | 地形全体の風の場。地表の風速と粉雪の発生量をマスクにする |
@@ -881,6 +884,32 @@ Road Mesh（未実装）が読む。Mask Path などの Path 入力へは繋が�
 縦断ポイントに菱形を置く。カーソルの所の標高・地形との差・勾配をツールチップで出す）を出す。
 ビューポートには縦断を反映した中心線、10 m ごとの切土（青）・盛土（橙）の目安（差 0.3 m 未満は描かない）、
 縦断ポイントの菱形、バンク角を付けているときは傾きの横棒を重ねる。
+
+## Road Mesh
+
+Road Path の中心線（縦断を反映、1 m ごと）から路面のメッシュを作る。road-material-editor の Road（`BuildRoad`）の移植で、
+断面を幅方向に約 1 m ごとに割り、バンク角で傾ける。角ではマイターで幅を保ち、隣り合う区間の向きの内積が 0.25 未満
+（約 75° より急）の角と、面が裏返る所は断る。Mesh Output に繋ぐとビューポートに出る（影を落とし、影と雲影を受ける）。
+形は中心線・バンク・幅・持ち上げが変わったときだけ作り直す。
+
+| パラメータ | 既定 | 意味 |
+| --- | --- | --- |
+| 幅 | 7.0 m | 路面の全幅（0.5〜60 m） |
+| 車線数（進行方向 / 対向） | 1 / 1 | 車線の幅は幅を車線数で割る。轍のマスクが使う |
+| 走行側 | 左側通行 | 進行方向の車線が道路のどちら側に並ぶか |
+| 路面の持ち上げ | 0.05 m | 中心線から路面を上げる量。地形の均しが入るまで、地形と重なって欠けるのを抑える |
+| 材質 | なし | Material か Layered Material。なしなら灰色 |
+| 繰り返し長 | 4.0 m | 通常の Material のとき、模様が 1 周する長さ。Layered Material は層ごとの値 |
+
+- **材質は焼かずに画素ごとに評価する**（`GeneratedMesh.hlsl` → `LayerMaterial.hlsli`）。UV は実寸の道路座標
+  （x = 左端からの横位置、y = 始点からの道のり、どちらも m）。通常の Material は 1 層の Layered Material として同じ関数で塗る。
+  地形の合成テクスチャ（1 テクセル 1〜2 m）を通らないので、細かい模様も潰れない。
+- Layered Material の**轍・道路端のマスク**は、ここでだけ効く（幅・車線数・走行側を材質の定数へ入れる）。
+  Surface では道路の文脈が無いので覆わない（Surface のプロパティに注意書きを出す）。
+- 中心線の高さは CPU 側のハイト（512²）から引くので、描いた地形とは数 m ずれることがある。地形を道路に合わせて
+  均す段（計画の段階 3）が入るまでは、路面が地形に隠れたり浮いたりする。
+- 描くのはモデルの配置と同じ所（影の段と本描画）なので、ビューポートの Display の「Hide Instances」で一緒に隠れる。
+- 未対応: テセレーションによる変位、路肩・区画線（段階 4）。
 
 ## Mask Path
 

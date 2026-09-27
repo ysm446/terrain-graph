@@ -374,7 +374,11 @@ json WriteMaterialBody(const compositor::MaterialAsset& asset, const TextureWrit
     node["roughness"] = asset.roughnessValue;
     node["metallic"] = asset.metallicValue;
     node["ambientOcclusion"] = asset.ambientOcclusionValue;
-    node["alphaCutoff"] = asset.alphaCutoff;
+    // 不透明度。キーは road-material-editor の .tgmat と同じ。旧版の alphaCutoff は書かない。
+    static const char* const kBlendModeNames[] = {"opaque", "masked", "translucent"};
+    node["blendMode"] = EnumName(kBlendModeNames, static_cast<uint32_t>(asset.blendMode));
+    node["maskThreshold"] = asset.maskThreshold;
+    node["opacity"] = asset.opacityValue;
     node["twoSided"] = asset.twoSided;
     // 色むらは既定（何もしない）なら書かない。
     if (const auto& variation = asset.colorVariation; !variation.IsIdentity() || variation.jitter != 0.0f) {
@@ -394,6 +398,7 @@ json WriteMaterialBody(const compositor::MaterialAsset& asset, const TextureWrit
     maps["metallic"] = WriteMapSlot(asset.metallic, writeTexture);
     maps["ambientOcclusion"] = WriteMapSlot(asset.ambientOcclusion, writeTexture);
     maps["height"] = WriteMapSlot(asset.height, writeTexture);
+    maps["opacity"] = WriteMapSlot(asset.opacity, writeTexture);
     node["maps"] = std::move(maps);
     return node;
 }
@@ -417,7 +422,18 @@ void ReadMaterialBody(const json& node, compositor::MaterialAsset& asset,
     asset.metallicValue = ReadFloat(node, "metallic", defaults.metallicValue);
     asset.ambientOcclusionValue =
         ReadFloat(node, "ambientOcclusion", defaults.ambientOcclusionValue);
-    asset.alphaCutoff = std::clamp(ReadFloat(node, "alphaCutoff", defaults.alphaCutoff), 0.0f, 1.0f);
+    // 不透明度。blendMode が無い旧版は alphaCutoff（0 より大きければ切り抜き、値がしきい値）から読む。
+    static const char* const kBlendModeNames[] = {"opaque", "masked", "translucent"};
+    if (FindMember(node, "blendMode") != nullptr) {
+        asset.blendMode = static_cast<compositor::BlendMode>(
+            EnumValue(kBlendModeNames, node, "blendMode", static_cast<uint32_t>(defaults.blendMode)));
+        asset.maskThreshold = std::clamp(ReadFloat(node, "maskThreshold", defaults.maskThreshold), 0.0f, 1.0f);
+    } else {
+        const float cutoff = std::clamp(ReadFloat(node, "alphaCutoff", 0.0f), 0.0f, 1.0f);
+        asset.blendMode = cutoff > 0.0f ? compositor::BlendMode::Masked : compositor::BlendMode::Opaque;
+        asset.maskThreshold = cutoff > 0.0f ? cutoff : defaults.maskThreshold;
+    }
+    asset.opacityValue = std::clamp(ReadFloat(node, "opacity", defaults.opacityValue), 0.0f, 1.0f);
     asset.twoSided = ReadBool(node, "twoSided", defaults.twoSided);
     asset.colorVariation = defaults.colorVariation;
     if (const json* variation = FindMember(node, "colorVariation"); variation && variation->is_object()) {
@@ -445,6 +461,7 @@ void ReadMaterialBody(const json& node, compositor::MaterialAsset& asset,
     asset.metallic = ReadMapSlot(*maps, "metallic", readTexture);
     asset.ambientOcclusion = ReadMapSlot(*maps, "ambientOcclusion", readTexture);
     asset.height = ReadMapSlot(*maps, "height", readTexture);
+    asset.opacity = ReadMapSlot(*maps, "opacity", readTexture);
 }
 
 // --- レイヤー -------------------------------------------------------------
@@ -1874,6 +1891,12 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
         } else if (const auto* roadPath = std::get_if<graph::RoadPathNodeSettings>(&node.settings)) {
             item["path"] = WritePath(roadPath->road.path);
             item["roadProfile"] = WriteRoadProfile(roadPath->road);
+        } else if (const auto* roadMesh = std::get_if<graph::RoadMeshNodeSettings>(&node.settings)) {
+            const graph::RoadMeshSettings& m = roadMesh->mesh;
+            item["roadMesh"] = {{"width", m.widthMeters}, {"lanesForward", m.lanesForward},
+                                {"lanesBackward", m.lanesBackward}, {"leftHandTraffic", m.leftHandTraffic},
+                                {"surfaceOffset", m.surfaceOffsetMeters},
+                                {"uvRepeat", m.uvRepeatMeters}, {"material", writeMaterial(m.material)}};
         }
         nodes.push_back(std::move(item));
     }
@@ -2239,6 +2262,22 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
             } else if (created.kind == graph::NodeKind::RoadPath) {
                 graph::RoadPathNodeSettings settings;
                 settings.road = ReadRoadPath(item);
+                created.settings = std::move(settings);
+            } else if (created.kind == graph::NodeKind::RoadMesh) {
+                graph::RoadMeshNodeSettings settings;
+                graph::RoadMeshSettings& m = settings.mesh;
+                if (const json* values = FindMember(item, "roadMesh"); values != nullptr && values->is_object()) {
+                    const graph::RoadMeshSettings d;
+                    m.widthMeters = std::clamp(ReadFloat(*values, "width", d.widthMeters), graph::kRoadMinWidthMeters,
+                                               graph::kRoadMaxWidthMeters);
+                    m.lanesForward = std::clamp(ReadInt(*values, "lanesForward", d.lanesForward), 1, 8);
+                    m.lanesBackward = std::clamp(ReadInt(*values, "lanesBackward", d.lanesBackward), 0, 8);
+                    m.leftHandTraffic = ReadBool(*values, "leftHandTraffic", d.leftHandTraffic);
+                    m.surfaceOffsetMeters = std::clamp(ReadFloat(*values, "surfaceOffset", d.surfaceOffsetMeters), 0.0f, 5.0f);
+                    m.uvRepeatMeters = std::clamp(ReadFloat(*values, "uvRepeat", d.uvRepeatMeters), 0.1f, 100.0f);
+                    if (const json* material = FindMember(*values, "material"); material != nullptr)
+                        m.material = readMaterial(*material);
+                }
                 created.settings = std::move(settings);
             } else if (created.kind == graph::NodeKind::Missing) {
                 created.settings = graph::MissingNodeSettings{kindName};
@@ -2922,6 +2961,9 @@ void RemapNodeReferences(graph::NodeSettings& settings, const NodeReferenceRemap
             });
     } else if (auto* mask = std::get_if<graph::MaskNodeSettings>(&settings)) {
         mask->map.texture = texture(mask->map.texture);
+    } else if (auto* roadMesh = std::get_if<graph::RoadMeshNodeSettings>(&settings)) {
+        if (roadMesh->mesh.material != compositor::kNoMaterialAsset && remap.material)
+            roadMesh->mesh.material = remap.material(roadMesh->mesh.material);
     } else if (auto* scatter = std::get_if<graph::ModelScatterSettings>(&settings)) {
         if (remap.model) {
             for (graph::ModelChoice& choice : scatter->models) choice.model = remap.model(choice.model);

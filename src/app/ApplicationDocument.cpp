@@ -69,7 +69,10 @@ DocumentSnapshot Application::CaptureDocument() const {
         material.saturation = asset.saturation;
         material.brightness = asset.brightness;
         material.flipNormalGreen = asset.flipNormalGreen;
-        material.alphaCutoff = asset.alphaCutoff;
+        material.blendMode = asset.blendMode;
+        material.maskThreshold = asset.maskThreshold;
+        material.opacity = asset.opacity;
+        material.opacityValue = asset.opacityValue;
         material.twoSided = asset.twoSided;
         material.colorVariation = asset.colorVariation;
         material.roughnessValue = asset.roughnessValue;
@@ -156,7 +159,11 @@ void Application::ApplyDocument(const DocumentSnapshot& snapshot) {
         asset.saturation = material.saturation;
         asset.brightness = material.brightness;
         asset.flipNormalGreen = material.flipNormalGreen;
-        asset.alphaCutoff = material.alphaCutoff;
+        asset.blendMode = material.blendMode;
+        asset.maskThreshold = material.maskThreshold;
+        asset.opacity = material.opacity;
+        asset.opacity.texture = ValidTexture(asset.opacity.texture);
+        asset.opacityValue = material.opacityValue;
         asset.twoSided = material.twoSided;
         asset.colorVariation = material.colorVariation;
         asset.roughnessValue = material.roughnessValue;
@@ -168,6 +175,11 @@ void Application::ApplyDocument(const DocumentSnapshot& snapshot) {
     // --- グラフ -------------------------------------------------------------
     std::vector<graph::Node> nodes = snapshot.graphNodes;
     for (graph::Node& node : nodes) {
+        if (auto* roadMesh = std::get_if<graph::RoadMeshNodeSettings>(&node.settings)) {
+            if (m_materialLibrary.Find(roadMesh->mesh.material) == nullptr)
+                roadMesh->mesh.material = compositor::kNoMaterialAsset;
+            continue;
+        }
         auto* settings = std::get_if<graph::LayerNodeSettings>(&node.settings);
         if (settings == nullptr) {
             continue;

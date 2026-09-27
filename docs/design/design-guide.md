@@ -1,7 +1,7 @@
 # design-guide — UI の設計ガイド
 
 作成日時: 2026-08-31 14:36
-更新日時: 2026-09-28 02:47
+更新日時: 2026-09-28 04:28
 
 ## Road Path の縦断とバンク角
 
@@ -27,7 +27,7 @@ Road Path を選んだときのプロパティは、Path と同じ「パス」�
 | 整形 | Heightmap Blur / Flatten Borders / Height Levels |
 | マスク | Mask Image / Noise / Flowline / Fluvial / Height / Slope / Curvature / Levels / Blur / Blend、Wind Field |
 | パス | Path / Mask Path / Mask Area |
-| 道路 | Road Path（Road Mesh / Lane Marking は移植中） |
+| 道路 | Road Path / Road Mesh / Mesh Output（Lane Marking などは移植中） |
 | 配置 | Scatter / Model Scatter / Model Merge / Model Output |
 | 雲 | Cloud Weather Layer ほか雲グラフ用の種類 |
 
@@ -93,9 +93,20 @@ Road Path を選んだときのプロパティは、Path と同じ「パス」�
 
 Model Scatter の設定表で「接地オフセット」の後に PropertyBool の「LOD 自動」を置き、オンなら PropertyFloat の「LOD 距離の倍率」（0.01〜100、小数 2 桁）、オフなら従来の PropertyInt「LOD」を出す（どちらか一方だけ）。表は `BeginPropertyTable(id, "LOD 距離の倍率")` で最長ラベルに列幅を合わせる。切り替え距離そのものはモデルのプロパティに置く。表示 LOD の行の下、マテリアルスロットの前に「LOD」節を作り、段が 2 つ以上あるときだけ「LOD1 の距離」…を PropertyFloat（m、小数 1 桁）で並べる。既定値は最大寸法から求めた値で、手前の段より近くはできない。節の下の HintText で Model Scatter の「LOD 自動」で使うことを示す。
 
-## マテリアルのアルファ抜き
+## マテリアルの不透明度（アルファ抜き）
 
-マテリアル編集の末尾（マップ節の案内の後）に「モデル」節を置き、PropertyFloat の「アルファ抜き」（0〜1、0 で無効、表示は小数 2 桁）と PropertyBool の「両面」を並べる。どちらもモデルの描画だけに効くので、節の下の HintText でそれを示す。閾値の目安（0.5）と影も抜けることはツールチップに書く。アルファはベースカラーのマップの A を使い、マップが無いときは抜かない。
+マテリアル編集のマップ節の案内の後に「不透明度」節を置く（ユーザー指定で road-material-editor の不透明度を移植。旧「モデル」節の「アルファ抜き」を置き換えた）。
+
+- PropertyCombo の「描き方」（不透明 / 切り抜き / 半透明）、切り抜きのときだけ PropertyFloat の「しきい値」（0〜1、目安 0.5）、マップ行の「不透明度マップ」（テクスチャ + チャンネル）、半透明でマップが無いときだけ PropertyFloat の「不透明度」。表の列幅は「不透明度マップ」に合わせる。
+- 不透明のまま不透明度マップを付けたら、描き方を切り抜きへ切り替える（付けたのに効かない、を避ける）。
+- 節の下の HintText で、マップが無ければベースカラーのアルファを使うこと、地形のレイヤー合成には効かないことを示す。ツールチップに、影も抜けることと、モデルでは半透明を切り抜きとして描くことを書く。
+- 「モデル」節は PropertyBool の「両面」だけになり、HintText は「両面はモデルの描画だけに効く」。
+
+## Road Mesh のプロパティ
+
+Road Mesh を選んだときは「路面」（幅、車線数（進行方向 / 対向）、読み取り専用の車線幅、PropertyCombo の「走行側」（左側通行 / 右側通行）、路面の持ち上げ）、「材質」（DrawMaterialSlotRow の「材質」。Layered Material も選べ、サムネイルを出す。通常の Material のときだけ「繰り返し長」）と HintText、「状態」（作れなかった理由を WarnColor で、延長とメッシュの頂点 / 三角形の数）を並べる。Road Path と Mesh Output が繋がっていなければ「状態」に繋ぎ方を HintText で出す。
+
+Layered Material の層のマスクで「轍（道路専用）」を選んだら「車線に合わせる」「対向車線にも」（手入力なら「車線中央の位置」）「タイヤ間隔」「轍の幅」「縁のぼかし」、「道路端（道路専用）」なら「側」（両側 / 左 / 右）「端の幅」「縁のぼかし」を出し、ノイズの行（ノイズ寸法・しきい値・ぼかし）は出さない。Surface に轍・道路端のマスクを持つ Layered Material を割り当てたら、HintText で「Road Mesh の路面でだけ効く（Surface では覆わない）」と出す。
 
 ## マテリアルプレビューのハイト変位
 

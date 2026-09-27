@@ -158,6 +158,17 @@ constexpr std::array<PinDefinition, 3> kRoadPathPins = {{
     {PinKind::Output, ValueType::RoadPath, "Road Path"},
 }};
 
+// 道路の路面のメッシュ。Road Path から作り、Mesh を出す。
+constexpr std::array<PinDefinition, 2> kRoadMeshPins = {{
+    {PinKind::Input, ValueType::RoadPath, "Road Path"},
+    {PinKind::Output, ValueType::Mesh, "Mesh"},
+}};
+
+// ユニークなメッシュをビューポートへ出す終端。
+constexpr std::array<PinDefinition, 1> kMeshOutputPins = {{
+    {PinKind::Input, ValueType::Mesh, "Mesh"},
+}};
+
 // パスの足跡をマスクにするピン。
 constexpr std::array<PinDefinition, 2> kMaskPathPins = {{
     {PinKind::Input, ValueType::Path, "Path"},
@@ -273,7 +284,7 @@ constexpr std::array<PinDefinition, 1> kModelOutputPins = {{
 constexpr std::array<PinDefinition, 1> kSnowPlumePins = {{
     {PinKind::Input, ValueType::Mask, "Source"},
 }};
-constexpr std::array<NodeDefinition, 53> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 55> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kSurfacePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -306,6 +317,8 @@ constexpr std::array<NodeDefinition, 53> kNodeDefinitions = {{
     {NodeKind::MaskPath, "maskPath", "Mask Path", kMaskPathPins},
     {NodeKind::MaskArea, "maskArea", "Mask Area", kMaskPathPins},
     {NodeKind::RoadPath, "roadPath", "Road Path", kRoadPathPins},
+    {NodeKind::RoadMesh, "roadMesh", "Road Mesh", kRoadMeshPins},
+    {NodeKind::MeshOutput, "meshOutput", "Mesh Output", kMeshOutputPins},
     {NodeKind::Cloud, "cloud", "Cloud (Legacy)", kCloudPins},
     {NodeKind::CloudLayer, "cloudLayer", "Cloud Layer (Legacy)", kCloudLayerPins},
     {NodeKind::CloudWeatherLayer, "cloudWeatherLayer", "Cloud Weather Layer", kCloudWeatherPins},
@@ -750,6 +763,21 @@ std::vector<CompiledModelScatter> NodeGraph::CompileModelScatters() const {
     return result;
 }
 
+std::vector<CompiledRoadMesh> NodeGraph::CompileRoadMeshes() const {
+    std::vector<CompiledRoadMesh> result;
+    std::unordered_set<GraphId> visited;
+    for (const Node& output : m_nodes) {
+        if (output.kind != NodeKind::MeshOutput || output.inputs.empty()) continue;
+        const Node* mesh = FindUpstreamNodeForPin(output.inputs[0].id);
+        if (mesh == nullptr || mesh->kind != NodeKind::RoadMesh || mesh->inputs.empty()) continue;
+        if (!visited.insert(mesh->id).second) continue;
+        const Node* path = FindUpstreamNodeForPin(mesh->inputs[0].id);
+        if (path == nullptr || path->kind != NodeKind::RoadPath) continue;
+        result.push_back({output.id, mesh->id, path->id});
+    }
+    return result;
+}
+
 std::vector<CompiledSnowPlume> NodeGraph::CompileSnowPlumes() const {
     std::vector<CompiledSnowPlume> result;
     for (const Node& node : m_nodes) {
@@ -967,6 +995,8 @@ GraphId NodeGraph::CreateNode(NodeKind kind) {
     } else if (kind == NodeKind::Missing) { node.settings = MissingNodeSettings{};
     } else if (kind == NodeKind::Path) {
         node.settings = PathNodeSettings{};
+    } else if (kind == NodeKind::RoadMesh) {
+        node.settings = RoadMeshNodeSettings{};
     } else if (kind == NodeKind::RoadPath) {
         RoadPathNodeSettings road;
         road.road.path.defaultWidthMeters = kRoadDefaultWidthMeters;

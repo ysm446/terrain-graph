@@ -43,7 +43,10 @@ struct MaterialSnapshot {
     float saturation = 1.0f;
     float brightness = 1.0f;
     bool flipNormalGreen = true;
-    float alphaCutoff = 0.0f;
+    compositor::BlendMode blendMode = compositor::BlendMode::Opaque;
+    float maskThreshold = 0.5f;
+    compositor::MapSlot opacity;
+    float opacityValue = 1.0f;
     bool twoSided = false;
     compositor::ColorVariation colorVariation;
     float roughnessValue = 0.5f;

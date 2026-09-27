@@ -1,13 +1,23 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-28 02:48
+更新日時: 2026-09-28 04:28
 
 ## 空木岳（utsugidake6）の登山道の引き直し（2026-09-27 05:33）
 
 ユーザーが置いた `utsugidake_routes.geojson`（OSM、trail 16 本）から Path を作り直した（点 341 / エッジ 342。自動経路の仮の 6 点を置き換え）。Heightmap に位置が無かったので、ユーザー指定の 35.7109, 137.8125 を入れた（GeoJSON の範囲の中心と一致し、標高の差は中央値 1.0 m）。変更前は `data/Test/utsugidake6-backup-20260927.zip`。
 
 検証: 陰影図に重ねて尾根に沿うことを確認し、Release でシーンのカメラと真上を撮影（`data/Test/utsugidake6-qa/`）。Debug で開いて保存し直し、警告・エラーが無いことを確認。
+
+## Road Mesh と Mesh Output、マテリアルの不透明度 — 道路の移植の段階 2（2026-09-28 04:28）
+
+- **Road Mesh / Mesh Output**: Road Path の中心線（1 m ごと、縦断を反映）から断面を約 1 m ごとに張る（`graph/RoadMesh.cpp`。road-material-editor の `BuildRoad` の移植。右 = (-dz, 0, dx)、列 0 が左端、UV は実寸の道路座標）。`NodeGraph::CompileRoadMeshes` が Mesh Output → Road Mesh → Road Path を辿る。形は中心線・バンク・幅・持ち上げのハッシュが変わったときだけ作り直す（`ApplicationRoadMesh.cpp`、フレームの外で `GeneratedMeshes::Update`）。描くのはモデルの配置と同じ `drawInstances` のコールバックの中（影の段と本描画）。
+- **材質は画素ごと**: `GeneratedMesh.hlsl` が `EvaluateLayerMaterial` を道路座標で呼ぶ。陰影は `ModelPreview.hlsl` の `ShadeModel` と同じ式（写した）。road-material-editor はスロットごとに 1024² へ焼いていたが、terrain-graph の評価器は重いので焼かない。通常の Material は `PresetMaterial` 1 層の `LayerMaterial` として `CompileLayerMaterial` に通す。
+- **法線の向き**: 最初は `SV_IsFrontFace` で裏なら返していたが、三角形の巻き順とパイプラインの表の定義が合わず上面が「裏」になって暗く写った。視線との内積で返すようにした（巻き順に頼らない）。
+- **轍・道路端**: `LayerMaterialGpu` に道路の文脈（幅・車線数・走行側、幅 0 なら道路でない）と層ごとの設定（road0 / road1）を足し、`LayerMaterial.hlsli` の `RoadShapeMask` で road-material-editor の `EvaluateRoadMask` と同じ式を評価する（車線は右端から並べ、走行側で進行方向の車線の側を決める）。`CompileLayerMaterial` の拒否をやめ、Surface では覆わない（注意書き）。
+- **不透明度**: `MaterialAsset` の `alphaCutoff` を `blendMode` / `maskThreshold` / `opacity`（MapSlot）/ `opacityValue` に置き換えた。保存キーは road-material-editor と同じ。モデル（`ModelConstants` の予備 2 つを `opacityIndex, opacityChannel` に）とインポスターの焼き込み（`BakeConstants` の予備）で、不透明度マップがあればそれで抜く。半透明はモデルでは切り抜き。
+
+検証: Debug / Release ビルド（警告 0）、CTest 6 件（Road Mesh の頂点・UV・向き・法線・バンク・急な角の拒否、ノードの接続を追加）、変更したシェーダを DXC でコンパイル。確認用シーン（`data/Test/roadpath-qa/`）で、Road Mesh の路面が地形に沿って描かれること、Material（草）と Layered Material が貼られること、色で塗り分けた確認用の Layered Material（`road-mask-test.tglayer`: 赤の下地、青の轍、白の道路端）で 2 車線の轍 4 本と端が出ることを撮影で確認。白馬岳の稜線でハイマツの葉の切り抜きが変わらないことを確認（旧 `alphaCutoff` の読み替え）。**未確認**: 近くからの見え方（確認用シーンの近クリップが約 100 m で、近寄れなかった）、UI の見た目（不透明度の節、Road Mesh のプロパティ）、半透明。**既知**: 中心線は CPU 側のハイト（512²）から引くので、描いた地形と数 m ずれて路面が隠れる所がある（段階 3 の地形の均しで解消する想定）。
 
 ## Road Path — 道路の移植の段階 1（2026-09-28 02:48）
 

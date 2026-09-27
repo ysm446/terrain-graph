@@ -1,7 +1,7 @@
 # plan — 実装方針と優先順位
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-28 02:48
+更新日時: 2026-09-28 04:28
 
 ## 道路 — road-material-editor からの移植（2026-09-28 02:48、段階 1 実装済み）
 
@@ -18,12 +18,20 @@ road-material-editor（`D:\GitHub\road-material-editor`、terrain-graph のフ�
 ### 段階
 
 1. **Road Path（2026-09-28 02:48 実装済み）** — `graph/RoadPath.h/.cpp`（縦断曲線とバンク角は `RoadProfile` の移植）、NodeKind 53 / ValueType 9、保存（`path` + `roadProfile`）、平面の編集は Path と共通（`EditablePathSettings`）、縦断とバンクのポイントはプロパティで編集、縦断図とビューポートの中心線・切土盛土の目安。**残り**: 縦断・バンクのポイントをビューポートでドラッグして動かす操作。
-2. **メッシュの描画と Road Mesh** — 生成メッシュの描画経路（頂点に道路座標 `roadUv`、テセレーションと変位、影）を `MeshPbr.hlsl` から移す。Road Mesh は幅・車線数を持ち、路面のメッシュを作る。Material / Layered Material を最大 4 枠。道路座標が要るため今は拒否している Layered Material のマスク（轍・路肩のかすれ）をここで有効にする。
+2. **メッシュの描画と Road Mesh（2026-09-28 04:28 実装済み。残りは下）** — 生成メッシュの描画経路（頂点に道路座標 `roadUv`、テセレーションと変位、影）を `MeshPbr.hlsl` から移す。Road Mesh は幅・車線数を持ち、路面のメッシュを作る。Material / Layered Material を最大 4 枠。道路座標が要るため今は拒否している Layered Material のマスク（轍・路肩のかすれ）をここで有効にする。
+   **マテリアルの不透明度（アルファ抜き）** も移す（ユーザー指定）: 不透明度マップと描き方（不透明 / 切り抜き / 半透明）、しきい値、マップごとの UV の選び方（道路の座標 / ワールド）。白線・ひび割れ・路面のゴミのマテリアルが使う。terrain-graph の既存のアルファ抜き（ベースカラーの A と `alphaCutoff`、モデル用）とは一つの仕組みにまとめる。
+   **実装（2026-09-28 04:28）**: Road Mesh（NodeKind 54、断面は約 1 m ごと、マイターとバンク）と Mesh Output（55、ValueType::Mesh = 10）、`renderer/GeneratedMeshes`（形が変わったときだけ上げ直し、モデルの配置と同じ所で影と本描画）、`GeneratedMesh.hlsl`（材質は焼かずに画素ごとに `EvaluateLayerMaterial`、通常の Material は 1 層として組む）、Layered Material の轍・道路端のマスク（`LayerMaterialGpu` に道路の文脈と層ごとの設定を足した。160 / 672 B）、マテリアルの不透明度（描き方・しきい値・不透明度マップ。モデルとインポスターの切り抜きに反映、旧 `alphaCutoff` は切り抜きとして読む）。
+   **残り**: テセレーションによる変位、Road Mesh の路肩に沿った点（Points）の出力、半透明の描画（Lane Marking の段で帯と一緒に）、`mapUvSets`（モデルの 2 つ目の UV）。
    **出力は専用の Mesh Output ノード**（ユーザーと合意）。道路や高さの変わる擁壁のようなユニークメッシュは Mesh Output、ガードレール・標識・路肩の植生のようなインスタンスは既存の Model Scatter → Model Output に分ける（描画の仕組みも値の形も違うので、1 本のピンに混ぜない）。Road Mesh は路肩に沿った向き付きの点（Points）も出し、インスタンスを道路に沿って並べられるようにする。
 3. **地形の均し（切土・盛土）** — 地形グラフのノード。地形と Road Mesh（道路の範囲と路面の高さ）を受け、路肩の外側から法面の勾配（切土・盛土で別）で元の地形へすり付ける。路面の下はわずかに下げて地形が道路を突き抜けないようにし、路肩の外側にスカート（下へ延ばした面）を付けて 1〜2 m のテクセルとの隙間を隠す。出力は均した地形と、路面下・切土法面・盛土法面・擁壁候補のマスク（法面の素材、植生の除外に使う）。
-4. **路肩・Lane Marking・Boundary Material** — Shoulder、区画線（路面に沿った帯メッシュ）、`.tgboundary`（路面と沿道の境目の形を決めるマスクとハイトの共有アセット）を移す。
+4. **路肩・Lane Marking・Boundary Material・沿道の帯（SurfaceLayout）** — Shoulder、区画線（路面に沿った帯メッシュ）、`.tgboundary`（路面と沿道の境目の形を決めるマスクとハイトの共有アセット）、SurfaceLayout（路肩・歩道・草地などの帯を道路の横に並べる断面の仕組み。区間ごとの割り当て、断面のプリセット、境界マテリアルでの境目、Layered Material の沿道）を移す（SurfaceLayout はユーザー指定で移植に含める）。元は `SurfaceLayout.h`、`SurfaceBandGeometry.cpp`、`SurfaceLayoutEvaluation.cpp`、`ApplicationSurfaceLayout.cpp`、`ApplicationBoundaryMaterial.cpp`（合わせて約 1,800 行 + UI）。
+   この段の後、road-material-editor の `sample_road3.tgscene` と同じ道路を terrain-graph で組み直したサンプルシーンを作る（元のシーンは古い 1 ファイル形式と SurfaceLayout を使っていて、そのままは開けない）。
 5. **擁壁** — 法面が収まらない所（用地の制約、法面が高くなりすぎる所）に、道路に沿った擁壁を置き、地形の均しをその分だけ止める。種類（重力式・もたれ式・ブロック積みなど）と素材を選べるようにする。高さが連続して変わる壁はユニークメッシュ（Mesh Output）、モジュールを並べる壁はインスタンス（Model Output）で、どちらにするかはこの段階で決める。
 6. **縫い付け（地形がメッシュになった場合）** — 路肩の外端と地形メッシュの境界の頂点を共有させる。ハイトマップのままならスカートと均しで隠す（段階 3）。地形をメッシュにするかは G5（地形 LOD）と合わせて決める。
+
+### 移したアセット（2026-09-28 03:26）
+
+`sample_road3.tgscene` が使うアセットを road-material-editor の `data/` から terrain-graph の `data/` へ同じ相対パスで写した（Git の管理外）: マテリアル 14、レイヤーマテリアル 7、境界マテリアル 2（`asphalt-boundary`、`gradation_boundary`。シーンが参照していた旧名 `asphalt-edge` / `新しい境界マテリアル` と同じ uid）、テクスチャ 44 枚（90 MB）。中身が同じテクスチャ 15 枚は terrain-graph の既存のものを使い、そのうち uid が違う 9 枚はマテリアルの参照を terrain-graph 側の uid へ書き換えた（既存の `.meta` は変えない）。不透明度・描き方・UV の選び方は段階 2、境界マテリアルは段階 4 まで効かない。轍・道路端のマスクを使うレイヤーマテリアル（道路材質など）は、段階 2 までは Surface で使うとエラーになる。
 
 ### 決めていないこと
 

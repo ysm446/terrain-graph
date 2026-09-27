@@ -4,6 +4,7 @@
 // Road Path の線形（地形に沿う中心線、縦断曲線、バンク角）とノードの登録を確かめる。
 
 #include "graph/NodeGraph.h"
+#include "graph/RoadMesh.h"
 #include "graph/RoadPath.h"
 
 #include "TestSupport.h"
@@ -132,6 +133,59 @@ void RunRoadPathTests() {
         Check(!BuildRoadBaseline(road, kSize, nullptr, base, &error) && !error.empty(), "分岐した線は断る");
     }
 
+    Section("Road Mesh: 路面のメッシュ");
+    {
+        const RoadPathSettings road = StraightRoad();
+        const RoadHeightSampler flat = [](float, float) { return 10.0f; };
+        RoadProfileCurve centerline;
+        BuildRoadCenterline(road, kSize, flat, centerline, nullptr);
+        RoadMeshSettings settings;
+        settings.widthMeters = 7.0f;
+        settings.surfaceOffsetMeters = 0.05f;
+        tg::renderer::MeshData mesh;
+        std::string error;
+        Check(BuildRoadMesh(road, centerline, settings, mesh, &error), "直線の道路から路面を作る");
+        const size_t stride = 8;  // 幅 7 m は 7 列（8 頂点）
+        Check(mesh.vertices.size() == centerline.points.size() * stride, "幅方向は約 1 m ごと（7 m で 8 頂点）");
+        Check(mesh.indices.size() == (centerline.points.size() - 1) * 7 * 6, "四角ごとに三角形 2 つ");
+        const auto& first = mesh.vertices.front();
+        const auto& last = mesh.vertices[stride - 1];
+        Check(Near(std::abs(first.position.z - last.position.z), 7.0f, 1e-3f) && Near(first.position.x, last.position.x, 1e-3f),
+              "断面は進行方向に直角で、幅の分だけ広がる");
+        Check(Near(first.position.y, 10.05f, 1e-4f), "路面は中心線から持ち上げる");
+        Check(Near(first.uv.x, 0.0f, 1e-4f) && Near(last.uv.x, 7.0f, 1e-4f), "UV の x は左端からの横位置（m）");
+        Check(Near(mesh.vertices[stride * 100].uv.y, centerline.arcLengths[100], 1e-3f), "UV の y は道のり（m）");
+        bool up = true;
+        for (const auto& v : mesh.vertices) up = up && v.normal.y > 0.99f;
+        Check(up, "平らな道路の法線は上向き");
+        // 進行方向の右は (-dz, 0, dx)（Road Path のバンクと同じ）。+X へ進む道路の右は +Z 側で、
+        // 左端（列 0）は -Z 側。
+        Check(first.position.z < last.position.z, "列 0 が左端、最後の列が右端");
+
+        RoadPathSettings banked;
+        const PathElementId a = AddPathPoint(banked.path, 0.1f, 0.5f, 0);
+        const PathElementId b = AddPathPoint(banked.path, 0.5f, 0.5f, a);
+        AddPathPoint(banked.path, 0.5f, 0.9f, b);
+        for (PathEdge& edge : banked.path.edges) edge.curve = PathCurve::Quadratic;
+        banked.bankEnabled = true;
+        banked.designSpeedKmh = 80.0f;
+        RoadProfileCurve curve;
+        BuildRoadCenterline(banked, kSize, flat, curve, nullptr);
+        Check(BuildRoadMesh(banked, curve, settings, mesh, &error), "バンクの付いた曲線の道路から路面を作る");
+        const size_t mid = curve.points.size() / 2;
+        const float leftY = mesh.vertices[mid * stride].position.y;
+        const float rightY = mesh.vertices[mid * stride + stride - 1].position.y;
+        Check(leftY > rightY + 0.05f, "右カーブでは左端が上がる");
+
+        RoadPathSettings sharp;
+        const PathElementId p = AddPathPoint(sharp.path, 0.2f, 0.5f, 0);
+        const PathElementId q = AddPathPoint(sharp.path, 0.5f, 0.5f, p);
+        AddPathPoint(sharp.path, 0.3f, 0.52f, q);  // ほぼ折り返す
+        RoadProfileCurve bent;
+        BuildRoadCenterline(sharp, kSize, flat, bent, nullptr);
+        Check(!BuildRoadMesh(sharp, bent, settings, mesh, &error) && !error.empty(), "折り返すような角は断る");
+    }
+
     Section("Road Path: ノード");
     {
         NodeGraph graph;
@@ -149,5 +203,18 @@ void RunRoadPathTests() {
         const GraphId maskPath = graph.CreateNode(NodeKind::MaskPath);
         Check(!graph.CreateLink(graph.FindNode(roadNode)->outputs[0].id, graph.FindNode(maskPath)->inputs[0].id),
               "Road Path は Mask Path（Path の型）へ繋がらない");
+        const GraphId meshNode = graph.CreateNode(NodeKind::RoadMesh);
+        const GraphId outputNode = graph.CreateNode(NodeKind::MeshOutput);
+        Check(graph.CompileRoadMeshes().empty(), "繋いでいなければ描く道路は無い");
+        Check(graph.CreateLink(graph.FindNode(roadNode)->outputs[0].id, graph.FindNode(meshNode)->inputs[0].id),
+              "Road Path を Road Mesh へ繋げる");
+        Check(graph.CreateLink(graph.FindNode(meshNode)->outputs[0].id, graph.FindNode(outputNode)->inputs[0].id),
+              "Road Mesh を Mesh Output へ繋げる");
+        const auto compiled = graph.CompileRoadMeshes();
+        Check(compiled.size() == 1 && compiled[0].roadMesh == meshNode && compiled[0].roadPath == roadNode,
+              "Mesh Output から Road Mesh と Road Path を辿る");
+        const GraphId modelOutput = graph.CreateNode(NodeKind::ModelOutput);
+        Check(!graph.CreateLink(graph.FindNode(meshNode)->outputs[0].id, graph.FindNode(modelOutput)->inputs[0].id),
+              "Mesh は Model Output（Instances）へ繋がらない");
     }
 }

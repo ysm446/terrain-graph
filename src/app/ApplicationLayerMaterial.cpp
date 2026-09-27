@@ -148,7 +148,33 @@ bool Application::DrawLayerMaterialProperties(compositor::MaterialAsset& asset) 
             for (int i = 0; i < 5; ++i) if (m.shape == shapeValues[i]) shape = i;
             if (ui::PropertyCombo("種類", &shape, shapes, 5, 0, "材質内部の被覆マスク")) { m.shape = shapeValues[shape]; layersChanged = true; }
             layersChanged |= ui::PropertyFloat("強さ", &m.strength, 0, 1, defaultMask.strength, "上層の被覆率");
-            if (m.shape != graph::RoadMaskShape::Constant) {
+            // 轍と道路端は Road Mesh の路面の座標（幅・車線）で決まる。Surface では覆わない。
+            if (m.shape == graph::RoadMaskShape::WheelTracks) {
+                layersChanged |= ui::PropertyBool("車線に合わせる", &m.tracksFromLanes, defaultMask.tracksFromLanes,
+                                                  "Road Mesh の車線の中央ごとに轍を置く。切ると道路の中心から手入力の距離に置く");
+                layersChanged |= ui::PropertyBool("対向車線にも", &m.bothLanes, defaultMask.bothLanes,
+                                                  "対向の車線にも置く（手入力のときは中心の左右両方）");
+                if (!m.tracksFromLanes)
+                    layersChanged |= ui::PropertyFloat("車線中央の位置", &m.laneOffsetMeters, -10, 10, defaultMask.laneOffsetMeters,
+                                                       "道路の中心から車線の中央までの距離（正が左）", "%.2f m");
+                layersChanged |= ui::PropertyFloat("タイヤ間隔", &m.trackSpacingMeters, 0.5f, 3, defaultMask.trackSpacingMeters,
+                                                   "左右の轍の中心の間隔", "%.2f m");
+                layersChanged |= ui::PropertyFloat("轍の幅", &m.trackWidthMeters, 0.05f, 1.5f, defaultMask.trackWidthMeters,
+                                                   "轍 1 本の幅", "%.2f m");
+                layersChanged |= ui::PropertyFloat("縁のぼかし", &m.featherMeters, 0, 2, defaultMask.featherMeters,
+                                                   "轍の縁を 0 へ落とす幅", "%.2f m");
+            } else if (m.shape == graph::RoadMaskShape::EdgeFalloff) {
+                const char* sides[]{"両側", "左", "右"};
+                int side = static_cast<int>(m.edgeSide);
+                if (ui::PropertyCombo("側", &side, sides, 3, 0, "どちらの端に置くか（進行方向に向かって）")) {
+                    m.edgeSide = static_cast<graph::RoadMaskSide>(side);
+                    layersChanged = true;
+                }
+                layersChanged |= ui::PropertyFloat("端の幅", &m.edgeWidthMeters, 0, 10, defaultMask.edgeWidthMeters,
+                                                   "端から 1 のまま覆う幅", "%.2f m");
+                layersChanged |= ui::PropertyFloat("縁のぼかし", &m.featherMeters, 0, 5, defaultMask.featherMeters,
+                                                   "端の幅の内側を 0 へ落とす幅", "%.2f m");
+            } else if (m.shape != graph::RoadMaskShape::Constant) {
                 layersChanged |= ui::PropertyFloat("ノイズ寸法", &m.noiseScaleMeters, 0.05f, 100, defaultMask.noiseScaleMeters, "ノイズの模様の大きさ", "%.2f m");
                 layersChanged |= ui::PropertyFloat("しきい値", &m.threshold, 0, 1, defaultMask.threshold, "被覆に使うノイズの境界");
                 layersChanged |= ui::PropertyFloat("ぼかし", &m.softness, 0.0001f, 1, defaultMask.softness, "マスク境界の柔らかさ");

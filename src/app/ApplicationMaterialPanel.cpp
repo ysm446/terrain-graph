@@ -44,7 +44,10 @@ void CopyMaterialValues(const compositor::MaterialAsset& source, compositor::Mat
     target.metallicValue = source.metallicValue;
     target.ambientOcclusionValue = source.ambientOcclusionValue;
     target.flipNormalGreen = source.flipNormalGreen;
-    target.alphaCutoff = source.alphaCutoff;
+    target.blendMode = source.blendMode;
+    target.maskThreshold = source.maskThreshold;
+    target.opacity = source.opacity;
+    target.opacityValue = source.opacityValue;
     target.twoSided = source.twoSided;
     target.colorVariation = source.colorVariation;
 }
@@ -327,21 +330,48 @@ bool Application::DrawMaterialProperties(compositor::MaterialAsset& asset) {
     ui::HintText("ORD は AO=R / ラフネス=G / ハイト=B に割り当てる（Megascans の並び）");
     ui::HintText("ハイトはレイヤーの「ハイトのソース」をテクスチャにすると効く");
 
+    // 不透明度（アルファ抜き）。モデルと道路の帯（Lane Marking など）に効く。地形のレイヤー合成には使わない。
+    ui::SectionHeader("不透明度");
+    if (ui::BeginPropertyTable("materialOpacityRows", "不透明度マップ")) {
+        static const compositor::MaterialAsset kDefaultAsset;
+        static const char* const kBlendModes[] = {"不透明", "切り抜き", "半透明"};
+        int mode = static_cast<int>(asset.blendMode);
+        if (ui::PropertyCombo("描き方", &mode, kBlendModes, 3, 0,
+                              "切り抜きは不透明度がしきい値未満の画素を描かない（影も抜ける）。"
+                              "半透明は不透明度で混ぜる（モデルでは切り抜きとして描く）")) {
+            asset.blendMode = static_cast<compositor::BlendMode>(mode);
+            changed = true;
+        }
+        if (asset.blendMode == compositor::BlendMode::Masked) {
+            changed |= ui::PropertyFloat("しきい値", &asset.maskThreshold, 0.0f, 1.0f, kDefaultAsset.maskThreshold,
+                                         "不透明度がこの値未満の画素を描かない。目安は 0.5", "%.2f");
+        }
+        const compositor::TextureId previousOpacity = asset.opacity.texture;
+        if (DrawMapSlotRow("不透明度マップ", asset.opacity, m_textureLibrary, m_pendingAssetReveal)) {
+            changed = true;
+            // 不透明のままマップを付けたら切り抜きにする（付けたのに効かない、を避ける）。
+            if (previousOpacity == compositor::kNoTexture && asset.opacity.texture != compositor::kNoTexture &&
+                asset.blendMode == compositor::BlendMode::Opaque)
+                asset.blendMode = compositor::BlendMode::Masked;
+        }
+        if (asset.blendMode == compositor::BlendMode::Translucent && asset.opacity.texture == compositor::kNoTexture) {
+            changed |= ui::PropertyFloat("不透明度", &asset.opacityValue, 0.0f, 1.0f, kDefaultAsset.opacityValue,
+                                         "マップが無いときの不透明度（ベースカラーのアルファが無いとき）", "%.2f");
+        }
+        ui::EndPropertyTable();
+    }
+    ui::HintText("不透明度はマップから読み、無ければベースカラーのアルファを使う。地形のレイヤー合成には効かない");
+
     // モデルに割り当てたときだけ効く設定。地形のレイヤー合成には使わない。
     ui::SectionHeader("モデル");
     if (ui::BeginPropertyTable("materialModelRows")) {
         static const compositor::MaterialAsset kDefaultAsset;
-        changed |= ui::PropertyFloat(
-            "アルファ抜き", &asset.alphaCutoff, 0.0f, 1.0f, kDefaultAsset.alphaCutoff,
-            "ベースカラーのアルファがこの値未満の画素を描かない（影も抜ける）。0 で無効。"
-            "葉のカードなどに使う。目安は 0.5",
-            "%.2f");
         changed |= ui::PropertyBool(
             "両面", &asset.twoSided, kDefaultAsset.twoSided,
             "裏面も描く。裏から見たときは法線を反転して陰影を付ける。葉のカードなど厚みの無い面に使う");
         ui::EndPropertyTable();
     }
-    ui::HintText("アルファ抜きと両面はモデルの描画だけに効く");
+    ui::HintText("両面はモデルの描画だけに効く");
 
     // 配置の点の色むら（散布の Variation）への応え方。モデルの配置だけに効く。
     ui::SectionHeader("色むら");

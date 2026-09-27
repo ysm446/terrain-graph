@@ -212,6 +212,7 @@ void Application::Shutdown() {
     m_snowPlumeMasks.clear();
     m_modelPoints.clear();
     for (auto& [id,mesh] : m_instanceMeshes) mesh->Destroy(m_device);
+    m_generatedMeshes.Destroy(m_device);
     m_instanceMeshes.clear();
     m_materialSphere.Destroy(m_device);
     m_skySphere.Destroy(m_device);
@@ -506,6 +507,7 @@ int Application::Run() {
         DrawUi();
         SyncGraphStack();
         PrepareModelScatters();
+        PrepareRoadMeshes();
 
         ID3D12GraphicsCommandList* commandList =
             m_device.BeginFrame(m_settings.Display().clearColor);

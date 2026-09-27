@@ -168,6 +168,8 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
         case graph::NodeKind::MaskArea:
             return ImVec4(0.58f, 0.74f, 0.82f, 1.0f);
         case graph::NodeKind::RoadPath:
+        case graph::NodeKind::RoadMesh:
+        case graph::NodeKind::MeshOutput:
             return ImVec4(0.84f, 0.80f, 0.60f, 1.0f);
         case graph::NodeKind::Output:
         default:
@@ -199,6 +201,9 @@ ImVec4 PinTypeColor(graph::ValueType valueType) {
         // 道路の線形は淡い黄色（区画線の色）。Path の水色とは繋がらないので色を分ける。
         case graph::ValueType::RoadPath:
             return ImVec4(0.95f, 0.88f, 0.55f, 1.0f);
+        // ユニークなメッシュは明るい灰色（形そのものが流れる）。
+        case graph::ValueType::Mesh:
+            return ImVec4(0.82f, 0.82f, 0.86f, 1.0f);
         // マテリアルは緑。4 チャンネル一式（ハイトを含む）。
         case graph::ValueType::Material:
         default:
@@ -1386,6 +1391,8 @@ void Application::DrawGraphEditor() {
         });
         section("道路", {
             {graph::NodeKind::RoadPath, "Road Path — 道路の線形（縦断曲線・バンク角）を引く"},
+            {graph::NodeKind::RoadMesh, "Road Mesh — Road Path から路面のメッシュを作る"},
+            {graph::NodeKind::MeshOutput, "Mesh Output — 道路などのメッシュをビューポートへ出す"},
         });
         section("配置", {
             {graph::NodeKind::Scatter, "Scatter — 単純な形をばら撒き、分布のマスクを出す"},
@@ -2601,6 +2608,11 @@ void Application::DrawGraphPanel() {
         if (DrawPathSettings(*selected)) {
             m_graph.MarkDirty();
             MarkDocumentChanged();
+        }
+    } else if (std::get_if<graph::RoadMeshNodeSettings>(&selected->settings) != nullptr) {
+        if (DrawRoadMeshSettings(*selected)) {
+            m_graph.MarkDirty();
+            MarkDocumentChanged(false);
         }
     } else if (std::get_if<graph::RoadPathNodeSettings>(&selected->settings) != nullptr) {
         // 平面の点とエッジは Path と同じ欄、その下に縦断とバンク角。

@@ -111,6 +111,7 @@ set(tg_sources
     src/renderer/Impostor.cpp
     src/renderer/ModelAsset.cpp
     src/renderer/ModelPreview.cpp
+    src/renderer/GeneratedMeshes.cpp
     src/renderer/SnowPlume.cpp
     src/renderer/SnowPlume.h
     src/app/ApplicationPathEdit.cpp
@@ -120,6 +121,7 @@ set(tg_sources
     src/app/ApplicationUiHelpers.h
     src/app/ApplicationViewport.cpp
     src/app/ApplicationRoadPath.cpp
+    src/app/ApplicationRoadMesh.cpp
     src/app/UndoHistory.cpp
     src/app/UndoHistory.h
     src/core/Log.cpp
@@ -129,6 +131,7 @@ set(tg_sources
     src/graph/NodeGraph.h
     src/graph/Path.cpp
     src/graph/RoadPath.cpp
+    src/graph/RoadMesh.cpp
     src/graph/PathRoute.cpp
     src/graph/Path.h
     src/compositor/MaterialEvaluator.cpp
@@ -333,6 +336,7 @@ add_executable(terrain_graph_tests
     src/graph/NodeGraph.h
     src/graph/Path.cpp
     src/graph/RoadPath.cpp
+    src/graph/RoadMesh.cpp
     src/graph/Path.h
     src/graph/PathRoute.cpp
     src/graph/PathRoute.h

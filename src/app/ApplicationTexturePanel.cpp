@@ -58,6 +58,9 @@ std::vector<std::string> Application::CollectTextureUsers(compositor::TextureId 
         if (asset.height.texture == id) {
             add("ハイト");
         }
+        if (asset.opacity.texture == id) {
+            add("不透明度");
+        }
     }
 
     for (const graph::Node& node : m_graph.Nodes()) {
@@ -90,6 +93,7 @@ size_t Application::CountTextureUsers(compositor::TextureId id) const {
         count += (asset.metallic.texture == id) ? 1 : 0;
         count += (asset.ambientOcclusion.texture == id) ? 1 : 0;
         count += (asset.height.texture == id) ? 1 : 0;
+        count += (asset.opacity.texture == id) ? 1 : 0;
     }
     for (const graph::Node& node : m_graph.Nodes()) {
         const auto* settings = std::get_if<graph::LayerNodeSettings>(&node.settings);
@@ -444,7 +448,7 @@ bool Application::MaterialHasMissingTexture(const compositor::MaterialAsset& ass
     };
     return missing(asset.baseColor) || missing(asset.normal) || missing(asset.roughness.texture) ||
            missing(asset.metallic.texture) || missing(asset.ambientOcclusion.texture) ||
-           missing(asset.height.texture);
+           missing(asset.height.texture) || missing(asset.opacity.texture);
 }
 
 // 予約した繋ぎ直しを処理する。**フレームの外で呼ぶこと**（読み込みは GPU 待機を伴う）。

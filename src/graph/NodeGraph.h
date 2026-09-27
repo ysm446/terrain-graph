@@ -4,6 +4,7 @@
 #include "compositor/MaterialLayer.h"
 #include "compositor/MaskGraph.h"
 #include "graph/Path.h"
+#include "graph/RoadMesh.h"
 #include "graph/RoadPath.h"
 
 #include <cstdint>
@@ -51,6 +52,9 @@ enum class ValueType : uint32_t {
     Wind = 8,
     // 道路の線形（Road Path が出す）。Road Mesh が読む。Path とは繋がない。
     RoadPath = 9,
+    // CPU で作ったユニークなメッシュ（Road Mesh が出す）。Mesh Output がビューポートへ出す。
+    // インスタンス（Instances → Model Output）とは描き方も値の形も違うので分ける。
+    Mesh = 10,
 };
 
 enum class NodeKind : uint32_t {
@@ -140,6 +144,10 @@ enum class NodeKind : uint32_t {
     HeightLevels = 52,
     // 道路の線形。平面は Path と同じ点とエッジ（UV + 地形からのずれ）で、縦断曲線とバンク角を持つ。
     RoadPath = 53,
+    // 道路の路面のメッシュ。Road Path の中心線から断面を張る（graph/RoadMesh.h）。
+    RoadMesh = 54,
+    // ユニークなメッシュ（Road Mesh など）をビューポートへ出す終端。
+    MeshOutput = 55,
 };
 
 struct PinDefinition {
@@ -229,6 +237,11 @@ struct PathNodeSettings {
 // ビューポートでの編集も Path と共通（EditablePathSettings で取り出す）。
 struct RoadPathNodeSettings {
     RoadPathSettings road;
+};
+
+// 道路の路面のメッシュ（Road Mesh ノード）。中身は graph/RoadMesh.h。
+struct RoadMeshNodeSettings {
+    RoadMeshSettings mesh;
 };
 
 // グラフを評価器の入力へ落とした結果。レイヤー列と、マスクの op の列。
@@ -415,6 +428,10 @@ struct CompiledModelScatter {
     GraphId node = 0, source = 0;
     ModelScatterSettings settings;
 };
+// Mesh Output から辿った道路のメッシュ。Road Mesh と、その Road Path。
+struct CompiledRoadMesh {
+    GraphId output = 0, roadMesh = 0, roadPath = 0;
+};
 // 雪煙（Snow Plume ノード）。Source のマスクが強い所から、風下へ半透明の帯を伸ばす。
 // 帯は評価器ではなくビューポートの描画で作る（頂点シェーダが格子の種から組み立てる）。
 struct SnowPlumeSettings {
@@ -457,7 +474,7 @@ struct MissingNodeSettings { std::string kindName; };
 using NodeSettings =
     std::variant<LayerNodeSettings, MaskNodeSettings, OutputNodeSettings, PathNodeSettings, CloudNodeSettings,
                  CloudMergeSettings, CloudNoiseSettings, CloudTransformSettings, CloudMapSettings, CloudAnimationSettings, CloudShapeGenerateSettings, CloudWeatherSettings, MissingNodeSettings, ModelScatterSettings,
-                 TerrainNodeSettings, SnowPlumeSettings, RoadPathNodeSettings>;
+                 TerrainNodeSettings, SnowPlumeSettings, RoadPathNodeSettings, RoadMeshNodeSettings>;
 
 struct Node {
     GraphId id = 0;
@@ -543,6 +560,9 @@ public:
     CompiledGraph CompilePathRouteInputs(GraphId pathNodeId, int& avoidOp) const;
     CompiledCloud CompileCloud() const;
     std::vector<CompiledModelScatter> CompileModelScatters() const;
+    // Mesh Output に繋がった Road Mesh（と、その入力の Road Path）。Road Path が繋がって
+    // いない Road Mesh は入れない。同じ Road Mesh へ複数の経路があっても 1 回だけ。
+    std::vector<CompiledRoadMesh> CompileRoadMeshes() const;
     // Snow Plume ノードをすべて集める。Source の上流に Wind Field があればその風を使う。
     std::vector<CompiledSnowPlume> CompileSnowPlumes() const;
     CompiledCloud CompileCloudShapes(GraphId shapeId) const;

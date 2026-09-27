@@ -69,9 +69,8 @@ LayerMaterialGpu MaterialLibrary::CompileLayerMaterial(const MaterialAsset& asse
     for (const auto& layer : layers) {
         const auto* source = Find(layer.material);
         if ((layer.material && !source) || (source && source->layerMaterial)) { error = "合成材質の入力には通常のPBR素材を指定してください"; return {}; }
-        if (layer.mask && (layer.mask->shape == graph::RoadMaskShape::WheelTracks || layer.mask->shape == graph::RoadMaskShape::EdgeFalloff)) {
-            error = "轍・道路端のマスクには道路の座標が必要です。Surfaceでは定数またはノイズを使用してください"; return {};
-        }
+        // 轍・道路端のマスクは道路の座標で決まる。文脈（LayerMaterialGpu::road）は使う側が入れる
+        // （Road Mesh の路面）。Surface では文脈が無いので覆わない（UI で知らせる）。
         auto& g = result.slots[result.count++];
         std::fill(std::begin(g.textures0), std::end(g.textures0), kInvalidTextureIndex);
         std::fill(std::begin(g.textures1), std::end(g.textures1), kInvalidTextureIndex);
@@ -102,6 +101,10 @@ LayerMaterialGpu MaterialLibrary::CompileLayerMaterial(const MaterialAsset& asse
             g.breakup[0] = m.strength; g.breakup[1] = m.breakupAmount;
             g.breakup[2] = m.breakupScaleMeters; g.breakup[3] = static_cast<float>(m.seed);
             if (m.invert) g.textures1[3] |= 2;
+            g.road0[0] = m.laneOffsetMeters; g.road0[1] = m.trackSpacingMeters;
+            g.road0[2] = m.trackWidthMeters; g.road0[3] = m.featherMeters;
+            g.road1[0] = m.edgeWidthMeters; g.road1[1] = static_cast<float>(m.edgeSide);
+            g.road1[2] = static_cast<float>((m.tracksFromLanes ? 1u : 0u) | (m.bothLanes ? 2u : 0u));
         }
         g.blend[0] = static_cast<float>(layer.blendMode); g.blend[1] = static_cast<float>(layer.heightGate);
         g.blend[2] = layer.heightGateThreshold; g.blend[3] = layer.heightGateSoftness;

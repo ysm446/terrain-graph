@@ -75,7 +75,11 @@ void Application::PrepareModelScatters() {
             it->second->Destroy(m_device); it=m_instanceMeshes.erase(it);
         } else ++it;
     }
-    m_renderer.drawInstances = [this](auto* list,const auto& matrix,bool shadow) { DrawModelScatters(list,matrix,shadow); };
+    // モデルの配置と、Mesh Output のユニークなメッシュ（道路）は同じ所（影の段と本描画）で描く。
+    m_renderer.drawInstances = [this](auto* list,const auto& matrix,bool shadow) {
+        DrawModelScatters(list,matrix,shadow);
+        DrawGeneratedMeshes(list,matrix,shadow);
+    };
 }
 Application::PlacementPointsState Application::PlacementPointsOf(
     graph::GraphId source, const compositor::PlacementPointSet** out) const {

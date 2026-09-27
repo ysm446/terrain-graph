@@ -18,7 +18,7 @@ struct BakeConstants {
     float3 center; float radius;
     // 撮るマスの番号。方向と画面の向きは ImpostorCommon.hlsli から求める（描画と同じ式）。
     uint2 frame; uint frames; uint fullSphere;
-    uint flipNormalGreen; float variationWeight; uint2 padding;
+    uint flipNormalGreen; float variationWeight; uint opacityIndex, opacityChannel;
 };
 ConstantBuffer<BakeConstants> g_bake : register(b1);
 
@@ -59,12 +59,19 @@ BakeOutput PsBake(BakeInput input, bool frontFace:SV_IsFrontFace) {
     const float3 faceNormal = normalize(cross(ddx(input.position), ddy(input.position)));
     const float2 uv = input.uv, deltaX = ddx(uv), deltaY = ddy(uv);
     float3 baseColor = g_bake.baseColorTint;
+    // 不透明度のマップがあればそれで抜く（無ければ下でベースカラーのアルファで抜く）。
+    const bool opacityMap = g_bake.opacityIndex != kInvalidTextureIndex;
+    if (opacityMap && g_bake.alphaCutoff > 0) {
+        const float lod = BakeMapLod(g_bake.opacityIndex, deltaX, deltaY);
+        const float opacity = SelectChannel(BakeSample(g_bake.opacityIndex, uv, lod), g_bake.opacityChannel);
+        clip(opacity * (1 + max(lod, 0) * 0.25f) - g_bake.alphaCutoff);
+    }
     if (g_bake.baseColorIndex != kInvalidTextureIndex) {
         const float lod = BakeMapLod(g_bake.baseColorIndex, deltaX, deltaY);
         const float4 sampled = BakeSample(g_bake.baseColorIndex, uv, lod);
         // 斜めから撮るマスではミップが進んでアルファが薄まる。ModelPreview.hlsl の ClipAlpha と
         // 同じ補正（ミップ 1 段ごとに 0.25 倍ずつ持ち上げる）で、見かけの被覆をメッシュに揃える。
-        if (g_bake.alphaCutoff > 0) clip(sampled.a * (1 + max(lod, 0) * 0.25f) - g_bake.alphaCutoff);
+        if (!opacityMap && g_bake.alphaCutoff > 0) clip(sampled.a * (1 + max(lod, 0) * 0.25f) - g_bake.alphaCutoff);
         baseColor *= sampled.rgb;
     }
     baseColor = AdjustBaseColor(baseColor, g_bake.colorAdjust.x, g_bake.colorAdjust.y, g_bake.brightness);
