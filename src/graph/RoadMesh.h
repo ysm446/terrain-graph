@@ -64,6 +64,10 @@ struct RoadShoulderSettings {
     compositor::MaterialAssetId material = compositor::kNoMaterialAsset;
     // 通常の Material のとき、模様が 1 周する長さ（m）。
     float uvRepeatMeters = 2.0f;
+    // 内側の境界（境界マテリアル、.tgboundary）。ルートからの相対パスと固定 ID。空なら無い。
+    // 内側の端から境界の幅の中で、マスクで内側の帯の材質へ切り替え、ハイトの凹凸を足す。
+    std::string boundaryPath;
+    std::string boundaryUid;
 };
 inline constexpr float kShoulderMinWidthMeters = 0.1f;
 inline constexpr float kShoulderMaxWidthMeters = 20.0f;

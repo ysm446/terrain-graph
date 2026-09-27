@@ -26,11 +26,17 @@ struct GeneratedMeshConstants {
     uint32_t clearIrradianceIndex;
     uint32_t cloudNoiseIndex, atmosphericMode;
     float roadWidth, padding;
+    uint32_t boundaryMask, boundaryHeight, boundaryFlags, hasInner;
+    float boundaryWidth, boundaryRepeat, boundaryDepth, boundaryCenter;
+    float innerOrigin, innerSign, boundaryPadding[2];
+    float innerFallbackColor[3];
+    float innerFallbackRoughness;
     SceneShadowData shadows;
     AtmosphereSettings atmosphere;
     compositor::LayerMaterialGpu material;
+    compositor::LayerMaterialGpu innerMaterial;
 };
-static_assert(sizeof(GeneratedMeshConstants) == 176 + 384 + 352 + 672);
+static_assert(sizeof(GeneratedMeshConstants) == 176 + 64 + 384 + 352 + 672 * 2);
 
 // 材質が無いときの路面（アスファルトの目安の灰色）。
 constexpr float kFallbackColor[3] = {0.18f, 0.18f, 0.18f};
@@ -65,6 +71,12 @@ void GeneratedMeshes::Update(rhi::Device& device, const std::vector<GeneratedMes
         entry->material = item.material;
         entry->roadWidthMeters = item.roadWidthMeters;
         std::copy(std::begin(item.fallbackColor), std::end(item.fallbackColor), entry->fallbackColor);
+        entry->boundary = item.boundary;
+        entry->hasInner = item.hasInner;
+        entry->innerMaterial = item.innerMaterial;
+        entry->innerOrigin = item.innerOrigin;
+        entry->innerSign = item.innerSign;
+        std::copy(std::begin(item.innerFallbackColor), std::end(item.innerFallbackColor), entry->innerFallbackColor);
         next.push_back(std::move(entry));
     }
     for (auto& stale : m_entries) {
@@ -128,6 +140,20 @@ uint32_t GeneratedMeshes::Draw(rhi::Device& device, rhi::PipelineCache& pipeline
         constants.material = entry->material;
         constants.roadWidth = entry->roadWidthMeters;
         std::memcpy(constants.fallbackColor, entry->fallbackColor, sizeof(constants.fallbackColor));
+        const auto& boundary = entry->boundary;
+        constants.boundaryMask = boundary.maskIndex;
+        constants.boundaryHeight = boundary.heightIndex;
+        constants.boundaryFlags = (boundary.alongU ? 1u : 0u) | (boundary.invertMask ? 2u : 0u);
+        constants.boundaryWidth = boundary.widthMeters;
+        constants.boundaryRepeat = boundary.repeatMeters;
+        constants.boundaryDepth = boundary.depthMeters;
+        constants.boundaryCenter = boundary.heightCenter;
+        constants.hasInner = entry->hasInner ? 1u : 0u;
+        constants.innerMaterial = entry->innerMaterial;
+        constants.innerOrigin = entry->innerOrigin;
+        constants.innerSign = entry->innerSign;
+        std::memcpy(constants.innerFallbackColor, entry->innerFallbackColor, sizeof(constants.innerFallbackColor));
+        constants.innerFallbackRoughness = kFallbackRoughness;
         std::memcpy(cb.cpu, &constants, sizeof(constants));
         commandList->SetGraphicsRootConstantBufferView(1, cb.gpuAddress);
         entry->mesh.Draw(commandList);

@@ -1,7 +1,7 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-09-28 05:12
+更新日時: 2026-09-28 05:40
 
 ## 大気散乱スカイと作業環境（シーン版3）
 
@@ -156,7 +156,7 @@ base' = base + 0.5 * gain     ただしソースが constant のときは base �
 | `blend` | `maskBlend` | `{ mode, intensity }` |
 | `maskPath` | `maskPath` | `{ gamma, invert }` |
 | `path` | `path` | `{ points[], edges[], defaultWidth, defaultFeather, defaultIntensity, nextId }`（下記） |
-| `shoulder` | `shoulder` | `{ side（both / left / right）, width, crossSlope, stepHeight, stepWidth, uvRepeat, material }` |
+| `shoulder` | `shoulder` | `{ side（both / left / right）, width, crossSlope, stepHeight, stepWidth, uvRepeat, material, boundary: { path, uid } }`（`boundary` は内側の境界の `.tgboundary`。無ければ書かない） |
 | `roadMesh` | `roadMesh` | `{ width, lanesForward, lanesBackward, leftHandTraffic, surfaceOffset, uvRepeat, material }`（`material` は `materials[]` の id、0 ならなし） |
 | `roadPath` | `path`, `roadProfile` | `path` は Path と同じ形。`roadProfile` は `{ verticalPoints[], bankPoints[], bankEnabled, designSpeed, friction, smoothBank, bankSmoothDistance }`（下記） |
 
@@ -409,6 +409,24 @@ RGB をそのまま使うマップ（ベースカラー / 法線）はテクス�
 マテリアルを 1 つ**追加**する（既存のマテリアルには触らない）。
 **同じパスの画像はすでに読み込んでいれば読み直さない。**
 `_ORD` のように複数のマップが同じファイルを指していても 1 枚で済む。
+
+## `.tgboundary`
+
+境界マテリアル（`terrain-graph.boundary-material-asset`、road-material-editor と同じ形）。路肩の内側の境目の形を決める。
+
+```json
+{
+  "format": "terrain-graph.boundary-material-asset", "version": 1, "uid": "{...}",
+  "name": "asphalt-boundary",
+  "mask":   { "path": "BoundaryMaterials/boundary-textures-v1/asphalt-soil-mask.png", "uid": "{...}" },
+  "height": { "path": "BoundaryMaterials/boundary-textures-v1/asphalt-soil-height.png", "uid": "{...}" },
+  "width": 1.0, "repeat": 1.0, "depth": 0.058, "heightCenter": 0.5, "alongU": false, "invertMask": false
+}
+```
+
+`mask` / `height` は画像への参照（ルートからの相対パスと `.meta` の ID）。`width` は境界の幅、`repeat` は道に沿って
+模様が 1 周する長さ、`depth` は凹凸の深さ（どれも m）。マスクとハイトは R を読む。ワークスペースは `.tgboundary` を
+ネイティブのアセット（本文に ID を持つ）として索引し、アセットブラウザにも出す。
 
 ## 壊れたファイルの扱い
 

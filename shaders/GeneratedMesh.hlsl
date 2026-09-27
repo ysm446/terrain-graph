@@ -31,9 +31,18 @@ struct GeneratedMeshConstants {
     // 環境光を雲あり / 雲なしで混ぜる高さの範囲（m）と遮蔽の強さ（ModelPreview と同じ）。
     float ambientLow, ambientHigh, ambientOcclusion; uint clearIrradianceIndex;
     uint cloudNoiseIndex, atmosphericMode; float roadWidth; float padding;
+    // 内側の境界（路肩の内側の端。境界マテリアル）。boundaryWidth が 0 なら無い。
+    // boundaryFlags: bit0 = 模様を U（横切る向き）に繰り返す、bit1 = マスクを反転。
+    // hasInner: 内側の帯（路面か内側の路肩）の材質があるか。innerOrigin / innerSign: この帯の
+    // 横位置 x（内側の端からの距離）を、内側の帯の座標（innerOrigin + innerSign * x）へ写す。
+    uint boundaryMask, boundaryHeight, boundaryFlags, hasInner;
+    float boundaryWidth, boundaryRepeat, boundaryDepth, boundaryCenter;
+    float innerOrigin, innerSign; float2 boundaryPadding;
+    float3 innerFallbackColor; float innerFallbackRoughness;
     SceneShadowData shadows;
     AtmosphericParameters atmosphere;
     LayerMaterialData material;
+    LayerMaterialData innerMaterial;
 };
 ConstantBuffer<GeneratedMeshConstants> g_generated : register(b1);
 
@@ -122,24 +131,79 @@ float4 PsMain(PixelInput input) : SV_TARGET {
     const float3 tangent = normalize(input.tangent.xyz - geometric * dot(input.tangent.xyz, geometric));
     const float3 bitangent = cross(geometric, tangent) * input.tangent.w;
 
+    const float2 meters = input.uv;
+    const float2 worldMeters = input.position.xz;
+    // 画素 1 つが覆う長さ（m）。ミップの選択に使う（x: 道路座標、y: ワールド座標）。
+    const float2 footprint = float2(max(length(ddx(meters)), length(ddy(meters))),
+                                    max(length(ddx(worldMeters)), length(ddy(worldMeters))));
+    const float2 xAxis = normalize(tangent.xz + 1e-6f);
+    const float2 yAxis = normalize(bitangent.xz + 1e-6f);
+
+    // この帯の材質（接線空間の法線のまま持つ）。
     float3 baseColor = g_generated.fallbackColor;
-    float roughness = g_generated.fallbackRoughness, metallic = 0, ambientOcclusion = 1;
-    float3 normal = geometric;
+    float3 surfaceValues = float3(g_generated.fallbackRoughness, 0, 1);
+    float3 tangentNormal = float3(0, 0, 1);
     if (g_generated.hasMaterial != 0) {
-        const float2 meters = input.uv;
-        const float2 worldMeters = input.position.xz;
-        // 画素 1 つが覆う長さ（m）。ミップの選択に使う（x: 道路座標、y: ワールド座標）。
-        const float2 footprint = float2(max(length(ddx(meters)), length(ddy(meters))),
-                                        max(length(ddx(worldMeters)), length(ddy(worldMeters))));
-        const float2 xAxis = normalize(tangent.xz + 1e-6f);
-        const float2 yAxis = normalize(bitangent.xz + 1e-6f);
         const LayerMaterialSample surface = EvaluateLayerMaterial(g_generated.material, meters, worldMeters, footprint,
                                                                   float2(1, 1), xAxis, yAxis);
         baseColor = surface.color;
-        roughness = surface.surface.x;
-        metallic = surface.surface.y;
-        ambientOcclusion = surface.surface.z;
-        normal = normalize(tangent * surface.normal.x + bitangent * surface.normal.y + geometric * surface.normal.z);
+        surfaceValues = surface.surface;
+        tangentNormal = surface.normal;
     }
-    return float4(ShadeGenerated(input.position, normal, viewDirection, baseColor, roughness, metallic, ambientOcclusion), 1);
+
+    // --- 内側の境界（境界マテリアル） ---------------------------------------------
+    // 内側の端から幅 boundaryWidth の中で、マスク（白 = 内側の帯）で内側の材質へ切り替え、
+    // ハイトの凹凸を陰影に足す。road-material-editor の境界マテリアルと同じ読み方
+    // （U = 内側から外へ横切る向き、V = 道に沿う向き。マスクとハイトは R）。
+    if (g_generated.boundaryWidth > 0 && meters.x < g_generated.boundaryWidth) {
+        const float across = saturate(meters.x / g_generated.boundaryWidth);
+        const float along = meters.y / max(g_generated.boundaryRepeat, 0.01f);
+        const bool alongU = (g_generated.boundaryFlags & 1u) != 0;
+        // 横切る向きは端の画素を使い続ける（繰り返さない）。道に沿う向きだけ繰り返す。
+        const float2 boundaryUv = alongU ? float2(along, clamp(across, 0.002f, 0.998f))
+                                         : float2(clamp(across, 0.002f, 0.998f), along);
+        float innerWeight = 0;
+        if (g_generated.boundaryMask != kInvalidTextureIndex) {
+            Texture2D<float4> mask = ResourceDescriptorHeap[g_generated.boundaryMask];
+            innerWeight = mask.Sample(g_samplerLinearWrap, boundaryUv).r;
+            if ((g_generated.boundaryFlags & 2u) != 0) innerWeight = 1 - innerWeight;
+        }
+        if (innerWeight > 1e-3f) {
+            // 内側の帯の材質を、内側の帯の座標で評価する（端の外へ延ばした位置）。
+            float3 innerColor = g_generated.innerFallbackColor;
+            float3 innerSurface = float3(g_generated.innerFallbackRoughness, 0, 1);
+            float3 innerNormal = float3(0, 0, 1);
+            if (g_generated.hasInner != 0) {
+                const float2 innerMeters = float2(g_generated.innerOrigin + g_generated.innerSign * meters.x, meters.y);
+                const LayerMaterialSample inner = EvaluateLayerMaterial(
+                    g_generated.innerMaterial, innerMeters, worldMeters, footprint, float2(1, 1),
+                    xAxis * g_generated.innerSign, yAxis);
+                innerColor = inner.color;
+                innerSurface = inner.surface;
+                // 内側の帯の x の向きがこの帯と逆なら、法線の x も返す。
+                innerNormal = float3(inner.normal.x * g_generated.innerSign, inner.normal.y, inner.normal.z);
+            }
+            baseColor = lerp(baseColor, innerColor, innerWeight);
+            surfaceValues = lerp(surfaceValues, innerSurface, innerWeight);
+            tangentNormal = ReorientNormal(FlattenNormal(tangentNormal, 1 - innerWeight),
+                                           FlattenNormal(innerNormal, innerWeight));
+        }
+        if (g_generated.boundaryHeight != kInvalidTextureIndex && g_generated.boundaryDepth > 0) {
+            // ハイトの勾配（m / m）を差分で求め、法線に足す。外側の端へ向かって弱める。
+            Texture2D<float4> height = ResourceDescriptorHeap[g_generated.boundaryHeight];
+            const float stepMeters = max(footprint.x, 0.005f);
+            const float2 perMeter = float2(1.0f / g_generated.boundaryWidth, 1.0f / max(g_generated.boundaryRepeat, 0.01f));
+            const float2 du = alongU ? float2(0, perMeter.x * stepMeters) : float2(perMeter.x * stepMeters, 0);
+            const float2 dv = alongU ? float2(perMeter.y * stepMeters, 0) : float2(0, perMeter.y * stepMeters);
+            const float scale = 2 * g_generated.boundaryDepth * (1 - smoothstep(0.7f, 1.0f, across));
+            const float hx = height.Sample(g_samplerLinearWrap, boundaryUv + du).r - height.Sample(g_samplerLinearWrap, boundaryUv - du).r;
+            const float hy = height.Sample(g_samplerLinearWrap, boundaryUv + dv).r - height.Sample(g_samplerLinearWrap, boundaryUv - dv).r;
+            const float2 gradient = float2(hx, hy) * scale / (2 * stepMeters);
+            tangentNormal = ReorientNormal(normalize(float3(-gradient, 1)), tangentNormal);
+        }
+    }
+
+    const float3 normal = normalize(tangent * tangentNormal.x + bitangent * tangentNormal.y + geometric * tangentNormal.z);
+    return float4(ShadeGenerated(input.position, normal, viewDirection, baseColor, surfaceValues.x, surfaceValues.y,
+                                 surfaceValues.z), 1);
 }

@@ -9,6 +9,8 @@
 #include "app/Application.h"
 
 #include "app/ApplicationUiHelpers.h"
+#include "core/Log.h"
+#include "io/ProjectWorkspace.h"
 #include "graph/RoadMesh.h"
 #include "graph/SurfacePresetGraph.h"
 #include "ui/UiStyle.h"
@@ -164,6 +166,8 @@ void Application::PrepareRoadMeshes() {
             cache.shoulders.clear();
             continue;
         }
+        bool roadItemHasMaterial = false;
+        compositor::LayerMaterialGpu roadMaterial;
         roadStatus.vertices = cache.road.mesh.vertices.size();
         roadStatus.triangles = cache.road.mesh.indices.size() / 3;
         {
@@ -175,6 +179,8 @@ void Application::PrepareRoadMeshes() {
             item.hasMaterial = SurfaceMaterialGpu(mesh->mesh.material, mesh->mesh.uvRepeatMeters, item.material,
                                                   &roadStatus.materialError);
             if (item.hasMaterial) SetRoadContext(item.material, mesh->mesh);
+            roadItemHasMaterial = item.hasMaterial;
+            roadMaterial = item.material;
             items.push_back(item);
         }
 
@@ -183,9 +189,16 @@ void Application::PrepareRoadMeshes() {
         struct Edge {
             const RoadStrip* strip = nullptr;
             uint32_t edgeColumn = 0, innerColumn = 0;
+            // 内側の帯の材質と、外へ延ばした位置の座標（origin + sign * 外への距離）。
+            bool hasMaterial = false;
+            compositor::LayerMaterialGpu material;
+            float origin = 0, sign = 1;
+            const float* fallback = kRoadFallbackColor;
         };
-        Edge edges[2] = {{&cache.road, 0, 1},
-                         {&cache.road, cache.road.stride - 1, cache.road.stride - 2}};
+        const float roadWidth = std::clamp(mesh->mesh.widthMeters, graph::kRoadMinWidthMeters, graph::kRoadMaxWidthMeters);
+        Edge edges[2] = {{&cache.road, 0, 1, roadItemHasMaterial, roadMaterial, 0.0f, -1.0f, kRoadFallbackColor},
+                         {&cache.road, cache.road.stride - 1, cache.road.stride - 2, roadItemHasMaterial, roadMaterial,
+                          roadWidth, 1.0f, kRoadFallbackColor}};
         size_t stripIndex = 0;
         for (const graph::GraphId shoulderId : compiled.shoulders) {
             const graph::Node* shoulderNode = m_graph.FindNode(shoulderId);
@@ -225,8 +238,35 @@ void Application::PrepareRoadMeshes() {
                 item.hasMaterial = SurfaceMaterialGpu(settings.material, settings.uvRepeatMeters, item.material,
                                                       &status.materialError);
                 if (item.hasMaterial) SetShoulderContext(item.material, settings.widthMeters);
+                // 内側の境界。内側の帯の材質と、境界マテリアルのマスク・ハイト。
+                item.hasInner = edges[side].hasMaterial;
+                item.innerMaterial = edges[side].material;
+                item.innerOrigin = edges[side].origin;
+                item.innerSign = edges[side].sign;
+                std::copy(edges[side].fallback, edges[side].fallback + 3, item.innerFallbackColor);
+                if (!settings.boundaryPath.empty() || !settings.boundaryUid.empty()) {
+                    if (const BoundaryAsset* boundary = AcquireBoundary(settings.boundaryPath, settings.boundaryUid)) {
+                        if (!boundary->error.empty()) {
+                            status.materialError = boundary->error;
+                        } else {
+                            auto& b = item.boundary;
+                            b.maskIndex = m_textureLibrary.SrvIndex(boundary->mask, false);
+                            b.heightIndex = m_textureLibrary.SrvIndex(boundary->height, false);
+                            // 幅は路肩の幅に収める（反対側の端まで食い込ませない）。
+                            b.widthMeters = std::min(boundary->widthMeters, std::max(settings.widthMeters, 0.0f));
+                            b.repeatMeters = boundary->repeatMeters;
+                            b.depthMeters = boundary->depthMeters;
+                            b.heightCenter = boundary->heightCenter;
+                            b.alongU = boundary->alongU;
+                            b.invertMask = boundary->invertMask;
+                        }
+                    }
+                }
                 items.push_back(item);
-                edges[side] = {&strip, strip.stride - 1, strip.stride - 2};
+                const float stripWidth = std::clamp(settings.widthMeters, graph::kShoulderMinWidthMeters,
+                                                    graph::kShoulderMaxWidthMeters);
+                edges[side] = {&strip, strip.stride - 1, strip.stride - 2, item.hasMaterial, item.material, stripWidth, 1.0f,
+                               kShoulderFallbackColor};
             }
         }
         cache.shoulders.resize(stripIndex);
@@ -328,6 +368,68 @@ void Application::DrawRoadNodeStatus(graph::GraphId nodeId, const char* disconne
     }
 }
 
+Application::BoundaryAsset* Application::AcquireBoundary(const std::string& path, const std::string& uid) {
+    const std::string key = uid.empty() ? path : uid;
+    if (key.empty()) return nullptr;
+    if (const auto found = m_boundaries.find(key); found != m_boundaries.end()) return &found->second;
+    BoundaryAsset& asset = m_boundaries[key];
+    asset.uid = uid;
+    asset.path = m_workspace.Resolve(nlohmann::json{{"path", path}, {"uid", uid}});
+    nlohmann::json body;
+    if (asset.path.empty() || !m_workspace.ReadAsset(asset.path, "boundary-material-asset", body)) {
+        asset.error = "境界マテリアルを読めません: " + path;
+        TG_LOG_WARN("%s", asset.error.c_str());
+        return &asset;
+    }
+    asset.name = io::ProjectWorkspace::String(body, "name");
+    if (asset.name.empty()) {
+        const auto stem = asset.path.stem().u8string();
+        asset.name.assign(reinterpret_cast<const char*>(stem.c_str()), stem.size());
+    }
+    const auto number = [&](const char* key, float fallback) {
+        return body.contains(key) && body[key].is_number() ? body[key].get<float>() : fallback;
+    };
+    const auto flag = [&](const char* key) { return body.contains(key) && body[key].is_boolean() && body[key].get<bool>(); };
+    asset.widthMeters = std::clamp(number("width", asset.widthMeters), 0.01f, 20.0f);
+    asset.repeatMeters = std::clamp(number("repeat", asset.repeatMeters), 0.01f, 1000.0f);
+    asset.depthMeters = std::clamp(number("depth", asset.depthMeters), 0.0f, 1.0f);
+    asset.heightCenter = std::clamp(number("heightCenter", asset.heightCenter), 0.0f, 1.0f);
+    asset.alongU = flag("alongU");
+    asset.invertMask = flag("invertMask");
+    const auto texture = [&](const char* key) {
+        if (!body.contains(key) || !body[key].is_object()) return compositor::kNoTexture;
+        const auto file = m_workspace.Resolve(body[key]);
+        return file.empty() ? compositor::kNoTexture : m_textureLibrary.Load(m_device, m_pipelineCache, file);
+    };
+    asset.mask = texture("mask");
+    asset.height = texture("height");
+    if (asset.mask == compositor::kNoTexture) {
+        asset.error = "境界マテリアルのマスク画像を読めません: " + asset.name;
+        TG_LOG_WARN("%s", asset.error.c_str());
+    }
+    return &asset;
+}
+
+bool Application::SaveBoundary(BoundaryAsset& asset) {
+    const auto reference = [&](compositor::TextureId id) -> nlohmann::json {
+        const compositor::LibraryTexture* texture = m_textureLibrary.Find(id);
+        return texture ? m_workspace.Reference(texture->path) : nlohmann::json();
+    };
+    nlohmann::json body = {{"name", asset.name}, {"width", asset.widthMeters}, {"repeat", asset.repeatMeters},
+                           {"depth", asset.depthMeters}, {"heightCenter", asset.heightCenter},
+                           {"alongU", asset.alongU}, {"invertMask", asset.invertMask},
+                           {"mask", reference(asset.mask)}, {"height", reference(asset.height)}};
+    if (!asset.uid.empty()) body["uid"] = asset.uid;
+    std::filesystem::path path = asset.path;
+    if (path.empty() || !m_workspace.SaveAsset(path, "boundary-material-asset", body)) {
+        TG_LOG_WARN("境界マテリアルを保存できませんでした: %s", asset.name.c_str());
+        return false;
+    }
+    asset.dirty = false;
+    TG_LOG_INFO("境界マテリアルを保存しました: %s", asset.name.c_str());
+    return true;
+}
+
 bool Application::DrawShoulderSettings(graph::Node& node) {
     auto* settings = std::get_if<graph::ShoulderNodeSettings>(&node.settings);
     if (settings == nullptr) return false;
@@ -370,6 +472,74 @@ bool Application::DrawShoulderSettings(graph::Node& node) {
         ui::EndPropertyTable();
     }
     ui::HintText("路肩の座標（内側の端からの横位置、始点からの道のり）で貼る。なしなら砂利色の灰色で塗る");
+
+    // --- 内側の境界（境界マテリアル） ---
+    ui::SectionHeader("内側の境界");
+    if (ui::BeginPropertyTable("shoulderBoundaryRows", "マスクを反転")) {
+        const std::vector<std::filesystem::path> files = m_workspace.AssetsWithExtension(L".tgboundary");
+        const std::filesystem::path current =
+            (shoulder.boundaryPath.empty() && shoulder.boundaryUid.empty())
+                ? std::filesystem::path{}
+                : m_workspace.Resolve(nlohmann::json{{"path", shoulder.boundaryPath}, {"uid", shoulder.boundaryUid}});
+        const auto display = [](const std::filesystem::path& p) {
+            const auto text = p.stem().u8string();
+            return std::string(reinterpret_cast<const char*>(text.c_str()));
+        };
+        const std::string preview = current.empty() ? (shoulder.boundaryPath.empty() ? "なし" : "（見つからない）") : display(current);
+        ui::PropertyLabel("境界マテリアル", "内側の帯（路面か内側の路肩）との境目の形。ルート内の .tgboundary から選ぶ");
+        ImGui::SetNextItemWidth(std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x));
+        if (ImGui::BeginCombo("##boundary", preview.c_str())) {
+            if (ImGui::Selectable("なし", current.empty())) {
+                shoulder.boundaryPath.clear();
+                shoulder.boundaryUid.clear();
+                changed = true;
+            }
+            for (const auto& file : files) {
+                if (ImGui::Selectable(display(file).c_str(), file == current)) {
+                    const nlohmann::json reference = m_workspace.Reference(file);
+                    shoulder.boundaryPath = io::ProjectWorkspace::String(reference, "path");
+                    shoulder.boundaryUid = io::ProjectWorkspace::String(reference, "uid");
+                    changed = true;
+                }
+            }
+            ImGui::EndCombo();
+        }
+        ui::PropertyEnd();
+        BoundaryAsset* boundary = current.empty() ? nullptr : AcquireBoundary(shoulder.boundaryPath, shoulder.boundaryUid);
+        if (boundary != nullptr && boundary->error.empty()) {
+            const BoundaryAsset boundaryDefaults;
+            bool edited = false;
+            edited |= DrawTextureSlotRow("マスク", boundary->mask, m_textureLibrary, m_pendingAssetReveal);
+            edited |= DrawTextureSlotRow("ハイト", boundary->height, m_textureLibrary, m_pendingAssetReveal);
+            edited |= ui::PropertyFloat("境界の幅", &boundary->widthMeters, 0.01f, 20.0f, boundaryDefaults.widthMeters,
+                                        "内側の端から、境目の模様を置く幅（m）。路肩の幅より広くはしない", "%.2f m");
+            edited |= ui::PropertyFloat("繰り返し長", &boundary->repeatMeters, 0.01f, 100.0f, boundaryDefaults.repeatMeters,
+                                        "道に沿って模様が 1 周する長さ（m）", "%.2f m", ImGuiSliderFlags_Logarithmic);
+            edited |= ui::PropertyFloat("深さ", &boundary->depthMeters, 0.0f, 0.5f, boundaryDefaults.depthMeters,
+                                        "ハイトの凹凸の深さ（m）。(ハイト - 基準) × 2 × 深さ。今は陰影だけに効く", "%.3f m");
+            edited |= ui::PropertyFloat("基準の高さ", &boundary->heightCenter, 0.0f, 1.0f, boundaryDefaults.heightCenter,
+                                        "ハイト画像の平らな所の値", "%.2f");
+            static const char* const kAxes[] = {"V（道に沿う向き）", "U（横切る向き）"};
+            int axis = boundary->alongU ? 1 : 0;
+            if (ui::PropertyCombo("繰り返しの向き", &axis, kAxes, 2, 0, "画像のどちらの向きを道に沿って繰り返すか")) {
+                boundary->alongU = axis == 1;
+                edited = true;
+            }
+            edited |= ui::PropertyBool("マスクを反転", &boundary->invertMask, boundaryDefaults.invertMask,
+                                       "マスクは白が内側の帯（路面）、黒が路肩。逆の画像のときに入れる");
+            if (edited) boundary->dirty = true;
+            ui::PropertyLabelEmpty("shoulderBoundarySave");
+            ImGui::BeginDisabled(!boundary->dirty);
+            if (ui::Button("境界マテリアルを保存", ui::kWideButtonWidth)) SaveBoundary(*boundary);
+            ImGui::EndDisabled();
+            ui::PropertyEnd();
+        }
+        ui::EndPropertyTable();
+        if (boundary != nullptr && !boundary->error.empty())
+            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(ui::WarnColor()), "%s", boundary->error.c_str());
+        else if (boundary != nullptr && boundary->dirty)
+            ui::HintText("境界マテリアルの設定は、このファイルを使うすべての路肩に効く。「境界マテリアルを保存」でファイルへ書く");
+    }
 
     DrawRoadNodeStatus(node.id, "Road Mesh（か内側の Shoulder）を繋ぎ、Mesh Output へ繋ぐと描く");
     return changed;

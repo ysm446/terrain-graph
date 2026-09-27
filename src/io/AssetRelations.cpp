@@ -45,7 +45,7 @@ void RenamePath(const fs::path& from, const fs::path& to, std::error_code& error
 }
 bool IsDocument(const fs::path& path) {
     const auto ext = path.extension().wstring();
-    for (const auto* value : {L".tgterrain", L".tgcloud", L".tgatmosphere", L".tgscene", L".tgmat", L".tglayer", L".tgsky", L".tgmodel", L".tgproj", L".mmproj", L".mmmat"})
+    for (const auto* value : {L".tgterrain", L".tgcloud", L".tgatmosphere", L".tgscene", L".tgmat", L".tglayer", L".tgboundary", L".tgsky", L".tgmodel", L".tgproj", L".mmproj", L".mmmat"})
         if (_wcsicmp(ext.c_str(), value) == 0) return true;
     return false;
 }

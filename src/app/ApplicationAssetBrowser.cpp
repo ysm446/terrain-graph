@@ -545,7 +545,7 @@ void Application::RefreshAssetBrowser() {
         const auto ext = Extension(entry.path());
         if (!entry.is_directory(error) && !IsImage(ext) && ext != ".fbx" && ext != ".hdr" &&
             ext != ".tgmat" && ext != ".tglayer" && ext != ".tgsky" && ext != ".tgmodel" &&
-            ext != ".tgterrain" && ext != ".tgcloud" && ext != ".tgatmosphere" && ext != ".tgscene" && ext != ".tgproj" && ext != ".mmproj") continue;
+            ext != ".tgterrain" && ext != ".tgcloud" && ext != ".tgatmosphere" && ext != ".tgboundary" && ext != ".tgscene" && ext != ".tgproj" && ext != ".mmproj") continue;
         m_assetEntries.push_back(entry);
     }
     std::sort(m_assetEntries.begin(), m_assetEntries.end(), [](const auto& a, const auto& b) {
@@ -1041,7 +1041,7 @@ void Application::DrawAssetBrowser() {
                                   ext == ".tgterrain" ? ui::AssetIcon::Terrain : ui::AssetIcon::Cloud;
                 ui::DrawAssetIcon(icon, tileMin, tileMax);
             } else if (!handle) {
-                const char* type = ext == ".tgterrain" ? "地形グラフ" : ext == ".tgatmosphere" ? "大気散乱" : ext == ".tgcloud" ? "雲グラフ" : ext == ".tgscene" ? "シーン" : ext == ".tglayer" ? "レイヤーマテリアル" : ext == ".tgmat" ? "マテリアル" :
+                const char* type = ext == ".tgterrain" ? "地形グラフ" : ext == ".tgatmosphere" ? "大気散乱" : ext == ".tgcloud" ? "雲グラフ" : ext == ".tgscene" ? "シーン" : ext == ".tglayer" ? "レイヤーマテリアル" : ext == ".tgmat" ? "マテリアル" : ext == ".tgboundary" ? "境界マテリアル" :
                     ext == ".tgsky" ? "作業用IBL" : ext == ".tgmodel" || ext == ".fbx" ? "モデル" : IsImage(ext) ? "画像" : "ファイル";
                 const auto min = tileMin, max = tileMax;
                 const auto text = ImGui::CalcTextSize(type);

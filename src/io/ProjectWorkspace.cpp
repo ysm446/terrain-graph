@@ -32,7 +32,7 @@ fs::path Absolute(const fs::path& path) {
 }
 bool IsNative(const fs::path& path) {
     const auto ext = path.extension();
-    return ext == L".tgmat" || ext == L".tglayer" || ext == L".tgsky" || ext == L".tgmodel" || ext == L".tgterrain" || ext == L".tgcloud" || ext == L".tgatmosphere";
+    return ext == L".tgmat" || ext == L".tglayer" || ext == L".tgsky" || ext == L".tgmodel" || ext == L".tgterrain" || ext == L".tgcloud" || ext == L".tgatmosphere" || ext == L".tgboundary";
 }
 void MapTextures(json& material, const std::function<json(const json&)>& convert) {
     auto maps = material.find("maps");

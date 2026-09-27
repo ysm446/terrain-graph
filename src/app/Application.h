@@ -190,6 +190,19 @@ private:
     bool DrawShoulderSettings(graph::Node& node);
     // Road Mesh / Shoulder のプロパティの「状態」節（作れなかった理由、延長、メッシュの量）。
     void DrawRoadNodeStatus(graph::GraphId nodeId, const char* disconnectedHint);
+    // 境界マテリアル（.tgboundary）。読み込んだものを ID（無ければパス）で持つ。
+    // マスクとハイトの画像はテクスチャライブラリへ読み込む（GPU 待機を伴うのでフレームの外で呼ぶ）。
+    struct BoundaryAsset {
+        std::filesystem::path path;  // 絶対パス
+        std::string uid, name;
+        compositor::TextureId mask = compositor::kNoTexture, height = compositor::kNoTexture;
+        float widthMeters = 0.5f, repeatMeters = 2.0f, depthMeters = 0.03f, heightCenter = 0.5f;
+        bool alongU = false, invertMask = false;
+        bool dirty = false;   // 編集して保存していない
+        std::string error;    // 読めなかった理由
+    };
+    BoundaryAsset* AcquireBoundary(const std::string& path, const std::string& uid);
+    bool SaveBoundary(BoundaryAsset& asset);
     // 配置の点の元（散布 / 崩落）の、いま使える点の組。本体の評価器が作っていれば
     // そちらを、無ければ元ごとの評価器を見る。Ready で *out が nullptr なら点は 0。
     enum class PlacementPointsState { Missing, Evaluating, Ready };
@@ -497,6 +510,7 @@ private:
         size_t vertices = 0, triangles = 0;
     };
     std::unordered_map<graph::GraphId, RoadNodeStatus> m_roadNodeStatus;
+    std::unordered_map<std::string, BoundaryAsset> m_boundaries;
     CloudMaskSlot m_cloudMasks[2]; // 0: 分布／雲量、1: 雲種。
     // Snow Plume ノードごとの Source マスク（512²）。雲のマスクと同じ評価の仕方。
     struct SnowPlumeSlot {

@@ -31,6 +31,17 @@ struct GeneratedMeshItem {
     float roadWidthMeters = 0;
     // 材質が無いときの色（リニア）。
     float fallbackColor[3] = {0.18f, 0.18f, 0.18f};
+    // 内側の境界（境界マテリアル）。boundary.widthMeters が 0 なら無い。
+    struct Boundary {
+        uint32_t maskIndex = 0xffffffffu, heightIndex = 0xffffffffu;
+        float widthMeters = 0, repeatMeters = 1, depthMeters = 0, heightCenter = 0.5f;
+        bool alongU = false, invertMask = false;
+    } boundary;
+    // 内側の帯（路面か内側の路肩）の材質と、この帯の横位置 x から内側の帯の座標への写し方。
+    bool hasInner = false;
+    compositor::LayerMaterialGpu innerMaterial;
+    float innerOrigin = 0, innerSign = 1;
+    float innerFallbackColor[3] = {0.18f, 0.18f, 0.18f};
 };
 
 // 1 回の描画（本描画か影）で共通の値。
@@ -73,6 +84,11 @@ private:
         compositor::LayerMaterialGpu material;
         float roadWidthMeters = 0;
         float fallbackColor[3] = {0.18f, 0.18f, 0.18f};
+        GeneratedMeshItem::Boundary boundary;
+        bool hasInner = false;
+        compositor::LayerMaterialGpu innerMaterial;
+        float innerOrigin = 0, innerSign = 1;
+        float innerFallbackColor[3] = {0.18f, 0.18f, 0.18f};
     };
     std::vector<std::unique_ptr<Entry>> m_entries;
 };

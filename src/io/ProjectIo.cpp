@@ -1898,6 +1898,8 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
                                 {"width", m.widthMeters}, {"crossSlope", m.crossSlopePercent},
                                 {"stepHeight", m.stepHeightMeters}, {"stepWidth", m.stepWidthMeters},
                                 {"uvRepeat", m.uvRepeatMeters}, {"material", writeMaterial(m.material)}};
+            if (!m.boundaryPath.empty() || !m.boundaryUid.empty())
+                item["shoulder"]["boundary"] = {{"path", m.boundaryPath}, {"uid", m.boundaryUid}};
         } else if (const auto* roadMesh = std::get_if<graph::RoadMeshNodeSettings>(&node.settings)) {
             const graph::RoadMeshSettings& m = roadMesh->mesh;
             item["roadMesh"] = {{"width", m.widthMeters}, {"lanesForward", m.lanesForward},
@@ -2286,6 +2288,10 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     m.uvRepeatMeters = std::clamp(ReadFloat(*values, "uvRepeat", d.uvRepeatMeters), 0.1f, 100.0f);
                     if (const json* material = FindMember(*values, "material"); material != nullptr)
                         m.material = readMaterial(*material);
+                    if (const json* boundary = FindMember(*values, "boundary"); boundary != nullptr && boundary->is_object()) {
+                        m.boundaryPath = ReadString(*boundary, "path", "");
+                        m.boundaryUid = ReadString(*boundary, "uid", "");
+                    }
                 }
                 created.settings = std::move(settings);
             } else if (created.kind == graph::NodeKind::RoadMesh) {
