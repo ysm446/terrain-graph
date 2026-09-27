@@ -22,6 +22,8 @@ constexpr uint32_t kThumbnailSize = 128;
 // サムネイルは「何が写っているか」を見分けるためのもので、
 // マップ全体を見せる場所ではない（それはテクスチャ一覧の役目）。
 constexpr float kThumbnailUvScale = 0.25f;
+// Layered Material のサムネイルに置く仮の道路の幅（m）。平面は 8 m 角（uvScale）。
+constexpr float kThumbnailRoadWidthMeters = 7.0f;
 
 // GPU 側の ThumbnailConstants と一致させること。
 struct ThumbnailConstants {
@@ -292,6 +294,14 @@ bool MaterialLibrary::BuildThumbnail(rhi::Device& device, rhi::PipelineCache& pi
 
     ThumbnailConstants constants = {};
     constants.layerMaterial = asset.layerGpu;
+    // 轍・道路端のマスクを持つ層があれば、仮の道路（幅 7 m・片側 1 車線・左側通行。マテリアル
+    // プレビューの既定と同じ）を平面の中央に置く。無いとマスクが何も覆わず、層が見えない。
+    if (asset.layerMaterial && UsesRoadMasks(asset.layerGpu)) {
+        constants.layerMaterial.road[0] = kThumbnailRoadWidthMeters;
+        constants.layerMaterial.road[1] = 1.0f;
+        constants.layerMaterial.road[2] = 1.0f;
+        constants.layerMaterial.road[3] = 1.0f;
+    }
     constants.outputIndex = asset.thumbnail.UavIndex();
     constants.size = kThumbnailSize;
     // ベースカラーだけ sRGB として読む。それ以外はリニア。

@@ -1,13 +1,19 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-28 06:54
+更新日時: 2026-09-28 06:58
 
 ## 空木岳（utsugidake6）の登山道の引き直し（2026-09-27 05:33）
 
 ユーザーが置いた `utsugidake_routes.geojson`（OSM、trail 16 本）から Path を作り直した（点 341 / エッジ 342。自動経路の仮の 6 点を置き換え）。Heightmap に位置が無かったので、ユーザー指定の 35.7109, 137.8125 を入れた（GeoJSON の範囲の中心と一致し、標高の差は中央値 1.0 m）。変更前は `data/Test/utsugidake6-backup-20260927.zip`。
 
 検証: 陰影図に重ねて尾根に沿うことを確認し、Release でシーンのカメラと真上を撮影（`data/Test/utsugidake6-qa/`）。Debug で開いて保存し直し、警告・エラーが無いことを確認。
+
+## レイヤーマテリアルのサムネイルの道路系マスク（2026-09-28 06:58）
+
+ユーザー報告「プレビューのマスクは直ったが、サムネイルは更新されていない」。サムネイル（`MaterialLibrary` の `MaterialThumbnail.hlsl`）には道路の文脈（`road`）を入れておらず、道路系のマスクは常に 0 だった（プレビューを直したときに見落とした）。道路系のマスクを持つ Layered Material のサムネイルでは、`road` に幅 7 m・片側 1 車線・左側通行を入れ、シェーダで 8 m 角の平面の中央に置く（x を 0.5 m ずらす。テクスチャの座標はずらさない）。ディスクのサムネイルの版を `thumbnail-layer-quarter-v3` に上げて作り直させる。
+
+検証: `MaterialThumbnail.hlsl` を DXC でコンパイル、Debug ビルド（警告 0）。アセットブラウザを撮り、`road-mask-test.tglayer` に轍 4 本と両端の道路端、`grass_and_gravel.tglayer` に片側の砂利の帯が出ることを確認（`data/Test/roadpath-qa/thumb_test_crop.png`、`thumb_layers_crop.png`）。
 
 ## フライのカメラ（2026-09-28 06:54）
 

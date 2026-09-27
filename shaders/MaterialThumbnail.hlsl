@@ -144,7 +144,10 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     }
 
     if (g_thumbnail.layerMaterial.count > 0) {
-        const LayerMaterialSample material = EvaluateLayerMaterial(g_thumbnail.layerMaterial, uv, uv, 1.732051f * g_thumbnail.uvScale / g_thumbnail.size, float2(1,1), float2(1,0), float2(0,1));
+        // 仮の道路（道路系のマスクがあるときだけ幅が入る）を平面の中央に置く。x を道路の左端からの横位置にずらす。
+        float2 meters = uv;
+        if (g_thumbnail.layerMaterial.road.x > 0) meters.x -= (g_thumbnail.uvScale - g_thumbnail.layerMaterial.road.x) * 0.5f;
+        const LayerMaterialSample material = EvaluateLayerMaterial(g_thumbnail.layerMaterial, meters, uv, 1.732051f * g_thumbnail.uvScale / g_thumbnail.size, float2(1,1), float2(1,0), float2(0,1));
         baseColor = material.color; roughness = material.surface.x; metallic = material.surface.y; ambientOcclusion = material.surface.z;
         normal = normalize(float3(material.normal.x, material.normal.z, material.normal.y));
     }
