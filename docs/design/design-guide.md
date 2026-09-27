@@ -1,7 +1,17 @@
 # design-guide — UI の設計ガイド
 
 作成日時: 2026-08-31 14:36
-更新日時: 2026-09-28 01:36
+更新日時: 2026-09-28 02:47
+
+## Road Path の縦断とバンク角
+
+Road Path を選んだときのプロパティは、Path と同じ「パス」節（点とエッジ）の下に「縦断」「バンク角」の節を置く。平面の編集（ビューポートの操作、ギズモ、案内）は Path と同じ。
+
+- 「縦断」節: PropertyValue の「延長」「標高」（Heightmap の最低標高が無ければ「高さ」）「最大勾配」（地形のままの値を括弧で並べる）。その下に縦断図（幅いっぱい、高さ `Scaled(150)`、FrameBg の下地と Border の枠）。地形は TextDisabled の細線（1）、設計の高さは CheckMark の線（2）、縦断ポイントは Border の縦線と CheckMark の菱形。左上に最高、左下に最低の標高、右下に延長を TextDisabled で書く。カーソルを載せると縦線を引き、道のり・標高・地形との差（盛土 / 切土）・勾配をツールチップで出す。
+- 縦断ポイントは位置の順に、TextDisabled の「縦断ポイント N」の見出しと、ポイントごとのプロパティ表（位置〔m〕・縦断曲線長・高さのずれ・「削除」）で並べる。表の ID はポイントの ID で分ける。「縦断ポイントを追加」は今あるポイントの間で一番広く空いた所の真ん中に置く。
+- 「バンク角」節: PropertyBool の「バンク角を付ける」、設計速度・摩擦係数・「なめらかにする」（オンなら距離）と「最大」。バンクポイントは縦断ポイントと同じ並べ方（位置・設計速度・手動・角度〔手動のときだけ〕・「削除」）。「バンク角を付ける」が切りの間は節の中を無効表示にする。
+- 線が 1 本でない（分岐・閉ループ・孤立点）ときは、縦断の値と図を出さず、HintText で理由を出す。
+- ビューポート: 縦断を反映した中心線を、Path の点と線より先に淡い黄色（Road Path のピンの色）で描き、10 m ごとに設計の高さと地形の間へ縦線（盛土は橙、切土は青、差 0.3 m 未満は描かない）を立てる。縦断ポイントは菱形、バンク角を付けているときは道路の幅の傾いた横棒（間隔は延長に応じて 25 m 以上、ポイントの位置は濃く）。色は Path の表示と同じく overlay の中で決めている（ApplyTheme の外。既存の Path の表示と同じ扱い）。
 
 ## ノードの追加メニュー
 
@@ -17,6 +27,7 @@
 | 整形 | Heightmap Blur / Flatten Borders / Height Levels |
 | マスク | Mask Image / Noise / Flowline / Fluvial / Height / Slope / Curvature / Levels / Blur / Blend、Wind Field |
 | パス | Path / Mask Path / Mask Area |
+| 道路 | Road Path（Road Mesh / Lane Marking は移植中） |
 | 配置 | Scatter / Model Scatter / Model Merge / Model Output |
 | 雲 | Cloud Weather Layer ほか雲グラフ用の種類 |
 

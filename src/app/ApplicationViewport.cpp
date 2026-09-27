@@ -955,6 +955,10 @@ void Application::DrawViewportPanel() {
             DrawHeightGuide(imageOrigin, imageMax);
             DrawLightGizmo(imageOrigin, imageMax);
             if (pathNode != nullptr) {
+                // Road Path は縦断を反映した中心線を先に描き、点と線（編集の手がかり）を上に重ねる。
+                if (pathNode->kind == graph::NodeKind::RoadPath) {
+                    DrawRoadPathOverlay(*pathNode, imageOrigin, imageMax);
+                }
                 DrawPathOverlay(*pathNode, imageOrigin, imageMax);
             }
 

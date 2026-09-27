@@ -1,7 +1,7 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-09-14 16:41
+更新日時: 2026-09-28 02:47
 
 ## 大気散乱スカイと作業環境（シーン版3）
 
@@ -156,6 +156,7 @@ base' = base + 0.5 * gain     ただしソースが constant のときは base �
 | `blend` | `maskBlend` | `{ mode, intensity }` |
 | `maskPath` | `maskPath` | `{ gamma, invert }` |
 | `path` | `path` | `{ points[], edges[], defaultWidth, defaultFeather, defaultIntensity, nextId }`（下記） |
+| `roadPath` | `path`, `roadProfile` | `path` は Path と同じ形。`roadProfile` は `{ verticalPoints[], bankPoints[], bankEnabled, designSpeed, friction, smoothBank, bankSmoothDistance }`（下記） |
 
 **マスクの繋ぎ方そのものは `links` にしかない。** レイヤー側の
 `mask.source` が `node` のとき、どの op を読むかはコンパイルのたびに決まるので
@@ -210,6 +211,15 @@ routedFrom, routedTo, waypoints }`（点の `id` を指す。from → to が向�
 （そのエッジの上で一定にする値）。
 `nextId` は点とエッジの次の ID（パスの中でだけ一意）。端点の無いエッジは読み捨てる。
 無ければ空のパス（版は上げない）。
+
+`kind` が `roadPath` のノードは、平面の点とエッジを `path`（上と同じ形）に、縦断とバンク角を
+`roadProfile` に持つ。`verticalPoints[]` は `{ id, u, vcl, offset }`（`u` は線形の道のりの割合 0〜1、
+`vcl` は縦断曲線長 m、`offset` は高さのずれ m）、`bankPoints[]` は `{ id, u, designSpeed, manual, angle }`
+（`designSpeed` は km/h、`manual` と `angle`（°、正で左が上がる）は手動のときだけ書く）。
+`designSpeed` / `friction` / `bankSmoothDistance`（m）は線形全体の値。ポイントの `id` は `path.nextId` と
+同じ番号の空間から振る（読み込みで `nextId` をポイントの ID より大きくする）。
+`roadProfile` が無ければ縦断もバンク角も無い線形として読む（版は上げない）。
+古いビルドでは `roadPath` は定義の無いノード（Missing）として保存名ごと残る。
 
 レイヤーの `blur`（`{ radius, strength, iterations }`）は
 `kind` が `blur` のノード（Heightmap Blur）だけが使う。無ければ既定値。

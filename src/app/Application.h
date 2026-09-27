@@ -405,6 +405,17 @@ private:
     DirectX::XMFLOAT3 PathWorldPosition(float u, float v, float heightOffsetMeters) const;
     // Path ノードのプロパティ（グラフパネルのプロパティ欄から呼ぶ）。変更があれば true。
     bool DrawPathSettings(graph::Node& node);
+    // --- Road Path（ApplicationRoadPath.cpp） ---
+    // 平面の点とエッジの編集は Path と共通（上の関数が Road Path も扱う）。ここは縦断・バンク角。
+    // 中心線（base: 地形 + ずれ、centerline: 縦断を反映）。高さは CPU 側のハイトから引く。
+    // Road Path でない / 線が 1 本でないときは偽で、error に理由を入れる。
+    bool BuildRoadCenterline(const graph::Node& node, graph::RoadProfileCurve& base,
+                             graph::RoadProfileCurve& centerline, std::string* error) const;
+    // 縦断曲線とバンク角のプロパティ（縦断図を含む）。変更があれば true。
+    bool DrawRoadPathSettings(graph::Node& node);
+    // 縦断を反映した中心線、切土・盛土の目安、縦断・バンクのポイントをビューポートへ重ねる。
+    void DrawRoadPathOverlay(const graph::Node& node, const ImVec2& viewportMin,
+                             const ImVec2& viewportMax);
 
     Window m_window;
     rhi::Device m_device;

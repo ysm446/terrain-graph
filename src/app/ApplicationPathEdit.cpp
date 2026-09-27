@@ -485,7 +485,7 @@ int PathGizmoHit(const PathGizmoScreen& gizmo, const ImVec2& mouse) {
 
 graph::Node* Application::CurrentPathNode() {
     graph::Node* node = m_graph.FindMutableNode(m_selectedGraphNode);
-    if (node == nullptr || node->kind != graph::NodeKind::Path) {
+    if (node == nullptr || !graph::IsPathLikeNodeKind(node->kind)) {
         return nullptr;
     }
     return node;
@@ -596,11 +596,11 @@ bool Application::PickTerrainUv(const ImVec2& mouse, const ImVec2& viewportMin,
 
 void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemHovered,
                                   const ImVec2& viewportMin, const ImVec2& viewportMax) {
-    auto* settings = std::get_if<graph::PathNodeSettings>(&node.settings);
-    if (settings == nullptr) {
+    graph::PathSettings* editable = graph::EditablePathSettings(node);
+    if (editable == nullptr) {
         return;
     }
-    graph::PathSettings& path = settings->path;
+    graph::PathSettings& path = *editable;
     PathEditState& state = m_pathEdit;
     const ImGuiIO& io = ImGui::GetIO();
     (void)itemActive;
@@ -1116,11 +1116,11 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
 
 void Application::DrawPathOverlay(const graph::Node& node, const ImVec2& viewportMin,
                                   const ImVec2& viewportMax) {
-    const auto* settings = std::get_if<graph::PathNodeSettings>(&node.settings);
-    if (settings == nullptr) {
+    const graph::PathSettings* editable = graph::EditablePathSettings(node);
+    if (editable == nullptr) {
         return;
     }
-    const graph::PathSettings& path = settings->path;
+    const graph::PathSettings& path = *editable;
     const PathEditState& state = m_pathEdit;
     const ImVec2 size(viewportMax.x - viewportMin.x, viewportMax.y - viewportMin.y);
     if (size.x <= 0.0f || size.y <= 0.0f) {
@@ -1419,12 +1419,18 @@ void Application::DrawPathOverlay(const graph::Node& node, const ImVec2& viewpor
 }
 
 bool Application::DrawPathSettings(graph::Node& node) {
-    auto* settings = std::get_if<graph::PathNodeSettings>(&node.settings);
-    if (settings == nullptr) {
+    graph::PathSettings* editable = graph::EditablePathSettings(node);
+    if (editable == nullptr) {
         return false;
     }
-    graph::PathSettings& path = settings->path;
-    const graph::PathSettings defaults;
+    graph::PathSettings& path = *editable;
+    graph::PathSettings defaults;
+    if (node.kind == graph::NodeKind::RoadPath) {
+        defaults.defaultWidthMeters = graph::kRoadDefaultWidthMeters;
+        defaults.defaultFeatherMeters = graph::kRoadDefaultFeatherMeters;
+    }
+    // Road Path は蛇行を持たず、経路探索は「なし / 道路」だけ（登山道・流れは道路の線形ではない）。
+    const bool road = node.kind == graph::NodeKind::RoadPath;
     bool changed = false;
 
     ui::SectionHeader("パス");
@@ -1616,12 +1622,13 @@ bool Application::DrawPathSettings(graph::Node& node) {
                     changed = true;
                 }
                 // 蛇行。引いた線を進む向きと直角に小刻みに振る（経路探索とは別に掛かる）。
-                bool meanderChanged = ui::PropertyFloat(
+                bool meanderChanged = false;
+                if (!road) meanderChanged = ui::PropertyFloat(
                     "蛇行", &meander, 0.0f, 20.0f, 0.0f,
                     "線を進む向きと直角に、なめらかなノイズで振る幅（m）。登山道が岩や藪を"
                     "避けて小刻みに振れる感じ。0 で振らない。鎖の両端では 0 へ絞る",
                     "%.1f m");
-                if (meander > 0.0f) {
+                if (!road && meander > 0.0f) {
                     meanderChanged |= ui::PropertyFloat(
                         "蛇行の波長", &meanderWavelength, 2.0f, 200.0f, 20.0f,
                         "1 回振れる長さ（m）。短いほど細かく振れる", "%.1f m",
@@ -1639,8 +1646,11 @@ bool Application::DrawPathSettings(graph::Node& node) {
                                                            "流れ（下る。川 / 氷河）",
                                                            "登山道（稜線を通り、避ける所を避ける）"};
                 int routeIndex = static_cast<int>(route);
+                // Road Path は「なし / 道路」の 2 つだけを出す（貼り付けで別の探し方が入っていたら「なし」と見せる）。
+                const int routeCount = road ? 2 : IM_ARRAYSIZE(kRouteLabels);
+                if (routeIndex >= routeCount) routeIndex = 0;
                 bool routeChanged = ui::PropertyCombo(
-                    "経路探索", &routeIndex, kRouteLabels, IM_ARRAYSIZE(kRouteLabels), 0,
+                    "経路探索", &routeIndex, kRouteLabels, routeCount, 0,
                     "両端の点の間の経路を Base に繋いだ地形から探し、内部の点を自動で打つ。"
                     "置いた点は動かない。点を動かすと作り直す。上流の地形を変えたときは"
                     "再計算のボタンで。道路は許容勾配を超えた分をペナルティにし、上りも下りも"
@@ -1885,11 +1895,11 @@ void Application::ProcessPendingPathRoutes() {
 
 void Application::RecomputePathRoutes(graph::Node& node, bool force,
                                       const std::vector<graph::PathElementId>* edges) {
-    auto* settings = std::get_if<graph::PathNodeSettings>(&node.settings);
-    if (settings == nullptr) {
+    graph::PathSettings* editable = graph::EditablePathSettings(node);
+    if (editable == nullptr) {
         return;
     }
-    graph::PathSettings& path = settings->path;
+    graph::PathSettings& path = *editable;
     bool anyRouted = false;
     for (const graph::PathEdge& edge : path.edges) {
         if (edge.route != graph::PathRoute::None) {

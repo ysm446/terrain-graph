@@ -939,6 +939,84 @@ graph::PathSettings ReadPath(const json& parent, const char* key) {
     return path;
 }
 
+// Road Path の縦断とバンク角。平面の点とエッジは "path"（WritePath）に書き、ここは "roadProfile"。
+// キーは road-material-editor の Path の道路線形に合わせてある。
+json WriteRoadProfile(const graph::RoadPathSettings& road) {
+    json node;
+    json vertical = json::array();
+    for (const graph::RoadVerticalPoint& point : road.verticalPoints) {
+        vertical.push_back({{"id", point.id}, {"u", point.u}, {"vcl", point.vclMeters},
+                            {"offset", point.offsetMeters}});
+    }
+    node["verticalPoints"] = std::move(vertical);
+    json bank = json::array();
+    for (const graph::RoadBankPoint& point : road.bankPoints) {
+        json item{{"id", point.id}, {"u", point.u}, {"designSpeed", point.designSpeedKmh}};
+        if (point.manual) {
+            item["manual"] = true;
+            item["angle"] = point.angleDegrees;
+        }
+        bank.push_back(std::move(item));
+    }
+    node["bankPoints"] = std::move(bank);
+    node["bankEnabled"] = road.bankEnabled;
+    node["designSpeed"] = road.designSpeedKmh;
+    node["friction"] = road.frictionCoefficient;
+    node["smoothBank"] = road.smoothBank;
+    node["bankSmoothDistance"] = road.bankSmoothMeters;
+    return node;
+}
+
+graph::RoadPathSettings ReadRoadPath(const json& item) {
+    graph::RoadPathSettings road;
+    road.path = ReadPath(item, "path");
+    if (FindMember(item, "path") == nullptr) {
+        road.path.defaultWidthMeters = graph::kRoadDefaultWidthMeters;
+        road.path.defaultFeatherMeters = graph::kRoadDefaultFeatherMeters;
+    }
+    const json* node = FindMember(item, "roadProfile");
+    if (node == nullptr || !node->is_object()) {
+        return road;
+    }
+    const graph::RoadPathSettings defaults;
+    graph::PathElementId maxId = 0;
+    if (const json* points = FindMember(*node, "verticalPoints"); points != nullptr && points->is_array()) {
+        for (const json& value : *points) {
+            if (!value.is_object()) continue;
+            graph::RoadVerticalPoint point;
+            point.id = ReadInt(value, "id", 0);
+            if (point.id <= 0) continue;
+            point.u = std::clamp(ReadFloat(value, "u", 0.0f), 0.0f, 1.0f);
+            point.vclMeters = std::max(0.0f, ReadFloat(value, "vcl", point.vclMeters));
+            point.offsetMeters = ReadFloat(value, "offset", 0.0f);
+            maxId = std::max(maxId, point.id);
+            road.verticalPoints.push_back(point);
+        }
+    }
+    if (const json* points = FindMember(*node, "bankPoints"); points != nullptr && points->is_array()) {
+        for (const json& value : *points) {
+            if (!value.is_object()) continue;
+            graph::RoadBankPoint point;
+            point.id = ReadInt(value, "id", 0);
+            if (point.id <= 0) continue;
+            point.u = std::clamp(ReadFloat(value, "u", 0.0f), 0.0f, 1.0f);
+            point.designSpeedKmh = std::max(0.0f, ReadFloat(value, "designSpeed", point.designSpeedKmh));
+            point.manual = ReadBool(value, "manual", false);
+            point.angleDegrees = std::clamp(ReadFloat(value, "angle", 0.0f), -90.0f, 90.0f);
+            maxId = std::max(maxId, point.id);
+            road.bankPoints.push_back(point);
+        }
+    }
+    road.bankEnabled = ReadBool(*node, "bankEnabled", defaults.bankEnabled);
+    road.designSpeedKmh = std::max(0.0f, ReadFloat(*node, "designSpeed", defaults.designSpeedKmh));
+    road.frictionCoefficient = std::max(0.0f, ReadFloat(*node, "friction", defaults.frictionCoefficient));
+    road.smoothBank = ReadBool(*node, "smoothBank", defaults.smoothBank);
+    road.bankSmoothMeters = std::max(0.0f, ReadFloat(*node, "bankSmoothDistance", defaults.bankSmoothMeters));
+    // 縦断・バンクのポイントも path.nextId の番号の空間を使う。
+    road.path.nextId = std::max(road.path.nextId, maxId + 1);
+    return road;
+}
+
 json WriteMask(const compositor::LayerMask& mask, const TextureWriter& writeTexture,
                const std::function<json(compositor::PaintMaskId)>& writePaint) {
     json node;
@@ -1793,6 +1871,9 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["cloud"]["windDirection"] = cloud->windDirection;
         } else if (const auto* path = std::get_if<graph::PathNodeSettings>(&node.settings)) {
             item["path"] = WritePath(path->path);
+        } else if (const auto* roadPath = std::get_if<graph::RoadPathNodeSettings>(&node.settings)) {
+            item["path"] = WritePath(roadPath->road.path);
+            item["roadProfile"] = WriteRoadProfile(roadPath->road);
         }
         nodes.push_back(std::move(item));
     }
@@ -2154,6 +2235,10 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
             } else if (created.kind == graph::NodeKind::Path) {
                 graph::PathNodeSettings settings;
                 settings.path = ReadPath(item, "path");
+                created.settings = std::move(settings);
+            } else if (created.kind == graph::NodeKind::RoadPath) {
+                graph::RoadPathNodeSettings settings;
+                settings.road = ReadRoadPath(item);
                 created.settings = std::move(settings);
             } else if (created.kind == graph::NodeKind::Missing) {
                 created.settings = graph::MissingNodeSettings{kindName};

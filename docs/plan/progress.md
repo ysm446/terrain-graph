@@ -1,13 +1,25 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-27 05:33
+更新日時: 2026-09-28 02:48
 
 ## 空木岳（utsugidake6）の登山道の引き直し（2026-09-27 05:33）
 
 ユーザーが置いた `utsugidake_routes.geojson`（OSM、trail 16 本）から Path を作り直した（点 341 / エッジ 342。自動経路の仮の 6 点を置き換え）。Heightmap に位置が無かったので、ユーザー指定の 35.7109, 137.8125 を入れた（GeoJSON の範囲の中心と一致し、標高の差は中央値 1.0 m）。変更前は `data/Test/utsugidake6-backup-20260927.zip`。
 
 検証: 陰影図に重ねて尾根に沿うことを確認し、Release でシーンのカメラと真上を撮影（`data/Test/utsugidake6-qa/`）。Debug で開いて保存し直し、警告・エラーが無いことを確認。
+
+## Road Path — 道路の移植の段階 1（2026-09-28 02:48）
+
+road-material-editor の道路ノードの移植（plan.md「道路」）の段階 1。道路の線形を引く Road Path ノード（`roadPath`、NodeKind 53、出力は新しい型 RoadPath = 9）を足した。
+
+- **平面は Path と共通。** `RoadPathSettings` は `PathSettings`（UV + 地形からのずれ）を持ち、縦断ポイント・バンクポイントと線形全体の値（設計速度・摩擦係数・平滑化）を足したもの。`EditablePathSettings(Node&)` が Path / Road Path の点とエッジを返し、ApplicationPathEdit.cpp の編集・表示・経路探索（`CurrentPathNode`、`HandlePathInput`、`DrawPathOverlay`、`DrawPathSettings`、`RecomputePathRoutes`、`CompilePathRouteInputs`）はこれを通して両方を扱う。Road Path では蛇行の行を出さず、経路探索は「なし / 道路」だけ。新しい点の幅 7 m・フェザー 0 m。
+- **縦断とバンク角**（`graph/RoadPath.cpp`）は road-material-editor の `RoadProfile.cpp` の式をそのまま使う。中心線は鎖 1 本（分岐・閉ループ・孤立点なし）を平面の道のりで 1 m ごとに割り直し（曲線の標本は制御点の区間ごとで、長い区間では地形を拾い損ねるため）、高さを地形 + 点のずれにしてから掛ける。縦断ポイントが無ければ地形に沿う。
+- **表示**（`app/ApplicationRoadPath.cpp`）: プロパティの「縦断」（延長・標高・最大勾配、縦断図、ポイントの一覧）と「バンク角」。ビューポートに設計の中心線、切土・盛土の目安、縦断ポイント、バンクの横棒。
+- 保存は `path`（Path と同じ）と `roadProfile`。ポイントの ID は `path.nextId` の空間から振る。
+- 停止線は移植していない（仕様は後で決める）。縦断・バンクのポイントはビューポートでは動かせない（プロパティで編集）。
+
+検証: Debug ビルド（警告 0）、CTest 6 件（`tests/RoadPathTests.cpp` を追加: 地形に沿う中心線、点のずれ、縦断曲線長 0 / 200 m の高さと勾配、右カーブで正のバンク、手動の角度、分岐の拒否、ノードの型と Mask Path へ繋がらないこと）。空木岳の複製に Road Path（曲線 3 本、縦断ポイント 1、バンク有効）を置いた確認用シーン（`data/Test/roadpath-qa/`）で、プロパティ（縦断図）とビューポートの表示を `--screenshot-ui` で確認し、保存し直して `roadProfile` が保たれることを確認。既存の Path（登山道 341 点）の編集表示も変わらないことを確認。デバッグレイヤーの警告なし。**未確認**: マウスでの点の追加・移動（Path と同じ処理を通るが、Road Path では手で操作していない）。
 
 ## 白馬岳の残雪期の雪と植生（2026-09-27 04:40）
 

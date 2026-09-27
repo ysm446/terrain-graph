@@ -4,6 +4,7 @@
 #include "compositor/MaterialLayer.h"
 #include "compositor/MaskGraph.h"
 #include "graph/Path.h"
+#include "graph/RoadPath.h"
 
 #include <cstdint>
 #include <memory>
@@ -48,6 +49,8 @@ enum class ValueType : uint32_t {
     Instances = 7,
     // 風の場（Wind Field が出す 3D の速度場）。局所のボリューム計算が境界条件に読む。
     Wind = 8,
+    // 道路の線形（Road Path が出す）。Road Mesh が読む。Path とは繋がない。
+    RoadPath = 9,
 };
 
 enum class NodeKind : uint32_t {
@@ -135,6 +138,8 @@ enum class NodeKind : uint32_t {
     SnowPlume = 51,
     // ハイトの Levels。入力の範囲（自動なら今の最低〜最高）を出力の範囲へ写し直す。
     HeightLevels = 52,
+    // 道路の線形。平面は Path と同じ点とエッジ（UV + 地形からのずれ）で、縦断曲線とバンク角を持つ。
+    RoadPath = 53,
 };
 
 struct PinDefinition {
@@ -218,6 +223,12 @@ struct MaskNodeSettings {
 // パス（Path ノード）。点と向き付きのエッジ。中身は graph/Path.h。
 struct PathNodeSettings {
     PathSettings path;
+};
+
+// 道路の線形（Road Path ノード）。中身は graph/RoadPath.h。平面の点とエッジは Path と同じ型で、
+// ビューポートでの編集も Path と共通（EditablePathSettings で取り出す）。
+struct RoadPathNodeSettings {
+    RoadPathSettings road;
 };
 
 // グラフを評価器の入力へ落とした結果。レイヤー列と、マスクの op の列。
@@ -446,7 +457,7 @@ struct MissingNodeSettings { std::string kindName; };
 using NodeSettings =
     std::variant<LayerNodeSettings, MaskNodeSettings, OutputNodeSettings, PathNodeSettings, CloudNodeSettings,
                  CloudMergeSettings, CloudNoiseSettings, CloudTransformSettings, CloudMapSettings, CloudAnimationSettings, CloudShapeGenerateSettings, CloudWeatherSettings, MissingNodeSettings, ModelScatterSettings,
-                 TerrainNodeSettings, SnowPlumeSettings>;
+                 TerrainNodeSettings, SnowPlumeSettings, RoadPathNodeSettings>;
 
 struct Node {
     GraphId id = 0;
@@ -676,5 +687,11 @@ bool IsLayerMaskSourceKind(NodeKind kind);
 bool IsPreviewableNodeKind(NodeKind kind);
 // 種類に対応するレイヤー種別（レイヤー設定を持つ種類のみ意味を持つ）。
 compositor::LayerKind LayerKindFor(NodeKind kind);
+// ビューポートで線を編集できる種類か（Path / Road Path）。
+bool IsPathLikeNodeKind(NodeKind kind);
+// Path / Road Path の平面の点とエッジ。どちらでもなければ nullptr。
+// ビューポートでの編集と経路探索は、これを通して両方を同じに扱う。
+PathSettings* EditablePathSettings(Node& node);
+const PathSettings* EditablePathSettings(const Node& node);
 
 }  // namespace tg::graph

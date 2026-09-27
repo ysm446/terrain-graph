@@ -119,6 +119,7 @@ set(tg_sources
     src/app/ApplicationTexturePanel.cpp
     src/app/ApplicationUiHelpers.h
     src/app/ApplicationViewport.cpp
+    src/app/ApplicationRoadPath.cpp
     src/app/UndoHistory.cpp
     src/app/UndoHistory.h
     src/core/Log.cpp
@@ -127,6 +128,7 @@ set(tg_sources
     src/graph/NodeGraph.cpp
     src/graph/NodeGraph.h
     src/graph/Path.cpp
+    src/graph/RoadPath.cpp
     src/graph/PathRoute.cpp
     src/graph/Path.h
     src/compositor/MaterialEvaluator.cpp
@@ -306,6 +308,7 @@ add_executable(terrain_graph_tests
     tests/TestSupport.h
     tests/FrameLimiterTests.cpp
     tests/NodeGraphTests.cpp
+    tests/RoadPathTests.cpp
     tests/MultiScaleBreachingTests.cpp
     tests/UiInteractionTests.cpp
     tests/UndoHistoryTests.cpp
@@ -329,6 +332,7 @@ add_executable(terrain_graph_tests
     src/graph/NodeGraph.cpp
     src/graph/NodeGraph.h
     src/graph/Path.cpp
+    src/graph/RoadPath.cpp
     src/graph/Path.h
     src/graph/PathRoute.cpp
     src/graph/PathRoute.h

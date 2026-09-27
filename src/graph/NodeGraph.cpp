@@ -150,6 +150,14 @@ constexpr std::array<PinDefinition, 3> kPathPins = {{
     {PinKind::Output, ValueType::Path, "Path"},
 }};
 
+// 道路の線形。Base（沿う地形）と Avoid（経路探索で避ける所）は Path と同じ。
+// 出力は Path とは別の型（Road Mesh が読む。Mask Path などへは繋がない）。
+constexpr std::array<PinDefinition, 3> kRoadPathPins = {{
+    {PinKind::Input, ValueType::Material, "Base"},
+    {PinKind::Input, ValueType::Mask, "Avoid"},
+    {PinKind::Output, ValueType::RoadPath, "Road Path"},
+}};
+
 // パスの足跡をマスクにするピン。
 constexpr std::array<PinDefinition, 2> kMaskPathPins = {{
     {PinKind::Input, ValueType::Path, "Path"},
@@ -265,7 +273,7 @@ constexpr std::array<PinDefinition, 1> kModelOutputPins = {{
 constexpr std::array<PinDefinition, 1> kSnowPlumePins = {{
     {PinKind::Input, ValueType::Mask, "Source"},
 }};
-constexpr std::array<NodeDefinition, 52> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 53> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kSurfacePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -297,6 +305,7 @@ constexpr std::array<NodeDefinition, 52> kNodeDefinitions = {{
     {NodeKind::Path, "path", "Path", kPathPins},
     {NodeKind::MaskPath, "maskPath", "Mask Path", kMaskPathPins},
     {NodeKind::MaskArea, "maskArea", "Mask Area", kMaskPathPins},
+    {NodeKind::RoadPath, "roadPath", "Road Path", kRoadPathPins},
     {NodeKind::Cloud, "cloud", "Cloud (Legacy)", kCloudPins},
     {NodeKind::CloudLayer, "cloudLayer", "Cloud Layer (Legacy)", kCloudLayerPins},
     {NodeKind::CloudWeatherLayer, "cloudWeatherLayer", "Cloud Weather Layer", kCloudWeatherPins},
@@ -380,8 +389,24 @@ bool IsLayerMaskSourceKind(NodeKind kind) {
 bool IsPreviewableNodeKind(NodeKind kind) {
     // マスクは見ながら調整するものなので、どのマスクノードもプレビューできる。
     // パスは Base に繋いだ地形（沿う面）を出す。Terrain は地形グラフの結果を出す。
-    return IsLayerNodeKind(kind) || IsMaskNodeKind(kind) || kind == NodeKind::Path ||
+    return IsLayerNodeKind(kind) || IsMaskNodeKind(kind) || IsPathLikeNodeKind(kind) ||
            kind == NodeKind::Terrain;
+}
+
+bool IsPathLikeNodeKind(NodeKind kind) {
+    return kind == NodeKind::Path || kind == NodeKind::RoadPath;
+}
+
+PathSettings* EditablePathSettings(Node& node) {
+    if (auto* path = std::get_if<PathNodeSettings>(&node.settings)) return &path->path;
+    if (auto* road = std::get_if<RoadPathNodeSettings>(&node.settings)) return &road->road.path;
+    return nullptr;
+}
+
+const PathSettings* EditablePathSettings(const Node& node) {
+    if (const auto* path = std::get_if<PathNodeSettings>(&node.settings)) return &path->path;
+    if (const auto* road = std::get_if<RoadPathNodeSettings>(&node.settings)) return &road->road.path;
+    return nullptr;
 }
 
 compositor::LayerKind LayerKindFor(NodeKind kind) {
@@ -942,6 +967,11 @@ GraphId NodeGraph::CreateNode(NodeKind kind) {
     } else if (kind == NodeKind::Missing) { node.settings = MissingNodeSettings{};
     } else if (kind == NodeKind::Path) {
         node.settings = PathNodeSettings{};
+    } else if (kind == NodeKind::RoadPath) {
+        RoadPathNodeSettings road;
+        road.road.path.defaultWidthMeters = kRoadDefaultWidthMeters;
+        road.road.path.defaultFeatherMeters = kRoadDefaultFeatherMeters;
+        node.settings = road;
     } else if (kind == NodeKind::Terrain) {
         node.settings = TerrainNodeSettings{};
     } else {
@@ -1091,7 +1121,7 @@ const Node* NodeGraph::PreviewTop(GraphId nodeId) const {
     // チェーンだけを見る。未接続のときに Output 側の別チェーンへ落とすと
     // 無関係な地形が見えるので、nullptr を返して中立平面を作らせる。
     if (node != nullptr &&
-        (node->kind == NodeKind::Path || IsHeightMaskNodeKind(node->kind))) {
+        (IsPathLikeNodeKind(node->kind) || IsHeightMaskNodeKind(node->kind))) {
         for (const Pin& pin : node->inputs) {
             if (pin.valueType != ValueType::Material) {
                 continue;
@@ -1887,7 +1917,7 @@ CompiledGraph NodeGraph::CompileLayersWithPoints() const {
 CompiledGraph NodeGraph::CompilePathRouteInputs(GraphId pathNodeId, int& avoidOp) const {
     avoidOp = -1;
     const Node* node = FindNode(pathNodeId);
-    if (node == nullptr || node->kind != NodeKind::Path) {
+    if (node == nullptr || !IsPathLikeNodeKind(node->kind)) {
         return CompileLayers();
     }
     ChainTrace trace;
@@ -1979,7 +2009,7 @@ CompiledGraph NodeGraph::CompileLayersTo(GraphId nodeId, GraphId outputPin) cons
         RecordLayerSources(trace.layerNodes, compiled);
         return compiled;
     }
-    if (node->kind == NodeKind::Path) {
+    if (IsPathLikeNodeKind(node->kind)) {
         // パスは Base に繋いだ地形（沿う面）を見せる。
         return CompileChainFrom(PreviewTop(nodeId));
     }
