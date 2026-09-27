@@ -217,8 +217,8 @@ void RunRoadPathTests() {
         Check(Near(std::abs(outer.position.z - edge.position.z), 2.0f, 1e-3f) && outer.position.z < edge.position.z,
               "左の路肩は外（左）へ幅の分だけ張り出す");
         Check(Near(outer.position.y, edge.position.y - 0.1f, 1e-4f), "横断勾配 5% で 2 m 先は 10 cm 下がる");
-        Check(Near(outer.uv.x, 2.0f, 1e-4f) && Near(left.vertices[leftStride * 50].uv.y, surface.vertices[stride * 50].uv.y, 1e-4f),
-              "UV の x は内側の端からの横位置、y は路面と同じ道のり");
+        Check(Near(outer.uv.x, std::hypot(2.0f, 0.1f), 1e-4f) && Near(left.vertices[leftStride * 50].uv.y, surface.vertices[stride * 50].uv.y, 1e-4f),
+              "UV の x は内側の端から断面に沿った長さ、y は路面と同じ道のり");
         bool up = true;
         for (const auto& v : left.vertices) up = up && v.normal.y > 0.99f;
         Check(up, "路肩の法線は上向き");
@@ -237,9 +237,45 @@ void RunRoadPathTests() {
         step.stepHeightMeters = 0.15f;
         tg::renderer::MeshData curb;
         uint32_t curbStride = 0;
-        Check(BuildRoadShoulder(surface, stride, 0, 1, step, curb, curbStride, &error) && curbStride == 4 &&
-                  Near(curb.vertices[1].position.y, edge.position.y - 0.15f - 0.05f * 0.05f, 1e-4f),
-              "段差は面取りの列を足し、そこで段差の分だけ下げる");
+        Check(BuildRoadShoulder(surface, stride, 0, 1, step, curb, curbStride, &error) && curbStride == 5 &&
+                  Near(curb.vertices[1].position.y, edge.position.y - 0.15f - 0.05f * 0.05f, 1e-4f) &&
+                  Near(curb.vertices[2].position.y, curb.vertices[1].position.y, 1e-6f),
+              "段差は面取りの列を足し、そこで段差の分だけ下げる（角は列を重ねる）");
+
+        // 断面の点: 縁石 15 cm で上がり、2 m の歩道。
+        RoadShoulderSettings walk;
+        walk.shape = RoadShoulderShape::Section;
+        walk.section = ShoulderSectionTemplate(RoadSectionTemplate::Sidewalk);
+        Check(ValidateShoulderSection(walk.section, &error), "歩道のひな形は正しい断面");
+        tg::renderer::MeshData sidewalk;
+        uint32_t walkStride = 0;
+        Check(BuildRoadShoulder(surface, stride, 0, 1, walk, sidewalk, walkStride, &error) && walkStride == 5,
+              "縁石の立ち上がり 1 列 + 角の重ね 1 列 + 歩道 2 m を 1 m ごと");
+        const auto& kerbTop = sidewalk.vertices[1];
+        Check(Near(kerbTop.position.x, edge.position.x, 1e-5f) && Near(kerbTop.position.z, edge.position.z, 1e-5f) &&
+                  Near(kerbTop.position.y, edge.position.y + 0.15f, 1e-5f),
+              "縁石の上端は端の真上 15 cm");
+        Check(sidewalk.vertices[stride * 0].normal.z > 0.99f, "縁石の立ち上がりの面は道路側（左の路肩では +Z）を向く");
+        Check(sidewalk.vertices[2].normal.y > 0.99f, "角の外の列は歩道の面の法線（上向き）");
+        Check(Near(sidewalk.vertices[walkStride - 1].uv.x, 0.15f + std::hypot(2.0f, 0.04f), 1e-4f),
+              "UV の x は断面に沿った長さ");
+        tg::renderer::MeshData beyond;
+        uint32_t beyondStride = 0;
+        Check(BuildRoadShoulder(sidewalk, walkStride, walkStride - 1, walkStride - 2, shoulder, beyond, beyondStride,
+                                &error),
+              "歩道の外側の端からさらに路肩を重ねられる");
+
+        RoadShoulderSettings gutter = walk;
+        gutter.section = ShoulderSectionTemplate(RoadSectionTemplate::Gutter);
+        tg::renderer::MeshData ditch;
+        uint32_t ditchStride = 0;
+        Check(BuildRoadShoulder(surface, stride, 0, 1, gutter, ditch, ditchStride, &error),
+              "側溝のひな形（縦の面が下りと上りの両方）も作れる");
+        Check(ValidateShoulderSection(ShoulderSectionTemplate(RoadSectionTemplate::SoilShoulder), &error),
+              "土の路肩のひな形は正しい断面");
+        Check(!ValidateShoulderSection({{1.0f, 0.0f}, {0.5f, 0.0f}}, &error), "外への距離が戻る断面は断る");
+        Check(!ValidateShoulderSection({{0.0f, 0.2f}, {0.0f, 0.0f}, {1.0f, 0.0f}}, &error), "縦に折り返す断面は断る");
+        Check(Near(ShoulderSectionLength(shoulder), std::hypot(2.0f, 0.1f), 1e-4f), "勾配の形の断面の長さ");
 
         tg::renderer::MeshData outer2;
         uint32_t outerStride = 0;

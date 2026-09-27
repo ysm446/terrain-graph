@@ -105,6 +105,75 @@ bool BuildRoadMesh(const RoadPathSettings& road, const RoadProfileCurve& centerl
     return true;
 }
 
+std::vector<RoadSectionPoint> ShoulderSectionPoints(const RoadShoulderSettings& settings) {
+    std::vector<RoadSectionPoint> points{{0.0f, 0.0f}};
+    if (settings.shape == RoadShoulderShape::Section) {
+        points.insert(points.end(), settings.section.begin(), settings.section.end());
+        return points;
+    }
+    // 勾配の形: 段差があれば面取りの点、外側の端。
+    const float width = std::clamp(settings.widthMeters, kShoulderMinWidthMeters, kShoulderMaxWidthMeters);
+    const float drop = settings.crossSlopePercent * 0.01f;
+    const float step = std::max(settings.stepHeightMeters, 0.0f);
+    if (step > 0.0f) {
+        const float stepLateral = std::min(std::max(settings.stepWidthMeters, 0.005f), width * 0.5f);
+        points.push_back({stepLateral, -(step + drop * stepLateral)});
+    }
+    points.push_back({width, -(step + drop * width)});
+    return points;
+}
+
+bool ValidateShoulderSection(const std::vector<RoadSectionPoint>& section, std::string* error) {
+    const auto fail = [&](const char* message) { if (error) *error = message; return false; };
+    if (section.empty()) return fail("断面の点がありません");
+    if (section.size() > kShoulderMaxSectionPoints) return fail("断面の点が多すぎます");
+    RoadSectionPoint previous{0.0f, 0.0f};
+    float previousDx = 0.0f, previousDy = 0.0f, previousLength = 0.0f;
+    for (const RoadSectionPoint& point : section) {
+        if (!std::isfinite(point.acrossMeters) || !std::isfinite(point.heightMeters)) return fail("断面の点が不正です");
+        if (std::abs(point.heightMeters) > kShoulderMaxSectionHeight) return fail("断面の高さが大きすぎます");
+        const float dx = point.acrossMeters - previous.acrossMeters;
+        const float dy = point.heightMeters - previous.heightMeters;
+        if (dx < -1e-5f) return fail("断面の点は外へ向かう順に並べてください（外への距離を減らさない）");
+        const float length = std::hypot(dx, dy);
+        if (length < 0.005f) return fail("断面の点が近すぎます（5 mm 未満）");
+        // 縦の面で折り返す（上がってすぐ下がる）と面が重なる。
+        if (previousLength > 0.0f && (dx * previousDx + dy * previousDy) < -0.95f * length * previousLength)
+            return fail("断面が折り返しています");
+        previous = point;
+        previousDx = dx;
+        previousDy = dy;
+        previousLength = length;
+    }
+    if (section.back().acrossMeters < kShoulderMinWidthMeters) return fail("断面の外側の端が内側の端に近すぎます");
+    if (section.back().acrossMeters > kShoulderMaxWidthMeters) return fail("断面の幅が広すぎます");
+    return true;
+}
+
+float ShoulderSectionLength(const RoadShoulderSettings& settings) {
+    const std::vector<RoadSectionPoint> points = ShoulderSectionPoints(settings);
+    float length = 0.0f;
+    for (size_t i = 1; i < points.size(); ++i)
+        length += std::hypot(points[i].acrossMeters - points[i - 1].acrossMeters,
+                             points[i].heightMeters - points[i - 1].heightMeters);
+    return length;
+}
+
+std::vector<RoadSectionPoint> ShoulderSectionTemplate(RoadSectionTemplate kind) {
+    switch (kind) {
+    case RoadSectionTemplate::Sidewalk:
+        // 縁石 15 cm で上がり、2 m の歩道（道路へ向かって 2% 下がる）。
+        return {{0.0f, 0.15f}, {2.0f, 0.19f}};
+    case RoadSectionTemplate::Gutter:
+        // 10 cm の縁の外に幅 30 cm・深さ 30 cm の U 字の側溝、その外に 60 cm の土の路肩。
+        return {{0.1f, 0.0f}, {0.1f, -0.3f}, {0.4f, -0.3f}, {0.4f, 0.0f}, {1.0f, -0.02f}};
+    case RoadSectionTemplate::SoilShoulder:
+        // 50 cm ほぼ平らに続き、外の 1 m で 30 cm 下がる。
+        return {{0.5f, -0.02f}, {1.5f, -0.3f}};
+    }
+    return {{1.5f, -0.06f}};
+}
+
 bool BuildRoadShoulder(const renderer::MeshData& source, uint32_t sourceStride, uint32_t edgeColumn,
                        uint32_t innerColumn, const RoadShoulderSettings& settings, renderer::MeshData& out,
                        uint32_t& outStride, std::string* error) {
@@ -112,69 +181,116 @@ bool BuildRoadShoulder(const renderer::MeshData& source, uint32_t sourceStride, 
     out.vertices.clear();
     out.indices.clear();
     outStride = 0;
-    const float width = std::clamp(settings.widthMeters, kShoulderMinWidthMeters, kShoulderMaxWidthMeters);
     if (sourceStride < 2 || source.vertices.size() < static_cast<size_t>(sourceStride) * 2 ||
         source.vertices.size() % sourceStride != 0)
         return fail("路肩の元になる面がありません");
     if (edgeColumn >= sourceStride || innerColumn >= sourceStride || edgeColumn == innerColumn)
         return fail("路肩の端の列が不正です");
+    if (settings.shape == RoadShoulderShape::Section && !ValidateShoulderSection(settings.section, error)) return false;
     const size_t rows = source.vertices.size() / sourceStride;
+    const std::vector<RoadSectionPoint> points = ShoulderSectionPoints(settings);
 
-    // 列の横位置。端 0、（段差があれば）面取りの列、以後は約 1 m ごとに外側の端まで。
-    const bool stepped = settings.stepHeightMeters > 0.0f;
-    const float stepLateral = std::min(std::max(settings.stepWidthMeters, 0.005f), width * 0.5f);
-    std::vector<float> laterals{0.0f};
-    if (stepped) laterals.push_back(stepLateral);
-    const int cells = std::max(1, static_cast<int>(std::ceil(width)));
-    for (int cell = 1; cell <= cells; ++cell) {
-        const float lateral = width * static_cast<float>(cell) / static_cast<float>(cells);
-        if (lateral > laterals.back() + 1e-4f) laterals.push_back(lateral);
+    // 列。断面の区間を約 1 m ごとに割る。角（向きが約 20° より大きく変わる点）は同じ点の列を 2 つ
+    // 重ね、そこで面をつながない（法線を分けて稜線を立てる）。u は断面に沿った長さ。
+    struct Column {
+        float across = 0, height = 0, u = 0;
+        bool joinNext = true;  // 次の列との間に面を張るか
+        float tangentAcross = 1, tangentHeight = 0;  // 断面に沿う向き（接線）
+    };
+    std::vector<Column> columns{{0.0f, 0.0f, 0.0f}};
+    float arc = 0.0f;
+    for (size_t i = 1; i < points.size(); ++i) {
+        const float dx = points[i].acrossMeters - points[i - 1].acrossMeters;
+        const float dy = points[i].heightMeters - points[i - 1].heightMeters;
+        const float length = std::hypot(dx, dy);
+        if (length < 1e-6f) continue;
+        if (i > 1) {
+            // 前の区間との角。
+            const float px = points[i - 1].acrossMeters - points[i - 2].acrossMeters;
+            const float py = points[i - 1].heightMeters - points[i - 2].heightMeters;
+            const float plen = std::hypot(px, py);
+            if (plen > 1e-6f && (px * dx + py * dy) < std::cos(XMConvertToRadians(20.0f)) * plen * length) {
+                columns.back().joinNext = false;
+                columns.push_back(columns.back());
+                columns.back().joinNext = true;
+            }
+        }
+        columns.back().tangentAcross = dx / length;
+        columns.back().tangentHeight = dy / length;
+        // 1 m をわずかに超えるだけ（勾配で斜めの長さが伸びた分）なら割らない。
+        const int steps = std::max(1, static_cast<int>(std::ceil(length - 0.05f)));
+        for (int step = 1; step <= steps; ++step) {
+            const float t = static_cast<float>(step) / static_cast<float>(steps);
+            columns.push_back({points[i - 1].acrossMeters + dx * t, points[i - 1].heightMeters + dy * t,
+                               arc + length * t, true, dx / length, dy / length});
+        }
+        arc += length;
     }
-    const uint32_t stride = static_cast<uint32_t>(laterals.size());
+    const uint32_t stride = static_cast<uint32_t>(columns.size());
+    if (stride < 2) return fail("路肩の断面に幅がありません");
     if (rows * stride > kMaxRoadVertices) return fail("路肩の頂点が多すぎます");
-    const float drop = settings.crossSlopePercent * 0.01f;
+
+    // 外向きは、端から内側の列を引いた水平成分。内側の帯の端が縦の面（縁石の外など）なら、
+    // 水平に離れた列までさらに内へ辿る。
+    const int inward = innerColumn > edgeColumn ? 1 : -1;
+    std::vector<XMFLOAT2> outwards(rows);
+    for (size_t row = 0; row < rows; ++row) {
+        const renderer::MeshVertex& edge = source.vertices[row * sourceStride + edgeColumn];
+        float ox = 0.0f, oz = 0.0f, length = 0.0f;
+        for (int column = static_cast<int>(innerColumn); column >= 0 && column < static_cast<int>(sourceStride);
+             column += inward) {
+            const renderer::MeshVertex& inner = source.vertices[row * sourceStride + column];
+            ox = edge.position.x - inner.position.x;
+            oz = edge.position.z - inner.position.z;
+            length = std::hypot(ox, oz);
+            if (length >= 1e-4f) break;
+        }
+        if (length < 1e-4f) return fail("端の幅が 0 の行があります");
+        outwards[row] = {ox / length, oz / length};
+    }
 
     out.vertices.resize(rows * stride);
     for (size_t row = 0; row < rows; ++row) {
         const renderer::MeshVertex& edge = source.vertices[row * sourceStride + edgeColumn];
-        const renderer::MeshVertex& inner = source.vertices[row * sourceStride + innerColumn];
-        // 外向きは、端から隣の列を引いた水平成分。
-        float ox = edge.position.x - inner.position.x;
-        float oz = edge.position.z - inner.position.z;
-        const float length = std::hypot(ox, oz);
-        if (length < 1e-5f) return fail("端の幅が 0 の行があります");
-        ox /= length;
-        oz /= length;
+        const float ox = outwards[row].x, oz = outwards[row].y;
         for (uint32_t column = 0; column < stride; ++column) {
-            const float lateral = laterals[column];
+            const Column& c = columns[column];
             renderer::MeshVertex& v = out.vertices[row * stride + column];
             v.position = edge.position;
             if (column > 0) {
-                v.position.x += ox * lateral;
-                v.position.z += oz * lateral;
-                v.position.y -= drop * lateral + (stepped ? settings.stepHeightMeters : 0.0f);
+                v.position.x += ox * c.across;
+                v.position.z += oz * c.across;
+                v.position.y += c.height;
             }
             v.normal = {0.0f, 0.0f, 0.0f};
-            v.tangent = {ox, 0.0f, oz, 1.0f};
-            v.uv = {lateral, edge.uv.y};
+            v.tangent = {ox * c.tangentAcross, c.tangentHeight, oz * c.tangentAcross, 1.0f};
+            v.uv = {c.u, edge.uv.y};
         }
     }
-    // 三角形。左右どちらの端かで列の並びの向きが変わるので、法線が上を向くように並べる。
+    // 三角形。左右どちらの端かで列の並びの向きが変わるので、平らな面なら法線が上を向く並びにする。
+    // 面は断面の区間の向きから決まる向き（外への距離 da、高さ dh に対し 外向き × (-dh) + 上 × da。
+    // 縁石の立ち上がりは道路側を向く）を向くはずで、逆を向けばカーブの内側で裏返っている。
     out.indices.reserve((rows - 1) * (stride - 1) * 6);
     for (size_t row = 0; row + 1 < rows; ++row) {
+        const XMVECTOR along = XMVectorSubtract(XMLoadFloat3(&out.vertices[(row + 1) * stride].position),
+                                                XMLoadFloat3(&out.vertices[row * stride].position));
+        const XMVECTOR outward = XMVectorSet(outwards[row].x, 0.0f, outwards[row].y, 0.0f);
+        const bool flip = XMVectorGetY(XMVector3Cross(along, outward)) < 0.0f;
         for (uint32_t column = 0; column + 1 < stride; ++column) {
+            if (!columns[column].joinNext) continue;
+            const float da = columns[column + 1].across - columns[column].across;
+            const float dh = columns[column + 1].height - columns[column].height;
+            const XMVECTOR expected = XMVectorSet(outwards[row].x * -dh, da, outwards[row].y * -dh, 0.0f);
             const uint32_t a = static_cast<uint32_t>(row * stride + column);
             const uint32_t tris[2][3] = {{a, a + stride, a + 1}, {a + 1, a + stride, a + stride + 1}};
             for (const auto& tri : tris) {
                 uint32_t x = tri[0], y = tri[1], z = tri[2];
+                if (flip) std::swap(y, z);
                 const XMVECTOR px = XMLoadFloat3(&out.vertices[x].position);
-                XMVECTOR face = XMVector3Cross(XMVectorSubtract(XMLoadFloat3(&out.vertices[y].position), px),
-                                               XMVectorSubtract(XMLoadFloat3(&out.vertices[z].position), px));
-                if (XMVectorGetY(face) < 0.0f) {
-                    std::swap(y, z);
-                    face = XMVectorNegate(face);
-                }
-                if (XMVectorGetY(face) <= 1e-7f) return fail("幅に対してカーブが急すぎて路肩が裏返ります");
+                const XMVECTOR face = XMVector3Cross(XMVectorSubtract(XMLoadFloat3(&out.vertices[y].position), px),
+                                                     XMVectorSubtract(XMLoadFloat3(&out.vertices[z].position), px));
+                if (XMVectorGetX(XMVector3Dot(face, expected)) <= 1e-9f)
+                    return fail("幅に対してカーブが急すぎて路肩が裏返ります");
                 for (const uint32_t index : {x, y, z}) {
                     XMFLOAT3& n = out.vertices[index].normal;
                     XMStoreFloat3(&n, XMVectorAdd(XMLoadFloat3(&n), face));
@@ -183,7 +299,7 @@ bool BuildRoadShoulder(const renderer::MeshData& source, uint32_t sourceStride, 
             }
         }
     }
-    // 法線と接線。接線は U（内側 → 外側）の向き。従法線 cross(N, T) が道のりの増える向き（+V）に
+    // 法線と接線。接線は U（断面に沿って外へ）の向き。従法線 cross(N, T) が道のりの増える向き（+V）に
     // なるよう w を決める（左の路肩では外向きが左なので w = -1 になる）。
     for (size_t row = 0; row < rows; ++row) {
         const size_t next = row + 1 < rows ? row + 1 : row;
@@ -193,7 +309,9 @@ bool BuildRoadShoulder(const renderer::MeshData& source, uint32_t sourceStride, 
             const XMVECTOR n = XMVector3Normalize(XMLoadFloat3(&v.normal));
             XMStoreFloat3(&v.normal, n);
             XMVECTOR t = XMVectorSet(v.tangent.x, v.tangent.y, v.tangent.z, 0.0f);
-            t = XMVector3Normalize(XMVectorSubtract(t, XMVectorScale(n, XMVectorGetX(XMVector3Dot(n, t)))));
+            t = XMVectorSubtract(t, XMVectorScale(n, XMVectorGetX(XMVector3Dot(n, t))));
+            if (XMVectorGetX(XMVector3LengthSq(t)) < 1e-10f) t = XMVectorSet(outwards[row].x, 0.0f, outwards[row].y, 0.0f);
+            t = XMVector3Normalize(t);
             const XMVECTOR along = XMVectorSubtract(XMLoadFloat3(&out.vertices[next * stride + column].position),
                                                     XMLoadFloat3(&out.vertices[prev * stride + column].position));
             const float w = XMVectorGetX(XMVector3Dot(XMVector3Cross(n, t), along)) < 0.0f ? -1.0f : 1.0f;

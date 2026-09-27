@@ -1900,6 +1900,15 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
                                 {"uvRepeat", m.uvRepeatMeters}, {"material", writeMaterial(m.material)}};
             if (!m.boundaryPath.empty() || !m.boundaryUid.empty())
                 item["shoulder"]["boundary"] = {{"path", m.boundaryPath}, {"uid", m.boundaryUid}};
+            static const char* const kShoulderShapeNames[] = {"slope", "section"};
+            item["shoulder"]["shape"] = EnumName(kShoulderShapeNames, static_cast<uint32_t>(m.shape));
+            // 断面の点は勾配の形のときも残す（形を切り替えても失わない）。
+            if (!m.section.empty()) {
+                json section = json::array();
+                for (const graph::RoadSectionPoint& point : m.section)
+                    section.push_back(json::array({point.acrossMeters, point.heightMeters}));
+                item["shoulder"]["section"] = std::move(section);
+            }
         } else if (const auto* roadMesh = std::get_if<graph::RoadMeshNodeSettings>(&node.settings)) {
             const graph::RoadMeshSettings& m = roadMesh->mesh;
             item["roadMesh"] = {{"width", m.widthMeters}, {"lanesForward", m.lanesForward},
@@ -2292,6 +2301,22 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                         m.boundaryPath = ReadString(*boundary, "path", "");
                         m.boundaryUid = ReadString(*boundary, "uid", "");
                     }
+                    static const char* const kShoulderShapeNames[] = {"slope", "section"};
+                    m.shape = static_cast<graph::RoadShoulderShape>(
+                        EnumValue(kShoulderShapeNames, *values, "shape", static_cast<uint32_t>(d.shape)));
+                    if (const json* section = FindMember(*values, "section"); section != nullptr && section->is_array()) {
+                        for (const json& point : *section) {
+                            if (m.section.size() >= graph::kShoulderMaxSectionPoints) break;
+                            if (!point.is_array() || point.size() != 2 || !point[0].is_number() || !point[1].is_number())
+                                continue;
+                            m.section.push_back(
+                                {std::clamp(point[0].get<float>(), 0.0f, graph::kShoulderMaxWidthMeters),
+                                 std::clamp(point[1].get<float>(), -graph::kShoulderMaxSectionHeight,
+                                            graph::kShoulderMaxSectionHeight)});
+                        }
+                    }
+                    // 断面の点が無ければ勾配の形に戻す。
+                    if (m.section.empty()) m.shape = graph::RoadShoulderShape::Slope;
                 }
                 created.settings = std::move(settings);
             } else if (created.kind == graph::NodeKind::RoadMesh) {

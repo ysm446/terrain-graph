@@ -84,6 +84,11 @@ uint64_t ShoulderGeometryKey(uint64_t sourceKey, int side, const graph::RoadShou
     hash = HashValue(hash, shoulder.crossSlopePercent);
     hash = HashValue(hash, shoulder.stepHeightMeters);
     hash = HashValue(hash, shoulder.stepWidthMeters);
+    hash = HashValue(hash, static_cast<uint32_t>(shoulder.shape));
+    for (const graph::RoadSectionPoint& point : shoulder.section) {
+        hash = HashValue(hash, point.acrossMeters);
+        hash = HashValue(hash, point.heightMeters);
+    }
     return hash;
 }
 
@@ -237,7 +242,9 @@ void Application::PrepareRoadMeshes() {
                 std::copy(std::begin(kShoulderFallbackColor), std::end(kShoulderFallbackColor), item.fallbackColor);
                 item.hasMaterial = SurfaceMaterialGpu(settings.material, settings.uvRepeatMeters, item.material,
                                                       &status.materialError);
-                if (item.hasMaterial) SetShoulderContext(item.material, settings.widthMeters);
+                // 帯の幅（断面に沿った長さ。UV の x の範囲）。
+                const float stripWidth = graph::ShoulderSectionLength(settings);
+                if (item.hasMaterial) SetShoulderContext(item.material, stripWidth);
                 // 内側の境界。内側の帯の材質と、境界マテリアルのマスク・ハイト。
                 item.hasInner = edges[side].hasMaterial;
                 item.innerMaterial = edges[side].material;
@@ -253,7 +260,7 @@ void Application::PrepareRoadMeshes() {
                             b.maskIndex = m_textureLibrary.SrvIndex(boundary->mask, false);
                             b.heightIndex = m_textureLibrary.SrvIndex(boundary->height, false);
                             // 幅は路肩の幅に収める（反対側の端まで食い込ませない）。
-                            b.widthMeters = std::min(boundary->widthMeters, std::max(settings.widthMeters, 0.0f));
+                            b.widthMeters = std::min(boundary->widthMeters, stripWidth);
                             b.repeatMeters = boundary->repeatMeters;
                             b.depthMeters = boundary->depthMeters;
                             b.heightCenter = boundary->heightCenter;
@@ -263,8 +270,6 @@ void Application::PrepareRoadMeshes() {
                     }
                 }
                 items.push_back(item);
-                const float stripWidth = std::clamp(settings.widthMeters, graph::kShoulderMinWidthMeters,
-                                                    graph::kShoulderMaxWidthMeters);
                 edges[side] = {&strip, strip.stride - 1, strip.stride - 2, item.hasMaterial, item.material, stripWidth, 1.0f,
                                kShoulderFallbackColor};
             }
@@ -430,6 +435,104 @@ bool Application::SaveBoundary(BoundaryAsset& asset) {
     return true;
 }
 
+namespace {
+// 断面図の高さ（96 DPI 基準）。
+constexpr float kSectionPlotHeight = 110.0f;
+}  // namespace
+
+// 路肩の断面の点（断面図と、点ごとの外への距離・高さ）。
+bool Application::DrawShoulderSection(graph::RoadShoulderSettings& shoulder) {
+    bool changed = false;
+    std::vector<graph::RoadSectionPoint>& section = shoulder.section;
+
+    // 断面図。横が内側の端からの外への距離、縦が高さ（縦横同じ縮尺）。内側の帯は左に淡く描く。
+    {
+        const std::vector<graph::RoadSectionPoint> points = graph::ShoulderSectionPoints(shoulder);
+        const float width = ImGui::GetContentRegionAvail().x;
+        const float height = ui::Scaled(kSectionPlotHeight);
+        const ImVec2 min = ImGui::GetCursorScreenPos();
+        const ImVec2 max(min.x + width, min.y + height);
+        ImGui::InvisibleButton("##shoulderSectionPlot", ImVec2(width, height));
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        drawList->AddRectFilled(min, max, ImGui::GetColorU32(ImGuiCol_FrameBg), ImGui::GetStyle().FrameRounding);
+        drawList->AddRect(min, max, ImGui::GetColorU32(ImGuiCol_Border), ImGui::GetStyle().FrameRounding);
+        float right = 0.5f, low = 0.0f, high = 0.0f;
+        for (const graph::RoadSectionPoint& point : points) {
+            right = std::max(right, point.acrossMeters);
+            low = std::min(low, point.heightMeters);
+            high = std::max(high, point.heightMeters);
+        }
+        const float left = -std::max(0.5f, right * 0.2f);  // 内側の帯を見せる分
+        const float spanX = right - left;
+        const float spanY = std::max(high - low, 0.1f);
+        const float pad = ui::Scaled(10.0f);
+        // 上下は文字の行の分も空ける（寸法の文字と線が重ならないように）。
+        const float padY = pad + ImGui::GetTextLineHeight();
+        const float scale = std::min((width - pad * 2.0f) / spanX, (height - padY * 2.0f) / spanY);
+        const float centerY = (high + low) * 0.5f;
+        const auto toScreen = [&](float across, float y) {
+            return ImVec2(min.x + pad + (across - left) * scale, (min.y + max.y) * 0.5f - (y - centerY) * scale);
+        };
+        drawList->PushClipRect(min, max, true);
+        drawList->AddLine(toScreen(left, 0.0f), toScreen(0.0f, 0.0f), ImGui::GetColorU32(ImGuiCol_TextDisabled),
+                          ui::Scaled(2.0f));
+        std::vector<ImVec2> line;
+        for (const graph::RoadSectionPoint& point : points) line.push_back(toScreen(point.acrossMeters, point.heightMeters));
+        drawList->AddPolyline(line.data(), static_cast<int>(line.size()), ImGui::GetColorU32(ImGuiCol_CheckMark), 0,
+                              ui::Scaled(2.0f));
+        for (size_t i = 1; i < line.size(); ++i)
+            drawList->AddCircleFilled(line[i], ui::Scaled(3.0f), ImGui::GetColorU32(ImGuiCol_CheckMark));
+        char text[64] = {};
+        std::snprintf(text, sizeof(text), "%.2f m", right);
+        drawList->AddText(ImVec2(max.x - pad - ImGui::CalcTextSize(text).x, max.y - pad * 0.5f - ImGui::GetTextLineHeight()),
+                          ImGui::GetColorU32(ImGuiCol_TextDisabled), text);
+        std::snprintf(text, sizeof(text), "高さ %+.2f 〜 %+.2f m", low, high);
+        drawList->AddText(ImVec2(min.x + pad * 0.5f, min.y + pad * 0.3f), ImGui::GetColorU32(ImGuiCol_TextDisabled), text);
+        drawList->PopClipRect();
+    }
+    std::string error;
+    if (!graph::ValidateShoulderSection(section, &error))
+        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(ui::WarnColor()), "%s", error.c_str());
+
+    // 点ごとの行。内側の端 (0, 0) は固定なので出さない。
+    size_t removeIndex = section.size();
+    for (size_t i = 0; i < section.size(); ++i) {
+        graph::RoadSectionPoint& point = section[i];
+        ImGui::PushID(static_cast<int>(i));
+        ImGui::TextDisabled("断面の点 %zu", i + 1);
+        if (ui::BeginPropertyTable("shoulderSectionPoint")) {
+            changed |= ui::PropertyFloat("外への距離", &point.acrossMeters, 0.0f, graph::kShoulderMaxWidthMeters,
+                                         i > 0 ? section[i - 1].acrossMeters : 0.0f,
+                                         "内側の端から外への水平の距離（m）。前の点より小さくはしない。同じなら縦の面",
+                                         "%.3f m");
+            changed |= ui::PropertyFloat("高さ", &point.heightMeters, -graph::kShoulderMaxSectionHeight,
+                                         graph::kShoulderMaxSectionHeight, i > 0 ? section[i - 1].heightMeters : 0.0f,
+                                         "内側の端からの高さ（m）。正なら上", "%+.3f m");
+            if (section.size() > 1) {
+                ui::PropertyLabelEmpty("shoulderSectionPointDelete");
+                if (ui::Button("削除")) removeIndex = i;
+                ui::PropertyEnd();
+            }
+            ui::EndPropertyTable();
+        }
+        ImGui::PopID();
+    }
+    if (removeIndex < section.size()) {
+        section.erase(section.begin() + static_cast<std::ptrdiff_t>(removeIndex));
+        changed = true;
+    }
+    ImGui::BeginDisabled(section.size() >= graph::kShoulderMaxSectionPoints);
+    if (ui::Button("断面の点を追加", ui::kWideButtonWidth)) {
+        const graph::RoadSectionPoint last = section.empty() ? graph::RoadSectionPoint{} : section.back();
+        section.push_back({std::min(last.acrossMeters + 1.0f, graph::kShoulderMaxWidthMeters), last.heightMeters});
+        changed = true;
+    }
+    ImGui::EndDisabled();
+    ui::HintText("内側の端 (0, 0) から外へ向かう順に並べる。向きが大きく変わる点は稜線を立て、"
+                 "区間は約 1 m ごとに割る。材質は断面に沿った長さで貼る");
+    return changed;
+}
+
 bool Application::DrawShoulderSettings(graph::Node& node) {
     auto* settings = std::get_if<graph::ShoulderNodeSettings>(&node.settings);
     if (settings == nullptr) return false;
@@ -447,19 +550,45 @@ bool Application::DrawShoulderSettings(graph::Node& node) {
             shoulder.side = static_cast<graph::RoadShoulderSide>(side);
             changed = true;
         }
-        changed |= ui::PropertyFloat("幅", &shoulder.widthMeters, graph::kShoulderMinWidthMeters,
-                                     graph::kShoulderMaxWidthMeters, defaults.widthMeters,
-                                     "路肩の幅（m）。幅方向は約 1 m ごとに割る", "%.2f m");
-        changed |= ui::PropertyFloat("横断勾配", &shoulder.crossSlopePercent, -50.0f, 50.0f, defaults.crossSlopePercent,
-                                     "外側へ向かって下がる勾配（%）。負なら上がる", "%.1f %%");
-        changed |= ui::PropertyFloat("段差", &shoulder.stepHeightMeters, 0.0f, 0.5f, defaults.stepHeightMeters,
-                                     "内側の端で下げる高さ（m）。舗装の端や縁石の段。0 で段差なし", "%.3f m");
-        if (shoulder.stepHeightMeters > 0.0f) {
-            changed |= ui::PropertyFloat("段差の幅", &shoulder.stepWidthMeters, 0.005f, 1.0f, defaults.stepWidthMeters,
-                                         "段差を下りきるまでの水平の幅（m）", "%.3f m");
+        static const char* const kShapes[] = {"勾配", "断面の点"};
+        int shape = static_cast<int>(shoulder.shape);
+        if (ui::PropertyCombo("形", &shape, kShapes, 2, 0,
+                              "勾配: 幅・横断勾配・段差で決める。断面の点: 縁石や側溝のような横断の形を点で決める")) {
+            // 断面の点が無ければ、今の勾配の形から作る（切り替えても形が変わらない）。
+            if (shape == 1 && shoulder.section.empty()) {
+                const std::vector<graph::RoadSectionPoint> points = graph::ShoulderSectionPoints(shoulder);
+                shoulder.section.assign(points.begin() + 1, points.end());
+            }
+            shoulder.shape = static_cast<graph::RoadShoulderShape>(shape);
+            changed = true;
+        }
+        if (shoulder.shape == graph::RoadShoulderShape::Slope) {
+            changed |= ui::PropertyFloat("幅", &shoulder.widthMeters, graph::kShoulderMinWidthMeters,
+                                         graph::kShoulderMaxWidthMeters, defaults.widthMeters,
+                                         "路肩の幅（m）。幅方向は約 1 m ごとに割る", "%.2f m");
+            changed |= ui::PropertyFloat("横断勾配", &shoulder.crossSlopePercent, -50.0f, 50.0f,
+                                         defaults.crossSlopePercent, "外側へ向かって下がる勾配（%）。負なら上がる",
+                                         "%.1f %%");
+            changed |= ui::PropertyFloat("段差", &shoulder.stepHeightMeters, 0.0f, 0.5f, defaults.stepHeightMeters,
+                                         "内側の端で下げる高さ（m）。舗装の端や縁石の段。0 で段差なし", "%.3f m");
+            if (shoulder.stepHeightMeters > 0.0f) {
+                changed |= ui::PropertyFloat("段差の幅", &shoulder.stepWidthMeters, 0.005f, 1.0f,
+                                             defaults.stepWidthMeters, "段差を下りきるまでの水平の幅（m）", "%.3f m");
+            }
+        } else {
+            static const char* const kTemplates[] = {"選ぶ…", "歩道（縁石）", "側溝（U 字）", "土の路肩"};
+            int chosen = 0;
+            if (ui::PropertyCombo("ひな形", &chosen, kTemplates, 4, 0,
+                                  "断面の点をひな形で置き換える。歩道: 縁石 15 cm と幅 2 m の歩道。"
+                                  "側溝: 幅 30 cm・深さ 30 cm の U 字溝と土の路肩。土の路肩: 平らな 50 cm と外の下り") &&
+                chosen > 0) {
+                shoulder.section = graph::ShoulderSectionTemplate(static_cast<graph::RoadSectionTemplate>(chosen - 1));
+                changed = true;
+            }
         }
         ui::EndPropertyTable();
     }
+    if (shoulder.shape == graph::RoadShoulderShape::Section) changed |= DrawShoulderSection(shoulder);
 
     ui::SectionHeader("材質");
     if (ui::BeginPropertyTable("shoulderMaterialRows")) {
@@ -471,7 +600,7 @@ bool Application::DrawShoulderSettings(graph::Node& node) {
         }
         ui::EndPropertyTable();
     }
-    ui::HintText("路肩の座標（内側の端からの横位置、始点からの道のり）で貼る。なしなら砂利色の灰色で塗る");
+    ui::HintText("路肩の座標（内側の端から断面に沿った長さ、始点からの道のり）で貼る。なしなら砂利色の灰色で塗る");
 
     // --- 内側の境界（境界マテリアル） ---
     ui::SectionHeader("内側の境界");

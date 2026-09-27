@@ -188,6 +188,7 @@ private:
     // Road Mesh / Shoulder のプロパティ。変更があれば true。
     bool DrawRoadMeshSettings(graph::Node& node);
     bool DrawShoulderSettings(graph::Node& node);
+    bool DrawShoulderSection(graph::RoadShoulderSettings& shoulder);
     // Road Mesh / Shoulder のプロパティの「状態」節（作れなかった理由、延長、メッシュの量）。
     void DrawRoadNodeStatus(graph::GraphId nodeId, const char* disconnectedHint);
     // 境界マテリアル（.tgboundary）。読み込んだものを ID（無ければパス）で持つ。

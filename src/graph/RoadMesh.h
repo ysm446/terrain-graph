@@ -5,6 +5,7 @@
 #include "renderer/MeshData.h"
 
 #include <string>
+#include <vector>
 
 // Road Mesh（道路の路面のメッシュ）。Road Path の中心線（縦断を反映、1 m ごと）から、
 // 幅方向を約 1 m ごとに割った格子を作る。バンク角で断面を傾ける。
@@ -52,8 +53,23 @@ enum class RoadShoulderSide : uint32_t {
     Left = 1,   // 進行方向に向かって左
     Right = 2,  // 進行方向に向かって右
 };
+// 路肩の形の決め方。
+enum class RoadShoulderShape : uint32_t {
+    Slope = 0,    // 幅・横断勾配・段差で決める
+    Section = 1,  // 断面の点で決める（縁石・側溝など）
+};
+// 断面の点。内側の端からの外への距離と、内側の端からの高さ（m）。
+struct RoadSectionPoint {
+    float acrossMeters = 0.0f;
+    float heightMeters = 0.0f;
+};
 struct RoadShoulderSettings {
     RoadShoulderSide side = RoadShoulderSide::Both;
+    RoadShoulderShape shape = RoadShoulderShape::Slope;
+    // 断面の点（shape が Section のとき）。内側の端 (0, 0) は含めず、外へ向かう順に並べる。
+    // 外への距離は減らさない（同じなら縦の面。縁石の立ち上がりなど）。
+    std::vector<RoadSectionPoint> section;
+    // 以下の幅・横断勾配・段差は shape が Slope のとき。
     float widthMeters = 1.5f;
     // 横断勾配（%）。正なら外側へ向かって下がる。
     float crossSlopePercent = 4.0f;
@@ -71,11 +87,25 @@ struct RoadShoulderSettings {
 };
 inline constexpr float kShoulderMinWidthMeters = 0.1f;
 inline constexpr float kShoulderMaxWidthMeters = 20.0f;
+// 断面の点の数と高さの上限。
+inline constexpr size_t kShoulderMaxSectionPoints = 16;
+inline constexpr float kShoulderMaxSectionHeight = 5.0f;
+
+// 断面の点を、内側の端 (0, 0) から外側の端まで返す。勾配の形なら幅・横断勾配・段差から作る。
+std::vector<RoadSectionPoint> ShoulderSectionPoints(const RoadShoulderSettings& settings);
+// 断面の点を検査する（(0, 0) を含まない、RoadShoulderSettings::section の形）。
+bool ValidateShoulderSection(const std::vector<RoadSectionPoint>& section, std::string* error);
+// 断面に沿った長さ（m）。路肩の UV の x の範囲（内側の端 0 から外側の端まで）。
+float ShoulderSectionLength(const RoadShoulderSettings& settings);
+// 断面のひな形（UI の「ひな形」）。
+enum class RoadSectionTemplate : uint32_t { Sidewalk = 0, Gutter = 1, SoilShoulder = 2 };
+std::vector<RoadSectionPoint> ShoulderSectionTemplate(RoadSectionTemplate kind);
 
 // 路肩の帯を作る。source は内側の帯（路面か内側の路肩）、sourceStride はその 1 行の頂点数、
 // edgeColumn は張り出す端の列、innerColumn はその隣の列（外向きを決める）。
-// 列 0 は端の頂点をそのまま写す（内側の帯と隙間なくつながる）。UV は実寸: x = 内側の端からの
-// 横位置（0〜幅）、y = 道のり。outStride に 1 行の頂点数を返す（最後の列が外側の端）。
+// 列 0 は端の頂点をそのまま写す（内側の帯と隙間なくつながる）。UV は実寸: x = 内側の端から断面に
+// 沿った長さ、y = 道のり。断面の角（向きが大きく変わる点）は列を 2 つ重ねて稜線を立てる。
+// outStride に 1 行の頂点数を返す（最後の列が外側の端）。
 bool BuildRoadShoulder(const renderer::MeshData& source, uint32_t sourceStride, uint32_t edgeColumn,
                        uint32_t innerColumn, const RoadShoulderSettings& settings, renderer::MeshData& out,
                        uint32_t& outStride, std::string* error);
