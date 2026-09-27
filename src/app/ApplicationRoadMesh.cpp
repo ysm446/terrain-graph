@@ -435,6 +435,112 @@ bool Application::SaveBoundary(BoundaryAsset& asset) {
     return true;
 }
 
+void Application::DrawBoundaryAssetRows(BoundaryAsset& boundary) {
+    const BoundaryAsset defaults;
+    bool edited = false;
+    edited |= DrawTextureSlotRow("マスク", boundary.mask, m_textureLibrary, m_pendingAssetReveal);
+    edited |= DrawTextureSlotRow("ハイト", boundary.height, m_textureLibrary, m_pendingAssetReveal);
+    edited |= ui::PropertyFloat("境界の幅", &boundary.widthMeters, 0.01f, 20.0f, defaults.widthMeters,
+                                "内側の端から、境目の模様を置く幅（m）。路肩の幅より広くはしない", "%.2f m");
+    edited |= ui::PropertyFloat("繰り返し長", &boundary.repeatMeters, 0.01f, 100.0f, defaults.repeatMeters,
+                                "道に沿って模様が 1 周する長さ（m）", "%.2f m", ImGuiSliderFlags_Logarithmic);
+    edited |= ui::PropertyFloat("深さ", &boundary.depthMeters, 0.0f, 0.5f, defaults.depthMeters,
+                                "ハイトの凹凸の深さ（m）。(ハイト - 基準) × 2 × 深さ。今は陰影だけに効く", "%.3f m");
+    edited |= ui::PropertyFloat("基準の高さ", &boundary.heightCenter, 0.0f, 1.0f, defaults.heightCenter,
+                                "ハイト画像の平らな所の値", "%.2f");
+    static const char* const kAxes[] = {"V（道に沿う向き）", "U（横切る向き）"};
+    int axis = boundary.alongU ? 1 : 0;
+    if (ui::PropertyCombo("繰り返しの向き", &axis, kAxes, 2, 0, "画像のどちらの向きを道に沿って繰り返すか")) {
+        boundary.alongU = axis == 1;
+        edited = true;
+    }
+    edited |= ui::PropertyBool("マスクを反転", &boundary.invertMask, defaults.invertMask,
+                               "マスクは白が内側の帯（路面）、黒が路肩。逆の画像のときに入れる");
+    if (edited) boundary.dirty = true;
+    ui::PropertyLabelEmpty("boundarySave");
+    ImGui::BeginDisabled(!boundary.dirty);
+    if (ui::Button("ファイルへ保存", ui::kWideButtonWidth)) SaveBoundary(boundary);
+    ImGui::EndDisabled();
+    ui::PropertyEnd();
+}
+
+void Application::OpenBoundaryPreview(const std::filesystem::path& file) {
+    const nlohmann::json reference = m_workspace.Reference(file);
+    m_boundaryPreviewPath = io::ProjectWorkspace::String(reference, "path");
+    m_boundaryPreviewUid = io::ProjectWorkspace::String(reference, "uid");
+    m_showBoundaryPreview = true;
+}
+
+// 境界マテリアルの窓。上にマスクとハイトの画像、下に設定（路肩のプロパティと同じ行）。
+// 開くのはアセットブラウザのダブルクリックか、路肩のプロパティのボタン。
+void Application::DrawBoundaryPreviewWindow() {
+    if (!m_showBoundaryPreview) return;
+    ImGui::SetNextWindowSize(ImVec2(ui::Scaled(460.0f), ui::Scaled(640.0f)), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("境界マテリアル", &m_showBoundaryPreview,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+        ImGui::End();
+        return;
+    }
+    BoundaryAsset* boundary = (m_boundaryPreviewPath.empty() && m_boundaryPreviewUid.empty())
+                                  ? nullptr
+                                  : AcquireBoundary(m_boundaryPreviewPath, m_boundaryPreviewUid);
+    if (boundary == nullptr) {
+        ui::HintText("アセットブラウザで .tgboundary をダブルクリックすると開く");
+        ImGui::End();
+        return;
+    }
+
+    // --- 上: マスクとハイトを横に並べる（U = 横、V = 縦の画像のまま） ---
+    const float paneSize = PreviewPaneSize() * 0.5f + ImGui::GetTextLineHeightWithSpacing();
+    ImGui::BeginChild("boundaryPreviewPane", ImVec2(0.0f, paneSize), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    {
+        const float spacing = ImGui::GetStyle().ItemSpacing.x;
+        const float imageSize = std::max(
+            std::min((ImGui::GetContentRegionAvail().x - spacing) * 0.5f,
+                     ImGui::GetContentRegionAvail().y - ImGui::GetTextLineHeightWithSpacing()),
+            ui::Scaled(32.0f));
+        const auto image = [&](const char* label, compositor::TextureId id) {
+            ImGui::BeginGroup();
+            ImGui::TextDisabled("%s", label);
+            const compositor::LibraryTexture* texture = m_textureLibrary.Find(id);
+            const ImVec2 min = ImGui::GetCursorScreenPos();
+            if (texture == nullptr || texture->missing) {
+                ui::MissingThumbnail(min, ImVec2(min.x + imageSize, min.y + imageSize));
+                ImGui::Dummy(ImVec2(imageSize, imageSize));
+            } else {
+                // R を灰色で見せる（マスクとハイトは R を読む）。
+                ImGui::Image(static_cast<ImTextureID>(texture->ChannelHandle(0).ptr), ImVec2(imageSize, imageSize));
+            }
+            ImGui::EndGroup();
+        };
+        image("マスク（R）", boundary->mask);
+        ImGui::SameLine();
+        image("ハイト（R）", boundary->height);
+    }
+    ImGui::EndChild();
+    ImGui::Separator();
+
+    // --- 下: 設定 ---
+    ImGui::BeginChild("boundaryPropertyPane", ImVec2(0.0f, 0.0f));
+    ui::SectionHeader("境界マテリアル");
+    if (!boundary->error.empty()) {
+        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(ui::WarnColor()), "%s", boundary->error.c_str());
+    } else if (ui::BeginPropertyTable("boundaryWindowRows", "繰り返しの向き")) {
+        ui::PropertyValue("名前", "%s", boundary->name.c_str());
+        DrawAssetPathRow("場所", boundary->path, m_pendingAssetReveal);
+        DrawBoundaryAssetRows(*boundary);
+        ui::EndPropertyTable();
+    }
+    ui::HintText(boundary->alongU
+                     ? "画像の V が内側（路面）から外へ横切る向き、U が道に沿って繰り返す向き"
+                     : "画像の U（左 → 右）が内側（路面）から外へ横切る向き、V が道に沿って繰り返す向き");
+    ui::HintText("マスクの白が内側の帯（路面）、黒が路肩。設定はこのファイルを使うすべての路肩に効き、"
+                 "「ファイルへ保存」でファイルへ書く");
+    ImGui::EndChild();
+    ImGui::End();
+}
+
 namespace {
 // 断面図の高さ（96 DPI 基準）。
 constexpr float kSectionPlotHeight = 110.0f;
@@ -604,7 +710,7 @@ bool Application::DrawShoulderSettings(graph::Node& node) {
 
     // --- 内側の境界（境界マテリアル） ---
     ui::SectionHeader("内側の境界");
-    if (ui::BeginPropertyTable("shoulderBoundaryRows", "マスクを反転")) {
+    if (ui::BeginPropertyTable("shoulderBoundaryRows", "繰り返しの向き")) {
         const std::vector<std::filesystem::path> files = m_workspace.AssetsWithExtension(L".tgboundary");
         const std::filesystem::path current =
             (shoulder.boundaryPath.empty() && shoulder.boundaryUid.empty())
@@ -636,38 +742,16 @@ bool Application::DrawShoulderSettings(graph::Node& node) {
         ui::PropertyEnd();
         BoundaryAsset* boundary = current.empty() ? nullptr : AcquireBoundary(shoulder.boundaryPath, shoulder.boundaryUid);
         if (boundary != nullptr && boundary->error.empty()) {
-            const BoundaryAsset boundaryDefaults;
-            bool edited = false;
-            edited |= DrawTextureSlotRow("マスク", boundary->mask, m_textureLibrary, m_pendingAssetReveal);
-            edited |= DrawTextureSlotRow("ハイト", boundary->height, m_textureLibrary, m_pendingAssetReveal);
-            edited |= ui::PropertyFloat("境界の幅", &boundary->widthMeters, 0.01f, 20.0f, boundaryDefaults.widthMeters,
-                                        "内側の端から、境目の模様を置く幅（m）。路肩の幅より広くはしない", "%.2f m");
-            edited |= ui::PropertyFloat("繰り返し長", &boundary->repeatMeters, 0.01f, 100.0f, boundaryDefaults.repeatMeters,
-                                        "道に沿って模様が 1 周する長さ（m）", "%.2f m", ImGuiSliderFlags_Logarithmic);
-            edited |= ui::PropertyFloat("深さ", &boundary->depthMeters, 0.0f, 0.5f, boundaryDefaults.depthMeters,
-                                        "ハイトの凹凸の深さ（m）。(ハイト - 基準) × 2 × 深さ。今は陰影だけに効く", "%.3f m");
-            edited |= ui::PropertyFloat("基準の高さ", &boundary->heightCenter, 0.0f, 1.0f, boundaryDefaults.heightCenter,
-                                        "ハイト画像の平らな所の値", "%.2f");
-            static const char* const kAxes[] = {"V（道に沿う向き）", "U（横切る向き）"};
-            int axis = boundary->alongU ? 1 : 0;
-            if (ui::PropertyCombo("繰り返しの向き", &axis, kAxes, 2, 0, "画像のどちらの向きを道に沿って繰り返すか")) {
-                boundary->alongU = axis == 1;
-                edited = true;
-            }
-            edited |= ui::PropertyBool("マスクを反転", &boundary->invertMask, boundaryDefaults.invertMask,
-                                       "マスクは白が内側の帯（路面）、黒が路肩。逆の画像のときに入れる");
-            if (edited) boundary->dirty = true;
-            ui::PropertyLabelEmpty("shoulderBoundarySave");
-            ImGui::BeginDisabled(!boundary->dirty);
-            if (ui::Button("境界マテリアルを保存", ui::kWideButtonWidth)) SaveBoundary(*boundary);
-            ImGui::EndDisabled();
+            DrawBoundaryAssetRows(*boundary);
+            ui::PropertyLabelEmpty("shoulderBoundaryOpen");
+            if (ui::Button("境界マテリアルの窓で開く", ui::kWideButtonWidth)) OpenBoundaryPreview(boundary->path);
             ui::PropertyEnd();
         }
         ui::EndPropertyTable();
         if (boundary != nullptr && !boundary->error.empty())
             ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(ui::WarnColor()), "%s", boundary->error.c_str());
         else if (boundary != nullptr && boundary->dirty)
-            ui::HintText("境界マテリアルの設定は、このファイルを使うすべての路肩に効く。「境界マテリアルを保存」でファイルへ書く");
+            ui::HintText("境界マテリアルの設定は、このファイルを使うすべての路肩に効く。「ファイルへ保存」でファイルへ書く");
     }
 
     DrawRoadNodeStatus(node.id, "Road Mesh（か内側の Shoulder）を繋ぎ、Mesh Output へ繋ぐと描く");

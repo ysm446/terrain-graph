@@ -802,6 +802,7 @@ void Application::DrawUi() {
             ImGui::MenuItem("マテリアルプレビュー", nullptr, &m_showMaterialSphere);
             ImGui::MenuItem("モデルプレビュー", nullptr, &m_showModelPreview);
             ImGui::MenuItem("テクスチャプレビュー", nullptr, &m_showTexturePreview);
+            ImGui::MenuItem("境界マテリアル", nullptr, &m_showBoundaryPreview);
             ImGui::MenuItem("作業用IBL", nullptr, &m_showSkyPreview);
             ImGui::MenuItem("情報", nullptr, &m_showInfo);
             ImGui::MenuItem("設定", nullptr, &m_showSettings);
@@ -850,6 +851,7 @@ void Application::DrawUi() {
     DrawMaterialSphereWindow();
     DrawModelPreviewWindow();
     DrawTexturePreviewWindow();
+    DrawBoundaryPreviewWindow();
     DrawSkyPreviewWindow();
     DrawSceneSwitchDialog();
     DrawAssetDeleteDialog();

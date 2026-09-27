@@ -14,6 +14,9 @@ SamplerState g_samplerAnisoWrap   : register(s3);
 // equirectangular 用。経度方向はラップ、天頂方向はクランプ。
 SamplerState g_samplerEquirect    : register(s4);
 SamplerState g_samplerAnisoClamp  : register(s5);
+// 片方の向きだけ繰り返す（U クランプ・V ラップ / U ラップ・V クランプ）。境界マテリアルのマスクとハイト。
+SamplerState g_samplerAnisoClampUWrapV : register(s6);
+SamplerState g_samplerAnisoWrapUClampV : register(s7);
 
 static const float kPi = 3.14159265358979323846f;
 

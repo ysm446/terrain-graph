@@ -121,6 +121,12 @@ float3 ShadeGenerated(float3 position, float3 normal, float3 viewDirection, floa
     return radiance;
 }
 
+// 境界マテリアルの画像（R）。横切る向きはクランプ、道に沿う向きはラップで読む。
+// alongU なら U が道に沿う向き（ラップ）、V が横切る向き（クランプ）。
+float SampleBoundary(Texture2D<float4> image, float2 uv, bool alongU) {
+    return alongU ? image.Sample(g_samplerAnisoWrapUClampV, uv).r : image.Sample(g_samplerAnisoClampUWrapV, uv).r;
+}
+
 float4 PsMain(PixelInput input) : SV_TARGET {
     const float3 viewDirection = normalize(g_generated.cameraPosition - input.position);
     // 裏から見たら法線を返す。巻き順（SV_IsFrontFace）には頼らない（メッシュを作る側の
@@ -160,12 +166,12 @@ float4 PsMain(PixelInput input) : SV_TARGET {
         const float along = meters.y / max(g_generated.boundaryRepeat, 0.01f);
         const bool alongU = (g_generated.boundaryFlags & 1u) != 0;
         // 横切る向きは端の画素を使い続ける（繰り返さない）。道に沿う向きだけ繰り返す。
-        const float2 boundaryUv = alongU ? float2(along, clamp(across, 0.002f, 0.998f))
-                                         : float2(clamp(across, 0.002f, 0.998f), along);
+        // サンプラーも横切る向きはクランプにする（ラップだと粗いミップで反対側の端が混ざる）。
+        const float2 boundaryUv = alongU ? float2(along, across) : float2(across, along);
         float innerWeight = 0;
         if (g_generated.boundaryMask != kInvalidTextureIndex) {
             Texture2D<float4> mask = ResourceDescriptorHeap[g_generated.boundaryMask];
-            innerWeight = mask.Sample(g_samplerLinearWrap, boundaryUv).r;
+            innerWeight = SampleBoundary(mask, boundaryUv, alongU);
             if ((g_generated.boundaryFlags & 2u) != 0) innerWeight = 1 - innerWeight;
         }
         if (innerWeight > 1e-3f) {
@@ -196,8 +202,8 @@ float4 PsMain(PixelInput input) : SV_TARGET {
             const float2 du = alongU ? float2(0, perMeter.x * stepMeters) : float2(perMeter.x * stepMeters, 0);
             const float2 dv = alongU ? float2(perMeter.y * stepMeters, 0) : float2(0, perMeter.y * stepMeters);
             const float scale = 2 * g_generated.boundaryDepth * (1 - smoothstep(0.7f, 1.0f, across));
-            const float hx = height.Sample(g_samplerLinearWrap, boundaryUv + du).r - height.Sample(g_samplerLinearWrap, boundaryUv - du).r;
-            const float hy = height.Sample(g_samplerLinearWrap, boundaryUv + dv).r - height.Sample(g_samplerLinearWrap, boundaryUv - dv).r;
+            const float hx = SampleBoundary(height, boundaryUv + du, alongU) - SampleBoundary(height, boundaryUv - du, alongU);
+            const float hy = SampleBoundary(height, boundaryUv + dv, alongU) - SampleBoundary(height, boundaryUv - dv, alongU);
             const float2 gradient = float2(hx, hy) * scale / (2 * stepMeters);
             tangentNormal = ReorientNormal(normalize(float3(-gradient, 1)), tangentNormal);
         }

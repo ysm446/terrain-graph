@@ -204,6 +204,13 @@ private:
     };
     BoundaryAsset* AcquireBoundary(const std::string& path, const std::string& uid);
     bool SaveBoundary(BoundaryAsset& asset);
+    // 境界マテリアルの設定の行（プロパティ表の中で呼ぶ。保存のボタンまで）。
+    void DrawBoundaryAssetRows(BoundaryAsset& boundary);
+    // 境界マテリアルの窓（アセットブラウザのダブルクリックで開く）。
+    void OpenBoundaryPreview(const std::filesystem::path& file);
+    void DrawBoundaryPreviewWindow();
+    bool m_showBoundaryPreview = false;
+    std::string m_boundaryPreviewPath, m_boundaryPreviewUid;
     // 配置の点の元（散布 / 崩落）の、いま使える点の組。本体の評価器が作っていれば
     // そちらを、無ければ元ごとの評価器を見る。Ready で *out が nullptr なら点は 0。
     enum class PlacementPointsState { Missing, Evaluating, Ready };

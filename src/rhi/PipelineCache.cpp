@@ -121,6 +121,11 @@ bool PipelineCache::CreateGlobalRootSignature() {
         // タイルしない合成結果（平面 + UV スケール 1）用。
         MakeStaticSampler(5, D3D12_FILTER_ANISOTROPIC, D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
                           D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 16),
+        // 片方の向きだけ繰り返す画像（境界マテリアル: 横切る向きはクランプ、道に沿う向きはラップ）。
+        MakeStaticSampler(6, D3D12_FILTER_ANISOTROPIC, D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+                          D3D12_TEXTURE_ADDRESS_MODE_WRAP, 16),
+        MakeStaticSampler(7, D3D12_FILTER_ANISOTROPIC, D3D12_TEXTURE_ADDRESS_MODE_WRAP,
+                          D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 16),
     };
 
     D3D12_VERSIONED_ROOT_SIGNATURE_DESC desc = {};

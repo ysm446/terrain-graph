@@ -810,6 +810,10 @@ void Application::ProcessAssetWork() {
             } else TG_LOG_ERROR("大気散乱スカイを開けませんでした");
             return;
         }
+        if (ext == ".tgboundary") {
+            OpenBoundaryPreview(path);
+            return;
+        }
         if (ext == ".tgmat" || ext == ".tglayer" || ext == ".tgsky" || ext == ".tgmodel") {
             nlohmann::json assetHeader;
             if (ext == ".tgmat" && io::ProjectWorkspace::ReadJson(path, assetHeader) &&
