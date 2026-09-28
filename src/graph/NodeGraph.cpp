@@ -1624,15 +1624,14 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
             op.pathMask = settings->pathMask;
             // 蛇行は m で持つので、パスの Base のチェーンの実寸で UV へ直す。
             const TerrainScale* pathScale = FindChainScale(pathNode->id);
+            // 点の無いパスは「足跡が無い」マスク（0。反転なら 1）にする。未接続の扱いにすると、
+            // 読み手の Surface が自分の定数マスクで全面を塗ってしまう。
             op.pathSegments = BuildPathSegments(
                 pathSettings->path, pathScale ? pathScale->sizeMeters : TerrainScale{}.sizeMeters);
-            if (op.pathSegments.empty()) {
-                return -1;
-            }
             break;
         }
         case NodeKind::MaskArea: {
-            // 閉じた鎖が無ければ「繋がっていない」のと同じ扱い（プロパティが注意書きを出す）。
+            // Path が繋がっていなければ「繋がっていない」のと同じ扱い。
             const Node* pathNode = UpstreamOf(maskNode, ValueType::Path);
             const auto* pathSettings = (pathNode != nullptr)
                                            ? std::get_if<PathNodeSettings>(&pathNode->settings)
@@ -1642,10 +1641,8 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
             }
             op.kind = compositor::MaskOpKind::Area;
             op.areaMask = settings->areaMask;
+            // 閉じた鎖が無ければ「面が無い」マスク（0。反転なら 1）。Mask Path と同じ理由。
             op.pathSegments = BuildPathAreaSegments(pathSettings->path);
-            if (op.pathSegments.empty()) {
-                return -1;
-            }
             break;
         }
         default:

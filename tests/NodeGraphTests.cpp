@@ -1602,15 +1602,46 @@ void RunNodeGraphTests() {
                            compiled.maskOps.front().pathSegments.size() == 3;
         Check(linked && wired, "Mask Area は閉じた鎖から Area の op になる");
 
-        // 開いた鎖しか無ければ op は作られない（マスクは定数へ落ちる）。
+        // 開いた鎖しか無ければ、線分 0 本の Area の op（面が無いマスク = 0）になる。
+        // 未接続の扱いにすると、Surface が自分の定数マスクで全面を塗ってしまう。
         if (auto* settings = std::get_if<tg::graph::PathNodeSettings>(&pathNode->settings)) {
             settings->path = open;
         }
         graph.MarkDirty();
         const tg::graph::CompiledGraph openCompiled = graph.CompileLayersTo(surfaceId);
-        Check(openCompiled.layers.size() == 2 &&
-                  openCompiled.layers.back().mask.source != tg::compositor::MaskSource::Node,
-              "閉じた鎖が無い Mask Area は op を作らない");
+        const auto& openMask = openCompiled.layers.back().mask;
+        Check(openCompiled.layers.size() == 2 && openMask.source == tg::compositor::MaskSource::Node &&
+                  openMask.maskOp >= 0 &&
+                  openCompiled.maskOps[static_cast<size_t>(openMask.maskOp)].kind ==
+                      tg::compositor::MaskOpKind::Area &&
+                  openCompiled.maskOps[static_cast<size_t>(openMask.maskOp)].pathSegments.empty(),
+              "閉じた鎖が無い Mask Area は線分 0 本の op（面が無いマスク）になる");
+    }
+
+    Section("ノードグラフ — 点の無い Mask Path");
+    {
+        // 点の無い Path → Mask Path → Surface の Mask。線分 0 本の Path の op（足跡が無いマスク = 0）になる。
+        NodeGraph graph;
+        const tg::graph::GraphId baseId = graph.CreateNode(NodeKind::Heightmap);
+        const tg::graph::GraphId pathId = graph.CreateNode(NodeKind::Path);
+        const tg::graph::GraphId maskId = graph.CreateNode(NodeKind::MaskPath);
+        const tg::graph::GraphId surfaceId = graph.CreateNode(NodeKind::Surface);
+        const tg::graph::Node* base = graph.FindNode(baseId);
+        const tg::graph::Node* path = graph.FindNode(pathId);
+        const tg::graph::Node* mask = graph.FindNode(maskId);
+        const tg::graph::Node* surface = graph.FindNode(surfaceId);
+        const bool linked =
+            graph.CreateLink(path->outputs.front().id, mask->inputs.front().id) &&
+            graph.CreateLink(base->outputs.front().id, surface->inputs[0].id) &&
+            graph.CreateLink(mask->outputs.front().id, surface->inputs[1].id);
+        const tg::graph::CompiledGraph compiled = graph.CompileLayersTo(surfaceId);
+        const auto& layerMask = compiled.layers.back().mask;
+        Check(linked && compiled.layers.size() == 2 && layerMask.source == tg::compositor::MaskSource::Node &&
+                  layerMask.maskOp >= 0 &&
+                  compiled.maskOps[static_cast<size_t>(layerMask.maskOp)].kind ==
+                      tg::compositor::MaskOpKind::Path &&
+                  compiled.maskOps[static_cast<size_t>(layerMask.maskOp)].pathSegments.empty(),
+              "点の無い Mask Path は線分 0 本の op（足跡が無いマスク）になる");
     }
 
     Section("ノードグラフ — Path の Base");

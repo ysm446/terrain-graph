@@ -1679,7 +1679,12 @@ bool MaterialEvaluator::ApplyPathMask(rhi::Device& device, rhi::PipelineCache& p
     if (pipeline == nullptr) {
         return false;
     }
-    const uint32_t segmentsSrv = UploadPathSegments(device, index, op.pathSegments);
+    // 点の無いパスは線分 0 本として評価する（足跡の無いマスク）。線分バッファは空では
+    // 作れないので、読まれない 1 本を置く。
+    static const std::vector<PathSegment> kPlaceholderSegments(1);
+    const std::vector<PathSegment>& segments =
+        op.pathSegments.empty() ? kPlaceholderSegments : op.pathSegments;
+    const uint32_t segmentsSrv = UploadPathSegments(device, index, segments);
     if (segmentsSrv == kInvalidTextureIndex) {
         return false;
     }
