@@ -34,7 +34,13 @@ struct OverlayLineConstants {
 constexpr DXGI_FORMAT kMaterialUvFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
 
 // シャドウマップの解像度。プレビューの被写体 1 個ぶんなのでこれで足りる。
-constexpr uint32_t kShadowMapSize = 2048;
+// 影のテクスチャの一辺として選べる値（UI の「影の解像度」）。
+constexpr uint32_t kShadowResolutions[] = {2048, 4096};
+uint32_t ValidShadowResolution(int value) {
+    for (const uint32_t candidate : kShadowResolutions)
+        if (value == int(candidate)) return candidate;
+    return kShadowResolutions[0];
+}
 
 // 背景をぼかすときに引くプリフィルタ済みキューブのミップ。小数で指定する。
 //
@@ -63,10 +69,10 @@ constexpr float kShadowBias = 0.0018f;
 constexpr uint32_t kNoShadowIndex = 0xFFFFFFFFu;
 
 // 深度とSRVで共有する影テクスチャ。
-bool CreateShadowTexture(rhi::Device& device, rhi::GpuTexture& texture, const wchar_t* name) {
+bool CreateShadowTexture(rhi::Device& device, rhi::GpuTexture& texture, const wchar_t* name, uint32_t resolution) {
     rhi::TextureDesc shadowDesc;
-    shadowDesc.width = kShadowMapSize;
-    shadowDesc.height = kShadowMapSize;
+    shadowDesc.width = resolution;
+    shadowDesc.height = resolution;
     shadowDesc.format = DXGI_FORMAT_R32_TYPELESS;
     shadowDesc.dsvFormat = kShadowDsvFormat;
     shadowDesc.srvFormat = DXGI_FORMAT_R32_FLOAT;
@@ -270,7 +276,8 @@ bool PreviewRenderer::Initialize(rhi::Device& device, rhi::PipelineCache& pipeli
         return false;
     }
 
-    if (!CreateShadowTexture(device, m_shadowMap, L"ShadowMap")) return false;
+    m_shadowResolutionApplied = ValidShadowResolution(m_shadowResolution);
+    if (!CreateShadowTexture(device, m_shadowMap, L"ShadowMap", m_shadowResolutionApplied)) return false;
     // 自動露出の測光バッファ。ヒストグラム 256 ビンと結果 4 要素、読み戻しはフレーム数ぶんの枠。
     if (!device.Allocator().CreateStructuredBuffer(256, sizeof(uint32_t), L"ExposureHistogram", m_meterHistogram, true) ||
         !device.Allocator().CreateStructuredBuffer(4, sizeof(float), L"ExposureMeterResult", m_meterResult, true) ||
@@ -401,10 +408,21 @@ void PreviewRenderer::ProcessPendingWork(rhi::Device& device,
                                         rhi::PipelineCache& pipelineCache, const AtmosphereSettings* cloudOverride) {
     // UIで切り替えた資源の作り直しはフレームの外へ集める。
     m_shadowCascadeCount = std::clamp(m_shadowCascadeCount, 1, int(kShadowCascadeCount));
+    // 影の解像度を変えたら、1 枚方式の影とカスケードをすべて作り直す（古いものは遅延解放）。
+    if (const uint32_t resolution = ValidShadowResolution(m_shadowResolution); resolution != m_shadowResolutionApplied) {
+        m_shadowResolution = int(resolution);
+        device.DeferRelease(m_shadowMap);
+        for (auto& texture : m_shadowCascades) device.DeferRelease(texture);
+        m_shadowResolutionApplied = resolution;
+        if (!CreateShadowTexture(device, m_shadowMap, L"ShadowMap", resolution) &&
+            (m_shadowResolutionApplied = kShadowResolutions[0], m_shadowResolution = int(kShadowResolutions[0]),
+             !CreateShadowTexture(device, m_shadowMap, L"ShadowMap", kShadowResolutions[0])))
+            TG_LOG_WARN("影のテクスチャを確保できません");
+    }
     for (uint32_t i = 0; i < kShadowCascadeCount; ++i) {
         auto& texture = m_shadowCascades[i];
         if (m_shadowEnabled && m_cascadedShadows && i < uint32_t(m_shadowCascadeCount)) {
-            if (!texture.IsValid() && !CreateShadowTexture(device, texture, L"ShadowCascade")) {
+            if (!texture.IsValid() && !CreateShadowTexture(device, texture, L"ShadowCascade", m_shadowResolutionApplied)) {
                 m_cascadedShadows = false;
                 TG_LOG_WARN("CSMのテクスチャを確保できません。従来の影へ戻します");
             }
@@ -526,6 +544,8 @@ void PreviewRenderer::ResetSettings() {
     m_shadowEnabled = defaults.shadowEnabled;
     m_cascadedShadows = defaults.cascadedShadows;
     m_shadowCascadeCount = defaults.shadowCascadeCount;
+    m_shadowSplitLambda = defaults.shadowSplitLambda;
+    m_shadowResolution = defaults.shadowResolution;
     m_maskSaturationHatch = defaults.maskSaturationHatch;
     // 解像度の作り直しは GPU 待機を伴うので、要求だけ積む。
     RequestMaterialResolution(defaults.materialResolution);
@@ -880,7 +900,8 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     // ライトから深度だけを描く。同じ頂点シェーダを通るので、
     // ディスプレイスメントで押し出した形がそのまま影になる。
     constants.shadowIndex = kNoShadowIndex;
-    constants.shadowTexelSize = 1.0f / static_cast<float>(kShadowMapSize);
+    const uint32_t shadowResolution = std::max(m_shadowResolutionApplied, 8u);
+    constants.shadowTexelSize = 1.0f / static_cast<float>(shadowResolution);
     constants.shadowBias = kShadowBias;
     std::fill_n(constants.cascadeShadowIndices, kShadowCascadeCount, kNoShadowIndex);
     uint32_t activeCascadeCount = 0;
@@ -924,10 +945,10 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
                                                nullptr);
 
             const auto shadowViewport =
-                CD3DX12_VIEWPORT(0.0f, 0.0f, static_cast<float>(kShadowMapSize),
-                                 static_cast<float>(kShadowMapSize));
-            const auto shadowScissor = CD3DX12_RECT(0, 0, static_cast<LONG>(kShadowMapSize),
-                                                    static_cast<LONG>(kShadowMapSize));
+                CD3DX12_VIEWPORT(0.0f, 0.0f, static_cast<float>(shadowResolution),
+                                 static_cast<float>(shadowResolution));
+            const auto shadowScissor = CD3DX12_RECT(0, 0, static_cast<LONG>(shadowResolution),
+                                                    static_cast<LONG>(shadowResolution));
             commandList->RSSetViewports(1, &shadowViewport);
             commandList->RSSetScissorRects(1, &shadowScissor);
 
@@ -954,7 +975,8 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
         };
         if (useCascades) {
             const auto cascades = BuildShadowCascades(m_camera, EffectiveLight().Direction(),
-                BoundingRadius(), float(m_width) / float(std::max(m_height, 1u)), kShadowMapSize, activeCascadeCount);
+                BoundingRadius(), float(m_width) / float(std::max(m_height, 1u)), shadowResolution, activeCascadeCount,
+                m_shadowSplitLambda);
             constants.shadowCascadeCount = activeCascadeCount;
             constants.cascadeBlend = kShadowCascadeBlend;
             constants.cascadeNear = cascades.nearDistance;
@@ -1031,6 +1053,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     // UV バッファには書かないので、シーンカラーだけを束ね直す。
     commandList->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
     m_instanceShadows = {};
+    m_instanceShadows.texel = 1.0f / static_cast<float>(shadowResolution);
     XMStoreFloat4x4(&m_instanceShadows.view, view);
     m_instanceShadows.count = constants.shadowCascadeCount;
     m_instanceShadows.nearDistance = constants.cascadeNear;

@@ -194,6 +194,8 @@ struct PreviewDefaults {
     bool shadowEnabled = true;
     bool cascadedShadows = true;
     int shadowCascadeCount = 4;
+    float shadowSplitLambda = kDefaultShadowSplitLambda;  // カスケードの分割の偏り
+    int shadowResolution = 2048;                           // 影のテクスチャの一辺（2048 / 4096）
     bool showClouds = true;
     // マスクのプレビューで、0 か 1 に張り付いた所へ斜線を引くか。
     bool maskSaturationHatch = false;
@@ -334,6 +336,9 @@ public:
     bool& ShadowEnabled() { return m_shadowEnabled; }
     bool& CascadedShadows() { return m_cascadedShadows; }
     int& ShadowCascadeCount() { return m_shadowCascadeCount; }
+    float& ShadowSplitLambda() { return m_shadowSplitLambda; }
+    // 影のテクスチャの一辺。変えるとフレームの外で作り直す（ProcessPendingWork）。
+    int& ShadowResolution() { return m_shadowResolution; }
     DofSettings& Dof() { return m_dof; }
     const DofSettings& Dof() const { return m_dof; }
     // 実際にピント面として使う距離。注視点に合わせる設定ならカメラの距離。
@@ -475,6 +480,9 @@ private:
     bool m_shadowEnabled = kPreviewDefaults.shadowEnabled;
     bool m_cascadedShadows = kPreviewDefaults.cascadedShadows;
     int m_shadowCascadeCount = kPreviewDefaults.shadowCascadeCount;
+    float m_shadowSplitLambda = kPreviewDefaults.shadowSplitLambda;
+    int m_shadowResolution = kPreviewDefaults.shadowResolution;
+    uint32_t m_shadowResolutionApplied = 0;  // 今の影のテクスチャの一辺（0 はまだ作っていない）
     DofSettings m_dof;
     SceneShadowData m_instanceShadows;
     InstanceCloudShadow m_instanceClouds;

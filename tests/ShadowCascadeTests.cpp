@@ -16,6 +16,18 @@ void RunShadowCascadeTests() {
     state.distance = 8;
     state.pitch = 0.2f;
     camera.SetState(state);
+    {
+        // 分割の偏り: 対数寄りほど 1 段目が短く（近景が細かく）、最後の段はいつも同じ奥まで覆う。
+        const XMFLOAT3 light{0.4f, 0.8f, 0.3f};
+        const auto even = renderer::BuildShadowCascades(camera, light, 25, 1.5f, 2048, 4, 0.0f);
+        const auto old = renderer::BuildShadowCascades(camera, light, 25, 1.5f, 2048, 4, 0.7f);
+        const auto log = renderer::BuildShadowCascades(camera, light, 25, 1.5f, 2048, 4, 0.97f);
+        tests::Check(log.splits[0] < old.splits[0] && old.splits[0] < even.splits[0],
+                     "分割の偏りを上げるほど 1 段目の奥行きが短い");
+        tests::Check(log.splits[3] == even.splits[3] && log.splits[3] == old.splits[3],
+                     "分割の偏りを変えても最後の段は同じ奥まで覆う");
+        tests::Check(log.biases[0] < old.biases[0], "1 段目が短いほど 1 画素が小さい（深度バイアスも小さい）");
+    }
     for (const uint32_t count : {2u,3u,4u})
     for (const float aspect : {0.5f, 2.0f})
         for (const XMFLOAT3 light :

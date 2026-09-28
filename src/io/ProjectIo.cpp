@@ -2547,6 +2547,8 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     node["shadow"] = renderer.ShadowEnabled();
     node["cascadedShadows"] = renderer.CascadedShadows();
     node["shadowCascadeCount"] = renderer.ShadowCascadeCount();
+    node["shadowSplitLambda"] = renderer.ShadowSplitLambda();
+    node["shadowResolution"] = renderer.ShadowResolution();
     node["lightingMode"] = renderer.AtmosphericMode() ? "atmospheric" : "ibl";
     const auto& atmosphere = renderer.AtmosphericSettings();
     const auto& sun = renderer.AtmosphericLight();
@@ -2773,6 +2775,8 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
     // 項目のない既存プロジェクトは従来の1枚方式を維持する。
     renderer.CascadedShadows() = ReadBool(node, "cascadedShadows", false);
     renderer.ShadowCascadeCount() = std::clamp(ReadInt(node, "shadowCascadeCount", 4), 1, 4);
+    renderer.ShadowSplitLambda() = std::clamp(ReadFloat(node, "shadowSplitLambda", renderer::kPreviewDefaults.shadowSplitLambda), 0.0f, 1.0f);
+    renderer.ShadowResolution() = ReadInt(node, "shadowResolution", renderer::kPreviewDefaults.shadowResolution) == 4096 ? 4096 : 2048;
 
     // 節が丸ごと欠けていても既定値で埋める。file-format.md の「欠けているキーは
     // 既定値で埋める」に合わせる（節ごと飛ばすと前のプロジェクトの値が残る）。

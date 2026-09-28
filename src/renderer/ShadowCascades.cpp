@@ -6,7 +6,7 @@
 namespace tg::renderer {
 ShadowCascadeData BuildShadowCascades(const Camera& camera, const DirectX::XMFLOAT3& lightDirection,
                                       float sceneRadius, float aspect, uint32_t resolution,
-                                      uint32_t count) {
+                                      uint32_t count, float splitLambda) {
     using namespace DirectX;
     ShadowCascadeData result{};
     count = std::clamp(count, 1u, kShadowCascadeCount);
@@ -18,11 +18,12 @@ ShadowCascadeData BuildShadowCascades(const Camera& camera, const DirectX::XMFLO
     const float farDistance =
         std::max(nearDistance + 0.01f, std::min(camera.FarZ(), sceneDepth + radius));
     result.nearDistance = nearDistance;
-    // 対数分割を主体にし、遠景側にも一定の密度を残す。
+    // 均等割りと対数割りを splitLambda で混ぜる（practical split）。対数寄りほど近景の段が短くなり細かい。
+    const float lambda = std::clamp(std::isfinite(splitLambda) ? splitLambda : kDefaultShadowSplitLambda, 0.0f, 1.0f);
     for (uint32_t i = 0; i < count; ++i) {
         const float t = float(i + 1) / float(count);
         result.splits[i] = std::lerp(std::lerp(nearDistance, farDistance, t),
-                                     nearDistance * std::pow(farDistance / nearDistance, t), 0.7f);
+                                     nearDistance * std::pow(farDistance / nearDistance, t), lambda);
     }
     result.splits[count-1] = farDistance;
     const auto direction = XMVector3Normalize(XMLoadFloat3(&lightDirection));

@@ -400,10 +400,25 @@ void Application::DrawLightingPanel() {
             ui::PropertyBool("カスケードシャドウ", &m_renderer.CascadedShadows(),
                              renderer::kPreviewDefaults.cascadedShadows,
                              "視距離を分割して近景の影を細かく描く。オフは従来の1枚方式");
-            if (m_renderer.CascadedShadows())
+            if (m_renderer.CascadedShadows()) {
                 ui::PropertyInt("カスケード数", &m_renderer.ShadowCascadeCount(), 1, 4,
                     renderer::kPreviewDefaults.shadowCascadeCount,
                     "影を描くカメラの数。増やすと近景の解像度が上がり、描画負荷とメモリも増えます");
+                ui::PropertyFloat("分割の偏り", &m_renderer.ShadowSplitLambda(), 0.0f, 1.0f,
+                    renderer::kPreviewDefaults.shadowSplitLambda,
+                    "視距離の分け方。1 に近いほど近くの段を短くして足元の影を細かく描く（その分、中景の段が粗くなる）。"
+                    "0 は均等に分ける。最後の段はいつも奥まで覆うので、遠景の影は消えない",
+                    "%.2f");
+            }
+            {
+                static const char* const kResolutions[] = {"2048", "4096"};
+                int resolution = m_renderer.ShadowResolution() == 4096 ? 1 : 0;
+                if (ui::PropertyCombo("影の解像度", &resolution, kResolutions, 2,
+                                      renderer::kPreviewDefaults.shadowResolution == 4096 ? 1 : 0,
+                                      "影のテクスチャの一辺（画素）。4096 は影が 2 倍細かくなるが、影のメモリが 4 倍"
+                                      "（カスケード 4 段で約 256 MB）になり、描く負荷も増える"))
+                    m_renderer.ShadowResolution() = resolution == 1 ? 4096 : 2048;
+            }
             ImGui::EndDisabled();
             ui::EndPropertyTable();
         }

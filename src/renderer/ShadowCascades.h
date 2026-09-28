@@ -22,8 +22,12 @@ struct ShadowCascadeData {
     std::array<float, kShadowCascadeCount> biases;
     float nearDistance = 0;
 };
+// カスケードの分割の偏りの既定値（0 = 均等割り、1 = 対数割り）。1 に近いほど近景を細かく描く。
+// 最後の段はいつもシーン全体の奥まで覆うので、上げても遠景の影は消えない（2〜3 段目が粗くなる）。
+inline constexpr float kDefaultShadowSplitLambda = 0.97f;
 // 原点中心のシーン包囲球は、画面外の影を落とす物体も含む。
 ShadowCascadeData BuildShadowCascades(const Camera& camera, const DirectX::XMFLOAT3& lightDirection,
                                       float sceneRadius, float aspect, uint32_t resolution,
-                                      uint32_t count = kShadowCascadeCount);
+                                      uint32_t count = kShadowCascadeCount,
+                                      float splitLambda = kDefaultShadowSplitLambda);
 }  // namespace tg::renderer
