@@ -1910,6 +1910,17 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
                     section.push_back(json::array({point.acrossMeters, point.heightMeters}));
                 item["shoulder"]["section"] = std::move(section);
             }
+            if (!m.switches.empty()) {
+                json switches = json::array();
+                for (const graph::RoadShoulderSwitch& change : m.switches) {
+                    json entry = {{"at", change.atMeters}, {"transition", change.transitionMeters},
+                                  {"material", writeMaterial(change.material)}, {"uvRepeat", change.uvRepeatMeters}};
+                    if (!change.boundaryPath.empty() || !change.boundaryUid.empty())
+                        entry["boundary"] = {{"path", change.boundaryPath}, {"uid", change.boundaryUid}};
+                    switches.push_back(std::move(entry));
+                }
+                item["shoulder"]["switches"] = std::move(switches);
+            }
         } else if (const auto* marking = std::get_if<graph::LaneMarkingNodeSettings>(&node.settings)) {
             const graph::RoadMarkingSettings& m = marking->marking;
             static const char* const kLineNames[] = {"center", "edge", "lane"};
@@ -2331,6 +2342,25 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     }
                     // 断面の点が無ければ勾配の形に戻す。
                     if (m.section.empty()) m.shape = graph::RoadShoulderShape::Slope;
+                    if (const json* switches = FindMember(*values, "switches"); switches != nullptr && switches->is_array()) {
+                        const graph::RoadShoulderSwitch sd;
+                        for (const json& entry : *switches) {
+                            if (m.switches.size() >= graph::kShoulderMaxSwitches) break;
+                            if (!entry.is_object()) continue;
+                            graph::RoadShoulderSwitch change;
+                            change.atMeters = std::max(ReadFloat(entry, "at", sd.atMeters), 0.0f);
+                            change.transitionMeters = std::clamp(ReadFloat(entry, "transition", sd.transitionMeters), 0.0f,
+                                                                 graph::kShoulderMaxTransitionMeters);
+                            change.uvRepeatMeters = std::clamp(ReadFloat(entry, "uvRepeat", sd.uvRepeatMeters), 0.1f, 100.0f);
+                            if (const json* material = FindMember(entry, "material"); material != nullptr)
+                                change.material = readMaterial(*material);
+                            if (const json* boundary = FindMember(entry, "boundary"); boundary != nullptr && boundary->is_object()) {
+                                change.boundaryPath = ReadString(*boundary, "path", "");
+                                change.boundaryUid = ReadString(*boundary, "uid", "");
+                            }
+                            m.switches.push_back(std::move(change));
+                        }
+                    }
                 }
                 created.settings = std::move(settings);
             } else if (created.kind == graph::NodeKind::LaneMarking) {
@@ -3058,6 +3088,9 @@ void RemapNodeReferences(graph::NodeSettings& settings, const NodeReferenceRemap
     } else if (auto* shoulder = std::get_if<graph::ShoulderNodeSettings>(&settings)) {
         if (shoulder->shoulder.material != compositor::kNoMaterialAsset && remap.material)
             shoulder->shoulder.material = remap.material(shoulder->shoulder.material);
+        for (graph::RoadShoulderSwitch& change : shoulder->shoulder.switches)
+            if (change.material != compositor::kNoMaterialAsset && remap.material)
+                change.material = remap.material(change.material);
     } else if (auto* roadMesh = std::get_if<graph::RoadMeshNodeSettings>(&settings)) {
         if (roadMesh->mesh.material != compositor::kNoMaterialAsset && remap.material)
             roadMesh->mesh.material = remap.material(roadMesh->mesh.material);

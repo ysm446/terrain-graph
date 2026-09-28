@@ -178,6 +178,8 @@ void Application::ApplyDocument(const DocumentSnapshot& snapshot) {
         if (auto* shoulder = std::get_if<graph::ShoulderNodeSettings>(&node.settings)) {
             if (m_materialLibrary.Find(shoulder->shoulder.material) == nullptr)
                 shoulder->shoulder.material = compositor::kNoMaterialAsset;
+            for (graph::RoadShoulderSwitch& change : shoulder->shoulder.switches)
+                if (m_materialLibrary.Find(change.material) == nullptr) change.material = compositor::kNoMaterialAsset;
             continue;
         }
         if (auto* roadMesh = std::get_if<graph::RoadMeshNodeSettings>(&node.settings)) {

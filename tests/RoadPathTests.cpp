@@ -360,6 +360,43 @@ void RunRoadPathTests() {
               "路肩の外側の端からさらに路肩を重ねられる");
     }
 
+    Section("Shoulder: 区間の切り替え");
+    {
+        RoadShoulderSettings shoulder;
+        shoulder.material = 1;
+        std::vector<RoadShoulderSpan> spans = ShoulderSpans(shoulder, 100.0f);
+        Check(spans.size() == 1 && spans[0].startMeters == 0.0f && spans[0].material == 1, "切り替えが無ければ区間は 1 つ");
+
+        RoadShoulderSwitch late{60.0f, 4.0f, 3, 2.0f, "", ""};
+        RoadShoulderSwitch early{20.0f, 6.0f, 2, 2.0f, "b.tgboundary", "uid-b"};
+        shoulder.switches = {late, early};
+        spans = ShoulderSpans(shoulder, 100.0f);
+        Check(spans.size() == 3 && spans[1].startMeters == 20.0f && spans[1].material == 2 && spans[2].material == 3,
+              "切り替えは道のりの順に並べる");
+        Check(spans[1].boundaryUid == "uid-b" && spans[2].boundaryUid.empty(), "区間ごとに境界を持つ（なしへも替わる）");
+        Check(spans[0].transitionMeters == 0.0f && spans[1].transitionMeters == 6.0f && spans[2].transitionMeters == 4.0f,
+              "移行距離は区間の長さに収まれば設定のまま");
+
+        shoulder.switches = {{5.0f, 30.0f, 2, 2.0f, "", ""}, {12.0f, 30.0f, 3, 2.0f, "", ""}};
+        spans = ShoulderSpans(shoulder, 100.0f);
+        Check(spans.size() == 3 && spans[1].transitionMeters == 5.0f && spans[2].transitionMeters == 7.0f,
+              "移行距離は前後の区間の長さまで（隣の移行と重ならない）");
+
+        shoulder.switches = {{150.0f, 2.0f, 2, 2.0f, "", ""}};
+        spans = ShoulderSpans(shoulder, 100.0f);
+        Check(spans.size() == 2 && spans[1].startMeters == 100.0f && spans[1].transitionMeters == 0.0f,
+              "道路より先の切り替えは終点に寄せ、移行は持たない");
+
+        shoulder.switches = {{30.0f, 2.0f, 2, 2.0f, "", ""}, {30.0f, 2.0f, 3, 2.0f, "", ""}};
+        spans = ShoulderSpans(shoulder, 100.0f);
+        Check(spans.size() == 2 && spans[1].material == 3, "同じ位置の切り替えは後のものを使う");
+
+        shoulder.switches = {{0.0f, 2.0f, 4, 2.0f, "", ""}};
+        spans = ShoulderSpans(shoulder, 100.0f);
+        Check(spans.size() == 1 && spans[0].material == 4 && spans[0].transitionMeters == 0.0f,
+              "始点の切り替えは最初の区間を置き換える");
+    }
+
     Section("Lane Marking: 区画線");
     {
         const RoadPathSettings road = StraightRoad();

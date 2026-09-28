@@ -11,6 +11,15 @@ namespace tg::renderer {
 namespace {
 
 // GeneratedMesh.hlsl と同じ並び。
+struct TrackSpanConstants {
+    float start, transition;
+    uint32_t material, boundary;  // 材質の枠（0〜3 がこの帯、4〜7 が内側の帯）と境界の枠
+};
+struct BoundaryConstants {
+    uint32_t mask, height, flags, padding;  // flags: bit0 = 模様を U に繰り返す、bit1 = マスクを反転
+    float width, repeat, depth, center;
+};
+constexpr size_t kMaterialSlots = GeneratedMeshItem::kMaxMaterials * 2;
 struct GeneratedMeshConstants {
     DirectX::XMFLOAT4X4 viewProjection;  // 転置済み
     float cameraPosition[3];
@@ -18,27 +27,48 @@ struct GeneratedMeshConstants {
     float lightDirection[3];
     float lightIlluminance;
     float lightColor[3];
-    uint32_t hasMaterial;
+    uint32_t materialMask;  // bit i: 材質の枠 i に材質があるか（無ければ表の fallbackColor）
     uint32_t irradianceIndex, prefilteredIndex, brdfLutIndex, prefilteredMipCount;
     float fallbackColor[3];
     float fallbackRoughness;
     float ambientLow, ambientHigh, ambientOcclusion;
     uint32_t clearIrradianceIndex;
     uint32_t cloudNoiseIndex, atmosphericMode;
-    float roadWidth, padding;
-    uint32_t boundaryMask, boundaryHeight, boundaryFlags, hasInner;
-    float boundaryWidth, boundaryRepeat, boundaryDepth, boundaryCenter;
-    float innerOrigin, innerSign, boundaryPadding[2];
+    float roadWidth;
+    uint32_t hasInner;
+    uint32_t spanCount, innerSpanCount;
+    float innerOrigin, innerSign;
     float innerFallbackColor[3];
     float innerFallbackRoughness;
     uint32_t cutoutOpacity, cutoutChannel, cutoutBaseColor;
     float cutoutThreshold, cutoutUvScale, cutoutValue, cutoutPadding[2];
+    TrackSpanConstants spans[GeneratedMeshItem::kMaxSpans];
+    TrackSpanConstants innerSpans[GeneratedMeshItem::kMaxSpans];
+    BoundaryConstants boundaries[GeneratedMeshItem::kMaxBoundaries];
     SceneShadowData shadows;
     AtmosphereSettings atmosphere;
-    compositor::LayerMaterialGpu material;
-    compositor::LayerMaterialGpu innerMaterial;
+    compositor::LayerMaterialGpu materials[kMaterialSlots];
 };
-static_assert(sizeof(GeneratedMeshConstants) == 176 + 64 + 32 + 384 + 352 + 672 * 2);
+static_assert(sizeof(GeneratedMeshConstants) == 240 + 128 * 3 + 384 + 352 + 672 * kMaterialSlots);
+
+// 材質の表を定数へ写す。slotOffset は材質の枠の始まり（この帯 0、内側の帯 4）。
+uint32_t WriteTrack(const GeneratedMeshItem::Track& track, uint32_t slotOffset, TrackSpanConstants* spans,
+                    uint32_t& materialMask, compositor::LayerMaterialGpu* materials) {
+    const size_t materialCount = std::min(track.materials.size(), GeneratedMeshItem::kMaxMaterials);
+    for (size_t i = 0; i < materialCount; ++i) {
+        if (!track.materials[i].hasMaterial) continue;
+        materialMask |= 1u << (slotOffset + i);
+        materials[slotOffset + i] = track.materials[i].gpu;
+    }
+    const size_t count = std::min(track.spans.size(), GeneratedMeshItem::kMaxSpans);
+    for (size_t i = 0; i < count; ++i) {
+        const auto& span = track.spans[i];
+        spans[i] = {span.startMeters, span.transitionMeters,
+                    slotOffset + std::min<uint32_t>(span.material, static_cast<uint32_t>(materialCount ? materialCount - 1 : 0)),
+                    span.boundary};
+    }
+    return static_cast<uint32_t>(std::max<size_t>(count, 1));
+}
 
 // 路面に貼る帯（区画線）の深度バイアス。road-material-editor と同じ値。
 constexpr int kDecalDepthBias = -2000;
@@ -75,20 +105,8 @@ void GeneratedMeshes::Update(rhi::Device& device, const std::vector<GeneratedMes
             }
             entry->geometryKey = item.geometryKey;
         }
-        entry->visible = item.visible;
-        entry->reference = item.reference;
-        entry->hasMaterial = item.hasMaterial;
-        entry->material = item.material;
-        entry->roadWidthMeters = item.roadWidthMeters;
-        std::copy(std::begin(item.fallbackColor), std::end(item.fallbackColor), entry->fallbackColor);
-        entry->boundary = item.boundary;
-        entry->hasInner = item.hasInner;
-        entry->innerMaterial = item.innerMaterial;
-        entry->innerOrigin = item.innerOrigin;
-        entry->innerSign = item.innerSign;
-        std::copy(std::begin(item.innerFallbackColor), std::end(item.innerFallbackColor), entry->innerFallbackColor);
-        entry->decal = item.decal;
-        entry->cutout = item.cutout;
+        entry->look = item;
+        entry->look.geometry = nullptr;
         next.push_back(std::move(entry));
     }
     for (auto& stale : m_entries) {
@@ -154,10 +172,11 @@ uint32_t GeneratedMeshes::Draw(rhi::Device& device, rhi::PipelineCache& pipeline
     uint32_t drawCalls = 0;
     ID3D12PipelineState* current = pipeline;
     for (const auto& entry : m_entries) {
-        if (!entry || !entry->visible || !entry->mesh.IsValid()) continue;
-        if (entry->decal && (frame.shadow || decalPipeline == nullptr || entry->reference)) continue;
-        if (entry->reference && (frame.shadow || referencePipeline == nullptr)) continue;
-        ID3D12PipelineState* wanted = entry->reference ? referencePipeline : entry->decal ? decalPipeline : pipeline;
+        if (!entry || !entry->look.visible || !entry->mesh.IsValid()) continue;
+        const GeneratedMeshItem& look = entry->look;
+        if (look.decal && (frame.shadow || decalPipeline == nullptr || look.reference)) continue;
+        if (look.reference && (frame.shadow || referencePipeline == nullptr)) continue;
+        ID3D12PipelineState* wanted = look.reference ? referencePipeline : look.decal ? decalPipeline : pipeline;
         if (wanted != current) {
             commandList->SetPipelineState(wanted);
             current = wanted;
@@ -165,36 +184,41 @@ uint32_t GeneratedMeshes::Draw(rhi::Device& device, rhi::PipelineCache& pipeline
         const auto cb = device.Upload().Allocate(sizeof(GeneratedMeshConstants), 256);
         if (!cb.IsValid()) break;
         GeneratedMeshConstants constants = base;
-        constants.hasMaterial = entry->hasMaterial ? 1u : 0u;
-        constants.material = entry->material;
-        constants.roadWidth = entry->roadWidthMeters;
-        std::memcpy(constants.fallbackColor, entry->fallbackColor, sizeof(constants.fallbackColor));
-        const auto& boundary = entry->boundary;
-        constants.boundaryMask = boundary.maskIndex;
-        constants.boundaryHeight = boundary.heightIndex;
-        constants.boundaryFlags = (boundary.alongU ? 1u : 0u) | (boundary.invertMask ? 2u : 0u);
-        constants.boundaryWidth = boundary.widthMeters;
-        constants.boundaryRepeat = boundary.repeatMeters;
-        constants.boundaryDepth = boundary.depthMeters;
-        constants.boundaryCenter = boundary.heightCenter;
-        constants.hasInner = entry->hasInner ? 1u : 0u;
-        constants.innerMaterial = entry->innerMaterial;
-        constants.innerOrigin = entry->innerOrigin;
-        constants.innerSign = entry->innerSign;
-        std::memcpy(constants.innerFallbackColor, entry->innerFallbackColor, sizeof(constants.innerFallbackColor));
+        constants.roadWidth = look.roadWidthMeters;
+        std::memcpy(constants.fallbackColor, look.track.fallbackColor, sizeof(constants.fallbackColor));
+        constants.materialMask = 0;
+        constants.spanCount = WriteTrack(look.track, 0, constants.spans, constants.materialMask, constants.materials);
+        constants.hasInner = look.hasInner ? 1u : 0u;
+        constants.innerSpanCount = look.hasInner
+            ? WriteTrack(look.innerTrack, static_cast<uint32_t>(GeneratedMeshItem::kMaxMaterials), constants.innerSpans,
+                         constants.materialMask, constants.materials)
+            : 0u;
+        constants.innerOrigin = look.innerOrigin;
+        constants.innerSign = look.innerSign;
+        std::memcpy(constants.innerFallbackColor, look.innerTrack.fallbackColor, sizeof(constants.innerFallbackColor));
         constants.innerFallbackRoughness = kFallbackRoughness;
-        const auto& cutout = entry->cutout;
+        for (size_t i = 0; i < GeneratedMeshItem::kMaxBoundaries; ++i) {
+            BoundaryConstants& out = constants.boundaries[i];
+            out = {0xffffffffu, 0xffffffffu, 0, 0, 0, 1, 0, 0.5f};
+            if (i >= look.boundaries.size()) continue;
+            const auto& boundary = look.boundaries[i];
+            out = {boundary.maskIndex, boundary.heightIndex,
+                   (boundary.alongU ? 1u : 0u) | (boundary.invertMask ? 2u : 0u), 0,
+                   boundary.widthMeters, boundary.repeatMeters, boundary.depthMeters, boundary.heightCenter};
+        }
+        const auto& cutout = look.cutout;
         constants.cutoutOpacity = cutout.opacityIndex;
         constants.cutoutChannel = cutout.channel;
         constants.cutoutBaseColor = cutout.baseColorIndex;
         constants.cutoutThreshold = cutout.threshold;
         constants.cutoutUvScale = cutout.uvScale;
         constants.cutoutValue = cutout.value;
-        if (entry->reference) {
+        if (look.reference) {
             // 材質・境界・切り抜きを外し、単色の陰影で線を引く。
-            constants.hasMaterial = 0;
+            constants.materialMask = 0;
+            constants.spanCount = 1;
+            constants.spans[0] = {0, 0, 0, GeneratedMeshItem::kNoBoundary};
             std::memcpy(constants.fallbackColor, kReferenceColor, sizeof(constants.fallbackColor));
-            constants.boundaryWidth = 0;
             constants.hasInner = 0;
             constants.cutoutThreshold = 0;
         }
@@ -216,13 +240,13 @@ void GeneratedMeshes::Destroy(rhi::Device& device) {
 
 uint64_t GeneratedMeshes::Vertices() const {
     uint64_t total = 0;
-    for (const auto& entry : m_entries) if (entry && entry->visible) total += entry->vertices;
+    for (const auto& entry : m_entries) if (entry && entry->look.visible) total += entry->vertices;
     return total;
 }
 
 uint64_t GeneratedMeshes::Triangles() const {
     uint64_t total = 0;
-    for (const auto& entry : m_entries) if (entry && entry->visible) total += entry->triangles;
+    for (const auto& entry : m_entries) if (entry && entry->look.visible) total += entry->triangles;
     return total;
 }
 

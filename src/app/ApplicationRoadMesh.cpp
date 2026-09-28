@@ -211,8 +211,7 @@ void Application::PrepareRoadMeshes() {
             cache.markings.clear();
             continue;
         }
-        bool roadItemHasMaterial = false;
-        compositor::LayerMaterialGpu roadMaterial;
+        renderer::GeneratedMeshItem::Track roadTrack;
         roadStatus.vertices = cache.road.mesh.vertices.size();
         roadStatus.triangles = cache.road.mesh.indices.size() / 3;
         {
@@ -220,12 +219,12 @@ void Application::PrepareRoadMeshes() {
             item.id = MeshItemId(compiled.output, compiled.roadMesh, 0);
             item.geometryKey = cache.road.key;
             item.geometry = &cache.road.mesh;
-            std::copy(std::begin(kRoadFallbackColor), std::end(kRoadFallbackColor), item.fallbackColor);
-            item.hasMaterial = SurfaceMaterialGpu(mesh->mesh.material, mesh->mesh.uvRepeatMeters, item.material,
+            std::copy(std::begin(kRoadFallbackColor), std::end(kRoadFallbackColor), item.track.fallbackColor);
+            auto& slot = item.track.materials[0];
+            slot.hasMaterial = SurfaceMaterialGpu(mesh->mesh.material, mesh->mesh.uvRepeatMeters, slot.gpu,
                                                   &roadStatus.materialError);
-            if (item.hasMaterial) SetRoadContext(item.material, mesh->mesh);
-            roadItemHasMaterial = item.hasMaterial;
-            roadMaterial = item.material;
+            if (slot.hasMaterial) SetRoadContext(slot.gpu, mesh->mesh);
+            roadTrack = item.track;
             item.visible = visible;
             item.reference = reference;
             items.push_back(item);
@@ -261,8 +260,9 @@ void Application::PrepareRoadMeshes() {
                 item.geometryKey = markingCache.key ^ (0x9e3779b97f4a7c15ull * (kind + 1));
                 item.geometry = &geometry;
                 item.decal = true;
-                std::copy(std::begin(kMarkingFallbackColor), std::end(kMarkingFallbackColor), item.fallbackColor);
-                item.hasMaterial = SurfaceMaterialGpu(line.material, marking->marking.uvRepeatMeters, item.material,
+                std::copy(std::begin(kMarkingFallbackColor), std::end(kMarkingFallbackColor), item.track.fallbackColor);
+                auto& slot = item.track.materials[0];
+                slot.hasMaterial = SurfaceMaterialGpu(line.material, marking->marking.uvRepeatMeters, slot.gpu,
                                                       &status.materialError);
                 item.cutout = MaterialCutout(line.material, marking->marking.uvRepeatMeters);
                 item.visible = visible;
@@ -276,16 +276,13 @@ void Application::PrepareRoadMeshes() {
         struct Edge {
             const RoadStrip* strip = nullptr;
             uint32_t edgeColumn = 0, innerColumn = 0;
-            // 内側の帯の材質と、外へ延ばした位置の座標（origin + sign * 外への距離）。
-            bool hasMaterial = false;
-            compositor::LayerMaterialGpu material;
+            // 内側の帯の材質の表と、外へ延ばした位置の座標（origin + sign * 外への距離）。
+            renderer::GeneratedMeshItem::Track track;
             float origin = 0, sign = 1;
-            const float* fallback = kRoadFallbackColor;
         };
         const float roadWidth = std::clamp(mesh->mesh.widthMeters, graph::kRoadMinWidthMeters, graph::kRoadMaxWidthMeters);
-        Edge edges[2] = {{&cache.road, 0, 1, roadItemHasMaterial, roadMaterial, 0.0f, -1.0f, kRoadFallbackColor},
-                         {&cache.road, cache.road.stride - 1, cache.road.stride - 2, roadItemHasMaterial, roadMaterial,
-                          roadWidth, 1.0f, kRoadFallbackColor}};
+        Edge edges[2] = {{&cache.road, 0, 1, roadTrack, 0.0f, -1.0f},
+                         {&cache.road, cache.road.stride - 1, cache.road.stride - 2, roadTrack, roadWidth, 1.0f}};
         size_t stripIndex = 0;
         for (const graph::GraphId shoulderId : compiled.shoulders) {
             const graph::Node* shoulderNode = m_graph.FindNode(shoulderId);
@@ -321,41 +318,72 @@ void Application::PrepareRoadMeshes() {
                 item.id = MeshItemId(compiled.output, shoulderId, side + 1);
                 item.geometryKey = strip.key;
                 item.geometry = &strip.mesh;
-                std::copy(std::begin(kShoulderFallbackColor), std::end(kShoulderFallbackColor), item.fallbackColor);
-                item.hasMaterial = SurfaceMaterialGpu(settings.material, settings.uvRepeatMeters, item.material,
-                                                      &status.materialError);
+                std::copy(std::begin(kShoulderFallbackColor), std::end(kShoulderFallbackColor), item.track.fallbackColor);
                 // 帯の幅（断面に沿った長さ。UV の x の範囲）。
                 const float stripWidth = graph::ShoulderSectionLength(settings);
-                if (item.hasMaterial) SetShoulderContext(item.material, stripWidth);
-                // 内側の境界。内側の帯の材質と、境界マテリアルのマスク・ハイト。
-                item.hasInner = edges[side].hasMaterial;
-                item.innerMaterial = edges[side].material;
-                item.innerOrigin = edges[side].origin;
-                item.innerSign = edges[side].sign;
-                std::copy(edges[side].fallback, edges[side].fallback + 3, item.innerFallbackColor);
-                if (!settings.boundaryPath.empty() || !settings.boundaryUid.empty()) {
-                    if (const BoundaryAsset* boundary = AcquireBoundary(settings.boundaryPath, settings.boundaryUid)) {
-                        if (!boundary->error.empty()) {
-                            status.materialError = boundary->error;
-                        } else {
-                            auto& b = item.boundary;
-                            b.maskIndex = m_textureLibrary.SrvIndex(boundary->mask, false);
-                            b.heightIndex = m_textureLibrary.SrvIndex(boundary->height, false);
-                            // 幅は路肩の幅に収める（反対側の端まで食い込ませない）。
-                            b.widthMeters = std::min(boundary->widthMeters, stripWidth);
-                            b.repeatMeters = boundary->repeatMeters;
-                            b.depthMeters = boundary->depthMeters;
-                            b.heightCenter = boundary->heightCenter;
-                            b.alongU = boundary->alongU;
-                            b.invertMask = boundary->invertMask;
+                // 区間の表。材質（と繰り返し長）・境界マテリアルの種類ごとに枠を 1 つ使う。
+                item.track.spans.clear();
+                item.track.materials.clear();
+                std::vector<std::pair<compositor::MaterialAssetId, float>> materialKeys;
+                std::vector<std::string> boundaryKeys;
+                for (const graph::RoadShoulderSpan& span : graph::ShoulderSpans(settings, cache.lengthMeters)) {
+                    renderer::GeneratedMeshItem::Span out;
+                    out.startMeters = span.startMeters;
+                    out.transitionMeters = span.transitionMeters;
+                    const std::pair<compositor::MaterialAssetId, float> materialKey{span.material, span.uvRepeatMeters};
+                    const auto foundMaterial = std::find(materialKeys.begin(), materialKeys.end(), materialKey);
+                    if (foundMaterial != materialKeys.end()) {
+                        out.material = static_cast<uint32_t>(foundMaterial - materialKeys.begin());
+                    } else if (materialKeys.size() < graph::kShoulderMaxSpanMaterials) {
+                        out.material = static_cast<uint32_t>(materialKeys.size());
+                        materialKeys.push_back(materialKey);
+                        renderer::GeneratedMeshItem::Material slot;
+                        slot.hasMaterial = SurfaceMaterialGpu(span.material, span.uvRepeatMeters, slot.gpu,
+                                                              &status.materialError);
+                        if (slot.hasMaterial) SetShoulderContext(slot.gpu, stripWidth);
+                        item.track.materials.push_back(slot);
+                    } else {
+                        status.error = "区間の材質は 4 種類まで（繰り返し長の違いも別の種類に数える）";
+                    }
+                    if (!span.boundaryPath.empty() || !span.boundaryUid.empty()) {
+                        const std::string boundaryKey = span.boundaryUid + "|" + span.boundaryPath;
+                        const auto foundBoundary = std::find(boundaryKeys.begin(), boundaryKeys.end(), boundaryKey);
+                        if (foundBoundary != boundaryKeys.end()) {
+                            out.boundary = static_cast<uint32_t>(foundBoundary - boundaryKeys.begin());
+                        } else if (boundaryKeys.size() >= graph::kShoulderMaxSpanBoundaries) {
+                            status.error = "区間の境界マテリアルは 4 種類まで";
+                        } else if (const BoundaryAsset* boundary = AcquireBoundary(span.boundaryPath, span.boundaryUid)) {
+                            if (!boundary->error.empty()) {
+                                status.materialError = boundary->error;
+                            } else {
+                                out.boundary = static_cast<uint32_t>(boundaryKeys.size());
+                                boundaryKeys.push_back(boundaryKey);
+                                renderer::GeneratedMeshItem::Boundary b;
+                                b.maskIndex = m_textureLibrary.SrvIndex(boundary->mask, false);
+                                b.heightIndex = m_textureLibrary.SrvIndex(boundary->height, false);
+                                // 幅は路肩の幅に収める（反対側の端まで食い込ませない）。
+                                b.widthMeters = std::min(boundary->widthMeters, stripWidth);
+                                b.repeatMeters = boundary->repeatMeters;
+                                b.depthMeters = boundary->depthMeters;
+                                b.heightCenter = boundary->heightCenter;
+                                b.alongU = boundary->alongU;
+                                b.invertMask = boundary->invertMask;
+                                item.boundaries.push_back(b);
+                            }
                         }
                     }
+                    item.track.spans.push_back(out);
                 }
+                if (item.track.materials.empty()) item.track.materials.emplace_back();
+                // 内側の境界の中で見せる、内側の帯の材質（内側の帯が区間で替わるなら同じ道のりで替わる）。
+                item.hasInner = true;
+                item.innerTrack = edges[side].track;
+                item.innerOrigin = edges[side].origin;
+                item.innerSign = edges[side].sign;
                 item.visible = visible;
                 item.reference = reference;
                 items.push_back(item);
-                edges[side] = {&strip, strip.stride - 1, strip.stride - 2, item.hasMaterial, item.material, stripWidth, 1.0f,
-                               kShoulderFallbackColor};
+                edges[side] = {&strip, strip.stride - 1, strip.stride - 2, item.track, stripWidth, 1.0f};
             }
         }
         cache.shoulders.resize(stripIndex);
@@ -852,36 +880,9 @@ bool Application::DrawShoulderSettings(graph::Node& node) {
     // --- 内側の境界（境界マテリアル） ---
     ui::SectionHeader("内側の境界");
     if (ui::BeginPropertyTable("shoulderBoundaryRows", "繰り返しの向き")) {
-        const std::vector<std::filesystem::path> files = m_workspace.AssetsWithExtension(L".tgboundary");
-        const std::filesystem::path current =
-            (shoulder.boundaryPath.empty() && shoulder.boundaryUid.empty())
-                ? std::filesystem::path{}
-                : m_workspace.Resolve(nlohmann::json{{"path", shoulder.boundaryPath}, {"uid", shoulder.boundaryUid}});
-        const auto display = [](const std::filesystem::path& p) {
-            const auto text = p.stem().u8string();
-            return std::string(reinterpret_cast<const char*>(text.c_str()));
-        };
-        const std::string preview = current.empty() ? (shoulder.boundaryPath.empty() ? "なし" : "（見つからない）") : display(current);
-        ui::PropertyLabel("境界マテリアル", "内側の帯（路面か内側の路肩）との境目の形。ルート内の .tgboundary から選ぶ");
-        ImGui::SetNextItemWidth(std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x));
-        if (ImGui::BeginCombo("##boundary", preview.c_str())) {
-            if (ImGui::Selectable("なし", current.empty())) {
-                shoulder.boundaryPath.clear();
-                shoulder.boundaryUid.clear();
-                changed = true;
-            }
-            for (const auto& file : files) {
-                if (ImGui::Selectable(display(file).c_str(), file == current)) {
-                    const nlohmann::json reference = m_workspace.Reference(file);
-                    shoulder.boundaryPath = io::ProjectWorkspace::String(reference, "path");
-                    shoulder.boundaryUid = io::ProjectWorkspace::String(reference, "uid");
-                    changed = true;
-                }
-            }
-            ImGui::EndCombo();
-        }
-        ui::PropertyEnd();
-        BoundaryAsset* boundary = current.empty() ? nullptr : AcquireBoundary(shoulder.boundaryPath, shoulder.boundaryUid);
+        changed |= DrawBoundaryCombo("境界マテリアル", shoulder.boundaryPath, shoulder.boundaryUid);
+        const bool hasBoundary = !shoulder.boundaryPath.empty() || !shoulder.boundaryUid.empty();
+        BoundaryAsset* boundary = hasBoundary ? AcquireBoundary(shoulder.boundaryPath, shoulder.boundaryUid) : nullptr;
         if (boundary != nullptr && boundary->error.empty()) {
             DrawBoundaryAssetRows(*boundary);
             ui::PropertyLabelEmpty("shoulderBoundaryOpen");
@@ -895,7 +896,107 @@ bool Application::DrawShoulderSettings(graph::Node& node) {
             ui::HintText("境界マテリアルの設定は、このファイルを使うすべての路肩に効く。「ファイルへ保存」でファイルへ書く");
     }
 
+    // --- 区間（道のりで材質・境界を切り替える） ---
+    // 上の材質・内側の境界は最初の区間。切替位置から先を別の材質・境界にし、切替位置を中心に
+    // 移行距離の幅でなめらかにつなぐ（SurfaceLayout の区間の移植）。
+    ui::SectionHeader("区間");
+    const auto statusFound = m_roadNodeStatus.find(node.id);
+    const float roadLength = statusFound != m_roadNodeStatus.end() && statusFound->second.lengthMeters > 0.0f
+                                 ? statusFound->second.lengthMeters : 1000.0f;
+    // 一覧は道のりの順に並べる（ドラッグ中は並べ替えない。掴んでいる行が入れ替わらないように）。
+    if (!ImGui::IsAnyItemActive())
+        std::stable_sort(shoulder.switches.begin(), shoulder.switches.end(),
+                         [](const graph::RoadShoulderSwitch& a, const graph::RoadShoulderSwitch& b) { return a.atMeters < b.atMeters; });
+    size_t removeIndex = shoulder.switches.size();
+    for (size_t i = 0; i < shoulder.switches.size(); ++i) {
+        graph::RoadShoulderSwitch& change = shoulder.switches[i];
+        ImGui::PushID(static_cast<int>(i));
+        ImGui::TextDisabled("区間 %zu（%.1f m から）", i + 2, change.atMeters);
+        if (ui::BeginPropertyTable("shoulderSwitch", "境界マテリアル")) {
+            changed |= ui::PropertyFloat("切替位置", &change.atMeters, 0.0f, roadLength, std::min(10.0f, roadLength),
+                                         "この区間が始まる道のり（m）。始点から測る", "%.1f m");
+            changed |= ui::PropertyFloat("移行距離", &change.transitionMeters, 0.0f, graph::kShoulderMaxTransitionMeters,
+                                         2.0f,
+                                         "切替位置を中心に、前の区間からなめらかに移る幅（m）。0 でその位置で替わる。"
+                                         "前後の区間の長さより長くはならない",
+                                         "%.1f m");
+            changed |= DrawMaterialSlotRow("材質", change.material, m_materialLibrary, m_pendingAssetReveal, true, true);
+            const compositor::MaterialAsset* asset = m_materialLibrary.Find(change.material);
+            if (asset == nullptr || !asset->layerMaterial) {
+                changed |= ui::PropertyFloat("繰り返し長", &change.uvRepeatMeters, 0.1f, 100.0f, 2.0f,
+                                             "模様が 1 周する長さ（m）", "%.2f m", ImGuiSliderFlags_Logarithmic);
+            }
+            changed |= DrawBoundaryCombo("境界マテリアル", change.boundaryPath, change.boundaryUid);
+            ui::PropertyLabelEmpty("shoulderSwitchDelete");
+            if (ui::Button("削除")) removeIndex = i;
+            ui::PropertyEnd();
+            ui::EndPropertyTable();
+        }
+        ImGui::PopID();
+    }
+    if (removeIndex < shoulder.switches.size()) {
+        shoulder.switches.erase(shoulder.switches.begin() + static_cast<ptrdiff_t>(removeIndex));
+        changed = true;
+    }
+    ImGui::BeginDisabled(shoulder.switches.size() >= graph::kShoulderMaxSwitches);
+    if (ui::Button("区間を追加", ui::kWideButtonWidth)) {
+        // 一番長い区間の真ん中で切り、その区間の材質・境界を引き継ぐ（見た目を変えずに足す）。
+        const std::vector<graph::RoadShoulderSpan> spans = graph::ShoulderSpans(shoulder, roadLength);
+        size_t longest = 0;
+        float longestLength = -1.0f;
+        for (size_t i = 0; i < spans.size(); ++i) {
+            const float end = i + 1 < spans.size() ? spans[i + 1].startMeters : roadLength;
+            if (end - spans[i].startMeters > longestLength) longestLength = end - spans[i].startMeters, longest = i;
+        }
+        graph::RoadShoulderSwitch added;
+        added.atMeters = spans[longest].startMeters + std::max(longestLength, 0.0f) * 0.5f;
+        added.transitionMeters = std::min(2.0f, std::max(longestLength, 0.0f) * 0.5f);
+        added.material = spans[longest].material;
+        added.uvRepeatMeters = spans[longest].uvRepeatMeters;
+        added.boundaryPath = spans[longest].boundaryPath;
+        added.boundaryUid = spans[longest].boundaryUid;
+        shoulder.switches.push_back(std::move(added));
+        changed = true;
+    }
+    ImGui::EndDisabled();
+    ui::HintText("区間 1 は上の材質と内側の境界。区間を足すと、切替位置から先を別の材質・境界にする。"
+                 "材質と境界マテリアルは 1 本の路肩でそれぞれ 4 種類まで");
+
     DrawRoadNodeStatus(node.id, "Road Mesh（か内側の Shoulder）を繋ぎ、Mesh Output へ繋ぐと描く");
+    return changed;
+}
+
+// 境界マテリアル（.tgboundary）を選ぶ行。プロパティ表の中で呼ぶ。
+bool Application::DrawBoundaryCombo(const char* label, std::string& path, std::string& uid) {
+    bool changed = false;
+    const std::vector<std::filesystem::path> files = m_workspace.AssetsWithExtension(L".tgboundary");
+    const std::filesystem::path current =
+        (path.empty() && uid.empty()) ? std::filesystem::path{}
+                                      : m_workspace.Resolve(nlohmann::json{{"path", path}, {"uid", uid}});
+    const auto display = [](const std::filesystem::path& p) {
+        const auto text = p.stem().u8string();
+        return std::string(reinterpret_cast<const char*>(text.c_str()));
+    };
+    const std::string preview = current.empty() ? (path.empty() ? "なし" : "（見つからない）") : display(current);
+    ui::PropertyLabel(label, "内側の帯（路面か内側の路肩）との境目の形。ルート内の .tgboundary から選ぶ");
+    ImGui::SetNextItemWidth(std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x));
+    if (ImGui::BeginCombo("##boundary", preview.c_str())) {
+        if (ImGui::Selectable("なし", current.empty())) {
+            path.clear();
+            uid.clear();
+            changed = true;
+        }
+        for (const auto& file : files) {
+            if (ImGui::Selectable(display(file).c_str(), file == current)) {
+                const nlohmann::json reference = m_workspace.Reference(file);
+                path = io::ProjectWorkspace::String(reference, "path");
+                uid = io::ProjectWorkspace::String(reference, "uid");
+                changed = true;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ui::PropertyEnd();
     return changed;
 }
 

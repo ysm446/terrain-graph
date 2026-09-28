@@ -20,33 +20,38 @@ struct SceneShadowData {
     float4 splits, biases;
     float nearDistance, texel, blend; uint count;
 };
+// 材質の表の区間。start から先がこの区間で、start を中心に幅 transition で前の区間から移る。
+// material は材質の枠（0〜3 がこの帯、4〜7 が内側の帯）、boundary は境界の枠（無ければ kInvalidTextureIndex）。
+struct TrackSpan { float start, transition; uint material, boundary; };
+// 内側の境界（境界マテリアル）の枠。flags: bit0 = 模様を U（横切る向き）に繰り返す、bit1 = マスクを反転。
+struct BoundarySlot { uint mask, height, flags, padding; float width, repeat, depth, center; };
+static const uint kMaxTrackSpans = 8;
+
 // GeneratedMeshes.cpp の GeneratedMeshConstants と同じ並び。
 struct GeneratedMeshConstants {
     float4x4 viewProjection;  // 転置済み（mul(float4(p, 1), M)）
     float3 cameraPosition; float iblIntensity;
     float3 lightDirection; float lightIlluminance;
-    float3 lightColor; uint hasMaterial;
+    float3 lightColor; uint materialMask;  // bit i: 材質の枠 i に材質があるか
     uint irradianceIndex, prefilteredIndex, brdfLutIndex, prefilteredMipCount;
     float3 fallbackColor; float fallbackRoughness;
     // 環境光を雲あり / 雲なしで混ぜる高さの範囲（m）と遮蔽の強さ（ModelPreview と同じ）。
     float ambientLow, ambientHigh, ambientOcclusion; uint clearIrradianceIndex;
-    uint cloudNoiseIndex, atmosphericMode; float roadWidth; float padding;
-    // 内側の境界（路肩の内側の端。境界マテリアル）。boundaryWidth が 0 なら無い。
-    // boundaryFlags: bit0 = 模様を U（横切る向き）に繰り返す、bit1 = マスクを反転。
-    // hasInner: 内側の帯（路面か内側の路肩）の材質があるか。innerOrigin / innerSign: この帯の
-    // 横位置 x（内側の端からの距離）を、内側の帯の座標（innerOrigin + innerSign * x）へ写す。
-    uint boundaryMask, boundaryHeight, boundaryFlags, hasInner;
-    float boundaryWidth, boundaryRepeat, boundaryDepth, boundaryCenter;
-    float innerOrigin, innerSign; float2 boundaryPadding;
+    uint cloudNoiseIndex, atmosphericMode; float roadWidth; uint hasInner;
+    // 区間の数（この帯と内側の帯）。innerOrigin / innerSign: この帯の横位置 x（内側の端からの距離）を、
+    // 内側の帯の座標（innerOrigin + innerSign * x）へ写す。
+    uint spanCount, innerSpanCount; float innerOrigin, innerSign;
     float3 innerFallbackColor; float innerFallbackRoughness;
     // 不透明度での切り抜き（区画線など）。cutoutThreshold が 0 なら抜かない。不透明度は
     // マップ（cutoutOpacity の cutoutChannel）、無ければベースカラーの A、どちらも無ければ cutoutValue。
     uint cutoutOpacity, cutoutChannel, cutoutBaseColor; float cutoutThreshold;
     float cutoutUvScale, cutoutValue; float2 cutoutPadding;
+    TrackSpan spans[kMaxTrackSpans];
+    TrackSpan innerSpans[kMaxTrackSpans];
+    BoundarySlot boundaries[4];
     SceneShadowData shadows;
     AtmosphericParameters atmosphere;
-    LayerMaterialData material;
-    LayerMaterialData innerMaterial;
+    LayerMaterialData materials[8];
 };
 ConstantBuffer<GeneratedMeshConstants> g_generated : register(b1);
 
@@ -131,6 +136,110 @@ float SampleBoundary(Texture2D<float4> image, float2 uv, bool alongU) {
     return alongU ? image.Sample(g_samplerAnisoWrapUClampV, uv).r : image.Sample(g_samplerAnisoClampUWrapV, uv).r;
 }
 
+// --- 材質の表（区間の切り替え） --------------------------------------------------
+// 道のり d での区間と、隣の区間との移行の重み。a から b へ w（0〜1）で移る。
+struct TrackBlend { uint a, b, boundaryA, boundaryB; float w; };
+TrackSpan SpanOf(bool inner, uint i) {
+    if (inner) return g_generated.innerSpans[i];
+    return g_generated.spans[i];
+}
+TrackBlend TrackAt(bool inner, float d) {
+    const uint count = min(inner ? g_generated.innerSpanCount : g_generated.spanCount, kMaxTrackSpans);
+    uint index = 0;
+    for (uint k = 1; k < count; ++k)
+        if (d >= SpanOf(inner, k).start) index = k;
+    const TrackSpan span = SpanOf(inner, index);
+    TrackBlend blend;
+    blend.a = span.material; blend.b = span.material;
+    blend.boundaryA = span.boundary; blend.boundaryB = span.boundary;
+    blend.w = 0;
+    // 次の区間の始まりの手前（移行の前半）。
+    if (index + 1 < count) {
+        const TrackSpan next = SpanOf(inner, index + 1);
+        const float half = next.transition * 0.5f;
+        if (half > 0 && d > next.start - half) {
+            blend.b = next.material; blend.boundaryB = next.boundary;
+            blend.w = smoothstep(next.start - half, next.start + half, d);
+            return blend;
+        }
+    }
+    // この区間の始まりの直後（移行の後半）。
+    if (index > 0 && span.transition > 0 && d < span.start + span.transition * 0.5f) {
+        const TrackSpan previous = SpanOf(inner, index - 1);
+        const float half = span.transition * 0.5f;
+        blend.a = previous.material; blend.boundaryA = previous.boundary;
+        blend.w = smoothstep(span.start - half, span.start + half, d);
+    }
+    return blend;
+}
+
+struct SurfaceSample { float3 color, surface, normal; };
+// 材質の枠 1 つを評価する。材質が無ければ fallback の色（接線空間の法線のまま返す）。
+SurfaceSample SampleSlot(uint slot, float3 fallbackColor, float fallbackRoughness, float2 meters, float2 worldMeters,
+                         float2 footprint, float2 xAxis, float2 yAxis) {
+    SurfaceSample result;
+    result.color = fallbackColor;
+    result.surface = float3(fallbackRoughness, 0, 1);
+    result.normal = float3(0, 0, 1);
+    if ((g_generated.materialMask & (1u << slot)) != 0) {
+        const LayerMaterialSample surface = EvaluateLayerMaterial(g_generated.materials[slot], meters, worldMeters,
+                                                                  footprint, float2(1, 1), xAxis, yAxis);
+        result.color = surface.color;
+        result.surface = surface.surface;
+        result.normal = surface.normal;
+    }
+    return result;
+}
+// 表の道のり meters.y での材質。移行の中は 2 つの枠を混ぜる（法線は RNM）。
+SurfaceSample SampleTrack(bool inner, float3 fallbackColor, float fallbackRoughness, float2 meters, float2 worldMeters,
+                          float2 footprint, float2 xAxis, float2 yAxis) {
+    const TrackBlend blend = TrackAt(inner, meters.y);
+    SurfaceSample result = SampleSlot(blend.a, fallbackColor, fallbackRoughness, meters, worldMeters, footprint, xAxis, yAxis);
+    if (blend.w > 1e-3f && blend.b != blend.a) {
+        const SurfaceSample other = SampleSlot(blend.b, fallbackColor, fallbackRoughness, meters, worldMeters, footprint,
+                                               xAxis, yAxis);
+        result.color = lerp(result.color, other.color, blend.w);
+        result.surface = lerp(result.surface, other.surface, blend.w);
+        result.normal = ReorientNormal(FlattenNormal(result.normal, 1 - blend.w), FlattenNormal(other.normal, blend.w));
+    }
+    return result;
+}
+
+// 境界の枠 1 つの、内側の帯への重み（マスク）とハイトの勾配（m / m）。枠が無いか幅の外なら 0。
+struct BoundarySample { float innerWeight; float2 gradient; };
+BoundarySample SampleBoundarySlot(uint slot, float2 meters, float footprintX) {
+    BoundarySample result;
+    result.innerWeight = 0;
+    result.gradient = float2(0, 0);
+    if (slot >= 4) return result;
+    const BoundarySlot boundary = g_generated.boundaries[slot];
+    if (boundary.width <= 0 || meters.x >= boundary.width) return result;
+    const float across = saturate(meters.x / boundary.width);
+    const float along = meters.y / max(boundary.repeat, 0.01f);
+    const bool alongU = (boundary.flags & 1u) != 0;
+    // 横切る向きは端の画素を使い続ける（繰り返さない）。道に沿う向きだけ繰り返す。
+    // サンプラーも横切る向きはクランプにする（ラップだと粗いミップで反対側の端が混ざる）。
+    const float2 boundaryUv = alongU ? float2(along, across) : float2(across, along);
+    if (boundary.mask != kInvalidTextureIndex) {
+        Texture2D<float4> mask = ResourceDescriptorHeap[boundary.mask];
+        result.innerWeight = SampleBoundary(mask, boundaryUv, alongU);
+        if ((boundary.flags & 2u) != 0) result.innerWeight = 1 - result.innerWeight;
+    }
+    if (boundary.height != kInvalidTextureIndex && boundary.depth > 0) {
+        // ハイトの勾配を差分で求める。外側の端へ向かって弱める。
+        Texture2D<float4> height = ResourceDescriptorHeap[boundary.height];
+        const float stepMeters = max(footprintX, 0.005f);
+        const float2 perMeter = float2(1.0f / boundary.width, 1.0f / max(boundary.repeat, 0.01f));
+        const float2 du = alongU ? float2(0, perMeter.x * stepMeters) : float2(perMeter.x * stepMeters, 0);
+        const float2 dv = alongU ? float2(perMeter.y * stepMeters, 0) : float2(0, perMeter.y * stepMeters);
+        const float scale = 2 * boundary.depth * (1 - smoothstep(0.7f, 1.0f, across));
+        const float hx = SampleBoundary(height, boundaryUv + du, alongU) - SampleBoundary(height, boundaryUv - du, alongU);
+        const float hy = SampleBoundary(height, boundaryUv + dv, alongU) - SampleBoundary(height, boundaryUv - dv, alongU);
+        result.gradient = float2(hx, hy) * scale / (2 * stepMeters);
+    }
+    return result;
+}
+
 float4 PsMain(PixelInput input) : SV_TARGET {
     const float3 viewDirection = normalize(g_generated.cameraPosition - input.position);
     // 裏から見たら法線を返す。巻き順（SV_IsFrontFace）には頼らない（メッシュを作る側の
@@ -163,69 +272,46 @@ float4 PsMain(PixelInput input) : SV_TARGET {
         clip(opacity - g_generated.cutoutThreshold);
     }
 
-    // この帯の材質（接線空間の法線のまま持つ）。
-    float3 baseColor = g_generated.fallbackColor;
-    float3 surfaceValues = float3(g_generated.fallbackRoughness, 0, 1);
-    float3 tangentNormal = float3(0, 0, 1);
-    if (g_generated.hasMaterial != 0) {
-        const LayerMaterialSample surface = EvaluateLayerMaterial(g_generated.material, meters, worldMeters, footprint,
-                                                                  float2(1, 1), xAxis, yAxis);
-        baseColor = surface.color;
-        surfaceValues = surface.surface;
-        tangentNormal = surface.normal;
-    }
+    // この帯の材質（接線空間の法線のまま持つ）。区間の表の道のりで材質を替える。
+    const SurfaceSample own = SampleTrack(false, g_generated.fallbackColor, g_generated.fallbackRoughness, meters,
+                                          worldMeters, footprint, xAxis, yAxis);
+    float3 baseColor = own.color;
+    float3 surfaceValues = own.surface;
+    float3 tangentNormal = own.normal;
 
     // --- 内側の境界（境界マテリアル） ---------------------------------------------
-    // 内側の端から幅 boundaryWidth の中で、マスク（白 = 内側の帯）で内側の材質へ切り替え、
+    // 内側の端から境界の幅の中で、マスク（白 = 内側の帯）で内側の材質へ切り替え、
     // ハイトの凹凸を陰影に足す。road-material-editor の境界マテリアルと同じ読み方
     // （U = 内側から外へ横切る向き、V = 道に沿う向き。マスクとハイトは R）。
-    if (g_generated.boundaryWidth > 0 && meters.x < g_generated.boundaryWidth) {
-        const float across = saturate(meters.x / g_generated.boundaryWidth);
-        const float along = meters.y / max(g_generated.boundaryRepeat, 0.01f);
-        const bool alongU = (g_generated.boundaryFlags & 1u) != 0;
-        // 横切る向きは端の画素を使い続ける（繰り返さない）。道に沿う向きだけ繰り返す。
-        // サンプラーも横切る向きはクランプにする（ラップだと粗いミップで反対側の端が混ざる）。
-        const float2 boundaryUv = alongU ? float2(along, across) : float2(across, along);
-        float innerWeight = 0;
-        if (g_generated.boundaryMask != kInvalidTextureIndex) {
-            Texture2D<float4> mask = ResourceDescriptorHeap[g_generated.boundaryMask];
-            innerWeight = SampleBoundary(mask, boundaryUv, alongU);
-            if ((g_generated.boundaryFlags & 2u) != 0) innerWeight = 1 - innerWeight;
-        }
-        if (innerWeight > 1e-3f) {
-            // 内側の帯の材質を、内側の帯の座標で評価する（端の外へ延ばした位置）。
-            float3 innerColor = g_generated.innerFallbackColor;
-            float3 innerSurface = float3(g_generated.innerFallbackRoughness, 0, 1);
-            float3 innerNormal = float3(0, 0, 1);
-            if (g_generated.hasInner != 0) {
-                const float2 innerMeters = float2(g_generated.innerOrigin + g_generated.innerSign * meters.x, meters.y);
-                const LayerMaterialSample inner = EvaluateLayerMaterial(
-                    g_generated.innerMaterial, innerMeters, worldMeters, footprint, float2(1, 1),
-                    xAxis * g_generated.innerSign, yAxis);
-                innerColor = inner.color;
-                innerSurface = inner.surface;
-                // 内側の帯の x の向きがこの帯と逆なら、法線の x も返す。
-                innerNormal = float3(inner.normal.x * g_generated.innerSign, inner.normal.y, inner.normal.z);
-            }
-            baseColor = lerp(baseColor, innerColor, innerWeight);
-            surfaceValues = lerp(surfaceValues, innerSurface, innerWeight);
-            tangentNormal = ReorientNormal(FlattenNormal(tangentNormal, 1 - innerWeight),
-                                           FlattenNormal(innerNormal, innerWeight));
-        }
-        if (g_generated.boundaryHeight != kInvalidTextureIndex && g_generated.boundaryDepth > 0) {
-            // ハイトの勾配（m / m）を差分で求め、法線に足す。外側の端へ向かって弱める。
-            Texture2D<float4> height = ResourceDescriptorHeap[g_generated.boundaryHeight];
-            const float stepMeters = max(footprint.x, 0.005f);
-            const float2 perMeter = float2(1.0f / g_generated.boundaryWidth, 1.0f / max(g_generated.boundaryRepeat, 0.01f));
-            const float2 du = alongU ? float2(0, perMeter.x * stepMeters) : float2(perMeter.x * stepMeters, 0);
-            const float2 dv = alongU ? float2(perMeter.y * stepMeters, 0) : float2(0, perMeter.y * stepMeters);
-            const float scale = 2 * g_generated.boundaryDepth * (1 - smoothstep(0.7f, 1.0f, across));
-            const float hx = SampleBoundary(height, boundaryUv + du, alongU) - SampleBoundary(height, boundaryUv - du, alongU);
-            const float hy = SampleBoundary(height, boundaryUv + dv, alongU) - SampleBoundary(height, boundaryUv - dv, alongU);
-            const float2 gradient = float2(hx, hy) * scale / (2 * stepMeters);
-            tangentNormal = ReorientNormal(normalize(float3(-gradient, 1)), tangentNormal);
-        }
+    // 区間で境界が替わるときは、移行の重みで 2 つの境界を混ぜる（「なし」への切り替えも同じ）。
+    const TrackBlend boundaryBlend = TrackAt(false, meters.y);
+    const BoundarySample boundaryA = SampleBoundarySlot(boundaryBlend.boundaryA, meters, footprint.x);
+    BoundarySample boundary = boundaryA;
+    if (boundaryBlend.w > 1e-3f && boundaryBlend.boundaryB != boundaryBlend.boundaryA) {
+        const BoundarySample boundaryB = SampleBoundarySlot(boundaryBlend.boundaryB, meters, footprint.x);
+        boundary.innerWeight = lerp(boundaryA.innerWeight, boundaryB.innerWeight, boundaryBlend.w);
+        boundary.gradient = lerp(boundaryA.gradient, boundaryB.gradient, boundaryBlend.w);
     }
+    if (boundary.innerWeight > 1e-3f) {
+        // 内側の帯の材質を、内側の帯の座標で評価する（端の外へ延ばした位置）。内側の帯も区間で
+        // 材質を替えていれば、同じ道のりの材質を使う。
+        SurfaceSample inner;
+        inner.color = g_generated.innerFallbackColor;
+        inner.surface = float3(g_generated.innerFallbackRoughness, 0, 1);
+        inner.normal = float3(0, 0, 1);
+        if (g_generated.hasInner != 0) {
+            const float2 innerMeters = float2(g_generated.innerOrigin + g_generated.innerSign * meters.x, meters.y);
+            inner = SampleTrack(true, g_generated.innerFallbackColor, g_generated.innerFallbackRoughness, innerMeters,
+                                worldMeters, footprint, xAxis * g_generated.innerSign, yAxis);
+            // 内側の帯の x の向きがこの帯と逆なら、法線の x も返す。
+            inner.normal.x *= g_generated.innerSign;
+        }
+        baseColor = lerp(baseColor, inner.color, boundary.innerWeight);
+        surfaceValues = lerp(surfaceValues, inner.surface, boundary.innerWeight);
+        tangentNormal = ReorientNormal(FlattenNormal(tangentNormal, 1 - boundary.innerWeight),
+                                       FlattenNormal(inner.normal, boundary.innerWeight));
+    }
+    if (any(boundary.gradient != 0)) tangentNormal = ReorientNormal(normalize(float3(-boundary.gradient, 1)), tangentNormal);
 
     const float3 normal = normalize(tangent * tangentNormal.x + bitangent * tangentNormal.y + geometric * tangentNormal.z);
     return float4(ShadeGenerated(input.position, normal, viewDirection, baseColor, surfaceValues.x, surfaceValues.y,

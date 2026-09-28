@@ -29,23 +29,42 @@ struct GeneratedMeshItem {
     bool visible = true;
     // リファレンス表示（出口のフラグ）。灰色のワイヤーフレームで描き、影を落とさない。区画線は描かない。
     bool reference = false;
-    // 材質（毎フレーム差し替えてよい。形は上げ直さない）。
-    bool hasMaterial = false;
-    compositor::LayerMaterialGpu material;
+    // --- 材質（毎フレーム差し替えてよい。形は上げ直さない） ---
+    // 材質は「区間の表」（道のりで切り替える）と、その区間が指す材質の枠・境界の枠で持つ。
+    // 区間が 1 つなら今までどおり 1 つの材質。路肩の区間の切り替えでは、区間の境目の移行距離の
+    // 中を smoothstep で 2 つの材質（と境界）を混ぜる（GeneratedMesh.hlsl の TrackAt）。
+    static constexpr size_t kMaxSpans = 8;
+    static constexpr size_t kMaxMaterials = 4;   // 1 つの表が使える材質の枠
+    static constexpr size_t kMaxBoundaries = 4;  // 内側の境界の枠（この帯の表だけが使う）
+    static constexpr uint32_t kNoBoundary = 0xffffffffu;
+    struct Span {
+        float startMeters = 0, transitionMeters = 0;  // 始まりの道のりと、そこでの移行距離
+        uint32_t material = 0;                        // materials の添字
+        uint32_t boundary = kNoBoundary;              // boundaries の添字（無ければ kNoBoundary）
+    };
+    struct Material {
+        bool hasMaterial = false;  // 無ければ表の fallbackColor で塗る
+        compositor::LayerMaterialGpu gpu;
+    };
+    struct Track {
+        std::vector<Span> spans{Span{}};
+        std::vector<Material> materials{Material{}};
+        float fallbackColor[3] = {0.18f, 0.18f, 0.18f};
+    };
+    Track track;
     float roadWidthMeters = 0;
-    // 材質が無いときの色（リニア）。
-    float fallbackColor[3] = {0.18f, 0.18f, 0.18f};
-    // 内側の境界（境界マテリアル）。boundary.widthMeters が 0 なら無い。
+    // 内側の境界（境界マテリアル）。区間の boundary が指す。widthMeters が 0 なら無い。
     struct Boundary {
         uint32_t maskIndex = 0xffffffffu, heightIndex = 0xffffffffu;
         float widthMeters = 0, repeatMeters = 1, depthMeters = 0, heightCenter = 0.5f;
         bool alongU = false, invertMask = false;
-    } boundary;
-    // 内側の帯（路面か内側の路肩）の材質と、この帯の横位置 x から内側の帯の座標への写し方。
+    };
+    std::vector<Boundary> boundaries;
+    // 内側の帯（路面か内側の路肩）の材質の表と、この帯の横位置 x から内側の帯の座標への写し方。
+    // 内側の帯が区間で材質を替えていれば、境界の中の内側の材質も同じ道のりで替わる。
     bool hasInner = false;
-    compositor::LayerMaterialGpu innerMaterial;
+    Track innerTrack;
     float innerOrigin = 0, innerSign = 1;
-    float innerFallbackColor[3] = {0.18f, 0.18f, 0.18f};
     // 路面に貼る帯（区画線）。深度を手前へずらして描き、影は落とさない。
     bool decal = false;
     // 不透明度での切り抜き（Masked / Translucent の材質）。threshold が 0 なら抜かない。
@@ -93,19 +112,8 @@ private:
         uint64_t geometryKey = 0;
         Mesh mesh;
         uint64_t vertices = 0, triangles = 0;
-        bool visible = true;
-        bool reference = false;
-        bool hasMaterial = false;
-        compositor::LayerMaterialGpu material;
-        float roadWidthMeters = 0;
-        float fallbackColor[3] = {0.18f, 0.18f, 0.18f};
-        GeneratedMeshItem::Boundary boundary;
-        bool hasInner = false;
-        compositor::LayerMaterialGpu innerMaterial;
-        float innerOrigin = 0, innerSign = 1;
-        float innerFallbackColor[3] = {0.18f, 0.18f, 0.18f};
-        bool decal = false;
-        GeneratedMeshItem::Cutout cutout;
+        // 描き方（形の参照 geometry は使わない）。
+        GeneratedMeshItem look;
     };
     std::vector<std::unique_ptr<Entry>> m_entries;
 };

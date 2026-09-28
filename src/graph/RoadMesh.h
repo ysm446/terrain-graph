@@ -63,6 +63,16 @@ struct RoadSectionPoint {
     float acrossMeters = 0.0f;
     float heightMeters = 0.0f;
 };
+// 路肩の区間の切り替え（SurfaceLayout の区間の移植 ②）。道のり atMeters から先を別の材質・境界にする。
+// 移行距離は切替位置を中心にした幅で、その中を smoothstep でなめらかにつなぐ。
+struct RoadShoulderSwitch {
+    float atMeters = 10.0f;          // 切替位置（始点からの道のり、m）
+    float transitionMeters = 2.0f;   // 移行距離（m）。0 なら切り替えの位置でそのまま替わる
+    compositor::MaterialAssetId material = compositor::kNoMaterialAsset;
+    float uvRepeatMeters = 2.0f;
+    std::string boundaryPath;        // 内側の境界（空なら無い）
+    std::string boundaryUid;
+};
 struct RoadShoulderSettings {
     RoadShoulderSide side = RoadShoulderSide::Both;
     RoadShoulderShape shape = RoadShoulderShape::Slope;
@@ -84,8 +94,28 @@ struct RoadShoulderSettings {
     // 内側の端から境界の幅の中で、マスクで内側の帯の材質へ切り替え、ハイトの凹凸を足す。
     std::string boundaryPath;
     std::string boundaryUid;
+    // 区間の切り替え（道のりの順でなくてもよい。使うときに並べる）。上の材質・境界は最初の区間。
+    std::vector<RoadShoulderSwitch> switches;
 };
 inline constexpr float kShoulderMinWidthMeters = 0.1f;
+// 切り替えの数と、1 本の路肩で使える材質・境界マテリアルの種類の上限（シェーダへ渡す枠の数）。
+inline constexpr size_t kShoulderMaxSwitches = 7;
+inline constexpr size_t kShoulderMaxSpanMaterials = 4;
+inline constexpr size_t kShoulderMaxSpanBoundaries = 4;
+inline constexpr float kShoulderMaxTransitionMeters = 50.0f;
+
+// 路肩の区間（切り替えを道のりの順に並べ、最初の区間を先頭に足したもの）。
+struct RoadShoulderSpan {
+    float startMeters = 0.0f;
+    // この区間の始まりでの移行距離。前後の区間の長さを超えない（隣の移行と重ならない）。
+    float transitionMeters = 0.0f;
+    compositor::MaterialAssetId material = compositor::kNoMaterialAsset;
+    float uvRepeatMeters = 2.0f;
+    std::string boundaryPath;
+    std::string boundaryUid;
+};
+// 区間の列を作る。切替位置は 0〜道路の長さに収め、同じ位置なら後のものを使う。
+std::vector<RoadShoulderSpan> ShoulderSpans(const RoadShoulderSettings& settings, float lengthMeters);
 inline constexpr float kShoulderMaxWidthMeters = 20.0f;
 // 断面の点の数と高さの上限。
 inline constexpr size_t kShoulderMaxSectionPoints = 16;

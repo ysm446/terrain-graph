@@ -159,6 +159,36 @@ float ShoulderSectionLength(const RoadShoulderSettings& settings) {
     return length;
 }
 
+std::vector<RoadShoulderSpan> ShoulderSpans(const RoadShoulderSettings& settings, float lengthMeters) {
+    const float length = std::max(lengthMeters, 0.0f);
+    std::vector<RoadShoulderSpan> spans{{0.0f, 0.0f, settings.material, settings.uvRepeatMeters, settings.boundaryPath,
+                                         settings.boundaryUid}};
+    std::vector<RoadShoulderSwitch> switches = settings.switches;
+    // 同じ位置は後に足したものを使うため、安定に並べてから前のものを捨てる。
+    std::stable_sort(switches.begin(), switches.end(),
+                     [](const RoadShoulderSwitch& a, const RoadShoulderSwitch& b) { return a.atMeters < b.atMeters; });
+    for (const RoadShoulderSwitch& change : switches) {
+        const float at = std::clamp(std::isfinite(change.atMeters) ? change.atMeters : 0.0f, 0.0f, length);
+        RoadShoulderSpan span{at, std::max(std::isfinite(change.transitionMeters) ? change.transitionMeters : 0.0f, 0.0f),
+                              change.material, change.uvRepeatMeters, change.boundaryPath, change.boundaryUid};
+        if (spans.back().startMeters >= at) {
+            // 同じ位置（か 0 の位置）の切り替えは前の区間を置き換える。最初の区間は移行を持たない。
+            const bool first = spans.size() == 1;
+            spans.back() = span;
+            if (first) spans.back().startMeters = 0.0f, spans.back().transitionMeters = 0.0f;
+            continue;
+        }
+        spans.push_back(std::move(span));
+    }
+    // 移行距離は前後の区間の長さまで（移行の半分ずつが区間の半分を超えず、隣の移行と重ならない）。
+    for (size_t i = 1; i < spans.size(); ++i) {
+        const float before = spans[i].startMeters - spans[i - 1].startMeters;
+        const float after = (i + 1 < spans.size() ? spans[i + 1].startMeters : length) - spans[i].startMeters;
+        spans[i].transitionMeters = std::min({spans[i].transitionMeters, before, after, kShoulderMaxTransitionMeters});
+    }
+    return spans;
+}
+
 std::vector<RoadSectionPoint> ShoulderSectionTemplate(RoadSectionTemplate kind) {
     switch (kind) {
     case RoadSectionTemplate::Sidewalk:
