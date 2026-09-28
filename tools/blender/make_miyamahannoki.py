@@ -237,9 +237,12 @@ ENVELOPE_RESOLUTION = 0.1
 ENVELOPE_SMOOTH = 8
 ENVELOPE_NORMAL_WEIGHT = 0.75  # 葉の法線を外形の法線へ寄せる割合
 ENVELOPE_UP_BIAS = 0.3         # 下面が真っ黒にならないよう上へ足す量
-CORE_RADIUS_SCALE = 1.6
-CORE_RESOLUTION = 0.08
-CORE_INSET = 0.1
+# 葉の房（半径約15 cm）の内側だけを埋める。外形用に近い半径では
+# 隣の房のメタボールが連結して葉の外へ膨らみ、滑らかな殻が露出する。
+# 半径を小さくしてから細かな格子で形を取り、薄い部分が裏返らない量だけ縮める。
+CORE_RADIUS_SCALE = 0.8
+CORE_RESOLUTION = 0.04
+CORE_INSET = 0.025
 CORE_TRIANGLES = (2000, 900, 400)
 # 芯の色（リニア）。葉より暗くし、隙間から覗く藪の奥に見せる。
 CORE_COLOR = (0.02, 0.035, 0.012)
