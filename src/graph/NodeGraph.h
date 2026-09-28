@@ -443,6 +443,8 @@ struct ModelScatterSettings {
 struct CompiledModelScatter {
     GraphId node = 0, source = 0;
     ModelScatterSettings settings;
+    // この配置へ届く Model Output（辿った順）。表示フラグで全部隠れていれば描かない。
+    std::vector<GraphId> outputs;
 };
 // Mesh Output から辿った道路のメッシュ。Road Mesh と、その Road Path、間に挟んだ路肩
 // （Road Mesh に近い順。内側の路肩から外側へ張り出す）。
@@ -730,6 +732,9 @@ bool IsPreviewableNodeKind(NodeKind kind);
 compositor::LayerKind LayerKindFor(NodeKind kind);
 // ビューポートで線を編集できる種類か（Path / Road Path）。
 bool IsPathLikeNodeKind(NodeKind kind);
+// ビューポートへ描く出口（Output / Mesh Output / Model Output / Snow Plume / Cloud Output）か。
+// この種類のノードだけが表示フラグ（作業中だけ隠す切り替え）を持つ。
+bool IsDisplayOutputKind(NodeKind kind);
 // Path / Road Path の平面の点とエッジ。どちらでもなければ nullptr。
 // ビューポートでの編集と経路探索は、これを通して両方を同じに扱う。
 PathSettings* EditablePathSettings(Node& node);

@@ -506,6 +506,7 @@ int Application::Run() {
         ApplyCelestialSettings();
         DrawUi();
         SyncGraphStack();
+        SyncOutputDisplay();
         PrepareModelScatters();
         PrepareRoadMeshes();
 
@@ -731,6 +732,7 @@ void Application::PrepareSnowPlumes() {
 void Application::SubmitSnowPlumes() {
     std::vector<renderer::SnowPlumeDraw> draws;
     for (const auto& plume : m_snowPlumes) {
+        if (OutputHidden(plume.node)) continue;  // 表示フラグで隠している（マスクは評価し続ける）
         const auto found = m_snowPlumeMasks.find(plume.node);
         if (found == m_snowPlumeMasks.end() || !found->second->mask.pin) continue;
         // 評価し直している間も、前回の結果で描き続ける（編集中に雪煙が点滅しないように）。

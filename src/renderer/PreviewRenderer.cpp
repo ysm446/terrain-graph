@@ -936,9 +936,11 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
             commandList->SetGraphicsRootConstantBufferView(1, shadowCb.gpuAddress);
             // 地形を隠しているときは影も落とさない（クリアだけ残す）。
             if (m_showTerrain) {
-                mesh.Draw(commandList, m_tessellationEnabled);
-                CountMeshDraw(m_stats, mesh, m_tessellationEnabled);
-                if (drawInstances && !m_workHide.instances) drawInstances(commandList, matrix, true);
+                if (!m_workHide.terrain) {
+                    mesh.Draw(commandList, m_tessellationEnabled);
+                    CountMeshDraw(m_stats, mesh, m_tessellationEnabled);
+                }
+                if (drawInstances) drawInstances(commandList, matrix, true);
                 if (drawMeshes) drawMeshes(commandList, matrix, true);
             }
 
@@ -1008,7 +1010,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     commandList->SetGraphicsRootConstantBufferView(1, cb.gpuAddress);
     // 地形を隠しているときはメッシュを描かない。UV バッファは 0 クリアのままなので
     // ペイントの当たり判定も外れる。
-    if (m_showTerrain) {
+    if (m_showTerrain && !m_workHide.terrain) {
         mesh.Draw(commandList, useTessellation);
         CountMeshDraw(m_stats, mesh, useTessellation);
     }
@@ -1043,7 +1045,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     if (m_showTerrain && IsShadedView(m_debugView)) {
         XMFLOAT4X4 instanceViewProjection;
         XMStoreFloat4x4(&instanceViewProjection, viewProjection);
-        if (drawInstances && !m_workHide.instances) drawInstances(commandList, instanceViewProjection, false);
+        if (drawInstances) drawInstances(commandList, instanceViewProjection, false);
         if (drawMeshes) drawMeshes(commandList, instanceViewProjection, false);
     }
 
@@ -1116,7 +1118,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     // 深度は SRV として読み、地形との前後とソフトな縁をシェーダで決める。雲との前後は、大気の合成が
     // 残した半解像度の雲（透過率と平均距離）で決める（雲海の向こうの稜線の雪煙が、雲を突き抜けないように）。
     // 全解像度の雲では半解像度のバッファが無いので比べず、常に雲の手前に乗る。
-    if (!m_snowPlumes.empty() && m_showTerrain && !m_workHide.snowPlumes && IsShadedView(m_debugView)) {
+    if (!m_snowPlumes.empty() && m_showTerrain && IsShadedView(m_debugView)) {
         TransitionIfNeeded(commandList, m_depth,
                            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         commandList->OMSetRenderTargets(1, &rtv, FALSE, nullptr);

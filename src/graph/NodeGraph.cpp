@@ -424,6 +424,11 @@ bool IsPathLikeNodeKind(NodeKind kind) {
     return kind == NodeKind::Path || kind == NodeKind::RoadPath;
 }
 
+bool IsDisplayOutputKind(NodeKind kind) {
+    return kind == NodeKind::Output || kind == NodeKind::MeshOutput || kind == NodeKind::ModelOutput ||
+           kind == NodeKind::SnowPlume || kind == NodeKind::CloudOutput;
+}
+
 PathSettings* EditablePathSettings(Node& node) {
     if (auto* path = std::get_if<PathNodeSettings>(&node.settings)) return &path->path;
     if (auto* road = std::get_if<RoadPathNodeSettings>(&node.settings)) return &road->road.path;
@@ -753,9 +758,11 @@ CompiledCloud NodeGraph::CompileCloudShapes(GraphId shapeId) const {
 
 std::vector<CompiledModelScatter> NodeGraph::CompileModelScatters() const {
     std::vector<CompiledModelScatter> result;
-    std::unordered_set<GraphId> visited;
+    // 配置ノードから result の位置へ。複数の Model Output から届く配置も 1 回だけ描き、届く出口を並べる。
+    std::unordered_map<GraphId, size_t> placed;
     for (const auto& output : m_nodes) {
         if (output.kind != NodeKind::ModelOutput || output.inputs.empty()) continue;
+        std::unordered_set<GraphId> visited;
         std::vector<const Node*> pending{FindUpstreamNodeForPin(output.inputs[0].id)};
         while (!pending.empty()) {
             const auto* node = pending.back();
@@ -771,7 +778,12 @@ std::vector<CompiledModelScatter> NodeGraph::CompileModelScatters() const {
             const auto* source = FindUpstreamNodeForPin(node->inputs[0].id);
             const auto* settings = std::get_if<ModelScatterSettings>(&node->settings);
             if (!source || (source->kind != NodeKind::Crumbling && source->kind != NodeKind::Scatter) || !settings) continue;
-            result.push_back({node->id, source->id, *settings});
+            if (const auto found = placed.find(node->id); found != placed.end()) {
+                result[found->second].outputs.push_back(output.id);
+                continue;
+            }
+            placed.emplace(node->id, result.size());
+            result.push_back({node->id, source->id, *settings, {output.id}});
         }
     }
     return result;

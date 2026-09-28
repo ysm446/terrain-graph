@@ -223,13 +223,12 @@ public:
     GodRaySettings& GodRays() { return m_atmosphere.GodRays(); }
     bool& CloudLightingCache() { return m_cloudLightingCache; }
     bool& ShowClouds() { return m_showClouds; }
-    // 作業中だけ隠すもの（ビューポートの Display メニュー）。シーンの表示設定とは別に持ち、
+    // 作業中だけ隠すもの（出口ノードの表示フラグ）。シーンの表示設定とは別に持ち、
     // 保存しない。シーンで表示していて、ここで隠していないものだけを描く。
+    // 配置したモデル・道路・雪煙は出口ごとにアプリ側で除くので、ここには地形の面と雲だけを置く。
     struct WorkHide {
-        bool instances = false;   // Model Scatter の配置（本描画と影）
-        bool clouds = false;      // 雲と雲影
-        bool snowPlumes = false;  // 雪煙
-        bool Any() const { return instances || clouds || snowPlumes; }
+        bool terrain = false;  // 地形の面（本描画と影）。配置したモデルや道路は残す
+        bool clouds = false;   // 雲と雲影
     };
     WorkHide& WorkHidden() { return m_workHide; }
     bool& CloudCurvature() { return m_cloudCurvature; } // 天候層を球殻状に曲げる。

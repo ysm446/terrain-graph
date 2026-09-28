@@ -76,7 +76,7 @@ void Application::PrepareModelScatters() {
         } else ++it;
     }
     m_renderer.drawInstances = [this](auto* list,const auto& matrix,bool shadow) { DrawModelScatters(list,matrix,shadow); };
-    // Mesh Output のユニークなメッシュ（道路）。描く所は配置と同じだが、Hide Instances では隠さない。
+    // Mesh Output のユニークなメッシュ（道路）。描く所は配置と同じ。
     m_renderer.drawMeshes = [this](auto* list,const auto& matrix,bool shadow) { DrawGeneratedMeshes(list,matrix,shadow); };
 }
 Application::PlacementPointsState Application::PlacementPointsOf(
@@ -107,6 +107,9 @@ void Application::DrawModelScatters(ID3D12GraphicsCommandList* commandList,
     // 本描画で使ったメッシュ。複数の配置で共有していても、描画量は 1 回だけ足す（読み戻しは合計）。
     std::vector<const renderer::ModelPreview*> drawn;
     for (const auto& scatter : m_modelScatters) {
+        // 届く Model Output がどれも表示フラグで隠れていれば描かない（点の評価は続ける）。
+        if (std::all_of(scatter.outputs.begin(), scatter.outputs.end(),
+                        [&](graph::GraphId output) { return OutputHidden(output); })) continue;
         const compositor::PlacementPointSet* points = nullptr;
         if (PlacementPointsOf(scatter.source, &points) != PlacementPointsState::Ready || points == nullptr ||
             !points->points.IsValid() || points->count == 0) continue;

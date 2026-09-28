@@ -169,6 +169,13 @@ private:
     // 「出力ノードのチェーン」（0）に落とす。
     // outputPin は**どの出力を見るか**。0 なら最初の出力（レイヤーなら Result）。
     void SetPreviewGraphNode(graph::GraphId nodeId, graph::GraphId outputPin = 0);
+    // 出口ノードの表示フラグ。Ctrl を押しながらだと、その出口だけを出す / 全部へ戻す。
+    void ToggleOutputDisplay(graph::GraphId nodeId, bool solo);
+    bool OutputHidden(graph::GraphId nodeId) const { return m_hiddenOutputs.contains(nodeId); }
+    // 今のグラフにある出口のうち隠しているものの数。消えたノードの ID は捨てる。
+    size_t HiddenOutputCount();
+    // 地形の面と雲を隠すかをレンダラへ渡す（Output / Cloud Output のフラグ）。
+    void SyncOutputDisplay();
     void DrawMaterialLibraryPanel();
     void DrawModelLibraryPanel();
     void DrawModelPreviewWindow();
@@ -624,6 +631,9 @@ private:
     // 結果を見ながら別のノードのプロパティをいじれるようにするため
     // （terrain-editor と同じ作法）。0 は出力ノードのチェーン。
     graph::GraphId m_previewGraphNode = 0;
+    // 表示フラグを下ろした出口ノード（Houdini の表示フラグの逆）。作業中だけの切り替えで、
+    // シーンにもアプリの設定にも保存しない。シーンを開き直すと全部表示へ戻る。
+    std::unordered_set<graph::GraphId> m_hiddenOutputs;
     // プレビューしている出力ピン。0 なら最初の出力。
     // **堆積は Result と Mask を出す**ので、ノードだけでは決まらない。
     graph::GraphId m_previewGraphPin = 0;

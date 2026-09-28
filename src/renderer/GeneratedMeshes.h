@@ -25,6 +25,8 @@ struct GeneratedMeshItem {
     // 形を表す値。前回と違えば GPU へ上げ直す（同じなら geometry は読まない）。
     uint64_t geometryKey = 0;
     const MeshData* geometry = nullptr;
+    // 描くか（出口の表示フラグ）。隠しても GPU のメッシュは持ち続け、戻したときに上げ直さない。
+    bool visible = true;
     // 材質（毎フレーム差し替えてよい。形は上げ直さない）。
     bool hasMaterial = false;
     compositor::LayerMaterialGpu material;
@@ -89,6 +91,7 @@ private:
         uint64_t geometryKey = 0;
         Mesh mesh;
         uint64_t vertices = 0, triangles = 0;
+        bool visible = true;
         bool hasMaterial = false;
         compositor::LayerMaterialGpu material;
         float roadWidthMeters = 0;

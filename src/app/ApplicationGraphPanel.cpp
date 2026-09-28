@@ -358,6 +358,46 @@ void Application::SetPreviewGraphNode(graph::GraphId nodeId, graph::GraphId outp
     }
 }
 
+// 出口ノードの表示フラグ。Houdini の表示フラグに倣うが、既定は全部表示で、下ろしたものだけを持つ。
+// solo（Ctrl+クリック）は「その出口だけを出す」。すでにその出口だけが出ていれば全部表示へ戻す。
+void Application::ToggleOutputDisplay(graph::GraphId nodeId, bool solo) {
+    const graph::Node* node = m_graph.FindNode(nodeId);
+    if (node == nullptr || !graph::IsDisplayOutputKind(node->kind)) return;
+    if (!solo) {
+        if (!m_hiddenOutputs.erase(nodeId)) m_hiddenOutputs.insert(nodeId);
+        return;
+    }
+    std::unordered_set<graph::GraphId> others;
+    for (const graph::Node& other : m_graph.Nodes())
+        if (other.id != nodeId && graph::IsDisplayOutputKind(other.kind)) others.insert(other.id);
+    const bool alreadySolo = !m_hiddenOutputs.contains(nodeId) && m_hiddenOutputs == others;
+    m_hiddenOutputs = alreadySolo ? std::unordered_set<graph::GraphId>{} : std::move(others);
+}
+
+size_t Application::HiddenOutputCount() {
+    std::erase_if(m_hiddenOutputs, [&](graph::GraphId id) {
+        const graph::Node* node = m_graph.FindNode(id);
+        return node == nullptr || !graph::IsDisplayOutputKind(node->kind);
+    });
+    return m_hiddenOutputs.size();
+}
+
+void Application::SyncOutputDisplay() {
+    // 地形の面は、Output が 1 つ以上あってどれも隠れているときだけ隠す。
+    bool anyTerrain = false, allTerrainHidden = true, cloudHidden = false;
+    for (const graph::Node& node : m_graph.Nodes()) {
+        if (node.kind == graph::NodeKind::Output) {
+            anyTerrain = true;
+            allTerrainHidden = allTerrainHidden && OutputHidden(node.id);
+        } else if (node.kind == graph::NodeKind::CloudOutput && OutputHidden(node.id)) {
+            cloudHidden = true;
+        }
+    }
+    renderer::PreviewRenderer::WorkHide& workHide = m_renderer.WorkHidden();
+    workHide.terrain = anyTerrain && allTerrainHidden;
+    workHide.clouds = cloudHidden;
+}
+
 void Application::SyncGraphStack() {
     // プレビューの対象。**出力ピンのクリックで決める**（選択とは別）。
     // 0 のときは出力ノードのチェーン。
@@ -763,8 +803,11 @@ void Application::DrawGraphNode(const graph::Node& node) {
     // ヘッダ: 種類色の印 + 名前。レイヤーが無効なら名前を落とした色で描く。
     const auto* layerSettings = std::get_if<graph::LayerNodeSettings>(&node.settings);
     const auto* cloudSettings = std::get_if<graph::CloudNodeSettings>(&node.settings);
+    // 出口ノードは表示フラグを持つ。隠している出口も、無効のレイヤーと同じく名前を落とした色で描く。
+    const bool displayOutput = graph::IsDisplayOutputKind(node.kind);
+    const bool outputHidden = displayOutput && OutputHidden(node.id);
     const bool enabled = ((layerSettings == nullptr) || layerSettings->layer.enabled) &&
-                         ((cloudSettings == nullptr) || cloudSettings->enabled);
+                         ((cloudSettings == nullptr) || cloudSettings->enabled) && !outputHidden;
     {
         const ImVec2 cursor = ImGui::GetCursorScreenPos();
         ImDrawList* drawList = ImGui::GetWindowDrawList();
@@ -791,6 +834,25 @@ void Application::DrawGraphNode(const graph::Node& node) {
             ImGui::SameLine();
             DrawNoteIcon();
             if (ImGui::IsItemHovered()) m_graphNoteHover = node.id;
+        }
+        // 表示フラグ（目）。見出しの右端に置く。右端は前のフレームのノードの大きさから取る。
+        if (displayOutput) {
+            const float eyeSize = ui::Scaled(14.0f);
+            ImGui::SameLine();
+            const ImVec2 rowPos = ImGui::GetCursorScreenPos();
+            const float eyeX = std::max(rowPos.x, nodeRightX - kNodePaddingX - eyeSize);
+            ImGui::SetCursorScreenPos(ImVec2(eyeX, rowPos.y + (ImGui::GetTextLineHeight() - eyeSize) * 0.5f));
+            bool shown = !outputHidden;
+            // ノードの中でも ImGui の ID はノードごとに分かれないので、ノードの ID を積む。
+            ImGui::PushID(static_cast<int>(node.id));
+            if (ui::EyeToggle("##outputDisplay", &shown, eyeSize)) {
+                ToggleOutputDisplay(node.id, ImGui::GetIO().KeyCtrl);
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                ImGui::SetTooltip("ビューポートへの表示。作業中だけの切り替えで、保存しない\n"
+                                  "Ctrl+クリックでこの出口だけを表示 / もう一度で全部を表示");
+            }
+            ImGui::PopID();
         }
         // 種類はヘッダの下に小さく添える。名前と種類の両方が分かるようにする。
         if (const graph::NodeDefinition* definition = graph::FindNodeDefinition(node.kind);
@@ -1645,16 +1707,19 @@ void Application::DrawSceneHierarchy() {
     const auto graphEntry = [&](int component) {
         ImGui::PushID(component);
         const bool dirty = components && (m_sceneDirty & (component ? kDirtyCloud : kDirtyTerrain));
-        // Display メニューで作業中だけ隠しているときは、目が開いていても見えない理由を添える。
-        const auto& workHide = m_renderer.WorkHidden();
+        // 出口ノードの表示フラグで隠しているときは、目が開いていても見えない理由を添える。
+        bool flagHidden = false;
+        for (const graph::Node& node : m_graph.Nodes())
+            if (node.component == component && graph::IsDisplayOutputKind(node.kind) && OutputHidden(node.id))
+                flagHidden = true;
         if (component) eye("##eyeCloud", &m_renderer.ShowClouds(),
-                           workHide.clouds ? "雲と雲影の表示。雲グラフの設定は保持する\n"
-                                             "いまはビューポートの Display で一時的に隠しています"
-                                           : "雲と雲影の表示。雲グラフの設定は保持する");
+                           flagHidden ? "雲と雲影の表示。雲グラフの設定は保持する\n"
+                                        "いまは Cloud Output の表示フラグで一時的に隠しています"
+                                      : "雲と雲影の表示。雲グラフの設定は保持する");
         else eye("##eyeTerrain", &m_renderer.ShowTerrain(),
-                 workHide.instances ? "地形と配置したモデルの表示。影も一緒に消える\n"
-                                      "配置したモデルは、いまビューポートの Display で一時的に隠しています"
-                                    : "地形と配置したモデルの表示。影も一緒に消える");
+                 flagHidden ? "地形と配置したモデルの表示。影も一緒に消える\n"
+                              "いまは一部の出口ノードを表示フラグで一時的に隠しています"
+                            : "地形と配置したモデルの表示。影も一緒に消える");
         std::filesystem::path placed;
         if (components) for (const auto& entry : m_sceneComponents)
             if (io::ProjectWorkspace::String(entry, "role") == (component ? "cloud" : "terrain"))

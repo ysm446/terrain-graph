@@ -94,12 +94,11 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
     // --- 重ねる情報の切り替え ------------------------------------------------
     // FPS / 統計 / ハイトの範囲。どれもビューポートに重ねて出すものなので、
     // トップメニューではなくここに置く。切り替えたその場で設定に覚える。
-    // 作業中だけ隠すもの（インスタンス / 雲 / 雪煙）もここ。ハイトマップの編集中に邪魔なものを
-    // どけるための一時的な切り替えで、シーンにもアプリの設定にも保存しない（再起動で戻る）。
-    // 隠している間はボタンの文字を強調し、隠したまま忘れないようにする。
-    renderer::PreviewRenderer::WorkHide& workHide = m_renderer.WorkHidden();
+    // 出口ノードの表示フラグで隠しているものがあれば、ボタンの文字を強調して隠したまま忘れないようにし、
+    // メニューに「Show All」を出す。フラグは作業中だけの切り替えで、シーンにもアプリの設定にも保存しない。
+    const size_t hiddenOutputs = HiddenOutputCount();
     ImGui::SameLine();
-    const bool hiding = workHide.Any();
+    const bool hiding = hiddenOutputs > 0;
     if (hiding) {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::WarnColor());
     }
@@ -111,11 +110,10 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
     }
     if (ImGui::IsItemHovered()) {
         if (hiding) {
-            ImGui::SetTooltip("ビューポートに重ねる情報と、作業中だけ隠すもの。\nいま隠しているもの:%s%s%s",
-                              workHide.instances ? " インスタンス" : "", workHide.clouds ? " 雲" : "",
-                              workHide.snowPlumes ? " 雪煙" : "");
+            ImGui::SetTooltip("ビューポートに重ねる情報と、出口の表示。\nいま %zu 個の出口ノードを表示フラグで隠しています",
+                              hiddenOutputs);
         } else {
-            ImGui::SetTooltip("ビューポートに重ねる情報と、作業中だけ隠すもの");
+            ImGui::SetTooltip("ビューポートに重ねる情報と、出口の表示");
         }
     }
     if (ImGui::BeginPopup("##viewportDisplayMenu")) {
@@ -127,21 +125,14 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
         if (changed) {
             m_settings.Save();
         }
-        ImGui::SeparatorText("Hide");
-        const auto hideItem = [](const char* label, bool* value, const char* tooltip) {
-            ImGui::MenuItem(label, nullptr, value);
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-                ImGui::SetTooltip("%s", tooltip);
-            }
-        };
-        hideItem("Instances", &workHide.instances,
-                 "配置したモデル（Model Scatter）を作業中だけ隠す。影も落とさない。"
-                 "シーンには保存せず、再起動で戻る");
-        hideItem("Clouds", &workHide.clouds,
-                 "雲と雲影を作業中だけ隠す。シーン階層の目（シーンの表示設定）とは別で、"
-                 "シーンには保存せず、再起動で戻る");
-        hideItem("Snow Plumes", &workHide.snowPlumes,
-                 "稜線の雪煙を作業中だけ隠す。シーンには保存せず、再起動で戻る");
+        ImGui::Separator();
+        if (ImGui::MenuItem("Show All", nullptr, false, hiding)) {
+            m_hiddenOutputs.clear();
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort | ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("出口ノード（Output / Mesh Output / Model Output / Snow Plume / Cloud Output）の\n"
+                              "表示フラグを全部上げる。フラグはノードの見出しの目で切り替える");
+        }
         ImGui::EndPopup();
     }
 

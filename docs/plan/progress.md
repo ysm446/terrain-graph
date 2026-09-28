@@ -1,7 +1,16 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-28 16:08
+更新日時: 2026-09-28 18:33
+
+## 出口ノードの表示フラグ（2026-09-28 18:33）
+
+ユーザーから「道路ノードを触っているとき、道路・地形・岩のインスタンス・雲が同時に描かれてわかりにくい」と指摘。Houdini の表示フラグに倣い、出口ノード（Output / Mesh Output / Model Output / Snow Plume / Cloud Output）の見出しに目のアイコンを付けた。Ctrl+クリックでその出口だけを表示・もう一度で全部の表示。保存しない作業状態（`Application::m_hiddenOutputs`。シーンを開き直すと戻る）。ユーザーと相談のうえ、Display メニューの Hide（Instances / Clouds / Snow Plumes）は削り、代わりに「Show All」を置いた。
+
+- 地形の面と雲はレンダラの `WorkHide`（`terrain` / `clouds`）で止める。地形の面を隠しても、配置したモデルと道路は描く。
+- 配置したモデルは `CompiledModelScatter::outputs`（届く Model Output）がどれも隠れていれば描かない。道路は `GeneratedMeshItem::visible` で描くかだけを切り替え、GPU のメッシュは持ち続ける。雪煙は `SubmitSnowPlumes` で除く。どれも評価は続ける。
+
+検証: Debug ビルド（警告 0）、CTest 6 件。アルブラ峠で Mesh Output だけを表示した状態を一時コードで作って撮影（`data/Test/display-flag/solo_mesh.png`、`solo_ui.png`）: 地形・インスタンス・雲・雪煙が消えて道路だけが描かれ、Display ボタンが警告色になる。既定のグラフで Output の見出しの右端に目が出ることを確認（`default_graph_crop.png`）。**未確認**: ノードエディタ上での目のクリック・Ctrl+クリックの実操作（ノードの選択やドラッグと干渉しないか）、Show All の操作。同じ道路の鎖を 2 つの Mesh Output へ繋いだときは、先に見つかった Mesh Output のフラグだけが効く。
 
 ## カメラのブックマークでクリップの設定を上書きしない（2026-09-28 16:08）
 

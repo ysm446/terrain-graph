@@ -179,6 +179,8 @@ void Application::PrepareRoadMeshes() {
         const auto* path = pathNode ? std::get_if<graph::RoadPathNodeSettings>(&pathNode->settings) : nullptr;
         if (mesh == nullptr || path == nullptr) continue;
         alive.push_back(compiled.output);
+        // 表示フラグで隠している鎖も形と状態は作り続け、描くかだけを切り替える。
+        const bool visible = !OutputHidden(compiled.output);
         RoadChainCache& cache = m_roadMeshCache[compiled.output];
         RoadNodeStatus& roadStatus = m_roadNodeStatus[compiled.roadMesh];
         roadStatus = {};
@@ -223,6 +225,7 @@ void Application::PrepareRoadMeshes() {
             if (item.hasMaterial) SetRoadContext(item.material, mesh->mesh);
             roadItemHasMaterial = item.hasMaterial;
             roadMaterial = item.material;
+            item.visible = visible;
             items.push_back(item);
         }
 
@@ -260,6 +263,7 @@ void Application::PrepareRoadMeshes() {
                 item.hasMaterial = SurfaceMaterialGpu(line.material, marking->marking.uvRepeatMeters, item.material,
                                                       &status.materialError);
                 item.cutout = MaterialCutout(line.material, marking->marking.uvRepeatMeters);
+                item.visible = visible;
                 items.push_back(item);
             }
         }
@@ -344,6 +348,7 @@ void Application::PrepareRoadMeshes() {
                         }
                     }
                 }
+                item.visible = visible;
                 items.push_back(item);
                 edges[side] = {&strip, strip.stride - 1, strip.stride - 2, item.hasMaterial, item.material, stripWidth, 1.0f,
                                kShoulderFallbackColor};

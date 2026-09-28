@@ -73,6 +73,7 @@ void GeneratedMeshes::Update(rhi::Device& device, const std::vector<GeneratedMes
             }
             entry->geometryKey = item.geometryKey;
         }
+        entry->visible = item.visible;
         entry->hasMaterial = item.hasMaterial;
         entry->material = item.material;
         entry->roadWidthMeters = item.roadWidthMeters;
@@ -146,7 +147,7 @@ uint32_t GeneratedMeshes::Draw(rhi::Device& device, rhi::PipelineCache& pipeline
     uint32_t drawCalls = 0;
     ID3D12PipelineState* current = pipeline;
     for (const auto& entry : m_entries) {
-        if (!entry || !entry->mesh.IsValid()) continue;
+        if (!entry || !entry->visible || !entry->mesh.IsValid()) continue;
         if (entry->decal && (frame.shadow || decalPipeline == nullptr)) continue;
         ID3D12PipelineState* wanted = entry->decal ? decalPipeline : pipeline;
         if (wanted != current) {
@@ -199,13 +200,13 @@ void GeneratedMeshes::Destroy(rhi::Device& device) {
 
 uint64_t GeneratedMeshes::Vertices() const {
     uint64_t total = 0;
-    for (const auto& entry : m_entries) if (entry) total += entry->vertices;
+    for (const auto& entry : m_entries) if (entry && entry->visible) total += entry->vertices;
     return total;
 }
 
 uint64_t GeneratedMeshes::Triangles() const {
     uint64_t total = 0;
-    for (const auto& entry : m_entries) if (entry) total += entry->triangles;
+    for (const auto& entry : m_entries) if (entry && entry->visible) total += entry->triangles;
     return total;
 }
 
