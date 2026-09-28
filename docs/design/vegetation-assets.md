@@ -1,7 +1,7 @@
 # vegetation-assets — 植生アセットのルール
 
 作成日時: 2026-09-24 15:00
-更新日時: 2026-09-26 05:05
+更新日時: 2026-09-28 14:30
 
 草・低木・樹木など、Model Scatter で地形に並べる植生モデルを作るときの決まりごと。
 這い松（マット状の低木、`tools/blender/make_haimatsu.py`、出力は `data/Models/Haimatsu/`）、
@@ -10,7 +10,10 @@
 ミヤマハンノキ（株立ちの広葉樹の低木、`tools/blender/make_miyamahannoki.py`、出力は `data/Models/Miyamahannoki/`）、
 ササ（群落のひとまとまり、`tools/blender/make_sasa.py`、出力は `data/Models/Sasa/`）、
 スギ（植林の針葉樹、`tools/blender/make_sugi.py`、出力は `data/Models/Sugi/`）、
-ブナ（樹冠の広い広葉樹の高木、`tools/blender/make_buna.py`、出力は `data/Models/Buna/`）で確かめた内容をもとにしている。
+ブナ（樹冠の広い広葉樹の高木、`tools/blender/make_buna.py`、出力は `data/Models/Buna/`）、
+アロラマツ（Arve、`tools/blender/make_arve.py`、出力は `data/Models/Arve/`）、
+ドイツトウヒ（Fichte、`tools/blender/make_fichte.py`、出力は `data/Models/Fichte/`）、
+ヨーロッパカラマツ（Lärche、`tools/blender/make_laerche.py`、出力は `data/Models/Laerche/`）で確かめた内容をもとにしている。
 共通の部品は `tools/blender/vegetation.py`。数値の正は生成スクリプトの定数で、ここには意味と目安を書く。
 
 ## 1. 基本方針
@@ -26,6 +29,9 @@
   オオシラビソ（林の中の木）の例: 高さ 9〜16 m、幹 1 本、下の 2〜3 割は枝なし、一番下の枝は高さの 17〜22%。
   ミヤマハンノキ（森林限界付近の藪）の例: 高さ 2〜3.5 m、幅 3〜5 m、幹 8〜14 本（根元で寝てから 40〜62° へ立ち上がる）。
   スギ（植林の木）の例: 高さ 18〜26 m、幹 1 本、下の 4.5〜5.5 割は枝なし（枝打ちと密植）、一番下の枝は高さの 10〜13%。
+  アロラマツ（森林限界付近の開けた林の木）の例: 高さ 8〜14 m、太い幹（根元の半径は高さの約 2%）、枝は高さの 5〜14% から付き、太い円柱〜卵形の樹冠。4 割ほどは上の方で幹が 2〜3 本に分かれた燭台形。
+  ドイツトウヒ（高地の林の木）の例: 高さ 16〜24 m、枝は高さの 8〜18% から付き、細く尖った円錐（一番下の枝は高さの 12〜15%）。下の枝は付け根で下がって先が上へ反り、小枝は斜め下へ垂れる。
+  ヨーロッパカラマツ（開けた場所の木）の例: 高さ 12〜22 m、枝は高さの 8〜20% から付き、幹は 0.5〜4° 傾く。枝の 2 割ほどは折れて短く、樹冠が不規則に透ける。小枝は垂れ下がる。
   ブナ（稜線のブナ林）の例: 高さ 14〜20 m、幹 1 本が高さの 3〜4 割で 2〜4 本の大枝に分かれる、樹冠の直径は高さの 6〜7 割。
   ササ（伊豆スカイラインのような背丈ほどの群落）の例: 稈 58〜74 本を半径 0.85 m の円に散らし、高さ 0.9〜1.3 m、上面はほぼ平ら。1 本ずつではなく、約 2 m のまとまりを 1 モデルにする。
 - **葉のカード（枝先の房）は実物の房の大きさに合わせる。** 這い松は 14 × 7 cm（針葉 3〜8 cm、房の長さ 10〜15 cm）。
@@ -140,6 +146,9 @@
 - `blender -b --factory-startup --python-exit-code 1 --python tools/blender/make_buna.py -- --out data/Models/Buna`
 - `blender -b --factory-startup --python-exit-code 1 --python tools/blender/make_hakonedake.py -- --out data/Models/Hakonedake`
 - `blender -b --factory-startup --python-exit-code 1 --python tools/blender/make_susuki.py -- --out data/Models/Susuki`
+- `blender -b --factory-startup --python-exit-code 1 --python tools/blender/make_arve.py -- --out data/Models/Arve`
+- `blender -b --factory-startup --python-exit-code 1 --python tools/blender/make_fichte.py -- --out data/Models/Fichte`
+- `blender -b --factory-startup --python-exit-code 1 --python tools/blender/make_laerche.py -- --out data/Models/Laerche`
 - 植物の種類に依らない部品（引数、PNG、広葉樹の葉を描く画布 `LeafCanvas`、筒、枝の伸ばし方、樹冠の法線、芯、マテリアル、FBX、アセットの書き出し）は `vegetation.py` に置き、種類ごとのスクリプトはテクスチャと形の作り方だけを持つ。新しい植物もこの形で足す。
 - 共通部分を変えたら、既存の植物の出力が変わらないことを確かめる（テクスチャのハッシュ、三角形数、FBX を読んだ寸法を前後で比べる）。
 - テクスチャ・FBX・`.blend` は毎回作り直す。**既存の .tgmat / .tgmodel / .meta は上書きしない**（UID と手で直した値を保つ）。ただし .tgmodel のマテリアルの並びが足りないときは、足りない分だけ書き足す。

@@ -23,3 +23,5 @@ docs/reference/*
 
 # Python のキャッシュ（Blender のスクリプトを実行すると tools/blender/ にできる）
 __pycache__/
+
+docs/references/
