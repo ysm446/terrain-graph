@@ -69,17 +69,47 @@ def leaf_texture(seed):
 
 
 def crown(seed):
+    """大小の扁平な房を不規則に寄せた樹冠。等間隔の輪に並べると左右対称のお椀形（丸すぎる）になるため、
+    高さ方向の分布・半径・大きさをばらつかせ、風衝地らしく上段を風下へ傾けて風上側を刈り込む。"""
     rng = random.Random(seed)
-    width = rng.uniform(1.55,1.95)
-    lobes=[]
-    # 下側の裾、中段の肩、上段。真球を1個置くのでなく、大小のこぶを重ねる。
-    for count, radius, z, size in [(9,width,.9,.72),(7,width*.60,1.65,.80),(3,width*.22,2.15,.72)]:
-        phase=rng.random()*math.tau
-        for i in range(count):
-            a=phase+math.tau*i/count+rng.uniform(-.15,.15)
-            center=Vector((radius*math.cos(a),radius*math.sin(a),z+rng.uniform(-.15,.15)))
-            r=size*rng.uniform(.90,1.10)
-            lobes.append((center,Vector((r,r*rng.uniform(.9,1.1),r*.85))))
+    width = rng.uniform(1.75, 2.15)      # 樹冠の裾の半径（m）
+    height = rng.uniform(2.45, 2.85)     # 房の中心が届く高さ（m）
+    wind = rng.random() * math.tau        # 風下の向き
+    windward = Vector((-math.cos(wind), -math.sin(wind), 0))
+    lean = Vector((math.cos(wind), math.sin(wind), 0)) * rng.uniform(.35, .55)
+    lobes = []
+
+    def add(center, size, flat):
+        radii = Vector((size, size * rng.uniform(.8, 1.2), size * flat))
+        lobes.append((center, radii))
+
+    # 主な房。上ほど細く小さく、中段に多く集める。
+    for _ in range(24):
+        t = rng.betavariate(1.8, 1.8)
+        radius = width * math.sqrt(rng.random()) * (1.0 - .6 * t ** 1.4)
+        angle = rng.random() * math.tau
+        offset = Vector((radius * math.cos(angle), radius * math.sin(angle), 0))
+        # 風上側は枝先が枯れて詰まる。
+        if offset.length > 0 and offset.normalized().dot(windward) > .3:
+            offset *= rng.uniform(.6, .8)
+        center = offset + Vector((0, 0, .6 + t * (height - .6))) + lean * t
+        add(center, rng.uniform(.42, .88) * (1.0 - .25 * t), rng.uniform(.62, .82))
+    # 裾の房。風下と横の側だけ地面近くまで葉を下ろす（全周を埋めると塊に見えるので、幹の根元は所々覗かせる）。
+    # 樹冠から離れた球にならないよう、その向きにある低めの房の真下へ付ける。
+    low = [c for c, r in lobes if c.z < .6 + .45 * (height - .6)]
+    for i in range(4):
+        angle = wind + rng.uniform(-1.9, 1.9)
+        direction = Vector((math.cos(angle), math.sin(angle), 0))
+        above = max(low, key=lambda c: Vector((c.x, c.y, 0)).dot(direction))
+        center = Vector((above.x * 1.05, above.y * 1.05, rng.uniform(.42, .62)))
+        add(center, rng.uniform(.36, .55), rng.uniform(.6, .75))
+    # 縁の小さな房。輪郭をでこぼこにする（外へ少し突き出す）。
+    for _ in range(8):
+        base = lobes[rng.randrange(len(lobes))]
+        c, r = base
+        direction = Vector((rng.uniform(-1, 1), rng.uniform(-1, 1), rng.uniform(-.2, .7))).normalized()
+        center = c + Vector((direction.x * r.x, direction.y * r.y, direction.z * r.z)) * rng.uniform(.75, .95)
+        add(center, rng.uniform(.24, .38), rng.uniform(.65, .85))
     return lobes
 
 
@@ -101,12 +131,13 @@ def build(seed, lobes, lod):
             radial=math.sqrt(max(0,1-z*z))
             n=Vector((radial*math.cos(phi),radial*math.sin(phi),z))
             offset=Vector((n.x*radii.x,n.y*radii.y,n.z*radii.z))
-            point=center+offset*rng.uniform(.94,1.04)
+            # 殻からの出入りを大きくし、ところどころ間引いて、球の縁がくっきり出ないようにする。
+            point=center+offset*rng.uniform(.84,1.08)
             # 他のこぶの深い内側は描かず、葉の枚数を表面へ回す。
             hidden=any(k!=j and sum(((point[a]-c[a])/r[a])**2 for a in range(3))<.82**2
                        for k,(c,r) in enumerate(lobes))
             roll=rng.random()*math.tau
-            if hidden or i%step:
+            if hidden or i%step or rng.random()<.12:
                 continue
             normal=(Vector((n.x/radii.x,n.y/radii.y,n.z/radii.z))+UP*.22).normalized()
             tangent=perpendicular(normal)
