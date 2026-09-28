@@ -178,31 +178,76 @@ void Application::DrawSceneDuplicateDialog() {
     ImGui::EndPopup();
 }
 
+// 名前だけでは見分けにくいので、対象と関連ファイルにはサムネイルを添える。
+// 絵の無いもの（.meta やフォルダ）も枠だけ出して行の高さを揃える。
+bool Application::DrawAssetRow(const fs::path& path, float size, bool fullPath) {
+    ImGui::BeginGroup();
+    ui::ThumbnailImage(AssetThumbnailHandle(path), size);
+    if (!AssetThumbnailCache::Supports(path) || m_assetThumbnails.Failed(path)) {
+        const auto min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+        std::error_code error;
+        const char* type = fs::is_directory(path, error) ? "フォルダ" : path.extension() == L".meta" ? "meta" : "ファイル";
+        const auto text = ImGui::CalcTextSize(type);
+        if (text.x < size - ui::Scaled(4))
+            ImGui::GetWindowDrawList()->AddText(ImVec2((min.x + max.x - text.x) * 0.5f, (min.y + max.y - text.y) * 0.5f),
+                                                ImGui::GetColorU32(ImGuiCol_TextDisabled), type);
+    }
+    ImGui::SameLine();
+    const auto label = ToUtf8Display(fullPath ? path : path.lexically_relative(m_workspace.Root()));
+    // 文字は箱の上下中央へ。
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (size - ImGui::GetTextLineHeight()) * 0.5f);
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ui::Scaled(520) - size);
+    ImGui::TextUnformatted(label.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::EndGroup();
+    return ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+}
+
+void Application::DrawAssetRelationsDialog() {
+    if (m_assetRelationsDialog && !ImGui::IsPopupOpen("アセットの関連")) ImGui::OpenPopup("アセットの関連");
+    if (!ImGui::BeginPopupModal("アセットの関連", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    const auto& report = m_assetRelations;
+    fs::path reveal;
+    DrawAssetRow(report.target, ui::Scaled(64), true);
+    ui::HintText("直接の関係だけを出します。行をダブルクリックすると、アセットブラウザでそのファイルを選びます。");
+    // 被参照（上流の使い手）と参照（使っている素材）を同じ形の枠で並べる。空でも枠を出して「なし」と書く。
+    const auto list = [&](const char* title, const std::vector<fs::path>& paths) {
+        ImGui::Separator();
+        ImGui::Text("%s（%zu）", title, paths.size());
+        const float thumb = ui::Scaled(36);
+        const float rowHeight = thumb + ImGui::GetStyle().ItemSpacing.y;
+        const float rows = std::clamp(float(paths.size()), 1.0f, 6.0f);
+        if (ImGui::BeginChild(title, ImVec2(ui::Scaled(560), rows * rowHeight + ui::Scaled(12)), ImGuiChildFlags_Borders)) {
+            if (paths.empty()) ImGui::TextDisabled("なし");
+            for (const auto& path : paths) {
+                ImGui::PushID(ToUtf8Display(path).c_str());
+                if (DrawAssetRow(path, thumb, false)) reveal = path;
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", ToUtf8Display(path).c_str());
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndChild();
+    };
+    list("このアセットを参照しているもの", report.referencers);
+    list("このアセットが参照しているもの", report.related);
+    if (!report.complete) ui::HintText("参照関係をすべて確認できませんでした。読めないファイルやリンクを確認してください。");
+    ImGui::Separator();
+    const bool close = ui::Button("閉じる") || ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+    if (!reveal.empty()) {
+        // フォルダ（シーンの .assets）はその中を開く。ファイルは選んで見える所まで送る。
+        std::error_code error;
+        if (fs::is_directory(reveal, error)) { m_assetDirectory = reveal; m_assetRefresh = true; }
+        else m_pendingAssetReveal = reveal;
+    }
+    if (close || !reveal.empty()) { m_assetRelationsDialog = false; ImGui::CloseCurrentPopup(); }
+    ImGui::EndPopup();
+}
+
 void Application::DrawAssetDeleteDialog() {
     if (m_assetDeleteDialog && !ImGui::IsPopupOpen("アセットファイルの削除")) ImGui::OpenPopup("アセットファイルの削除");
     if (!ImGui::BeginPopupModal("アセットファイルの削除", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
     const auto& report = m_assetDeleteRelations;
-    // 名前だけでは見分けにくいので、対象と関連ファイルにはサムネイルを添える。
-    // 絵の無いもの（.meta やフォルダ）も枠だけ出して行の高さを揃える。
-    const auto row = [&](const fs::path& path, float size, bool fullPath) {
-        ui::ThumbnailImage(AssetThumbnailHandle(path), size);
-        if (!AssetThumbnailCache::Supports(path) || m_assetThumbnails.Failed(path)) {
-            const auto min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
-            std::error_code error;
-            const char* type = fs::is_directory(path, error) ? "フォルダ" : path.extension() == L".meta" ? "meta" : "ファイル";
-            const auto text = ImGui::CalcTextSize(type);
-            if (text.x < size - ui::Scaled(4))
-                ImGui::GetWindowDrawList()->AddText(ImVec2((min.x + max.x - text.x) * 0.5f, (min.y + max.y - text.y) * 0.5f),
-                                                    ImGui::GetColorU32(ImGuiCol_TextDisabled), type);
-        }
-        ImGui::SameLine();
-        const auto label = ToUtf8Display(fullPath ? path : path.lexically_relative(m_workspace.Root()));
-        // 文字は箱の上下中央へ。
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (size - ImGui::GetTextLineHeight()) * 0.5f);
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ui::Scaled(520) - size);
-        ImGui::TextUnformatted(label.c_str());
-        ImGui::PopTextWrapPos();
-    };
+    const auto row = [&](const fs::path& path, float size, bool fullPath) { DrawAssetRow(path, size, fullPath); };
     row(report.target, ui::Scaled(64), true);
     ui::HintText("元ファイルと付随する.metaを、ルート内の退避フォルダへ移します。");
     const auto list = [&](const char* title, const std::vector<fs::path>& paths) {
@@ -632,6 +677,10 @@ void Application::ProcessAssetWork() {
             m_pendingAssetDeleteInspect = m_assetDeleteQueue.front();
             m_assetDeleteQueue.erase(m_assetDeleteQueue.begin());
         }
+    }
+    if (!m_pendingAssetRelationsInspect.empty()) {
+        m_assetRelations = io::InspectAssetRelations(m_workspace, std::exchange(m_pendingAssetRelationsInspect, {}));
+        m_assetRelationsDialog = true;
     }
     if (!m_pendingAssetDeleteInspect.empty()) {
         m_assetDeleteRelations = io::InspectAssetRelations(m_workspace, m_pendingAssetDeleteInspect);
@@ -1139,6 +1188,8 @@ void Application::DrawAssetBrowser() {
                     m_sceneDuplicateDialog = true;
                 }
                 if (ImGui::MenuItem("エクスプローラで表示")) RevealFileInExplorer(path);
+                if (!folder && path.filename() != L"project.tgproj" && ImGui::MenuItem("関連を表示…"))
+                    m_pendingAssetRelationsInspect = path;
                 if (path.filename() != L"project.tgproj" && ImGui::MenuItem("名前を変更…", "F2")) OpenAssetRename(path);
                 if (folder) {
                     std::error_code folderError;

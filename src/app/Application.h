@@ -60,6 +60,8 @@ struct StartupOptions {
     std::filesystem::path projectRoot;
     // 削除確認画面のスクリーンショット検証用。削除そのものは実行しない。
     std::filesystem::path inspectAssetDelete;
+    // 関連の窓のスクリーンショット検証用。
+    std::filesystem::path inspectAssetRelations;
     // 指定すると、数フレーム描いてから合成結果を画像へ書き出して終了する。
     // 対話せずに書き出しを確かめるための開発用オプション。
     std::filesystem::path exportDirectory;
@@ -269,6 +271,10 @@ private:
     AssetSelectionContext m_assetSelections;
     void DrawSceneSwitchDialog();
     void DrawAssetDeleteDialog();
+    // アセットの関連（参照しているもの / 参照されているもの）を見るだけの窓。右クリックの「関連を表示…」。
+    void DrawAssetRelationsDialog();
+    // 窓の中のアセット 1 行（サムネイル + パス）。ダブルクリックされたら true。
+    bool DrawAssetRow(const std::filesystem::path& path, float size, bool fullPath);
     // 未保存のアセットを、保存されている内容へ戻す確認。
     void DrawAssetRevertDialog();
     void DrawSceneDuplicateDialog();
@@ -861,6 +867,10 @@ private:
     std::filesystem::path m_pendingAssetDeleteInspect;
     io::AssetRelations m_assetDeleteRelations;
     bool m_assetDeleteDialog = false;
+    // 関連の窓。調べるのはワークスペース全体を読むので、描画の外（削除の確認と同じ所）で行う。
+    std::filesystem::path m_pendingAssetRelationsInspect;
+    io::AssetRelations m_assetRelations;
+    bool m_assetRelationsDialog = false;
     bool m_pendingAssetDelete = false;
     // 「変更前に戻す」。確認の対象と、確定した戻す要求（フレームの外で処理する）。
     std::filesystem::path m_assetRevertTarget;

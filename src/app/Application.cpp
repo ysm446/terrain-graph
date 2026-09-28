@@ -145,6 +145,7 @@ bool Application::Initialize(const StartupOptions& options) {
     io::MigrateSceneThumbnails(m_workspace);
     m_assetDirectory = m_workspace.Root();
     m_pendingAssetDeleteInspect = options.inspectAssetDelete;
+    m_pendingAssetRelationsInspect = options.inspectAssetRelations;
     m_pendingAssetReveal = options.revealAsset;
     m_pendingTexturePaths = options.texturePaths;
 
@@ -857,6 +858,7 @@ void Application::DrawUi() {
     DrawSkyPreviewWindow();
     DrawSceneSwitchDialog();
     DrawAssetDeleteDialog();
+    DrawAssetRelationsDialog();
     DrawAssetRevertDialog();
     DrawSceneDuplicateDialog();
     // 削除確認の「代わり」は確認モーダルの中で重ねる。天球の差し替えはここで出す。
