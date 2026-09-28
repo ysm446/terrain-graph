@@ -1,5 +1,7 @@
 #pragma once
 #include "io/ProjectWorkspace.h"
+#include <unordered_map>
+#include <vector>
 namespace tg::io {
 // 参照の付け替えで「同じ種類」とみなす区分。
 enum class AssetKind { Image, Material, Sky, Model, Other, LayerMaterial };
@@ -19,6 +21,21 @@ struct AssetRelations {
     bool complete = false;
 };
 AssetRelations InspectAssetRelations(ProjectWorkspace& workspace, const std::filesystem::path& target);
+// ワークスペース全体の参照の対応表（参照ビューア用）。文書を 1 回ずつ読み、参照先と参照元の両向きを持つ。
+// 添字は assets の位置。参照しているだけのファイル（画像など）も参照先として載る。
+struct AssetReferenceIndex {
+    struct Asset {
+        std::filesystem::path path;
+        std::vector<size_t> references;   // このアセットが参照しているもの
+        std::vector<size_t> referencers;  // このアセットを参照しているもの
+    };
+    std::vector<Asset> assets;
+    std::unordered_map<std::wstring, size_t> lookup;  // 小文字にした正規化パス → 添字
+    bool complete = false;  // 読めない文書やリンクがあれば false
+    const Asset* Find(const std::filesystem::path& path) const;
+    size_t IndexOf(const Asset& asset) const { return static_cast<size_t>(&asset - assets.data()); }
+};
+AssetReferenceIndex BuildAssetReferenceIndex(ProjectWorkspace& workspace);
 // 確認時から変わっていない場合だけ、元ファイルと.metaをルート内へ退避する。
 bool RetireAsset(ProjectWorkspace& workspace, const AssetRelations& approved);
 // 確認時から変わっていない場合だけ、直接の参照元の文書を replacement（同じ種類）への参照に書き換える。

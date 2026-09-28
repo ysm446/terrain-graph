@@ -60,7 +60,7 @@ struct StartupOptions {
     std::filesystem::path projectRoot;
     // 削除確認画面のスクリーンショット検証用。削除そのものは実行しない。
     std::filesystem::path inspectAssetDelete;
-    // 関連の窓のスクリーンショット検証用。
+    // 参照ビューアのスクリーンショット検証用。指定したアセットを中心に開く。
     std::filesystem::path inspectAssetRelations;
     // 指定すると、数フレーム描いてから合成結果を画像へ書き出して終了する。
     // 対話せずに書き出しを確かめるための開発用オプション。
@@ -271,8 +271,12 @@ private:
     AssetSelectionContext m_assetSelections;
     void DrawSceneSwitchDialog();
     void DrawAssetDeleteDialog();
-    // アセットの関連（参照しているもの / 参照されているもの）を見るだけの窓。右クリックの「関連を表示…」。
-    void DrawAssetRelationsDialog();
+    // 参照ビューア（UE5 の Reference Viewer に倣う）。中心のアセットから左へ参照元、右へ参照先を段ごとに並べる。
+    // 右クリックの「関連を表示…」と「ウィンドウ」メニューから開く。ApplicationReferenceViewer.cpp。
+    void OpenReferenceViewer(const std::filesystem::path& center);
+    void DrawReferenceViewer();
+    void LayoutReferenceViewer();
+    void DestroyReferenceViewer();
     // 窓の中のアセット 1 行（サムネイル + パス）。ダブルクリックされたら true。
     bool DrawAssetRow(const std::filesystem::path& path, float size, bool fullPath);
     // 未保存のアセットを、保存されている内容へ戻す確認。
@@ -867,10 +871,28 @@ private:
     std::filesystem::path m_pendingAssetDeleteInspect;
     io::AssetRelations m_assetDeleteRelations;
     bool m_assetDeleteDialog = false;
-    // 関連の窓。調べるのはワークスペース全体を読むので、描画の外（削除の確認と同じ所）で行う。
-    std::filesystem::path m_pendingAssetRelationsInspect;
-    io::AssetRelations m_assetRelations;
-    bool m_assetRelationsDialog = false;
+    // 参照ビューア。対応表はワークスペース全体を読むので、描画の外（削除の確認と同じ所）で作る。
+    bool m_showReferenceViewer = false;
+    ax::NodeEditor::EditorContext* m_referenceEditor = nullptr;
+    io::AssetReferenceIndex m_referenceIndex;
+    bool m_referenceIndexDirty = true;
+    bool m_referenceLayoutDirty = true;
+    std::filesystem::path m_referenceCenter;
+    int m_referenceDepthIn = 2;   // 参照元（左）の段数
+    int m_referenceDepthOut = 2;  // 参照先（右）の段数
+    bool m_referenceFollowSelection = false;
+    bool m_referenceFocus = false;  // 次に描くとき窓を前へ出す
+    int m_referenceNavigateFrames = 0;  // 並べ直したあと、全体へ視点を合わせるまでのフレーム数
+    ImVec2 m_referenceCanvasSize{};
+    std::filesystem::path m_referenceFollowed;  // 追従で最後に中心へ据えた選択
+    struct ReferenceViewerNode {
+        std::filesystem::path path;
+        int column = 0;  // 0 が中心、負が参照元、正が参照先
+        ImVec2 position{};
+    };
+    std::vector<ReferenceViewerNode> m_referenceNodes;
+    std::vector<std::pair<size_t, size_t>> m_referenceLinks;  // 参照する側 → 参照される側（m_referenceNodes の添字）
+    size_t m_referenceHidden = 0;  // 箱の上限で出さなかった数
     bool m_pendingAssetDelete = false;
     // 「変更前に戻す」。確認の対象と、確定した戻す要求（フレームの外で処理する）。
     std::filesystem::path m_assetRevertTarget;

@@ -1191,4 +1191,8 @@ inline void DrawAxisGizmo(const renderer::Camera& camera, const ImVec2& viewport
 }
 
 
+// ノードエディタのドットグリッドの背景（グラフと参照ビューアで共通）。ed::Begin の中で、
+// キャンバスの画面上の矩形を渡して呼ぶ。定義は ApplicationGraphPanel.cpp。
+void DrawGraphDots(const ImVec2& screenMin, const ImVec2& screenMax);
+
 }  // namespace tg

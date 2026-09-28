@@ -274,6 +274,8 @@ PinGeometry DrawRoundPin(const graph::Pin& pin, float edgeX, bool filled = false
     return geometry;
 }
 
+}  // namespace
+
 // ドットグリッドの背景。既定のグリッド線は消して自前で描く。
 void DrawGraphDots(const ImVec2& screenMin, const ImVec2& screenMax) {
     ImDrawList* drawList = ImGui::GetWindowDrawList();
@@ -309,6 +311,8 @@ void DrawGraphDots(const ImVec2& screenMin, const ImVec2& screenMax) {
     drawList->PopClipRect();
     ed::Resume();
 }
+
+namespace {
 
 // ノードの表示名。レイヤー設定を持つ種類はレイヤー名を出す。
 const char* NodeDisplayName(const graph::Node& node) {

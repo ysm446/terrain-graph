@@ -145,7 +145,7 @@ bool Application::Initialize(const StartupOptions& options) {
     io::MigrateSceneThumbnails(m_workspace);
     m_assetDirectory = m_workspace.Root();
     m_pendingAssetDeleteInspect = options.inspectAssetDelete;
-    m_pendingAssetRelationsInspect = options.inspectAssetRelations;
+    if (!options.inspectAssetRelations.empty()) OpenReferenceViewer(options.inspectAssetRelations);
     m_pendingAssetReveal = options.revealAsset;
     m_pendingTexturePaths = options.texturePaths;
 
@@ -202,6 +202,7 @@ void Application::Shutdown() {
     // ImGui のコンテキストより先に破棄する（エディタが ImGui に依存している）。
     m_assetThumbnails.Destroy(m_device);
     DestroyGraphEditor();
+    DestroyReferenceViewer();
     for (auto& slot : m_cloudMasks) if (slot.evaluator.Resolution() != 0) slot.evaluator.Destroy(m_device);
     m_paintMasks.Destroy(m_device);
     for (auto& [id, preview] : m_modelPreviews) preview->Destroy(m_device);
@@ -807,6 +808,8 @@ void Application::DrawUi() {
             ImGui::MenuItem("テクスチャプレビュー", nullptr, &m_showTexturePreview);
             ImGui::MenuItem("境界マテリアル", nullptr, &m_showBoundaryPreview);
             ImGui::MenuItem("作業用IBL", nullptr, &m_showSkyPreview);
+            if (ImGui::MenuItem("参照ビューア", nullptr, &m_showReferenceViewer) && m_showReferenceViewer)
+                m_referenceIndexDirty = true;
             ImGui::MenuItem("情報", nullptr, &m_showInfo);
             ImGui::MenuItem("設定", nullptr, &m_showSettings);
             ImGui::EndMenu();
@@ -858,7 +861,7 @@ void Application::DrawUi() {
     DrawSkyPreviewWindow();
     DrawSceneSwitchDialog();
     DrawAssetDeleteDialog();
-    DrawAssetRelationsDialog();
+    DrawReferenceViewer();
     DrawAssetRevertDialog();
     DrawSceneDuplicateDialog();
     // 削除確認の「代わり」は確認モーダルの中で重ねる。天球の差し替えはここで出す。

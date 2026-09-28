@@ -49,6 +49,29 @@ bool IsDocument(const fs::path& path) {
         if (_wcsicmp(ext.c_str(), value) == 0) return true;
     return false;
 }
+// 文書の中の参照先（uid + path の組と、実在するファイルを指す文字列）を集める。
+// 関連の窓の「参照しているもの」と、参照ビューアの対応表で同じ規則を使う。
+void CollectReferences(ProjectWorkspace& workspace, const nlohmann::json& document, const fs::path& owner,
+                       std::vector<fs::path>& out) {
+    const auto visit = [&](auto&& self, const nlohmann::json& value) -> void {
+        if (value.is_object() && value.contains("uid") && value.contains("path")) {
+            const auto reference = workspace.Resolve(value);
+            if (!reference.empty()) out.push_back(reference);
+            return;
+        }
+        if (value.is_structured()) { for (const auto& child : value) self(self, child); }
+        else if (value.is_string()) {
+            const auto text = value.get<std::string>();
+            if (text.empty()) return;
+            const auto path = FromUtf8(text);
+            for (const auto& candidate : {owner.parent_path() / path, workspace.Root() / path}) {
+                std::error_code existsError;
+                if (fs::is_regular_file(candidate, existsError) && !SamePath(candidate, owner)) out.push_back(candidate.lexically_normal());
+            }
+        }
+    };
+    visit(visit, document);
+}
 void Unique(std::vector<fs::path>& paths) {
     std::sort(paths.begin(), paths.end());
     paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
@@ -120,15 +143,14 @@ AssetRelations InspectAssetRelations(ProjectWorkspace& workspace, const fs::path
             result.companionVersions.push_back(std::to_string(modified.time_since_epoch().count()) + ":" + std::to_string(size));
         }
     }
-    const auto references = [&](const nlohmann::json& document, const fs::path& owner, bool outgoing) {
+    // 文書が対象を参照しているか（uid か、解決したパスか、文字列のパスが一致する）。
+    const auto references = [&](const nlohmann::json& document, const fs::path& owner) {
         bool hit = false;
         const auto visit = [&](auto&& self, const nlohmann::json& value) -> void {
             if (value.is_object() && value.contains("uid") && value.contains("path")) {
                 const auto reference = workspace.Resolve(value);
-                if (outgoing) {
-                    if (!reference.empty()) result.related.push_back(reference);
-                } else if ((!uid.empty() && ProjectWorkspace::String(value, "uid") == uid) ||
-                           (!reference.empty() && SamePath(reference, target))) hit = true;
+                if ((!uid.empty() && ProjectWorkspace::String(value, "uid") == uid) ||
+                    (!reference.empty() && SamePath(reference, target))) hit = true;
                 return;
             }
             if (value.is_structured()) { for (const auto& child : value) self(self, child); }
@@ -136,19 +158,15 @@ AssetRelations InspectAssetRelations(ProjectWorkspace& workspace, const fs::path
                 const auto text = value.get<std::string>();
                 if (text.empty()) return;
                 const auto path = FromUtf8(text);
-                for (const auto& candidate : {owner.parent_path() / path, workspace.Root() / path}) {
-                    if (outgoing) {
-                        std::error_code existsError;
-                        if (fs::is_regular_file(candidate, existsError) && !SamePath(candidate, owner)) result.related.push_back(candidate.lexically_normal());
-                    } else if (SamePath(candidate, target)) hit = true;
-                }
+                for (const auto& candidate : {owner.parent_path() / path, workspace.Root() / path})
+                    if (SamePath(candidate, target)) hit = true;
             }
         };
         visit(visit, document);
         return hit;
     };
     result.uid = uid;
-    if (header.is_object()) references(header, target, true);
+    if (header.is_object()) CollectReferences(workspace, header, target, result.related);
     if (target.extension() == L".tgscene" || target.extension() == L".tgterrain" || target.extension() == L".tgcloud") {
         const auto thumbnail = SceneThumbnailPath(workspace, target);
         if (!thumbnail.empty() && fs::exists(thumbnail, error)) result.related.push_back(thumbnail);
@@ -168,7 +186,7 @@ AssetRelations InspectAssetRelations(ProjectWorkspace& workspace, const fs::path
         if (!ProjectWorkspace::ReadJson(path, document)) { result.complete = false; continue; }
         // プロジェクトの旧開始シーンは自動読み込みを廃止済み。
         if (ProjectWorkspace::String(document, "format") == "terrain-graph.workspace") continue;
-        if (references(document, path, false)) result.referencers.push_back(path);
+        if (references(document, path)) result.referencers.push_back(path);
     }
     if (error) result.complete = false;
     Unique(result.related); Unique(result.referencers); Unique(result.companions);
@@ -361,5 +379,62 @@ fs::path RenameAsset(ProjectWorkspace& workspace, const fs::path& target, const 
         return destination;
     }
     return RelocateAsset(workspace, target, destination);
+}
+namespace {
+// 対応表の鍵。Windows のパスは大文字・小文字を区別しないので小文字へ揃える。
+std::wstring ReferenceKey(const fs::path& path) {
+    std::wstring key = path.lexically_normal().wstring();
+    for (auto& c : key) c = static_cast<wchar_t>(std::towlower(c));
+    return key;
+}
+}
+AssetReferenceIndex BuildAssetReferenceIndex(ProjectWorkspace& workspace) {
+    AssetReferenceIndex index;
+    if (!workspace.Scan()) return index;
+    index.complete = true;
+    const auto node = [&](const fs::path& path) -> size_t {
+        const auto key = ReferenceKey(path);
+        if (const auto found = index.lookup.find(key); found != index.lookup.end()) return found->second;
+        index.lookup.emplace(key, index.assets.size());
+        index.assets.push_back({path.lexically_normal(), {}, {}});
+        return index.assets.size() - 1;
+    };
+    std::error_code error;
+    fs::recursive_directory_iterator it(workspace.Root(), fs::directory_options::none, error), end;
+    for (; it != end && !error; it.increment(error)) {
+        if (it->is_symlink(error)) { it.disable_recursion_pending(); index.complete = false; continue; }
+        if (it->is_directory(error)) {
+            if (it->path().filename().wstring().starts_with(L".")) it.disable_recursion_pending();
+            continue;
+        }
+        const auto path = it->path();
+        if (!IsDocument(path)) continue;
+        nlohmann::json document;
+        if (!ProjectWorkspace::ReadJson(path, document)) { index.complete = false; continue; }
+        if (ProjectWorkspace::String(document, "format") == "terrain-graph.workspace") continue;
+        std::vector<fs::path> references;
+        CollectReferences(workspace, document, path, references);
+        const size_t owner = node(path);
+        for (const auto& reference : references) {
+            const size_t target = node(reference);
+            if (target == owner) continue;
+            auto& out = index.assets[owner].references;
+            if (std::find(out.begin(), out.end(), target) != out.end()) continue;
+            out.push_back(target);
+            index.assets[target].referencers.push_back(owner);
+        }
+    }
+    if (error) index.complete = false;
+    // 並びは名前順（見るたびに箱の順が変わらないように）。
+    const auto byName = [&](size_t a, size_t b) { return index.assets[a].path < index.assets[b].path; };
+    for (auto& asset : index.assets) {
+        std::sort(asset.references.begin(), asset.references.end(), byName);
+        std::sort(asset.referencers.begin(), asset.referencers.end(), byName);
+    }
+    return index;
+}
+const AssetReferenceIndex::Asset* AssetReferenceIndex::Find(const fs::path& path) const {
+    const auto found = lookup.find(ReferenceKey(path));
+    return found == lookup.end() ? nullptr : &assets[found->second];
 }
 }

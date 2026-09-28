@@ -203,46 +203,6 @@ bool Application::DrawAssetRow(const fs::path& path, float size, bool fullPath) 
     return ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
 }
 
-void Application::DrawAssetRelationsDialog() {
-    if (m_assetRelationsDialog && !ImGui::IsPopupOpen("アセットの関連")) ImGui::OpenPopup("アセットの関連");
-    if (!ImGui::BeginPopupModal("アセットの関連", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
-    const auto& report = m_assetRelations;
-    fs::path reveal;
-    DrawAssetRow(report.target, ui::Scaled(64), true);
-    ui::HintText("直接の関係だけを出します。行をダブルクリックすると、アセットブラウザでそのファイルを選びます。");
-    // 被参照（上流の使い手）と参照（使っている素材）を同じ形の枠で並べる。空でも枠を出して「なし」と書く。
-    const auto list = [&](const char* title, const std::vector<fs::path>& paths) {
-        ImGui::Separator();
-        ImGui::Text("%s（%zu）", title, paths.size());
-        const float thumb = ui::Scaled(36);
-        const float rowHeight = thumb + ImGui::GetStyle().ItemSpacing.y;
-        const float rows = std::clamp(float(paths.size()), 1.0f, 6.0f);
-        if (ImGui::BeginChild(title, ImVec2(ui::Scaled(560), rows * rowHeight + ui::Scaled(12)), ImGuiChildFlags_Borders)) {
-            if (paths.empty()) ImGui::TextDisabled("なし");
-            for (const auto& path : paths) {
-                ImGui::PushID(ToUtf8Display(path).c_str());
-                if (DrawAssetRow(path, thumb, false)) reveal = path;
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", ToUtf8Display(path).c_str());
-                ImGui::PopID();
-            }
-        }
-        ImGui::EndChild();
-    };
-    list("このアセットを参照しているもの", report.referencers);
-    list("このアセットが参照しているもの", report.related);
-    if (!report.complete) ui::HintText("参照関係をすべて確認できませんでした。読めないファイルやリンクを確認してください。");
-    ImGui::Separator();
-    const bool close = ui::Button("閉じる") || ImGui::IsKeyPressed(ImGuiKey_Escape, false);
-    if (!reveal.empty()) {
-        // フォルダ（シーンの .assets）はその中を開く。ファイルは選んで見える所まで送る。
-        std::error_code error;
-        if (fs::is_directory(reveal, error)) { m_assetDirectory = reveal; m_assetRefresh = true; }
-        else m_pendingAssetReveal = reveal;
-    }
-    if (close || !reveal.empty()) { m_assetRelationsDialog = false; ImGui::CloseCurrentPopup(); }
-    ImGui::EndPopup();
-}
-
 void Application::DrawAssetDeleteDialog() {
     if (m_assetDeleteDialog && !ImGui::IsPopupOpen("アセットファイルの削除")) ImGui::OpenPopup("アセットファイルの削除");
     if (!ImGui::BeginPopupModal("アセットファイルの削除", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
@@ -678,9 +638,11 @@ void Application::ProcessAssetWork() {
             m_assetDeleteQueue.erase(m_assetDeleteQueue.begin());
         }
     }
-    if (!m_pendingAssetRelationsInspect.empty()) {
-        m_assetRelations = io::InspectAssetRelations(m_workspace, std::exchange(m_pendingAssetRelationsInspect, {}));
-        m_assetRelationsDialog = true;
+    // 参照ビューアの対応表。ワークスペース全体の文書を読むので、開いたときと「更新」のときだけ作り直す。
+    if (m_showReferenceViewer && m_referenceIndexDirty) {
+        m_referenceIndex = io::BuildAssetReferenceIndex(m_workspace);
+        m_referenceIndexDirty = false;
+        m_referenceLayoutDirty = true;
     }
     if (!m_pendingAssetDeleteInspect.empty()) {
         m_assetDeleteRelations = io::InspectAssetRelations(m_workspace, m_pendingAssetDeleteInspect);
@@ -1189,7 +1151,7 @@ void Application::DrawAssetBrowser() {
                 }
                 if (ImGui::MenuItem("エクスプローラで表示")) RevealFileInExplorer(path);
                 if (!folder && path.filename() != L"project.tgproj" && ImGui::MenuItem("関連を表示…"))
-                    m_pendingAssetRelationsInspect = path;
+                    OpenReferenceViewer(path);
                 if (path.filename() != L"project.tgproj" && ImGui::MenuItem("名前を変更…", "F2")) OpenAssetRename(path);
                 if (folder) {
                     std::error_code folderError;

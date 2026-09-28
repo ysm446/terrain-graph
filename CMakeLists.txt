@@ -168,6 +168,7 @@ set(tg_sources
     src/io/ProjectWorkspace.cpp src/io/SceneComponents.cpp
     src/app/ApplicationAssetSaving.cpp
     src/app/ApplicationAssetBrowser.cpp
+    src/app/ApplicationReferenceViewer.cpp
     src/app/AssetThumbnailCache.cpp
     src/io/LayerMaterialIo.cpp
     src/io/ProjectIo.cpp
