@@ -47,6 +47,8 @@ constexpr float kDecalSlopeScaledDepthBias = -2.0f;
 // 材質が無いときの路面（アスファルトの目安の灰色）。
 constexpr float kFallbackColor[3] = {0.18f, 0.18f, 0.18f};
 constexpr float kFallbackRoughness = 0.85f;
+// リファレンス表示の線の色（リニア）。地形のクレイと同じく、露出の掛かる明るめの灰色。
+constexpr float kReferenceColor[3] = {0.5f, 0.5f, 0.5f};
 
 }  // namespace
 
@@ -74,6 +76,7 @@ void GeneratedMeshes::Update(rhi::Device& device, const std::vector<GeneratedMes
             entry->geometryKey = item.geometryKey;
         }
         entry->visible = item.visible;
+        entry->reference = item.reference;
         entry->hasMaterial = item.hasMaterial;
         entry->material = item.material;
         entry->roadWidthMeters = item.roadWidthMeters;
@@ -114,6 +117,10 @@ uint32_t GeneratedMeshes::Draw(rhi::Device& device, rhi::PipelineCache& pipeline
     decalDesc.depthBias = kDecalDepthBias;
     decalDesc.slopeScaledDepthBias = kDecalSlopeScaledDepthBias;
     ID3D12PipelineState* decalPipeline = frame.shadow ? nullptr : pipelineCache.GetGraphics(decalDesc);
+    // リファレンス表示は線だけ（影の段では描かない）。
+    rhi::GraphicsPipelineDesc referenceDesc = desc;
+    referenceDesc.fillMode = D3D12_FILL_MODE_WIREFRAME;
+    ID3D12PipelineState* referencePipeline = frame.shadow ? nullptr : pipelineCache.GetGraphics(referenceDesc);
 
     PIXBeginEvent(commandList, PIX_COLOR(200, 180, 120), frame.shadow ? "GeneratedMeshesShadow" : "GeneratedMeshes");
     commandList->SetGraphicsRootSignature(pipelineCache.GlobalRootSignature());
@@ -148,8 +155,9 @@ uint32_t GeneratedMeshes::Draw(rhi::Device& device, rhi::PipelineCache& pipeline
     ID3D12PipelineState* current = pipeline;
     for (const auto& entry : m_entries) {
         if (!entry || !entry->visible || !entry->mesh.IsValid()) continue;
-        if (entry->decal && (frame.shadow || decalPipeline == nullptr)) continue;
-        ID3D12PipelineState* wanted = entry->decal ? decalPipeline : pipeline;
+        if (entry->decal && (frame.shadow || decalPipeline == nullptr || entry->reference)) continue;
+        if (entry->reference && (frame.shadow || referencePipeline == nullptr)) continue;
+        ID3D12PipelineState* wanted = entry->reference ? referencePipeline : entry->decal ? decalPipeline : pipeline;
         if (wanted != current) {
             commandList->SetPipelineState(wanted);
             current = wanted;
@@ -182,6 +190,14 @@ uint32_t GeneratedMeshes::Draw(rhi::Device& device, rhi::PipelineCache& pipeline
         constants.cutoutThreshold = cutout.threshold;
         constants.cutoutUvScale = cutout.uvScale;
         constants.cutoutValue = cutout.value;
+        if (entry->reference) {
+            // 材質・境界・切り抜きを外し、単色の陰影で線を引く。
+            constants.hasMaterial = 0;
+            std::memcpy(constants.fallbackColor, kReferenceColor, sizeof(constants.fallbackColor));
+            constants.boundaryWidth = 0;
+            constants.hasInner = 0;
+            constants.cutoutThreshold = 0;
+        }
         std::memcpy(cb.cpu, &constants, sizeof(constants));
         commandList->SetGraphicsRootConstantBufferView(1, cb.gpuAddress);
         entry->mesh.Draw(commandList);

@@ -450,6 +450,30 @@ bool EyeToggle(const char* id, bool* value, float size) {
     return changed;
 }
 
+bool WireframeToggle(const char* id, bool* value, float size) {
+    const ImVec2 min = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton(id, ImVec2(size, size));
+    const bool hovered = ImGui::IsItemHovered();
+    bool changed = false;
+    if (ImGui::IsItemClicked()) {
+        *value = !*value;
+        changed = true;
+    }
+    const ImU32 color = (*value || hovered) ? ImGui::GetColorU32(ImGuiCol_Text)
+                                            : ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    // 目と同じ大きさに見えるよう、枠の内側を少し空けた四角を縦に 2 つへ割り、それぞれに対角線を引く。
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    const float inset = size * 0.14f;
+    const float thickness = std::max(1.0f, size * 0.08f);
+    const ImVec2 a(min.x + inset, min.y + inset), b(min.x + size - inset, min.y + size - inset);
+    const float midX = (a.x + b.x) * 0.5f;
+    drawList->AddRect(a, b, color, 0.0f, 0, thickness);
+    drawList->AddLine(ImVec2(midX, a.y), ImVec2(midX, b.y), color, thickness);
+    drawList->AddLine(ImVec2(a.x, b.y), ImVec2(midX, a.y), color, thickness);
+    drawList->AddLine(ImVec2(midX, b.y), ImVec2(b.x, a.y), color, thickness);
+    return changed;
+}
+
 bool SaveIconButton(const char* id, float size, const char* tooltip) {
     const ImVec2 min = ImGui::GetCursorScreenPos();
     ImGui::InvisibleButton(id, ImVec2(size, size));

@@ -360,6 +360,7 @@ void Application::SetPreviewGraphNode(graph::GraphId nodeId, graph::GraphId outp
 
 // 出口ノードの表示フラグ。Houdini の表示フラグに倣うが、既定は全部表示で、下ろしたものだけを持つ。
 // solo（Ctrl+クリック）は「その出口だけを出す」。すでにその出口だけが出ていれば全部表示へ戻す。
+// リファレンス表示の出口は solo でも隠さない（道路だけを出して、地形を線で下敷きにする使い方のため）。
 void Application::ToggleOutputDisplay(graph::GraphId nodeId, bool solo) {
     const graph::Node* node = m_graph.FindNode(nodeId);
     if (node == nullptr || !graph::IsDisplayOutputKind(node->kind)) return;
@@ -369,32 +370,45 @@ void Application::ToggleOutputDisplay(graph::GraphId nodeId, bool solo) {
     }
     std::unordered_set<graph::GraphId> others;
     for (const graph::Node& other : m_graph.Nodes())
-        if (other.id != nodeId && graph::IsDisplayOutputKind(other.kind)) others.insert(other.id);
+        if (other.id != nodeId && graph::IsDisplayOutputKind(other.kind) && !OutputReference(other.id))
+            others.insert(other.id);
     const bool alreadySolo = !m_hiddenOutputs.contains(nodeId) && m_hiddenOutputs == others;
     m_hiddenOutputs = alreadySolo ? std::unordered_set<graph::GraphId>{} : std::move(others);
 }
 
+void Application::ToggleOutputReference(graph::GraphId nodeId) {
+    const graph::Node* node = m_graph.FindNode(nodeId);
+    if (node == nullptr || !graph::IsReferenceOutputKind(node->kind)) return;
+    if (!m_referenceOutputs.erase(nodeId)) m_referenceOutputs.insert(nodeId);
+}
+
 size_t Application::HiddenOutputCount() {
-    std::erase_if(m_hiddenOutputs, [&](graph::GraphId id) {
+    const auto stale = [&](graph::GraphId id, bool (*kindOk)(graph::NodeKind)) {
         const graph::Node* node = m_graph.FindNode(id);
-        return node == nullptr || !graph::IsDisplayOutputKind(node->kind);
-    });
+        return node == nullptr || !kindOk(node->kind);
+    };
+    std::erase_if(m_hiddenOutputs, [&](graph::GraphId id) { return stale(id, graph::IsDisplayOutputKind); });
+    std::erase_if(m_referenceOutputs, [&](graph::GraphId id) { return stale(id, graph::IsReferenceOutputKind); });
     return m_hiddenOutputs.size();
 }
 
 void Application::SyncOutputDisplay() {
     // 地形の面は、Output が 1 つ以上あってどれも隠れているときだけ隠す。
-    bool anyTerrain = false, allTerrainHidden = true, cloudHidden = false;
+    // 見えている Output がどれもリファレンス表示なら、地形の面を線で描く。
+    bool anyTerrain = false, allTerrainHidden = true, allShownReference = true, cloudHidden = false;
     for (const graph::Node& node : m_graph.Nodes()) {
         if (node.kind == graph::NodeKind::Output) {
             anyTerrain = true;
-            allTerrainHidden = allTerrainHidden && OutputHidden(node.id);
+            const bool hidden = OutputHidden(node.id);
+            allTerrainHidden = allTerrainHidden && hidden;
+            if (!hidden) allShownReference = allShownReference && OutputReference(node.id);
         } else if (node.kind == graph::NodeKind::CloudOutput && OutputHidden(node.id)) {
             cloudHidden = true;
         }
     }
     renderer::PreviewRenderer::WorkHide& workHide = m_renderer.WorkHidden();
     workHide.terrain = anyTerrain && allTerrainHidden;
+    workHide.terrainReference = anyTerrain && !allTerrainHidden && allShownReference;
     workHide.clouds = cloudHidden;
 }
 
@@ -836,15 +850,31 @@ void Application::DrawGraphNode(const graph::Node& node) {
             if (ImGui::IsItemHovered()) m_graphNoteHover = node.id;
         }
         // 表示フラグ（目）。見出しの右端に置く。右端は前のフレームのノードの大きさから取る。
+        // リファレンス表示にできる出口（Output / Mesh Output）は、目の左に網のトグルを並べる。
         if (displayOutput) {
             const float eyeSize = ui::Scaled(14.0f);
+            const bool referenceable = graph::IsReferenceOutputKind(node.kind);
+            const float gap = ImGui::GetStyle().ItemInnerSpacing.x;
             ImGui::SameLine();
             const ImVec2 rowPos = ImGui::GetCursorScreenPos();
-            const float eyeX = std::max(rowPos.x, nodeRightX - kNodePaddingX - eyeSize);
-            ImGui::SetCursorScreenPos(ImVec2(eyeX, rowPos.y + (ImGui::GetTextLineHeight() - eyeSize) * 0.5f));
-            bool shown = !outputHidden;
+            const float iconsWidth = referenceable ? eyeSize * 2.0f + gap : eyeSize;
+            const float iconsX = std::max(rowPos.x, nodeRightX - kNodePaddingX - iconsWidth);
+            const float iconY = rowPos.y + (ImGui::GetTextLineHeight() - eyeSize) * 0.5f;
             // ノードの中でも ImGui の ID はノードごとに分かれないので、ノードの ID を積む。
             ImGui::PushID(static_cast<int>(node.id));
+            if (referenceable) {
+                ImGui::SetCursorScreenPos(ImVec2(iconsX, iconY));
+                bool reference = OutputReference(node.id);
+                if (ui::WireframeToggle("##outputReference", &reference, eyeSize)) {
+                    ToggleOutputReference(node.id);
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                    ImGui::SetTooltip("リファレンス表示。灰色のワイヤーフレームで描き、影を落とさない\n"
+                                      "Ctrl+クリックの単独表示でも隠れない。作業中だけの切り替えで、保存しない");
+                }
+            }
+            ImGui::SetCursorScreenPos(ImVec2(iconsX + iconsWidth - eyeSize, iconY));
+            bool shown = !outputHidden;
             if (ui::EyeToggle("##outputDisplay", &shown, eyeSize)) {
                 ToggleOutputDisplay(node.id, ImGui::GetIO().KeyCtrl);
             }

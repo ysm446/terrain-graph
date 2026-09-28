@@ -172,9 +172,12 @@ private:
     // 出口ノードの表示フラグ。Ctrl を押しながらだと、その出口だけを出す / 全部へ戻す。
     void ToggleOutputDisplay(graph::GraphId nodeId, bool solo);
     bool OutputHidden(graph::GraphId nodeId) const { return m_hiddenOutputs.contains(nodeId); }
+    // 出口ノードのリファレンス表示（Houdini のテンプレートフラグ）。灰色のワイヤーフレームで描く。
+    void ToggleOutputReference(graph::GraphId nodeId);
+    bool OutputReference(graph::GraphId nodeId) const { return m_referenceOutputs.contains(nodeId); }
     // 今のグラフにある出口のうち隠しているものの数。消えたノードの ID は捨てる。
     size_t HiddenOutputCount();
-    // 地形の面と雲を隠すかをレンダラへ渡す（Output / Cloud Output のフラグ）。
+    // 地形の面と雲を隠すか、地形の面をリファレンス表示にするかをレンダラへ渡す（Output / Cloud Output のフラグ）。
     void SyncOutputDisplay();
     void DrawMaterialLibraryPanel();
     void DrawModelLibraryPanel();
@@ -634,6 +637,9 @@ private:
     // 表示フラグを下ろした出口ノード（Houdini の表示フラグの逆）。作業中だけの切り替えで、
     // シーンにもアプリの設定にも保存しない。シーンを開き直すと全部表示へ戻る。
     std::unordered_set<graph::GraphId> m_hiddenOutputs;
+    // リファレンス表示にした出口ノード（Output / Mesh Output）。表示フラグと同じく保存しない。
+    // 表示フラグで隠していれば描かない（隠すほうが勝つ）。
+    std::unordered_set<graph::GraphId> m_referenceOutputs;
     // プレビューしている出力ピン。0 なら最初の出力。
     // **堆積は Result と Mask を出す**ので、ノードだけでは決まらない。
     graph::GraphId m_previewGraphPin = 0;

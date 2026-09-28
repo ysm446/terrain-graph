@@ -229,6 +229,8 @@ public:
     struct WorkHide {
         bool terrain = false;  // 地形の面（本描画と影）。配置したモデルや道路は残す
         bool clouds = false;   // 雲と雲影
+        // 地形の面をリファレンス表示にする（灰色のワイヤーフレーム。影を落とさない）。
+        bool terrainReference = false;
     };
     WorkHide& WorkHidden() { return m_workHide; }
     bool& CloudCurvature() { return m_cloudCurvature; } // 天候層を球殻状に曲げる。

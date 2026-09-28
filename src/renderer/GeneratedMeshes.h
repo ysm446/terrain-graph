@@ -27,6 +27,8 @@ struct GeneratedMeshItem {
     const MeshData* geometry = nullptr;
     // 描くか（出口の表示フラグ）。隠しても GPU のメッシュは持ち続け、戻したときに上げ直さない。
     bool visible = true;
+    // リファレンス表示（出口のフラグ）。灰色のワイヤーフレームで描き、影を落とさない。区画線は描かない。
+    bool reference = false;
     // 材質（毎フレーム差し替えてよい。形は上げ直さない）。
     bool hasMaterial = false;
     compositor::LayerMaterialGpu material;
@@ -92,6 +94,7 @@ private:
         Mesh mesh;
         uint64_t vertices = 0, triangles = 0;
         bool visible = true;
+        bool reference = false;
         bool hasMaterial = false;
         compositor::LayerMaterialGpu material;
         float roadWidthMeters = 0;

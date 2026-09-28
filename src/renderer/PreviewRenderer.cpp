@@ -790,8 +790,8 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
         meshPipelineDesc.hullEntry = L"HsMain";
         meshPipelineDesc.domainEntry = L"DsMain";
     }
-    // ワイヤーフレーム表示のときだけラスタライザを切り替える。
-    if (m_debugView == DebugView::Wireframe) {
+    // ワイヤーフレーム表示と、地形のリファレンス表示のときだけラスタライザを切り替える。
+    if (m_debugView == DebugView::Wireframe || m_workHide.terrainReference) {
         meshPipelineDesc.fillMode = D3D12_FILL_MODE_WIREFRAME;
     }
 
@@ -936,7 +936,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
             commandList->SetGraphicsRootConstantBufferView(1, shadowCb.gpuAddress);
             // 地形を隠しているときは影も落とさない（クリアだけ残す）。
             if (m_showTerrain) {
-                if (!m_workHide.terrain) {
+                if (!m_workHide.terrain && !m_workHide.terrainReference) {
                     mesh.Draw(commandList, m_tessellationEnabled);
                     CountMeshDraw(m_stats, mesh, m_tessellationEnabled);
                 }
@@ -1003,7 +1003,14 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
         PIXEndEvent(commandList);
         return;
     }
+    // 地形のリファレンス表示は、陰影を付ける表示ならクレイ（単色の陰影）の線にする。
+    // 露出とトーンマップはそのまま掛かるので、明るさがシーンに馴染む。
+    const uint32_t sceneDebugView = constants.debugView;
+    if (m_workHide.terrainReference && IsShadedView(m_debugView)) {
+        constants.debugView = static_cast<uint32_t>(DebugView::Clay);
+    }
     std::memcpy(cb.cpu, &constants, sizeof(constants));
+    constants.debugView = sceneDebugView;
 
     commandList->SetGraphicsRootSignature(pipelineCache.GlobalRootSignature());
     commandList->SetPipelineState(meshPipeline);

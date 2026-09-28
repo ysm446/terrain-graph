@@ -181,6 +181,7 @@ void Application::PrepareRoadMeshes() {
         alive.push_back(compiled.output);
         // 表示フラグで隠している鎖も形と状態は作り続け、描くかだけを切り替える。
         const bool visible = !OutputHidden(compiled.output);
+        const bool reference = OutputReference(compiled.output);
         RoadChainCache& cache = m_roadMeshCache[compiled.output];
         RoadNodeStatus& roadStatus = m_roadNodeStatus[compiled.roadMesh];
         roadStatus = {};
@@ -226,6 +227,7 @@ void Application::PrepareRoadMeshes() {
             roadItemHasMaterial = item.hasMaterial;
             roadMaterial = item.material;
             item.visible = visible;
+            item.reference = reference;
             items.push_back(item);
         }
 
@@ -264,6 +266,7 @@ void Application::PrepareRoadMeshes() {
                                                       &status.materialError);
                 item.cutout = MaterialCutout(line.material, marking->marking.uvRepeatMeters);
                 item.visible = visible;
+                item.reference = reference;
                 items.push_back(item);
             }
         }
@@ -349,6 +352,7 @@ void Application::PrepareRoadMeshes() {
                     }
                 }
                 item.visible = visible;
+                item.reference = reference;
                 items.push_back(item);
                 edges[side] = {&strip, strip.stride - 1, strip.stride - 2, item.hasMaterial, item.material, stripWidth, 1.0f,
                                kShoulderFallbackColor};

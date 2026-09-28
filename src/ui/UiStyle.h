@@ -194,6 +194,10 @@ void WavesIcon(float size);     // 水面: 横に走る 2 本の波
 // 「記号を使うとき」を参照）。
 bool EyeToggle(const char* id, bool* value, float size);
 
+// リファレンス表示（ワイヤーフレーム）のオン / オフ。四角を三角形に割った網の図形で描く
+// （字形ではなく図形。EyeToggle と同じ理由）。色の付け方も EyeToggle と同じ。値が変わったら true。
+bool WireframeToggle(const char* id, bool* value, float size);
+
 // 保存のボタン。フロッピーディスクの図形で描く（字形ではなく図形。EyeToggle と同じ理由）。
 // 押したら true。ホバーで色が持ち上がり、tooltip があれば出す。
 bool SaveIconButton(const char* id, float size, const char* tooltip);

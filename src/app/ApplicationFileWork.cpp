@@ -351,6 +351,7 @@ void Application::FinishComponentPreview(bool place) {
     if (!place) { m_graph = std::move(m_previewOriginalGraph); m_sceneComponents = m_previewOriginalComponents; }
     m_previewOriginalGraph = graph::NodeGraph{}; m_previewOriginalComponents = nullptr;
     m_hiddenOutputs.clear();
+    m_referenceOutputs.clear();
     const int previewed = m_componentPreview;
     m_componentPreview = -1; m_componentPreviewPath.clear();
     m_undoHistory.Clear(); m_documentDirty = false; m_committed = CaptureDocument();
@@ -393,6 +394,7 @@ void Application::ResetProject() {
     m_previewGraphNode = 0;
     m_previewGraphPin = 0;
     m_hiddenOutputs.clear();
+    m_referenceOutputs.clear();
     m_compiledGraphRevision = 0;
     for (auto& slot : m_cloudMasks) slot.graphRevision = 0;
     m_graphStack.MarkDirty();
@@ -541,6 +543,7 @@ void Application::ProcessPendingFileWork() {
             m_previewGraphNode = 0;
             m_previewGraphPin = 0;
             m_hiddenOutputs.clear();
+            m_referenceOutputs.clear();
             m_compiledGraphRevision = 0;
             for (auto& slot : m_cloudMasks) slot.graphRevision = 0;
             m_graphStack.MarkDirty();

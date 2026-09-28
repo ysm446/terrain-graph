@@ -735,6 +735,8 @@ bool IsPathLikeNodeKind(NodeKind kind);
 // ビューポートへ描く出口（Output / Mesh Output / Model Output / Snow Plume / Cloud Output）か。
 // この種類のノードだけが表示フラグ（作業中だけ隠す切り替え）を持つ。
 bool IsDisplayOutputKind(NodeKind kind);
+// リファレンス表示（灰色のワイヤーフレーム）にできる出口か（Output / Mesh Output）。
+bool IsReferenceOutputKind(NodeKind kind);
 // Path / Road Path の平面の点とエッジ。どちらでもなければ nullptr。
 // ビューポートでの編集と経路探索は、これを通して両方を同じに扱う。
 PathSettings* EditablePathSettings(Node& node);

@@ -429,6 +429,10 @@ bool IsDisplayOutputKind(NodeKind kind) {
            kind == NodeKind::SnowPlume || kind == NodeKind::CloudOutput;
 }
 
+bool IsReferenceOutputKind(NodeKind kind) {
+    return kind == NodeKind::Output || kind == NodeKind::MeshOutput;
+}
+
 PathSettings* EditablePathSettings(Node& node) {
     if (auto* path = std::get_if<PathNodeSettings>(&node.settings)) return &path->path;
     if (auto* road = std::get_if<RoadPathNodeSettings>(&node.settings)) return &road->road.path;
