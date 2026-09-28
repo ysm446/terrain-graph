@@ -150,6 +150,28 @@ bool Application::DrawRoadPathSettings(graph::Node& node) {
     }
 
     // 縦断図。横が道のり、縦が高さ。地形（+ 点のずれ）を淡く、縦断を反映した高さを強く描く。
+    // 図の上で縦断ポイントを直接編集する: 空いた所をクリックで追加、菱形をクリックで選択、
+    // ドラッグで位置（横）と高さ（縦）を動かす。菱形は曲線ではなく縦断曲線の交点（制御点）に描く
+    // （曲線長があると、曲線は交点の内側を通る）。
+    RoadProfileEditState& edit = m_roadProfileEdit;
+    if (edit.nodeId != node.id) {
+        edit = RoadProfileEditState{};
+        edit.nodeId = node.id;
+    }
+    if (edit.selected != 0 && graph::FindVerticalPoint(road, edit.selected) == nullptr) edit.selected = 0;
+    if (edit.dragging != 0 && graph::FindVerticalPoint(road, edit.dragging) == nullptr) edit.dragging = 0;
+
+    // 縦断ポイントの位置の順（見出しの番号と、勾配線を引く順）。
+    const auto sortedPoints = [&road]() {
+        std::vector<size_t> order(road.verticalPoints.size());
+        for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+        std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+            return road.verticalPoints[a].u < road.verticalPoints[b].u;
+        });
+        return order;
+    };
+    graph::PathElementId removeId = 0;
+
     if (valid && centerline.points.size() >= 2) {
         const float width = ImGui::GetContentRegionAvail().x;
         const float height = ui::Scaled(kProfilePlotHeight);
@@ -157,31 +179,117 @@ bool Application::DrawRoadPathSettings(graph::Node& node) {
         const ImVec2 max(min.x + width, min.y + height);
         ImGui::InvisibleButton("##roadProfilePlot", ImVec2(width, height));
         const bool hovered = ImGui::IsItemHovered();
+        const bool pressed = ImGui::IsItemActivated();
+        const bool active = ImGui::IsItemActive();
         ImDrawList* drawList = ImGui::GetWindowDrawList();
         drawList->AddRectFilled(min, max, ImGui::GetColorU32(ImGuiCol_FrameBg), ImGui::GetStyle().FrameRounding);
         drawList->AddRect(min, max, ImGui::GetColorU32(ImGuiCol_Border), ImGui::GetStyle().FrameRounding);
 
-        float low = centerline.points.front().y;
-        float high = low;
-        for (size_t i = 0; i < centerline.points.size(); ++i) {
-            low = std::min({low, centerline.points[i].y, base.points[i].y});
-            high = std::max({high, centerline.points[i].y, base.points[i].y});
-        }
-        if (high - low < 2.0f) {
-            const float mid = (high + low) * 0.5f;
-            low = mid - 1.0f;
-            high = mid + 1.0f;
-        }
-        const float margin = (high - low) * 0.08f;
-        low -= margin;
-        high += margin;
-        const float pad = ui::Scaled(6.0f);
-        const auto toScreen = [&](float distance, float y) {
-            return ImVec2(min.x + pad + (distance / total) * (width - pad * 2.0f),
-                          max.y - pad - (y - low) / (high - low) * (height - pad * 2.0f));
+        // 交点（制御点）の高さ = その位置の地形 + 高さのずれ（EvaluateVerticalProfile と同じ）。
+        const auto handleHeight = [&](const graph::RoadVerticalPoint& point) {
+            return base.At(std::clamp(point.u, 0.0f, 1.0f) * total).y + point.offsetMeters;
         };
+        // 縦の範囲。ドラッグ中は掴んだときの範囲のまま。
+        if (edit.dragging == 0) {
+            float low = centerline.points.front().y;
+            float high = low;
+            for (size_t i = 0; i < centerline.points.size(); ++i) {
+                low = std::min({low, centerline.points[i].y, base.points[i].y});
+                high = std::max({high, centerline.points[i].y, base.points[i].y});
+            }
+            for (const graph::RoadVerticalPoint& point : road.verticalPoints) {
+                low = std::min(low, handleHeight(point));
+                high = std::max(high, handleHeight(point));
+            }
+            if (high - low < 2.0f) {
+                const float mid = (high + low) * 0.5f;
+                low = mid - 1.0f;
+                high = mid + 1.0f;
+            }
+            const float margin = (high - low) * 0.08f;
+            edit.plotLow = low - margin;
+            edit.plotHigh = high + margin;
+        }
+        const float low = edit.plotLow;
+        const float high = edit.plotHigh;
+        const float pad = ui::Scaled(6.0f);
+        const float innerWidth = width - pad * 2.0f;
+        const float innerHeight = height - pad * 2.0f;
+        const auto toScreen = [&](float distance, float y) {
+            return ImVec2(min.x + pad + (distance / total) * innerWidth,
+                          max.y - pad - (y - low) / (high - low) * innerHeight);
+        };
+        const ImVec2 mouse = ImGui::GetIO().MousePos;
+        const float mouseDistance = (mouse.x - min.x - pad) / innerWidth * total;
+        const float mouseHeight = low + (max.y - pad - mouse.y) / innerHeight * (high - low);
+
+        // カーソルの下の菱形（一番近いもの）。
+        const float pickRadius = ui::Scaled(7.0f);
+        graph::PathElementId hoverPoint = 0;
+        float hoverDistance = pickRadius;
+        if (hovered || active) {
+            for (const graph::RoadVerticalPoint& point : road.verticalPoints) {
+                const ImVec2 at = toScreen(std::clamp(point.u, 0.0f, 1.0f) * total, handleHeight(point));
+                const float distance = std::hypot(at.x - mouse.x, at.y - mouse.y);
+                if (distance <= hoverDistance) {
+                    hoverDistance = distance;
+                    hoverPoint = point.id;
+                }
+            }
+        }
+
+        // 押したとき: 菱形なら選んで掴む、空いた所ならその道のり・高さにポイントを置いて掴む。
+        if (pressed) {
+            if (hoverPoint != 0) {
+                const graph::RoadVerticalPoint* point = graph::FindVerticalPoint(road, hoverPoint);
+                edit.selected = edit.dragging = hoverPoint;
+                edit.grabDistance = std::clamp(point->u, 0.0f, 1.0f) * total - mouseDistance;
+                edit.grabHeight = handleHeight(*point) - mouseHeight;
+            } else {
+                const float distance = std::clamp(mouseDistance, 0.0f, total);
+                const graph::PathElementId id = graph::AddVerticalPoint(road, distance / total);
+                if (graph::RoadVerticalPoint* point = graph::FindVerticalPoint(road, id)) {
+                    point->offsetMeters = mouseHeight - base.At(distance).y;
+                }
+                edit.selected = edit.dragging = id;
+                edit.grabDistance = 0.0f;
+                edit.grabHeight = 0.0f;
+                changed = true;
+            }
+        }
+        // ドラッグ: 位置と、その位置の地形からの高さのずれを置き直す。
+        if (active && edit.dragging != 0) {
+            if (graph::RoadVerticalPoint* point = graph::FindVerticalPoint(road, edit.dragging)) {
+                const float distance = std::clamp(mouseDistance + edit.grabDistance, 0.0f, total);
+                const float u = distance / total;
+                const float offset = (mouseHeight + edit.grabHeight) - base.At(distance).y;
+                if (u != point->u || offset != point->offsetMeters) {
+                    point->u = u;
+                    point->offsetMeters = offset;
+                    changed = true;
+                }
+            }
+        }
+        if (!active) edit.dragging = 0;
+        if (hovered && !active && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) edit.selected = 0;
+        if ((hovered || active) && edit.selected != 0 && ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
+            removeId = edit.selected;
+        }
+        if (edit.dragging != 0) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+        } else if (hoverPoint != 0) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        }
+
+        // 編集を反映した線で描く（このフレームで動かした分も遅れずに見せる）。
+        graph::RoadProfileCurve design = centerline;
+        if (changed) {
+            const std::vector<float> heights = graph::EvaluateVerticalProfile(road, base);
+            for (size_t i = 0; i < design.points.size(); ++i) design.points[i].y = heights[i];
+            design = graph::BuildRoadProfileCurve(design.points);
+        }
         // 横の画素ごとに 1 点。中心線は 1 m ごとなので、長い道路では間引く。
-        const int columns = std::max(2, static_cast<int>(width - pad * 2.0f));
+        const int columns = std::max(2, static_cast<int>(innerWidth));
         std::vector<ImVec2> terrainLine;
         std::vector<ImVec2> designLine;
         terrainLine.reserve(columns + 1);
@@ -189,20 +297,40 @@ bool Application::DrawRoadPathSettings(graph::Node& node) {
         for (int i = 0; i <= columns; ++i) {
             const float d = total * static_cast<float>(i) / static_cast<float>(columns);
             terrainLine.push_back(toScreen(d, base.At(d).y));
-            designLine.push_back(toScreen(d, centerline.At(d).y));
+            designLine.push_back(toScreen(d, design.At(d).y));
         }
         drawList->PushClipRect(min, max, true);
+        const std::vector<size_t> order = sortedPoints();
+        // 勾配線（始点・交点・終点を結ぶ折れ線）。縦断曲線はこの折れ線の角を丸めたもの。
+        if (!order.empty()) {
+            std::vector<ImVec2> tangent;
+            tangent.push_back(toScreen(0.0f, base.points.front().y));
+            for (const size_t index : order) {
+                const graph::RoadVerticalPoint& point = road.verticalPoints[index];
+                tangent.push_back(toScreen(std::clamp(point.u, 0.0f, 1.0f) * total, handleHeight(point)));
+            }
+            tangent.push_back(toScreen(total, base.points.back().y));
+            drawList->AddPolyline(tangent.data(), static_cast<int>(tangent.size()),
+                                  ImGui::GetColorU32(ImGuiCol_Border), 0, ui::Scaled(1.0f));
+        }
         drawList->AddPolyline(terrainLine.data(), static_cast<int>(terrainLine.size()),
                               ImGui::GetColorU32(ImGuiCol_TextDisabled), 0, ui::Scaled(1.0f));
         drawList->AddPolyline(designLine.data(), static_cast<int>(designLine.size()),
                               ImGui::GetColorU32(ImGuiCol_CheckMark), 0, ui::Scaled(2.0f));
-        // 縦断ポイント。縦の細線と、設計の高さの菱形。
+        // 縦断ポイント。縦の細線と、交点の菱形。選んでいるものは大きく、本文の色で縁取る。
         for (const graph::RoadVerticalPoint& point : road.verticalPoints) {
             const float d = std::clamp(point.u, 0.0f, 1.0f) * total;
-            const ImVec2 at = toScreen(d, centerline.At(d).y);
+            const ImVec2 at = toScreen(d, handleHeight(point));
+            const bool isSelected = point.id == edit.selected;
             drawList->AddLine(ImVec2(at.x, min.y + pad), ImVec2(at.x, max.y - pad),
-                              ImGui::GetColorU32(ImGuiCol_Border), ui::Scaled(1.0f));
-            const float r = ui::Scaled(4.0f);
+                              ImGui::GetColorU32(isSelected ? ImGuiCol_TextDisabled : ImGuiCol_Border),
+                              ui::Scaled(1.0f));
+            const float r = ui::Scaled(isSelected ? 6.0f : (point.id == hoverPoint ? 5.0f : 4.0f));
+            if (isSelected) {
+                const float o = r + ui::Scaled(1.5f);
+                drawList->AddQuadFilled(ImVec2(at.x, at.y - o), ImVec2(at.x + o, at.y), ImVec2(at.x, at.y + o),
+                                        ImVec2(at.x - o, at.y), ImGui::GetColorU32(ImGuiCol_Text));
+            }
             drawList->AddQuadFilled(ImVec2(at.x, at.y - r), ImVec2(at.x + r, at.y), ImVec2(at.x, at.y + r),
                                     ImVec2(at.x - r, at.y), ImGui::GetColorU32(ImGuiCol_CheckMark));
         }
@@ -215,60 +343,70 @@ bool Application::DrawRoadPathSettings(graph::Node& node) {
         std::snprintf(text, sizeof(text), "%.0f m", total);
         drawList->AddText(ImVec2(max.x - pad - ImGui::CalcTextSize(text).x, max.y - pad * 0.5f - ImGui::GetTextLineHeight()),
                           ImGui::GetColorU32(ImGuiCol_TextDisabled), text);
-        // カーソルの位置の値。道のり、設計の高さ、地形との差（正が盛土）、勾配。
-        if (hovered) {
-            const float mouseX = ImGui::GetIO().MousePos.x;
-            const float d = std::clamp((mouseX - min.x - pad) / (width - pad * 2.0f), 0.0f, 1.0f) * total;
-            drawList->AddLine(ImVec2(mouseX, min.y), ImVec2(mouseX, max.y), ImGui::GetColorU32(ImGuiCol_Border));
-            const float design = centerline.At(d).y;
+        // カーソルの位置の値。ポイントの上・ドラッグ中はそのポイントの値、ほかは道のり・設計の高さ・
+        // 地形との差（正が盛土）・勾配。
+        const graph::PathElementId shown = edit.dragging != 0 ? edit.dragging : hoverPoint;
+        if (shown != 0) {
+            const graph::RoadVerticalPoint* point = graph::FindVerticalPoint(road, shown);
+            const float d = std::clamp(point->u, 0.0f, 1.0f) * total;
+            ImGui::SetTooltip("縦断ポイント\n%.0f m\n交点の%s %.1f m\n地形との差 %+.1f m\n"
+                              "ドラッグで位置と高さ、Delete で削除",
+                              d, scale != nullptr ? "標高" : "高さ", handleHeight(*point) + elevationOffset,
+                              point->offsetMeters);
+        } else if (hovered) {
+            const float d = std::clamp(mouseDistance, 0.0f, total);
+            drawList->AddLine(ImVec2(mouse.x, min.y), ImVec2(mouse.x, max.y), ImGui::GetColorU32(ImGuiCol_Border));
+            const float value = design.At(d).y;
             const float terrain = base.At(d).y;
             const float half = kGradeWindowMeters * 0.5f;
-            const XMFLOAT3 a = centerline.At(std::max(0.0f, d - half));
-            const XMFLOAT3 b = centerline.At(std::min(total, d + half));
+            const XMFLOAT3 a = design.At(std::max(0.0f, d - half));
+            const XMFLOAT3 b = design.At(std::min(total, d + half));
             const float run = std::hypot(b.x - a.x, b.z - a.z);
             const float grade = run > 1e-3f ? (b.y - a.y) / run * 100.0f : 0.0f;
-            ImGui::SetTooltip("%.0f m\n%s %.1f m\n地形との差 %+.1f m（%s）\n勾配 %+.1f %%", d,
-                              scale != nullptr ? "標高" : "高さ", design + elevationOffset, design - terrain,
-                              design >= terrain ? "盛土" : "切土", grade);
+            ImGui::SetTooltip("%.0f m\n%s %.1f m\n地形との差 %+.1f m（%s）\n勾配 %+.1f %%\n"
+                              "クリックで縦断ポイントを追加",
+                              d, scale != nullptr ? "標高" : "高さ", value + elevationOffset, value - terrain,
+                              value >= terrain ? "盛土" : "切土", grade);
         }
         drawList->PopClipRect();
     }
 
-    // 縦断ポイント。位置の順に並べる（保存の順は置いた順のまま）。
-    std::vector<size_t> order(road.verticalPoints.size());
-    for (size_t i = 0; i < order.size(); ++i) order[i] = i;
-    std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
-        return road.verticalPoints[a].u < road.verticalPoints[b].u;
-    });
-    graph::PathElementId removeId = 0;
-    for (size_t n = 0; n < order.size(); ++n) {
-        graph::RoadVerticalPoint& point = road.verticalPoints[order[n]];
-        ImGui::PushID(point.id);
-        ImGui::TextDisabled("縦断ポイント %zu", n + 1);
+    // 選んでいる縦断ポイントだけプロパティを出す。
+    if (graph::RoadVerticalPoint* point = graph::FindVerticalPoint(road, edit.selected)) {
+        const std::vector<size_t> order = sortedPoints();
+        size_t number = 0;
+        for (size_t n = 0; n < order.size(); ++n) {
+            if (road.verticalPoints[order[n]].id == point->id) number = n + 1;
+        }
+        ImGui::PushID(point->id);
+        ImGui::TextDisabled("縦断ポイント %zu / %zu", number, order.size());
         if (ui::BeginPropertyTable("roadVerticalPoint")) {
-            changed |= PropertyAlong("位置", &point.u, total, "始点からの道のり");
-            changed |= ui::PropertyFloat("縦断曲線長", &point.vclMeters, 0.0f, 500.0f, 50.0f,
+            changed |= PropertyAlong("位置", &point->u, total, "始点からの道のり");
+            changed |= ui::PropertyFloat("縦断曲線長", &point->vclMeters, 0.0f, 500.0f, 50.0f,
                                          "前後の勾配を放物線でつなぐ長さ（m）。0 で折れ線のまま。"
                                          "隣のポイントとの間より長くはならない",
                                          "%.0f m");
-            changed |= ui::PropertyFloat("高さのずれ", &point.offsetMeters, -100.0f, 100.0f, 0.0f,
-                                         "この位置の設計の高さを、地形（+ 点のずれ）からどれだけ上げ下げするか（m）",
+            changed |= ui::PropertyFloat("高さのずれ", &point->offsetMeters, -100.0f, 100.0f, 0.0f,
+                                         "この位置の設計の高さ（交点）を、地形（+ 点のずれ）からどれだけ上げ下げするか（m）",
                                          "%+.1f m");
             ui::PropertyLabelEmpty("roadVerticalPointDelete");
-            if (ui::Button("削除")) removeId = point.id;
+            if (ui::Button("削除")) removeId = point->id;
             ui::PropertyEnd();
             ui::EndPropertyTable();
         }
         ImGui::PopID();
+    } else if (!road.verticalPoints.empty()) {
+        ImGui::TextDisabled("縦断ポイント %zu 個（図の菱形をクリックで選ぶ）", road.verticalPoints.size());
     }
     if (ui::Button("縦断ポイントを追加", ui::kWideButtonWidth)) {
         std::vector<float> taken;
         for (const graph::RoadVerticalPoint& point : road.verticalPoints) taken.push_back(point.u);
-        graph::AddVerticalPoint(road, NextProfilePointU(taken));
+        edit.selected = graph::AddVerticalPoint(road, NextProfilePointU(taken));
         changed = true;
     }
-    ui::HintText("縦断ポイントが無ければ、道路の高さは地形に沿う。置くと、両端とポイントの間の勾配を"
-                 "縦断曲線でつなぐ（地形との差が切土・盛土になる）");
+    ui::HintText("図の空いた所をクリックで縦断ポイントを追加、菱形をクリックで選び、ドラッグで位置と高さを"
+                 "動かす（Delete で削除、Esc で選択を外す）。ポイントが無ければ道路の高さは地形に沿う。"
+                 "置くと、両端とポイントの間の勾配を縦断曲線でつなぐ（地形との差が切土・盛土になる）");
 
     // --- バンク角 --------------------------------------------------------------
     ui::SectionHeader("バンク角");
@@ -396,11 +534,12 @@ void Application::DrawRoadPathOverlay(const graph::Node& node, const ImVec2& vie
             drawList->AddLine(a.screen, b.screen, design.y > terrain.y ? fillColor : cutColor, ui::Scaled(1.5f));
         }
     }
-    // 縦断ポイント（菱形）。
+    // 縦断ポイント（菱形）。縦断図で選んでいるものは大きく描く。
     for (const graph::RoadVerticalPoint& point : road.verticalPoints) {
         const ProjectedPoint p = project(centerline.At(std::clamp(point.u, 0.0f, 1.0f) * total));
         if (!p.visible) continue;
-        const float r = ui::Scaled(6.0f);
+        const bool isSelected = m_roadProfileEdit.nodeId == node.id && m_roadProfileEdit.selected == point.id;
+        const float r = ui::Scaled(isSelected ? 9.0f : 6.0f);
         const ImVec2 c = p.screen;
         drawList->AddQuadFilled(ImVec2(c.x, c.y - r - 1), ImVec2(c.x + r + 1, c.y), ImVec2(c.x, c.y + r + 1),
                                 ImVec2(c.x - r - 1, c.y), shadow);

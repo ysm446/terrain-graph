@@ -208,6 +208,18 @@ class Terrain:
     def save(self, path=None):
         save_json(path or self.path, self.data)
 
+    def loaded_id(self, node_id):
+        """シーン（.tgscene）として開いたときのノード ID（`--select-node` に渡す値）。
+        シーンの部品を読むと、ノード ID・ピン ID が地形の部品の並び順に 1 から振り直される
+        （`SceneComponents.cpp`。ノード、その入力、出力の順）。地形は先頭の部品なので、ここから数えられる。"""
+        next_id, ids = 1, {}
+        for n in self.graph["nodes"]:
+            for old in [n["id"]] + n["inputs"] + n["outputs"]:
+                if old not in ids:
+                    ids[old] = next_id
+                    next_id += 1
+        return ids[node_id]
+
 
 # --- 実寸と位置 -------------------------------------------------------------------
 class Geo:

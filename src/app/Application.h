@@ -740,6 +740,21 @@ private:
         float menuV = 0.0f;
     };
     PathEditState m_pathEdit;
+    // Road Path の縦断図での縦断ポイントの編集。ノードが変わったら捨てる。
+    // ポイントの ID はそのノードの中でしか意味を持たないので、毎フレーム実在を確かめる。
+    struct RoadProfileEditState {
+        graph::GraphId nodeId = 0;
+        // 選んでいる縦断ポイント。プロパティに出すのはこれだけ。
+        graph::PathElementId selected = 0;
+        // ドラッグ中のポイント。掴んだ点と取っ手（交点）のずれを保ち、押した所へ跳ばないようにする。
+        graph::PathElementId dragging = 0;
+        float grabDistance = 0.0f;
+        float grabHeight = 0.0f;
+        // 図の縦の範囲（ワールドの高さ）。ドラッグ中は固定する（動かすたびに範囲が広がって点が逃げないように）。
+        float plotLow = 0.0f;
+        float plotHigh = 0.0f;
+    };
+    RoadProfileEditState m_roadProfileEdit;
     // パスのクリップボード（アプリ内）。鎖や点の集合をコピーして、カーソルの所へ貼る。
     // 別の Path ノードへも貼れる。
     graph::PathClip m_pathClipboard;
