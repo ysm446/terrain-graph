@@ -1,7 +1,7 @@
 # vegetation-assets — 植生アセットのルール
 
 作成日時: 2026-09-24 15:00
-更新日時: 2026-09-28 14:30
+更新日時: 2026-09-28 14:08
 
 草・低木・樹木など、Model Scatter で地形に並べる植生モデルを作るときの決まりごと。
 這い松（マット状の低木、`tools/blender/make_haimatsu.py`、出力は `data/Models/Haimatsu/`）、
@@ -15,6 +15,8 @@
 ドイツトウヒ（Fichte、`tools/blender/make_fichte.py`、出力は `data/Models/Fichte/`）、
 ヨーロッパカラマツ（Lärche、`tools/blender/make_laerche.py`、出力は `data/Models/Laerche/`）で確かめた内容をもとにしている。
 共通の部品は `tools/blender/vegetation.py`。数値の正は生成スクリプトの定数で、ここには意味と目安を書く。
+どの樹種をシーンのどこに置くか（標高帯・代用・配置の制限）は [scene-authoring.md](scene-authoring.md) の 5 章。
+生成したモデルは `tools/blender/render_preview.py` で LOD を並べて描き、既存の樹種と見比べる。
 
 ## 1. 基本方針
 

@@ -90,6 +90,13 @@ material-mixer（レイヤー合成方式）からのフォーク。レイヤー
 - Normal チャンネルの合成は必ず RNM（Reoriented Normal Mapping）を経由する。lerp は使わない。
 - 合成評価器のエントリポイントは、出力タイル矩形と解像度を引数に取る形を崩さない。
 
+### シーン作り
+
+- ハイトマップ（と GeoJSON・参考写真）から地形・植生・雪・空・道を仕上げる作業は
+  [docs/design/scene-authoring.md](docs/design/scene-authoring.md) の手順に従う。
+  補助スクリプトは `tools/scene/`、植生モデルの作り方は [docs/design/vegetation-assets.md](docs/design/vegetation-assets.md)。
+- 見た目の判断は、ユーザーの参考写真（`docs/references/<シーン名>/`）と並べて行う。
+
 ## ドキュメント管理
 
 - `docs/**/*.md` を新規作成または内容更新するときは、本文の先頭付近に作成日時と更新日時を書く。
