@@ -456,7 +456,13 @@ void Application::HandleCameraShortcuts(bool itemHovered) {
             bookmarks[i] = camera.State();
             TG_LOG_INFO("カメラのブックマーク %d に保存しました", i);
         } else if (bookmarks[i]) {
-            camera.SetState(*bookmarks[i]);
+            // 呼び出すのは視点（注視点・距離・向き・画角）だけ。クリップの設定（自動 / ニア / ファー）は
+            // プレビュー設定の値で、ブックマークを保存したときの値で上書きしない。
+            renderer::CameraState state = *bookmarks[i];
+            state.autoClip = camera.AutoClip();
+            state.nearZ = camera.State().nearZ;
+            state.farZ = camera.State().farZ;
+            camera.SetState(state);
         } else {
             TG_LOG_INFO("ブックマーク %d は空です（Ctrl + %d で保存）", i, i);
         }
