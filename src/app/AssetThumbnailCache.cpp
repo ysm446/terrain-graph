@@ -26,7 +26,7 @@ bool AssetThumbnailCache::Supports(const fs::path& path) {
     const auto ext = Extension(path);
     return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".tga" || ext == ".bmp" ||
            ext == ".exr" || ext == ".hdr" || ext == ".tgmat" || ext == ".tglayer" || ext == ".tgsky" ||
-           ext == ".tgmodel" || ext == ".fbx" || ext == ".tgscene";
+           ext == ".tgmodel" || ext == ".fbx" || ext == ".tgscene" || ext == ".tgboundary";
 }
 void AssetThumbnailCache::BeginRequests() { m_requests.clear(); ++m_frame; }
 D3D12_GPU_DESCRIPTOR_HANDLE AssetThumbnailCache::Request(const fs::path& path) {
@@ -119,6 +119,11 @@ bool AssetThumbnailCache::BuildImage(rhi::Device& device, const fs::path& path, 
             pixels[target + c] = uint8_t(std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f);
         }
     }
+    return UploadPixels(device, pixels, output);
+}
+
+// 128 x 128 の RGBA8（sRGB）を GPU のテクスチャへ上げる。
+bool AssetThumbnailCache::UploadPixels(rhi::Device& device, const std::vector<uint8_t>& pixels, rhi::GpuTexture& output) {
     rhi::TextureDesc desc;
     desc.width = desc.height = ThumbnailSize;
     desc.initialState = D3D12_RESOURCE_STATE_COPY_DEST;
@@ -144,6 +149,89 @@ bool AssetThumbnailCache::BuildImage(rhi::Device& device, const fs::path& path, 
     device.DeferRelease(staging);
     return result;
 }
+// 境界マテリアル（.tgboundary）のサムネイル。路肩の端を真上から見た絵にする: 左 1/4 が路面（内側の帯）、
+// 真ん中 1/2 が境界の幅、右 1/4 が路肩。境界の幅の中はマスク（白が路面）で塗り分け、ハイトで陰影を付ける。
+// 横と縦は同じ縮尺（道に沿う向きが縦）。色は材質に依らない目安の固定色（アスファルトと砂利）。
+bool AssetThumbnailCache::BuildBoundary(rhi::Device& device, io::ProjectWorkspace& workspace, const fs::path& path,
+                                        rhi::GpuTexture& output) {
+    nlohmann::json body;
+    if (!workspace.ReadAsset(path, "boundary-material-asset", body)) return false;
+    const auto number = [&](const char* key, float fallback) {
+        return body.contains(key) && body[key].is_number() ? body[key].get<float>() : fallback;
+    };
+    const auto flag = [&](const char* key) { return body.contains(key) && body[key].is_boolean() && body[key].get<bool>(); };
+    const float width = std::clamp(number("width", 0.5f), 0.01f, 20.0f);
+    const float repeat = std::clamp(number("repeat", 2.0f), 0.01f, 1000.0f);
+    const float depth = std::clamp(number("depth", 0.03f), 0.0f, 1.0f);
+    const bool alongU = flag("alongU"), invert = flag("invertMask");
+    const auto image = [&](const char* key, LdrImage& out) {
+        if (!body.contains(key) || !body[key].is_object()) return false;
+        const auto file = workspace.Resolve(body[key]);
+        return !file.empty() && LoadLdrImage(file, out) && out.width > 0 && out.height > 0;
+    };
+    LdrImage mask, height;
+    if (!image("mask", mask)) return false;
+    const bool hasHeight = image("height", height);
+    // R を双線形で読む。横切る向き（across）は端で止め、道に沿う向きは繰り返す。
+    const auto sample = [&](const LdrImage& img, float across, float along) {
+        float u = alongU ? along : across, v = alongU ? across : along;
+        const bool wrapU = alongU, wrapV = !alongU;
+        const auto coord = [](float t, uint32_t size, bool wrap, uint32_t& i0, uint32_t& i1, float& f) {
+            float x = t * float(size) - 0.5f;
+            if (wrap) { x = std::fmod(x, float(size)); if (x < 0) x += float(size); }
+            else x = std::clamp(x, 0.0f, float(size - 1));
+            const float base = std::floor(x);
+            f = x - base;
+            i0 = uint32_t(base) % size;
+            i1 = wrap ? (i0 + 1) % size : std::min(i0 + 1, size - 1);
+        };
+        uint32_t x0, x1, y0, y1; float fx, fy;
+        coord(u, img.width, wrapU, x0, x1, fx);
+        coord(v, img.height, wrapV, y0, y1, fy);
+        const auto r = [&](uint32_t x, uint32_t y) { return float(img.pixels[(size_t(y) * img.width + x) * 4]) / 255.0f; };
+        return (r(x0, y0) * (1 - fx) + r(x1, y0) * fx) * (1 - fy) + (r(x0, y1) * (1 - fx) + r(x1, y1) * fx) * fy;
+    };
+    const float span = width * 2.0f;  // 絵の一辺（m）
+    const float meterPerPixel = span / float(ThumbnailSize);
+    // 目安の色（sRGB）: 路面はアスファルトの暗い灰色、路肩は砂利の明るい黄土色。
+    const float road[3] = {0.25f, 0.25f, 0.27f}, shoulder[3] = {0.62f, 0.56f, 0.46f};
+    std::vector<uint8_t> pixels(ThumbnailSize * ThumbnailSize * 4, 255);
+    for (uint32_t py = 0; py < ThumbnailSize; ++py) for (uint32_t px = 0; px < ThumbnailSize; ++px) {
+        const float acrossMeters = (float(px) + 0.5f) * meterPerPixel - width * 0.5f;
+        const float alongMeters = (float(ThumbnailSize - 1 - py) + 0.5f) * meterPerPixel;
+        const float across = acrossMeters / width, along = alongMeters / repeat;
+        float inner = acrossMeters < 0 ? 1.0f : 0.0f;
+        float shade = 1.0f;
+        if (acrossMeters >= 0 && acrossMeters < width) {
+            inner = sample(mask, across, along);
+            if (invert) inner = 1 - inner;
+            if (hasHeight && depth > 0) {
+                // ハイトの勾配（m / m）から法線を作り、左上からの光で陰影を付ける。外側の端へ向かって弱める
+                // （描画の GeneratedMesh.hlsl と同じ）。凹凸が浅くても見えるよう、絵では勾配を強調する。
+                const float step = meterPerPixel;
+                const float dx = (sample(height, (acrossMeters + step) / width, along) -
+                                  sample(height, (acrossMeters - step) / width, along)) / (2 * step);
+                const float dy = (sample(height, across, (alongMeters + step) / repeat) -
+                                  sample(height, across, (alongMeters - step) / repeat)) / (2 * step);
+                const float envelope = 1.0f - std::clamp((across - 0.7f) / 0.3f, 0.0f, 1.0f);
+                const float gain = 2.0f * depth * envelope * 8.0f;
+                const float nx = -dx * gain, ny = -dy * gain;
+                const float length = std::sqrt(nx * nx + ny * ny + 1.0f);
+                // 光は左上から（-0.5, 0.5, 0.7）。平らな所がちょうど 1 になるよう、平らなときの明るさとの差で陰影を付ける。
+                const float flat = 0.7f / std::sqrt(0.99f);
+                const float light = (nx * -0.5f + ny * 0.5f + 0.7f) / (length * std::sqrt(0.99f));
+                shade = std::clamp(1.0f + 1.2f * (light - flat), 0.4f, 1.3f);
+            }
+        }
+        const size_t target = (size_t(py) * ThumbnailSize + px) * 4;
+        for (size_t c = 0; c < 3; ++c) {
+            const float value = (road[c] * inner + shoulder[c] * (1 - inner)) * shade;
+            pixels[target + c] = uint8_t(std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f);
+        }
+    }
+    return UploadPixels(device, pixels, output);
+}
+
 void AssetThumbnailCache::Process(rhi::Device& device, rhi::PipelineCache& pipelines,
                                  io::ProjectWorkspace& workspace, const fs::path& directory,
                                  renderer::PreviewRenderer& renderer) {
@@ -188,6 +276,11 @@ void AssetThumbnailCache::Process(rhi::Device& device, rhi::PipelineCache& pipel
             return;
         }
         device.DeferRelease(thumbnail);
+    }
+    if (extension == ".tgboundary") {
+        if (!BuildBoundary(device, workspace, path, thumbnail)) device.DeferRelease(thumbnail);
+        Store(device, path, std::move(thumbnail));
+        return;
     }
     if (extension != ".tgmat" && extension != ".tglayer" && extension != ".tgsky" && extension != ".tgmodel" && extension != ".fbx") {
         if (!BuildImage(device, path, thumbnail)) device.DeferRelease(thumbnail);

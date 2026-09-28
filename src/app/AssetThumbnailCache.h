@@ -30,6 +30,9 @@ private:
     };
     void ClearScratch(rhi::Device& device);
     bool BuildImage(rhi::Device& device, const std::filesystem::path& path, rhi::GpuTexture& output);
+    bool BuildBoundary(rhi::Device& device, io::ProjectWorkspace& workspace, const std::filesystem::path& path,
+                       rhi::GpuTexture& output);
+    bool UploadPixels(rhi::Device& device, const std::vector<uint8_t>& pixels, rhi::GpuTexture& output);
     void Store(rhi::Device& device, const std::filesystem::path& path, rhi::GpuTexture texture, bool persist = true);
     std::unordered_map<std::filesystem::path, Entry> m_entries;
     std::vector<std::filesystem::path> m_requests;

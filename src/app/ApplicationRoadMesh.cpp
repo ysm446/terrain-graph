@@ -879,21 +879,12 @@ bool Application::DrawShoulderSettings(graph::Node& node) {
 
     // --- 内側の境界（境界マテリアル） ---
     ui::SectionHeader("内側の境界");
-    if (ui::BeginPropertyTable("shoulderBoundaryRows", "繰り返しの向き")) {
+    // 境界マテリアルの中身（マスク・ハイト・幅など）は .tgboundary のもの。ここでは選ぶだけで、
+    // 中身は読むだけの要約で見せる（編集は境界マテリアルの窓で。同じファイルを使うすべての路肩に効くため）。
+    if (ui::BeginPropertyTable("shoulderBoundaryRows", "境界マテリアル")) {
         changed |= DrawBoundaryCombo("境界マテリアル", shoulder.boundaryPath, shoulder.boundaryUid);
-        const bool hasBoundary = !shoulder.boundaryPath.empty() || !shoulder.boundaryUid.empty();
-        BoundaryAsset* boundary = hasBoundary ? AcquireBoundary(shoulder.boundaryPath, shoulder.boundaryUid) : nullptr;
-        if (boundary != nullptr && boundary->error.empty()) {
-            DrawBoundaryAssetRows(*boundary);
-            ui::PropertyLabelEmpty("shoulderBoundaryOpen");
-            if (ui::Button("境界マテリアルの窓で開く", ui::kWideButtonWidth)) OpenBoundaryPreview(boundary->path);
-            ui::PropertyEnd();
-        }
+        DrawBoundarySummary("shoulderBoundarySummary", shoulder.boundaryPath, shoulder.boundaryUid);
         ui::EndPropertyTable();
-        if (boundary != nullptr && !boundary->error.empty())
-            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(ui::WarnColor()), "%s", boundary->error.c_str());
-        else if (boundary != nullptr && boundary->dirty)
-            ui::HintText("境界マテリアルの設定は、このファイルを使うすべての路肩に効く。「ファイルへ保存」でファイルへ書く");
     }
 
     // --- 区間（道のりで材質・境界を切り替える） ---
@@ -927,6 +918,7 @@ bool Application::DrawShoulderSettings(graph::Node& node) {
                                              "模様が 1 周する長さ（m）", "%.2f m", ImGuiSliderFlags_Logarithmic);
             }
             changed |= DrawBoundaryCombo("境界マテリアル", change.boundaryPath, change.boundaryUid);
+            DrawBoundarySummary("shoulderSwitchBoundary", change.boundaryPath, change.boundaryUid);
             ui::PropertyLabelEmpty("shoulderSwitchDelete");
             if (ui::Button("削除")) removeIndex = i;
             ui::PropertyEnd();
@@ -964,6 +956,37 @@ bool Application::DrawShoulderSettings(graph::Node& node) {
 
     DrawRoadNodeStatus(node.id, "Road Mesh（か内側の Shoulder）を繋ぎ、Mesh Output へ繋ぐと描く");
     return changed;
+}
+
+// 選んだ境界マテリアルの要約の行（マスクのサムネイル・幅・繰り返し長と、窓で開くボタン）。
+// 読むだけ。選んでいなければ何も出さず、読めなければ理由を出す。プロパティ表の中で呼ぶ。
+void Application::DrawBoundarySummary(const char* id, const std::string& path, const std::string& uid) {
+    if (path.empty() && uid.empty()) return;
+    const BoundaryAsset* boundary = AcquireBoundary(path, uid);
+    if (boundary == nullptr) return;
+    ui::PropertyLabelEmpty(id);
+    if (!boundary->error.empty()) {
+        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(ui::WarnColor()), "%s", boundary->error.c_str());
+        ui::PropertyEnd();
+        return;
+    }
+    // アセットブラウザと同じサムネイル（路肩の端を真上から見た絵。左が路面、右が路肩）。
+    const float size = ui::Scaled(40.0f);
+    ui::ThumbnailImage(AssetThumbnailHandle(boundary->path), size);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+        ImGui::SetTooltip("境目を真上から見た目安（左が路面、右が路肩。色は固定の目安）");
+    ImGui::SameLine();
+    ImGui::BeginGroup();
+    ImGui::TextDisabled("幅 %.2f m・繰り返し %.2f m%s", boundary->widthMeters, boundary->repeatMeters,
+                        boundary->dirty ? "（未保存の変更あり）" : "");
+    ImGui::PushID(id);
+    if (ui::Button("窓で開く")) OpenBoundaryPreview(boundary->path);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+        ImGui::SetTooltip("境界マテリアルの窓で開く。マスク・ハイト・幅などはそこで確かめて編集する"
+                          "（このファイルを使うすべての路肩に効く）");
+    ImGui::PopID();
+    ImGui::EndGroup();
+    ui::PropertyEnd();
 }
 
 // 境界マテリアル（.tgboundary）を選ぶ行。プロパティ表の中で呼ぶ。

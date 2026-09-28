@@ -223,6 +223,8 @@ private:
     void DrawBoundaryAssetRows(BoundaryAsset& boundary);
     // 境界マテリアルを選ぶ行（路肩の最初の区間と、区間の切り替えで共通）。変えたら true。
     bool DrawBoundaryCombo(const char* label, std::string& path, std::string& uid);
+    // 選んだ境界マテリアルの要約（読むだけ。マスクのサムネイル・幅と、窓で開くボタン）。
+    void DrawBoundarySummary(const char* id, const std::string& path, const std::string& uid);
     // 境界マテリアルの窓（アセットブラウザのダブルクリックで開く）。
     void OpenBoundaryPreview(const std::filesystem::path& file);
     void DrawBoundaryPreviewWindow();

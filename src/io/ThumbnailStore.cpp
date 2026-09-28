@@ -55,7 +55,9 @@ ThumbnailRecord AssetThumbnailRecord(ProjectWorkspace& workspace, const fs::path
     const auto directory = workspace.Root() / L".terrain-graph" / L"thumbnails";
     const auto key = std::to_wstring(Hash(relative));
     // 形式・描画条件の変更時に版を上げて古いキャッシュを無効化する。
-    uint64_t stamp = Hash(path.extension() == L".tglayer" ? "thumbnail-layer-quarter-v3" : "thumbnail-v1");
+    uint64_t stamp = Hash(path.extension() == L".tglayer"      ? "thumbnail-layer-quarter-v3"
+                          : path.extension() == L".tgboundary" ? "thumbnail-boundary-v2"
+                                                               : "thumbnail-v1");
     std::unordered_set<std::string> visited;
     std::function<void(const fs::path&)> visit;
     visit = [&](const fs::path& file) {
@@ -68,7 +70,8 @@ ThumbnailRecord AssetThumbnailRecord(ProjectWorkspace& workspace, const fs::path
         const auto size = fs::file_size(file, error);
         if (!error) stamp = Hash(std::to_string(size), stamp);
         const auto extension = file.extension().wstring();
-        if (_wcsicmp(extension.c_str(), L".tgmat") && _wcsicmp(extension.c_str(), L".tglayer") && _wcsicmp(extension.c_str(), L".tgsky") && _wcsicmp(extension.c_str(), L".tgmodel")) return;
+        if (_wcsicmp(extension.c_str(), L".tgmat") && _wcsicmp(extension.c_str(), L".tglayer") && _wcsicmp(extension.c_str(), L".tgsky") && _wcsicmp(extension.c_str(), L".tgmodel") &&
+            _wcsicmp(extension.c_str(), L".tgboundary")) return;
         nlohmann::json document;
         if (!ProjectWorkspace::ReadJson(file, document)) return;
         const auto refs = [&](auto&& self, const nlohmann::json& value) -> void {
