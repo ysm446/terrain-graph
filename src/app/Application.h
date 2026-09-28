@@ -604,6 +604,7 @@ private:
         float sizeX = 0.0f;
         float sizeY = 0.0f;
         std::string note;
+        bool bypass = false;
         struct Source {
             int copiedIndex = -1;              // コピーした集合の中の添字
             graph::GraphId externalPin = 0;    // 集合の外なら、その出力ピン

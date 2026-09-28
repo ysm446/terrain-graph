@@ -1730,6 +1730,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
         }
         item["position"] = json::array({node.posX, node.posY});
         if (!node.note.empty()) item["note"] = node.note;
+        if (node.bypass) item["bypass"] = true;
         json inputs = json::array();
         for (const graph::Pin& pin : node.inputs) {
             inputs.push_back(pin.id);
@@ -2004,6 +2005,7 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                                         std::abs(created.posY) <= 1.0e6f;
             }
             created.note = ReadString(item, "note", "");
+            created.bypass = ReadBool(item, "bypass", false);
 
             // ピンは定義から再生成し、ID だけファイルの値を使う。
             // 欠けているぶんは後で maxId から振り直す（リンクは繋がらないまま消える）。

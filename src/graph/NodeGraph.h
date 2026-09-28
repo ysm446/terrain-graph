@@ -513,6 +513,9 @@ struct Node {
     bool positionValid = false;
     // なぜこのノードを置いたか、などのメモ（UTF-8）。表示と保存だけで、評価には使わない。
     std::string note;
+    // バイパス（Houdini のバイパスフラグ）。自前の「有効」を持つ種類（レイヤー / Cloud / Cloud Layer）は
+    // こちらを使わず、その「有効」を切り替える（IsBypassed / SetBypassed を通す）。保存する。
+    bool bypass = false;
 };
 
 struct Link {
@@ -546,7 +549,11 @@ public:
     // 入力ピンに繋がっている上流ノード。無ければ nullptr。
     // **雲グラフの Terrain ノードは地形チェーンの先頭に読み替える**（別名）。
     // 繋いだ側は地形グラフの結果を Base として受け取ったのと同じになる。
+    // **バイパスしたノードは飛ばす**（ResolveSourcePin）。
     const Node* FindUpstreamNodeForPin(GraphId inputPinId) const;
+    // 入力ピンに繋がっている出力ピン。バイパスしたノードは、その出力に対応する入力の先へ読み替える。
+    // 読み替えられない（ソース、型の変わるノード、追加の出力）なら nullptr（繋いでいないのと同じ）。
+    const Pin* ResolveSourcePin(GraphId inputPinId) const;
     // リンクの先のノードそのもの（Terrain を読み替えない）。エディタの表示用。
     const Node* FindLinkedNodeForPin(GraphId inputPinId) const;
 
@@ -686,6 +693,10 @@ private:
     int EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
                     const std::vector<const Node*>& layerNodes, compositor::MaskProgram& ops,
                     std::vector<EmittedMaskOp>& emitted, int depth) const;
+    // 全面 0 のマスク（バイパスしたソースの出力）。1 つだけ焼いて共有する。
+    static int EmitEmptyMaskOp(compositor::MaskProgram& ops, std::vector<EmittedMaskOp>& emitted);
+    // Path の入力に線が繋がっているか（バイパスで読み替える前）。
+    bool PathInputLinked(const Node& node) const;
     // ノードの入力ピン（型を指定）に繋がっている上流ノード。無ければ nullptr。
     const Node* UpstreamOf(const Node& node, ValueType type, size_t which = 0) const;
     // Mask 入力に繋がっている出どころ。node が nullptr なら未接続。
@@ -737,6 +748,15 @@ bool IsPathLikeNodeKind(NodeKind kind);
 bool IsDisplayOutputKind(NodeKind kind);
 // リファレンス表示（灰色のワイヤーフレーム）にできる出口か（Output / Mesh Output）。
 bool IsReferenceOutputKind(NodeKind kind);
+// バイパスのトグルを持つか。出口（表示フラグで足りる）、Terrain（別名）、扱えないノードは持たない。
+bool CanBypass(const Node& node);
+// 自前の「有効」（レイヤーの enabled / 雲の enabled）でバイパスを表す種類か。
+bool HasOwnEnable(const Node& node);
+bool IsBypassed(const Node& node);
+void SetBypassed(Node& node, bool bypassed);
+// バイパスしたノードが、出力 output の代わりに通す入力ピン。通せなければ nullptr。
+// 通すのはその型の最初の出力だけで、入力はその型の最初の入力（Mask Blend だけ Background）。
+const Pin* BypassInputFor(const Node& node, const Pin& output);
 // Path / Road Path の平面の点とエッジ。どちらでもなければ nullptr。
 // ビューポートでの編集と経路探索は、これを通して両方を同じに扱う。
 PathSettings* EditablePathSettings(Node& node);

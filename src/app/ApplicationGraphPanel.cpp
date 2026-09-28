@@ -216,6 +216,9 @@ ImVec4 PinTypeColor(graph::ValueType valueType) {
 // ノードの地の色と左右の余白。ピンの丸をノードの縁へ置くのに使う。
 constexpr ImVec4 kNodeBackground(0.150f, 0.150f, 0.150f, 0.98f);
 constexpr float kNodePaddingX = 12.0f;
+// バイパス中のノードの地（格子が透ける）と中身（名前・サムネイル・ピン）の濃さ。
+constexpr float kBypassBackgroundAlpha = 0.4f;
+constexpr float kBypassContentAlpha = 0.4f;
 
 // ピンの矩形。当たり判定をラベルまで広げるので、丸の位置は別に持つ。
 struct PinGeometry {
@@ -223,6 +226,20 @@ struct PinGeometry {
     ImVec2 max;
     ImVec2 center;  // 接続点（リンクの端）
 };
+
+// 破線。バイパス中のノードの素通りの線に使う。線の端はピンの丸の縁から少し離す。
+void DrawDashedLine(ImDrawList* drawList, ImVec2 from, ImVec2 to, ImU32 color) {
+    constexpr float kDash = 6.0f, kGap = 4.0f, kInset = 8.0f, kThickness = 1.6f;
+    const ImVec2 delta(to.x - from.x, to.y - from.y);
+    const float length = std::sqrt(delta.x * delta.x + delta.y * delta.y);
+    if (length <= kInset * 2.0f) return;
+    const ImVec2 unit(delta.x / length, delta.y / length);
+    for (float t = kInset; t < length - kInset; t += kDash + kGap) {
+        const float end = std::min(t + kDash, length - kInset);
+        drawList->AddLine(ImVec2(from.x + unit.x * t, from.y + unit.y * t),
+                          ImVec2(from.x + unit.x * end, from.y + unit.y * end), color, kThickness);
+    }
+}
 
 // 丸ピンを描いて矩形を返す。**当たり判定（ed::PinRect）は呼び出し側で決める。**
 // ラベルまで含めて掴めるようにするため（出力ピンはクリックでプレビューも切り替える）。
@@ -547,6 +564,7 @@ void Application::CopySelectedGraphNodes() {
         entry.posX = node->posX;
         entry.posY = node->posY;
         entry.note = node->note;
+        entry.bypass = node->bypass;
         const ImVec2 size = ed::GetNodeSize(ed::NodeId(node->id));
         entry.sizeX = size.x;
         entry.sizeY = size.y;
@@ -705,6 +723,7 @@ void Application::PlaceGraphClipboard(const ImVec2& viewCenter, bool foreign) {
         node->settings = entry.settings;
         if (foreign) io::RemapNodeReferences(node->settings, remap);
         node->note = entry.note;
+        node->bypass = entry.bypass;
         node->component = std::max(0, m_editComponent);
         node->posX = entry.posX + deltaX;
         node->posY = entry.posY + deltaY;
@@ -792,16 +811,23 @@ void Application::DrawGraphNode(const graph::Node& node) {
     // 循環に入っているノード。接続では弾くので、壊れたファイルを読んだときだけ出る。
     const std::vector<graph::GraphId>& cycleNodes = GraphCycleNodes();
     const bool inCycle = std::binary_search(cycleNodes.begin(), cycleNodes.end(), node.id);
+    // バイパス（左上の角の印）。レイヤーと雲は自前の「有効」と同じ値を指す（graph::IsBypassed）。
+    const bool canBypass = graph::CanBypass(node);
+    const bool bypassed = canBypass && graph::IsBypassed(node);
     // 扱えないノードと循環に入っているノードはエラー色の枠で目立たせる。
+    // バイパス中は左上の印と同じ警告色の枠にし、地を透かして中身を薄くする（効いていないことを示す）。
     const ImVec4 nodeBorderColor = (missingSettings != nullptr || inCycle) ? ImGui::ColorConvertU32ToFloat4(ui::ErrorColor())
+                                 : bypassed ? ImGui::ColorConvertU32ToFloat4(ui::WarnColor())
                                  : isPreview ? ImVec4(0.72f, 0.76f, 0.62f, 1.0f)
                                              : ImVec4(0.22f, 0.22f, 0.22f, 1.0f);
+    ImVec4 nodeBackground = kNodeBackground;
+    if (bypassed) nodeBackground.w *= kBypassBackgroundAlpha;
     const ImVec4 activeNodeBorderColor(0.59f, 0.64f, 0.68f, 1.0f);
     ed::PushStyleVar(ed::StyleVar_NodePadding, ImVec4(kNodePaddingX, 10.0f, kNodePaddingX, 10.0f));
     ed::PushStyleVar(ed::StyleVar_NodeRounding, 6.0f);
-    ed::PushStyleVar(ed::StyleVar_NodeBorderWidth, (isPreview || inCycle) ? 2.0f : 1.0f);
+    ed::PushStyleVar(ed::StyleVar_NodeBorderWidth, (isPreview || inCycle || bypassed) ? 2.0f : 1.0f);
     ed::PushStyleVar(ed::StyleVar_SelectedNodeBorderWidth, 1.8f);
-    ed::PushStyleColor(ed::StyleColor_NodeBg, kNodeBackground);
+    ed::PushStyleColor(ed::StyleColor_NodeBg, nodeBackground);
     ed::PushStyleColor(ed::StyleColor_NodeBorder, nodeBorderColor);
     ed::PushStyleColor(ed::StyleColor_HovNodeBorder, activeNodeBorderColor);
     ed::PushStyleColor(ed::StyleColor_SelNodeBorder, activeNodeBorderColor);
@@ -816,19 +842,43 @@ void Application::DrawGraphNode(const graph::Node& node) {
 
     // ヘッダ: 種類色の印 + 名前。レイヤーが無効なら名前を落とした色で描く。
     const auto* layerSettings = std::get_if<graph::LayerNodeSettings>(&node.settings);
-    const auto* cloudSettings = std::get_if<graph::CloudNodeSettings>(&node.settings);
     // 出口ノードは表示フラグを持つ。隠している出口も、無効のレイヤーと同じく名前を落とした色で描く。
     const bool displayOutput = graph::IsDisplayOutputKind(node.kind);
     const bool outputHidden = displayOutput && OutputHidden(node.id);
-    const bool enabled = ((layerSettings == nullptr) || layerSettings->layer.enabled) &&
-                         ((cloudSettings == nullptr) || cloudSettings->enabled) && !outputHidden;
+    const bool enabled = !bypassed && !outputHidden;
     {
         const ImVec2 cursor = ImGui::GetCursorScreenPos();
         ImDrawList* drawList = ImGui::GetWindowDrawList();
-        drawList->AddRectFilled(ImVec2(cursor.x, cursor.y + 3.0f),
-                                ImVec2(cursor.x + 10.0f, cursor.y + 13.0f),
-                                ColorToU32(accent), 2.0f);
-        ImGui::Dummy(ImVec2(16.0f, 16.0f));
+        // 種類色の印がバイパスのボタンを兼ねる（Houdini のノードの左端のフラグ）。
+        // バイパス中は警告色で塗り、名前を落とした色にする。カーソルを載せると枠を出して押せることを示す。
+        bool hovered = false;
+        if (canBypass) {
+            ImGui::PushID(static_cast<int>(node.id));
+            if (ImGui::InvisibleButton("##bypass", ImVec2(16.0f, 16.0f))) {
+                if (graph::Node* mutableNode = m_graph.FindMutableNode(node.id)) {
+                    graph::SetBypassed(*mutableNode, !bypassed);
+                    m_graph.MarkDirty();
+                    MarkDocumentChanged();
+                }
+            }
+            hovered = ImGui::IsItemHovered();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                ImGui::SetTooltip(bypassed ? "バイパス中（このノードを飛ばしている）。クリックで戻す"
+                                           : "バイパス。このノードを飛ばし、入力をそのまま下流へ通す\n"
+                                             "通す入力が無いノードは空（マスクは黒）を出す。保存する");
+            }
+            ImGui::PopID();
+        } else {
+            ImGui::Dummy(ImVec2(16.0f, 16.0f));
+        }
+        const ImVec2 markMin(cursor.x, cursor.y + 3.0f), markMax(cursor.x + 10.0f, cursor.y + 13.0f);
+        drawList->AddRectFilled(markMin, markMax, bypassed ? ui::WarnColor() : ColorToU32(accent), 2.0f);
+        if (hovered) {
+            drawList->AddRect(ImVec2(markMin.x - 2.0f, markMin.y - 2.0f), ImVec2(markMax.x + 2.0f, markMax.y + 2.0f),
+                              ImGui::GetColorU32(ImGuiCol_Text), 3.0f);
+        }
+        // 印より後ろ（名前・サムネイル・ピン）をまとめて薄くする。素通りの線を描く前に戻す。
+        if (bypassed) ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * kBypassContentAlpha);
         ImGui::SameLine();
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 2.0f);
         const ImVec4 titleColor =
@@ -888,7 +938,7 @@ void Application::DrawGraphNode(const graph::Node& node) {
         if (const graph::NodeDefinition* definition = graph::FindNodeDefinition(node.kind);
             definition != nullptr && layerSettings != nullptr) {
             ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.55f, 1.0f), "%s%s", definition->title,
-                               enabled ? "" : "（無効）");
+                               bypassed ? "（バイパス）" : "");
         }
     }
 
@@ -954,6 +1004,8 @@ void Application::DrawGraphNode(const graph::Node& node) {
     // **ラベルもピンの当たり判定に入れる。** 丸だけだと小さく、
     // 出力ピンのクリック（プレビューの切り替え）も接続も狙いにくい。
     const ImVec4 pinLabelColor(0.62f, 0.64f, 0.62f, 1.0f);
+    // 丸の中心。バイパス中の素通りの線を引くのに使う。
+    std::vector<ImVec2> inputCenters(node.inputs.size()), outputCenters(node.outputs.size());
 
     for (size_t inputIndex = 0; inputIndex < node.inputs.size(); ++inputIndex) {
         const graph::Pin& input = node.inputs[inputIndex];
@@ -961,6 +1013,7 @@ void Application::DrawGraphNode(const graph::Node& node) {
         ImGui::SetCursorPos(ImVec2(rowStartX, inputY));
         ed::BeginPin(ed::PinId(input.id), ed::PinKind::Input);
         const PinGeometry geometry = DrawRoundPin(input, nodeLeftX);
+        inputCenters[inputIndex] = geometry.center;
         ImGui::SameLine();
         ImGui::SetCursorPosY(inputY + 2.0f);
         ImGui::TextColored(pinLabelColor, "%s", input.label.c_str());
@@ -984,6 +1037,7 @@ void Application::DrawGraphNode(const graph::Node& node) {
         ImGui::SameLine();
         ImGui::SetCursorPosY(outputY);
         const PinGeometry geometry = DrawRoundPin(output, nodeRightX, previewOutput);
+        outputCenters[outputIndex] = geometry.center;
         // ラベルの左端から丸まで。
         ed::PinRect(ImVec2(labelMin.x, geometry.min.y), geometry.max);
         ed::EndPin();
@@ -991,6 +1045,20 @@ void Application::DrawGraphNode(const graph::Node& node) {
     const size_t pinRowCount = std::max(node.inputs.size(), node.outputs.size());
     ImGui::Dummy(
         ImVec2(kNodeWidth, std::max(4.0f, static_cast<float>(pinRowCount) * 24.0f - 20.0f)));
+
+    // バイパス中は、下流へ通している入力から出力まで、ノードを横切る警告色の破線を引く
+    // （空を出す出力には引かない。通しているか空かの違いも見える）。
+    if (bypassed) {
+        ImGui::PopStyleVar();
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        const ImU32 color = ui::WarnColor();
+        for (size_t outputIndex = 0; outputIndex < node.outputs.size(); ++outputIndex) {
+            const graph::Pin* through = graph::BypassInputFor(node, node.outputs[outputIndex]);
+            if (through == nullptr) continue;
+            const size_t inputIndex = static_cast<size_t>(through - node.inputs.data());
+            DrawDashedLine(drawList, inputCenters[inputIndex], outputCenters[outputIndex], color);
+        }
+    }
 
     ed::EndNode();
     ed::PopStyleColor(4);

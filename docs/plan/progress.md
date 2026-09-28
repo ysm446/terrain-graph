@@ -1,7 +1,19 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-28 18:52
+更新日時: 2026-09-28 19:34
+
+## ノードのバイパス（2026-09-28 19:09）
+
+ユーザー指定により、Houdini のバイパスフラグに倣ってノードの左上の角（種類色の四角）をバイパスのボタンにした。保存し、アンドゥが効く（ユーザーと確認済み）。
+
+- 状態: レイヤーと Cloud / Cloud Layer は既存の「有効」（`layer.enabled` / `cloud.enabled`）をそのまま使う。それ以外は `graph::Node::bypass`（`"bypass": true` で保存、クリップボードでも引き継ぐ）。入口は `graph::IsBypassed` / `SetBypassed` / `CanBypass`。
+- マスク以外の評価: `NodeGraph::ResolveSourcePin` がバイパスしたノードを読み替える（その型の最初の出力 → 同じ型の最初の入力。Mask Blend は Background。`BypassInputFor`）。`FindUpstreamNodeForPin` と、雪煙・Cloud Layer・Weather Layer のマスクのピンの探索がこれを通るので、道路・配置・雲の鎖はそのまま効く。
+- マスク: `EmitMaskOps` の入口で、バイパスしたマスクのノードを入力へ読み替えるか、全面 0 の op（`EmitEmptyMaskOp`。入力の無い Levels を反転したもの。シェーダは変えていない）にする。Mask Path / Mask Area は、繋いだ Path をバイパスしていれば全面 0。
+- 出口ノード・Terrain・扱えないノードはバイパスを持たない。
+- 見た目（ユーザーの「もう少しバイパス感が欲しい」への対応）: 地を透かし（アルファ 0.4 倍）、中身を `ImGuiStyleVar_Alpha` で 0.4 倍に薄くし、枠を警告色の太さ 2 にし、通している入力から出力へ警告色の破線を引く（`bypass_crop2.png`）。破線は同じ行のピンのラベル（Base / Result）の上を横切る。
+
+検証: Debug ビルド（警告 0）、CTest 6 件（NodeGraphTests に 8 項目: Levels を飛ばすと Noise を通す、ソースは全面 0、レイヤーは「有効」を切り替える、路肩を飛ばす、Road Mesh を飛ばすと道路を描かない、出口は持たない）。既定のグラフで Surface をバイパスした見た目を撮影（`data/Test/display-flag/bypass_crop.png`）。**未確認**: 四角のクリックの実操作（ノードの選択・ドラッグとの干渉）、実際のシーンでのバイパスの描画結果、レイヤーをバイパスしたときの追加のマスク出力（既存の「有効」の動きのまま）。
 
 ## 出口ノードのリファレンス表示（2026-09-28 18:52）
 

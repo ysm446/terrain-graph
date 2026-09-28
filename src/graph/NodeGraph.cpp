@@ -433,6 +433,41 @@ bool IsReferenceOutputKind(NodeKind kind) {
     return kind == NodeKind::Output || kind == NodeKind::MeshOutput;
 }
 
+bool CanBypass(const Node& node) {
+    return !IsDisplayOutputKind(node.kind) && node.kind != NodeKind::Terrain && node.kind != NodeKind::Missing;
+}
+
+bool HasOwnEnable(const Node& node) {
+    return std::holds_alternative<LayerNodeSettings>(node.settings) ||
+           std::holds_alternative<CloudNodeSettings>(node.settings);
+}
+
+bool IsBypassed(const Node& node) {
+    if (const auto* layer = std::get_if<LayerNodeSettings>(&node.settings)) return !layer->layer.enabled;
+    if (const auto* cloud = std::get_if<CloudNodeSettings>(&node.settings)) return !cloud->enabled;
+    return node.bypass;
+}
+
+void SetBypassed(Node& node, bool bypassed) {
+    if (auto* layer = std::get_if<LayerNodeSettings>(&node.settings)) layer->layer.enabled = !bypassed;
+    else if (auto* cloud = std::get_if<CloudNodeSettings>(&node.settings)) cloud->enabled = !bypassed;
+    else node.bypass = bypassed;
+}
+
+const Pin* BypassInputFor(const Node& node, const Pin& output) {
+    const auto first = std::find_if(node.outputs.begin(), node.outputs.end(),
+                                    [&](const Pin& pin) { return pin.valueType == output.valueType; });
+    if (first == node.outputs.end() || first->id != output.id) return nullptr;
+    // Mask Blend は Foreground を重ねる前の Background を通す。
+    const size_t which = node.kind == NodeKind::MaskBlend ? 1 : 0;
+    size_t seen = 0;
+    for (const Pin& pin : node.inputs) {
+        if (pin.valueType != output.valueType) continue;
+        if (seen++ == which) return &pin;
+    }
+    return nullptr;
+}
+
 PathSettings* EditablePathSettings(Node& node) {
     if (auto* path = std::get_if<PathNodeSettings>(&node.settings)) return &path->path;
     if (auto* road = std::get_if<RoadPathNodeSettings>(&node.settings)) return &road->road.path;
@@ -559,8 +594,28 @@ const Node* NodeGraph::FindLinkedNodeForPin(GraphId inputPinId) const {
     return nullptr;
 }
 
+const Pin* NodeGraph::ResolveSourcePin(GraphId inputPinId) const {
+    // バイパスの連なりを辿る。循環は繋ぐときに弾いているが、壊れたファイルに備えて段数で止める。
+    for (size_t depth = 0; depth < 64; ++depth) {
+        const Pin* start = nullptr;
+        for (const Link& link : m_links) {
+            if (link.endPin == inputPinId) {
+                start = FindPin(link.startPin);
+                break;
+            }
+        }
+        const Node* node = start != nullptr ? FindNode(start->nodeId) : nullptr;
+        if (node == nullptr || !node->bypass || HasOwnEnable(*node)) return start;
+        const Pin* through = BypassInputFor(*node, *start);
+        if (through == nullptr) return nullptr;
+        inputPinId = through->id;
+    }
+    return nullptr;
+}
+
 const Node* NodeGraph::FindUpstreamNodeForPin(GraphId inputPinId) const {
-    const Node* node = FindLinkedNodeForPin(inputPinId);
+    const Pin* start = ResolveSourcePin(inputPinId);
+    const Node* node = start != nullptr ? FindNode(start->nodeId) : nullptr;
     // Terrain は地形グラフの Output に繋がったチェーンの別名。地形側に何も繋がって
     // いなければ未接続と同じ（nullptr）。地形グラフは雲グラフへ繋げないので輪はできない。
     // **地形グラフの中に置かれた Terrain は未接続と同じにする。** 別名のままだと、
@@ -829,12 +884,10 @@ std::vector<CompiledSnowPlume> NodeGraph::CompileSnowPlumes() const {
         plume.settings = *settings;
         plume.windDirection = settings->windDirection;
         plume.windSpeed = settings->windSpeed;
-        for (const Link& link : m_links) {
-            if (link.endPin != node.inputs[0].id) continue;
-            if (const Pin* pin = FindPin(link.startPin)) {
-                plume.maskNode = pin->nodeId;
-                plume.maskPin = pin->id;
-            }
+        // バイパスしたノードは飛ばす（ResolveSourcePin）。
+        if (const Pin* pin = ResolveSourcePin(node.inputs[0].id)) {
+            plume.maskNode = pin->nodeId;
+            plume.maskPin = pin->id;
         }
         // Source の上流を幅優先で辿り、最初に見つかった Wind Field の風に揃える
         // （Spindrift を Levels や Blend で加工してから繋いでも同じ風で流す）。
@@ -877,12 +930,9 @@ CompiledCloud NodeGraph::CompileCloud() const {
                 result.sourceId = source->id;
                 result.layer = source->kind == NodeKind::CloudLayer;
                 if (result.layer && !source->inputs.empty()) {
-                    for (const auto& link : m_links) {
-                        if (link.endPin != source->inputs.front().id) continue;
-                        if (const auto* pin = FindPin(link.startPin)) {
-                            result.maskNode = pin->nodeId;
-                            result.maskPin = pin->id;
-                        }
+                    if (const auto* pin = ResolveSourcePin(source->inputs.front().id)) {
+                        result.maskNode = pin->nodeId;
+                        result.maskPin = pin->id;
                     }
                 }
             }
@@ -933,13 +983,10 @@ CompiledCloud NodeGraph::CompileCloud() const {
             cloud.windDirection = weather.windDirection;
             cloud.noiseSpeedRatio = weather.evolveNoise ? std::clamp(weather.noiseSpeedRatio, 0.0f, 1.0f) : 1.0f;
             for (size_t input = 0; input < source->inputs.size() && input < 2; ++input) {
-                for (const auto& link : m_links) {
-                    if (link.endPin != source->inputs[input].id) continue;
-                    const auto* pin = FindPin(link.startPin);
-                    if (!pin) continue;
-                    if (input == 0) { result.maskNode = pin->nodeId; result.maskPin = pin->id; }
-                    else { result.typeMaskNode = pin->nodeId; result.typeMaskPin = pin->id; }
-                }
+                const auto* pin = ResolveSourcePin(source->inputs[input].id);
+                if (!pin) continue;
+                if (input == 0) { result.maskNode = pin->nodeId; result.maskPin = pin->id; }
+                else { result.typeMaskNode = pin->nodeId; result.typeMaskPin = pin->id; }
             }
         }
         if (const auto* noiseSettings = source && source->kind == NodeKind::CloudNoise
@@ -1473,6 +1520,12 @@ bool NodeGraph::MaskUsesDefaultHeight(const Node& maskNode,
 // マスクのノードを op の列へ落とす（入力が先、出力が後）。
 // **同じノードは 1 つの op を共有する。** Mask Blend で合流したり、
 // 同じマスクを 2 つのレイヤーで使ったりしても、評価は 1 回で済む。
+bool NodeGraph::PathInputLinked(const Node& node) const {
+    for (const Pin& pin : node.inputs)
+        if (pin.valueType == ValueType::Path && FindLinkedNodeForPin(pin.id) != nullptr) return true;
+    return false;
+}
+
 int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
                            const std::vector<const Node*>& layerNodes,
                            compositor::MaskProgram& ops,
@@ -1484,6 +1537,25 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
     // 循環は CanCreateLink が弾いているが、読み込んだファイルが壊れている
     // 可能性もあるので深さでも止める。
     constexpr int kMaxDepth = 32;
+    // **バイパスしたマスクのノード**は、その出力に対応する入力をそのまま通す。通せない
+    // （ソース、追加の出力）なら全面 0。未接続（-1）にすると、読み手の Surface が全面を塗ってしまう。
+    if (maskNode.bypass && !HasOwnEnable(maskNode) && depth <= kMaxDepth) {
+        size_t index = 0;
+        for (const Pin& out : maskNode.outputs) {
+            if (out.valueType != ValueType::Mask) continue;
+            if (index++ != source.outputIndex) continue;
+            const Pin* through = BypassInputFor(maskNode, out);
+            if (through == nullptr) break;
+            size_t which = 0;
+            for (const Pin& pin : maskNode.inputs) {
+                if (&pin == through) break;
+                if (pin.valueType == ValueType::Mask) ++which;
+            }
+            return EmitMaskOps(UpstreamMaskOf(maskNode, which), defaultHeightLayer, layerNodes, ops, emitted,
+                               depth + 1);
+        }
+        return EmitEmptyMaskOp(ops, emitted);
+    }
     // 堆積・崩落・積雪は**レイヤーでもありマスクの出どころでもある**
     // （積もった厚み / 積んだ岩屑 / 雪の被覆を出す）。
     const bool isLayerMaskSource = IsLayerMaskSourceKind(maskNode.kind);
@@ -1634,7 +1706,8 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
                                            ? std::get_if<PathNodeSettings>(&pathNode->settings)
                                            : nullptr;
             if (pathSettings == nullptr) {
-                return -1;
+                // 繋いだ Path をバイパスしているときは「足跡が無い」（全面 0）。
+                return PathInputLinked(maskNode) ? EmitEmptyMaskOp(ops, emitted) : -1;
             }
             op.kind = compositor::MaskOpKind::Path;
             op.pathMask = settings->pathMask;
@@ -1653,7 +1726,8 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
                                            ? std::get_if<PathNodeSettings>(&pathNode->settings)
                                            : nullptr;
             if (pathSettings == nullptr) {
-                return -1;
+                // 繋いだ Path をバイパスしているときは「足跡が無い」（全面 0）。
+                return PathInputLinked(maskNode) ? EmitEmptyMaskOp(ops, emitted) : -1;
             }
             op.kind = compositor::MaskOpKind::Area;
             op.areaMask = settings->areaMask;
@@ -1705,6 +1779,21 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
 
     ops.push_back(op);
     emitted.push_back({&maskNode, defaultHeightLayer, source.outputIndex});
+    return static_cast<int>(ops.size() - 1);
+}
+
+int NodeGraph::EmitEmptyMaskOp(compositor::MaskProgram& ops, std::vector<EmittedMaskOp>& emitted) {
+    constexpr size_t kEmptyOutput = static_cast<size_t>(-1);
+    for (size_t i = 0; i < emitted.size(); ++i) {
+        if (emitted[i].node == nullptr && emitted[i].outputIndex == kEmptyOutput) return static_cast<int>(i);
+    }
+    // 入力の無い Levels は 1 を出す。反転して 0 にする（シェーダに専用の op を足さずに済む）。
+    compositor::MaskOp op;
+    op.kind = compositor::MaskOpKind::Levels;
+    op.levels.invert = true;
+    op.inputA = -1;
+    ops.push_back(op);
+    emitted.push_back({nullptr, 0, kEmptyOutput});
     return static_cast<int>(ops.size() - 1);
 }
 

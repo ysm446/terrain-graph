@@ -50,6 +50,82 @@ bool StartsWithNeutralPlane(const tg::graph::CompiledGraph& compiled) {
 
 void RunNodeGraphTests() {
     {
+        Section("バイパス（ノードを飛ばす）");
+        auto graph = NodeGraph::CreateDefault();
+        const auto pin = [&](tg::graph::GraphId id, bool output, size_t index) {
+            const auto* node = graph.FindNode(id);
+            return output ? node->outputs[index].id : node->inputs[index].id;
+        };
+        const auto bypass = [&](tg::graph::GraphId id, bool value) {
+            tg::graph::SetBypassed(*graph.FindMutableNode(id), value);
+            graph.MarkDirty();
+        };
+        // 既定の地面 → Surface → 出力。Surface のマスクは Noise → Levels。
+        tg::graph::GraphId baseId = 0, outputId = 0;
+        for (const auto& node : graph.Nodes()) {
+            if (node.kind == NodeKind::Surface) baseId = node.id;
+            if (node.kind == NodeKind::Output) outputId = node.id;
+        }
+        const auto surface = graph.CreateNode(NodeKind::Surface);
+        const auto noise = graph.CreateNode(NodeKind::MaskNoise);
+        const auto levels = graph.CreateNode(NodeKind::MaskLevels);
+        const auto oldLinks = graph.Links();
+        for (const auto& link : oldLinks) graph.DeleteLink(link.id);
+        graph.CreateLink(pin(baseId, true, 0), pin(surface, false, 0));
+        graph.CreateLink(pin(surface, true, 0), pin(outputId, false, 0));
+        graph.CreateLink(pin(noise, true, 0), pin(levels, false, 0));
+        graph.CreateLink(pin(levels, true, 0), pin(surface, false, 1));
+        const auto maskOpOf = [&]() -> const tg::compositor::MaskOp* {
+            const auto compiled = graph.CompileLayers();
+            static tg::compositor::MaskOp copy;
+            for (size_t i = 0; i < compiled.layers.size(); ++i) {
+                if (compiled.layerSources[i] != surface) continue;
+                const int op = compiled.layers[i].mask.maskOp;
+                if (op < 0 || static_cast<size_t>(op) >= compiled.maskOps.size()) return nullptr;
+                copy = compiled.maskOps[op];
+                return &copy;
+            }
+            return nullptr;
+        };
+        const auto* op = maskOpOf();
+        Check(op && op->kind == tg::compositor::MaskOpKind::Levels && op->inputA >= 0, "バイパス無しは Levels が Noise を読む");
+        bypass(levels, true);
+        op = maskOpOf();
+        Check(op && op->kind == tg::compositor::MaskOpKind::Noise, "Levels をバイパスすると Noise をそのまま通す");
+        bypass(noise, true);
+        op = maskOpOf();
+        Check(op && op->kind == tg::compositor::MaskOpKind::Levels && op->levels.invert && op->inputA < 0,
+              "ソースをバイパスすると全面 0（入力の無い Levels の反転）で、未接続（全面）にはしない");
+        bypass(levels, false);
+        bypass(noise, false);
+        bypass(surface, true);
+        Check(tg::graph::IsBypassed(*graph.FindNode(surface)) &&
+                  !std::get<tg::graph::LayerNodeSettings>(graph.FindNode(surface)->settings).layer.enabled &&
+                  !graph.FindNode(surface)->bypass,
+              "レイヤーのバイパスは自前の「有効」を切り替える");
+        bypass(surface, false);
+
+        // 道路: Road Path → Road Mesh → Shoulder → Mesh Output。
+        const auto roadPath = graph.CreateNode(NodeKind::RoadPath);
+        const auto roadMesh = graph.CreateNode(NodeKind::RoadMesh);
+        const auto shoulder = graph.CreateNode(NodeKind::Shoulder);
+        const auto meshOutput = graph.CreateNode(NodeKind::MeshOutput);
+        graph.CreateLink(pin(roadPath, true, 0), pin(roadMesh, false, 0));
+        graph.CreateLink(pin(roadMesh, true, 0), pin(shoulder, false, 0));
+        graph.CreateLink(pin(shoulder, true, 0), pin(meshOutput, false, 0));
+        auto roads = graph.CompileRoadMeshes();
+        Check(roads.size() == 1 && roads[0].shoulders.size() == 1, "バイパス無しは路肩を含む");
+        bypass(shoulder, true);
+        roads = graph.CompileRoadMeshes();
+        Check(roads.size() == 1 && roads[0].roadMesh == roadMesh && roads[0].shoulders.empty(),
+              "路肩をバイパスすると Road Mesh を直接繋いだのと同じ");
+        bypass(shoulder, false);
+        bypass(roadMesh, true);
+        Check(graph.CompileRoadMeshes().empty(), "型の変わる Road Mesh をバイパスすると道路を描かない");
+        bypass(roadMesh, false);
+        Check(!tg::graph::CanBypass(*graph.FindNode(meshOutput)), "出口はバイパスを持たない（表示フラグで足りる）");
+    }
+    {
         Section("文書の印（別のシーンへの貼り付けの判定）");
         NodeGraph original;
         const NodeGraph copied = original;  // アンドゥの控えと同じ複製
