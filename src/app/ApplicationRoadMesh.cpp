@@ -98,8 +98,29 @@ uint64_t MeshItemId(graph::GraphId output, graph::GraphId node, int side) {
     return HashValue(hash, side);
 }
 
-// 材質が無いときの色（リニア）。路面はアスファルト、路肩は少し明るい砂利の目安。
+// 区画線の形に効く値のハッシュ（路面の形、車線の並び、区画線の設定。材質は含めない）。
+uint64_t MarkingGeometryKey(uint64_t roadKey, const graph::RoadMeshSettings& mesh,
+                            const graph::RoadMarkingSettings& marking) {
+    uint64_t hash = HashValue(14695981039346656037ull, roadKey);
+    hash = HashValue(hash, mesh.lanesForward);
+    hash = HashValue(hash, mesh.lanesBackward);
+    hash = HashValue(hash, mesh.leftHandTraffic);
+    for (const graph::RoadMarkingLine& line : marking.lines) {
+        hash = HashValue(hash, line.enabled);
+        hash = HashValue(hash, line.dashed);
+        hash = HashValue(hash, line.widthMeters);
+    }
+    hash = HashValue(hash, marking.edgeInsetMeters);
+    hash = HashValue(hash, marking.dashLengthMeters);
+    hash = HashValue(hash, marking.dashGapMeters);
+    hash = HashValue(hash, marking.liftMeters);
+    hash = HashValue(hash, marking.uvRepeatMeters);
+    return HashValue(hash, marking.uvAlongU);
+}
+
+// 材質が無いときの色（リニア）。路面はアスファルト、路肩は少し明るい砂利の目安、区画線は白。
 constexpr float kRoadFallbackColor[3] = {0.18f, 0.18f, 0.18f};
+constexpr float kMarkingFallbackColor[3] = {0.80f, 0.80f, 0.78f};
 constexpr float kShoulderFallbackColor[3] = {0.32f, 0.30f, 0.27f};
 
 }  // namespace
@@ -130,6 +151,21 @@ bool Application::SurfaceMaterialGpu(compositor::MaterialAssetId material, float
         return false;
     }
     return true;
+}
+
+renderer::GeneratedMeshItem::Cutout Application::MaterialCutout(compositor::MaterialAssetId material,
+                                                                float uvRepeatMeters) const {
+    renderer::GeneratedMeshItem::Cutout cutout;
+    const compositor::MaterialAsset* asset = m_materialLibrary.Find(material);
+    // Layered Material の層ごとの不透明度はまだ扱わない（通常の Material だけ）。
+    if (asset == nullptr || asset->layerMaterial || asset->AlphaCutoff() <= 0.0f) return cutout;
+    cutout.threshold = asset->AlphaCutoff();
+    cutout.opacityIndex = m_textureLibrary.SrvIndex(asset->opacity.texture, false);
+    cutout.channel = static_cast<uint32_t>(asset->opacity.channel);
+    cutout.baseColorIndex = m_textureLibrary.SrvIndex(asset->baseColor, true);
+    cutout.value = asset->opacityValue;
+    cutout.uvScale = 1.0f / std::max(uvRepeatMeters, 0.01f);
+    return cutout;
 }
 
 void Application::PrepareRoadMeshes() {
@@ -169,6 +205,7 @@ void Application::PrepareRoadMeshes() {
         roadStatus.lengthMeters = cache.lengthMeters;
         if (cache.road.mesh.indices.empty()) {
             cache.shoulders.clear();
+            cache.markings.clear();
             continue;
         }
         bool roadItemHasMaterial = false;
@@ -187,6 +224,44 @@ void Application::PrepareRoadMeshes() {
             roadItemHasMaterial = item.hasMaterial;
             roadMaterial = item.material;
             items.push_back(item);
+        }
+
+        // --- 区画線（路面の上。鎖のどこに挟んでも路面に引く） ---
+        cache.markings.resize(compiled.markings.size());
+        for (size_t m = 0; m < compiled.markings.size(); ++m) {
+            const graph::GraphId markingId = compiled.markings[m];
+            const graph::Node* markingNode = m_graph.FindNode(markingId);
+            const auto* marking = markingNode ? std::get_if<graph::LaneMarkingNodeSettings>(&markingNode->settings) : nullptr;
+            if (marking == nullptr) continue;
+            RoadNodeStatus& status = m_roadNodeStatus[markingId];
+            RoadMarkingCache& markingCache = cache.markings[m];
+            const uint64_t markingKey = MarkingGeometryKey(cache.road.key, mesh->mesh, marking->marking);
+            if (markingKey != markingCache.key) {
+                markingCache.key = markingKey;
+                markingCache.error.clear();
+                if (!graph::BuildRoadMarkings(cache.road.mesh, cache.road.stride, mesh->mesh, marking->marking,
+                                              markingCache.meshes, &markingCache.error))
+                    for (auto& built : markingCache.meshes) built = {};
+            }
+            status.error = markingCache.error;
+            status.lengthMeters = cache.lengthMeters;
+            for (size_t kind = 0; kind < graph::kRoadMarkingKindCount; ++kind) {
+                const renderer::MeshData& geometry = markingCache.meshes[kind];
+                if (geometry.indices.empty()) continue;
+                status.vertices += geometry.vertices.size();
+                status.triangles += geometry.indices.size() / 3;
+                const graph::RoadMarkingLine& line = marking->marking.lines[kind];
+                renderer::GeneratedMeshItem item;
+                item.id = MeshItemId(compiled.output, markingId, static_cast<int>(kind) + 16);
+                item.geometryKey = markingCache.key ^ (0x9e3779b97f4a7c15ull * (kind + 1));
+                item.geometry = &geometry;
+                item.decal = true;
+                std::copy(std::begin(kMarkingFallbackColor), std::end(kMarkingFallbackColor), item.fallbackColor);
+                item.hasMaterial = SurfaceMaterialGpu(line.material, marking->marking.uvRepeatMeters, item.material,
+                                                      &status.materialError);
+                item.cutout = MaterialCutout(line.material, marking->marking.uvRepeatMeters);
+                items.push_back(item);
+            }
         }
 
         // --- 路肩（内側から順に。左右それぞれ、今の外側の端から張り出す） ---
@@ -636,6 +711,63 @@ bool Application::DrawShoulderSection(graph::RoadShoulderSettings& shoulder) {
     ImGui::EndDisabled();
     ui::HintText("内側の端 (0, 0) から外へ向かう順に並べる。向きが大きく変わる点は稜線を立て、"
                  "区間は約 1 m ごとに割る。材質は断面に沿った長さで貼る");
+    return changed;
+}
+
+bool Application::DrawLaneMarkingSettings(graph::Node& node) {
+    auto* settings = std::get_if<graph::LaneMarkingNodeSettings>(&node.settings);
+    if (settings == nullptr) return false;
+    graph::RoadMarkingSettings& marking = settings->marking;
+    const graph::RoadMarkingSettings defaults;
+    bool changed = false;
+
+    // 線の種類ごと（中央線・外側線・車線境界線）。
+    static const char* const kTitles[] = {"中央線", "外側線", "車線境界線"};
+    static const char* const kHints[] = {
+        "進行方向と対向の車線の境に引く。対向の車線が無い道路（Road Mesh の対向の車線数が 0）では出ない",
+        "左右の端から「外側線の位置」だけ内側に引く",
+        "同じ向きの車線どうしの境に引く（片側 2 車線以上のとき）",
+    };
+    for (size_t kind = 0; kind < graph::kRoadMarkingKindCount; ++kind) {
+        graph::RoadMarkingLine& line = marking.lines[kind];
+        const graph::RoadMarkingLine& lineDefaults = defaults.lines[kind];
+        ImGui::PushID(static_cast<int>(kind));
+        ui::SectionHeader(kTitles[kind]);
+        if (ui::BeginPropertyTable("laneMarkingLineRows")) {
+            changed |= ui::PropertyBool("引く", &line.enabled, lineDefaults.enabled, kHints[kind]);
+            if (line.enabled) {
+                changed |= ui::PropertyBool("破線", &line.dashed, lineDefaults.dashed,
+                                            "破線にする。線と間隔の長さは下の「破線」で決める");
+                changed |= ui::PropertyFloat("幅", &line.widthMeters, 0.05f, 1.0f, lineDefaults.widthMeters,
+                                             "線の幅（m）", "%.2f m");
+                changed |= DrawMaterialSlotRow("材質", line.material, m_materialLibrary, m_pendingAssetReveal, true, true);
+            }
+            ui::EndPropertyTable();
+        }
+        ImGui::PopID();
+    }
+
+    ui::SectionHeader("共通");
+    if (ui::BeginPropertyTable("laneMarkingCommonRows", "長さの向きを U に")) {
+        changed |= ui::PropertyFloat("外側線の位置", &marking.edgeInsetMeters, 0.0f, 5.0f, defaults.edgeInsetMeters,
+                                     "外側線の中心の、路面の端からの距離（m）", "%.2f m");
+        changed |= ui::PropertyFloat("破線の線", &marking.dashLengthMeters, 0.1f, 50.0f, defaults.dashLengthMeters,
+                                     "破線の 1 本の長さ（m）", "%.1f m");
+        changed |= ui::PropertyFloat("破線の間隔", &marking.dashGapMeters, 0.0f, 50.0f, defaults.dashGapMeters,
+                                     "破線の線と線の間（m）", "%.1f m");
+        changed |= ui::PropertyFloat("浮かせる量", &marking.liftMeters, 0.0f, 0.1f, defaults.liftMeters,
+                                     "路面から浮かせる高さ（m）。描画でも手前へずらすので、ごく小さくてよい", "%.3f m");
+        changed |= ui::PropertyFloat("繰り返し長", &marking.uvRepeatMeters, 0.1f, 100.0f, defaults.uvRepeatMeters,
+                                     "線の長さの向きに模様が 1 周する長さ（m）。横は線の幅いっぱいで 1 周", "%.2f m",
+                                     ImGuiSliderFlags_Logarithmic);
+        changed |= ui::PropertyBool("長さの向きを U に", &marking.uvAlongU, defaults.uvAlongU,
+                                    "画像の U（横）を線の長さの向きにする。横長の白線の画像（2048×256 など）向け");
+        ui::EndPropertyTable();
+    }
+    ui::HintText("材質が無ければ白で塗る。不透明度（切り抜き・半透明）の Material なら、かすれた所を抜く"
+                 "（半透明もいまは切り抜きで描く）。車線の並びは Road Mesh の車線数と走行側で決まる");
+
+    DrawRoadNodeStatus(node.id, "Road Mesh（か、その先の Shoulder）を繋ぎ、Mesh Output へ繋ぐと描く");
     return changed;
 }
 

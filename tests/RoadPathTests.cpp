@@ -4,11 +4,14 @@
 // Road Path の線形（地形に沿う中心線、縦断曲線、バンク角）とノードの登録を確かめる。
 
 #include "graph/NodeGraph.h"
+#include "graph/RoadMarking.h"
 #include "graph/RoadMesh.h"
 #include "graph/RoadPath.h"
 
 #include "TestSupport.h"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <string>
 #include <variant>
@@ -284,6 +287,69 @@ void RunRoadPathTests() {
               "路肩の外側の端からさらに路肩を重ねられる");
     }
 
+    Section("Lane Marking: 区画線");
+    {
+        const RoadPathSettings road = StraightRoad();
+        const RoadHeightSampler flat = [](float, float) { return 10.0f; };
+        RoadProfileCurve centerline;
+        BuildRoadCenterline(road, kSize, flat, centerline, nullptr);
+        RoadMeshSettings mesh;
+        mesh.surfaceOffsetMeters = 0.0f;
+        tg::renderer::MeshData surface;
+        BuildRoadMesh(road, centerline, mesh, surface, nullptr);
+        const uint32_t stride = RoadMeshStride(mesh);
+        const float leftZ = surface.vertices[0].position.z;  // 左端（+X へ向かう道路では -Z 側）
+
+        const RoadLaneLayout twoWay = ComputeRoadLaneLayout(mesh);
+        Check(twoWay.hasCenter && Near(twoWay.centerMeters, 3.5f, 1e-5f) && twoWay.dividerMeters.empty(),
+              "片側 1 車線の対面通行: 中央線が真ん中、車線境界線は無い");
+
+        RoadMarkingSettings settings;
+        std::array<tg::renderer::MeshData, kRoadMarkingKindCount> lines;
+        std::string error;
+        Check(BuildRoadMarkings(surface, stride, mesh, settings, lines, &error), "既定の設定で区画線を作る");
+        const auto& centerMesh = lines[static_cast<size_t>(RoadMarkingKind::Center)];
+        const auto& edgeMesh = lines[static_cast<size_t>(RoadMarkingKind::Edge)];
+        Check(!centerMesh.indices.empty() && !edgeMesh.indices.empty() &&
+                  lines[static_cast<size_t>(RoadMarkingKind::Lane)].indices.empty(),
+              "中央線と外側線はあり、車線境界線は無い");
+        float minX = 1e9f, maxX = -1e9f;
+        bool lifted = true, acrossUv = true;
+        for (const auto& v : centerMesh.vertices) {
+            minX = std::min(minX, v.position.z - leftZ);
+            maxX = std::max(maxX, v.position.z - leftZ);
+            lifted = lifted && Near(v.position.y, 10.0f + settings.liftMeters, 1e-4f);
+            acrossUv = acrossUv && (Near(v.uv.x, 0.0f, 1e-6f) || Near(v.uv.x, settings.uvRepeatMeters, 1e-6f));
+        }
+        Check(Near(minX, 3.5f - 0.075f, 1e-3f) && Near(maxX, 3.5f + 0.075f, 1e-3f), "中央線は幅 0.15 m で道路の真ん中");
+        Check(lifted, "区画線は路面から浮かせる量だけ上");
+        Check(acrossUv, "横の UV は線の幅いっぱいで 1 周（0 と繰り返し長）");
+        float edgeMin = 1e9f;
+        for (const auto& v : edgeMesh.vertices) edgeMin = std::min(edgeMin, v.position.z - leftZ);
+        Check(Near(edgeMin, 0.5f - 0.075f, 1e-3f), "外側線は端から 0.5 m の所が中心");
+
+        RoadMeshSettings oneWay = mesh;
+        oneWay.lanesForward = 2;
+        oneWay.lanesBackward = 0;
+        const RoadLaneLayout lanes = ComputeRoadLaneLayout(oneWay);
+        Check(!lanes.hasCenter && lanes.dividerMeters.size() == 1, "一方通行 2 車線: 中央線は無く、車線境界線が 1 本");
+        Check(BuildRoadMarkings(surface, stride, oneWay, settings, lines, &error), "一方通行の区画線を作る");
+        const auto& laneMesh = lines[static_cast<size_t>(RoadMarkingKind::Lane)];
+        bool inDash = !laneMesh.vertices.empty();
+        for (const auto& v : laneMesh.vertices) inDash = inDash && std::fmod(v.uv.y, 10.0f) <= 5.0f + 1e-3f;
+        Check(inDash && lines[static_cast<size_t>(RoadMarkingKind::Center)].indices.empty(),
+              "車線境界線は破線（5 m の線と 5 m の間隔）");
+
+        RoadMarkingSettings wide = settings;
+        wide.edgeInsetMeters = 3.5f;
+        Check(!BuildRoadMarkings(surface, stride, mesh, wide, lines, &error) && !error.empty(),
+              "外側線が中心を越える設定は断る");
+        RoadMarkingSettings thick = settings;
+        thick.lines[static_cast<size_t>(RoadMarkingKind::Center)].widthMeters = 1.0f;
+        thick.edgeInsetMeters = 3.0f;
+        Check(!BuildRoadMarkings(surface, stride, mesh, thick, lines, &error), "線どうしが重なる設定は断る");
+    }
+
     Section("Road Path: ノード");
     {
         NodeGraph graph;
@@ -324,5 +390,13 @@ void RunRoadPathTests() {
         Check(chained.size() == 1 && chained[0].roadMesh == meshNode && chained[0].shoulders.size() == 2 &&
                   chained[0].shoulders[0] == shoulderA && chained[0].shoulders[1] == shoulderB,
               "路肩を Road Mesh に近い順に辿る");
+        const GraphId marking = graph.CreateNode(NodeKind::LaneMarking);
+        graph.CreateLink(graph.FindNode(meshNode)->outputs[0].id, graph.FindNode(marking)->inputs[0].id);
+        Check(graph.CreateLink(graph.FindNode(marking)->outputs[0].id, graph.FindNode(shoulderA)->inputs[0].id),
+              "Lane Marking を Road Mesh と路肩の間に挟める");
+        const auto marked = graph.CompileRoadMeshes();
+        Check(marked.size() == 1 && marked[0].roadMesh == meshNode && marked[0].markings.size() == 1 &&
+                  marked[0].markings[0] == marking && marked[0].shoulders.size() == 2,
+              "区画線を挟んでも Road Mesh まで辿り、区画線と路肩を分けて返す");
     }
 }

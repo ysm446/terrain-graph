@@ -1,7 +1,7 @@
 # design-guide — UI の設計ガイド
 
 作成日時: 2026-08-31 14:36
-更新日時: 2026-09-28 06:54
+更新日時: 2026-09-28 07:17
 
 ## Road Path の縦断とバンク角
 
@@ -107,6 +107,8 @@ Model Scatter の設定表で「接地オフセット」の後に PropertyBool �
 Road Mesh を選んだときは「路面」（幅、車線数（進行方向 / 対向）、読み取り専用の車線幅、PropertyCombo の「走行側」（左側通行 / 右側通行）、路面の持ち上げ）、「材質」（DrawMaterialSlotRow の「材質」。Layered Material も選べ、サムネイルを出す。通常の Material のときだけ「繰り返し長」）と HintText、「状態」（作れなかった理由を WarnColor で、延長とメッシュの頂点 / 三角形の数）を並べる。Road Path と Mesh Output が繋がっていなければ「状態」に繋ぎ方を HintText で出す。
 
 マテリアルプレビューの表示の設定では、轍・道路端のマスクを持つ Layered Material のときだけ、「影を落とす」の下に仮の道路の行（PropertyFloat の「道路の幅」（既定 7 m）、PropertyInt の「車線数（進行方向）」「車線数（対向）」、PropertyCombo の「走行側」）を出す。プレビュー専用で保存しない。道路は平面の中央に置き、層のマスク画像も同じ座標で描く（球では位置を合わせない）。一辺が道路の幅 + 2 m より狭いときは、その長さまで広げて映し、表の下に HintText で映している長さを出す（一辺の値そのものは変えない）。
+
+Lane Marking を選んだときは、線の種類ごとの節（「中央線」「外側線」「車線境界線」。PropertyBool の「引く」（ツールチップに出る条件）、引くときだけ PropertyBool の「破線」、PropertyFloat の「幅」、材質の行）、「共通」の節（「外側線の位置」「破線の線」「破線の間隔」「浮かせる量」「繰り返し長」、PropertyBool の「長さの向きを U に」）、材質と車線の並びの HintText、「状態」（Road Mesh と同じ節。`DrawRoadNodeStatus`）を並べる。
 
 Shoulder を選んだときは「路肩」（PropertyCombo の「側」（左右 / 左 / 右）と「形」（勾配 / 断面の点）。勾配なら幅、横断勾配、段差、段差が 0 より大きいときだけ「段差の幅」。断面の点なら PropertyCombo の「ひな形」（先頭の「選ぶ…」のまま。選ぶと断面の点を置き換える）、表の下に断面図と点の行）、「材質」（Road Mesh と同じ行）と HintText、「内側の境界」、「状態」（Road Mesh と同じ節。`DrawRoadNodeStatus`）を並べる。
 

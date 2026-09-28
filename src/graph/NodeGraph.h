@@ -4,6 +4,7 @@
 #include "compositor/MaterialLayer.h"
 #include "compositor/MaskGraph.h"
 #include "graph/Path.h"
+#include "graph/RoadMarking.h"
 #include "graph/RoadMesh.h"
 #include "graph/RoadPath.h"
 
@@ -150,6 +151,9 @@ enum class NodeKind : uint32_t {
     MeshOutput = 55,
     // 路肩。Road Mesh（か内側の路肩）の端から外へ張り出す帯。Mesh を受けて、自分の帯を足した Mesh を出す。
     Shoulder = 56,
+    // 区画線（白線）。Road Mesh の路面の上に中央線・外側線・車線境界線の帯を足す（graph/RoadMarking.h）。
+    // Mesh を受けて、そのまま出す（鎖のどこに挟んでも、線は路面の上に引く）。
+    LaneMarking = 57,
 };
 
 struct PinDefinition {
@@ -249,6 +253,11 @@ struct RoadMeshNodeSettings {
 // 路肩（Shoulder ノード）。中身は graph/RoadMesh.h。
 struct ShoulderNodeSettings {
     RoadShoulderSettings shoulder;
+};
+
+// 区画線（Lane Marking ノード）。中身は graph/RoadMarking.h。
+struct LaneMarkingNodeSettings {
+    RoadMarkingSettings marking;
 };
 
 // グラフを評価器の入力へ落とした結果。レイヤー列と、マスクの op の列。
@@ -440,6 +449,8 @@ struct CompiledModelScatter {
 struct CompiledRoadMesh {
     GraphId output = 0, roadMesh = 0, roadPath = 0;
     std::vector<GraphId> shoulders;
+    // 鎖に挟んだ Lane Marking（Road Mesh に近い順）。線はどれも路面の上に引く。
+    std::vector<GraphId> markings;
 };
 // 雪煙（Snow Plume ノード）。Source のマスクが強い所から、風下へ半透明の帯を伸ばす。
 // 帯は評価器ではなくビューポートの描画で作る（頂点シェーダが格子の種から組み立てる）。
@@ -484,7 +495,7 @@ using NodeSettings =
     std::variant<LayerNodeSettings, MaskNodeSettings, OutputNodeSettings, PathNodeSettings, CloudNodeSettings,
                  CloudMergeSettings, CloudNoiseSettings, CloudTransformSettings, CloudMapSettings, CloudAnimationSettings, CloudShapeGenerateSettings, CloudWeatherSettings, MissingNodeSettings, ModelScatterSettings,
                  TerrainNodeSettings, SnowPlumeSettings, RoadPathNodeSettings, RoadMeshNodeSettings,
-                 ShoulderNodeSettings>;
+                 ShoulderNodeSettings, LaneMarkingNodeSettings>;
 
 struct Node {
     GraphId id = 0;

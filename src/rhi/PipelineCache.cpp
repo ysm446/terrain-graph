@@ -67,6 +67,9 @@ std::wstring GraphicsPipelineDesc::MakeKey() const {
     key += depthWrite ? L"t" : L"f";
     key += lineTopology ? L"t" : L"f";
     key += alphaBlend ? L"t" : L"f";
+    if (depthBias != 0 || slopeScaledDepthBias != 0.0f) {
+        key += L"#b" + std::to_wstring(depthBias) + L"," + std::to_wstring(slopeScaledDepthBias);
+    }
     return key;
 }
 
@@ -274,6 +277,8 @@ ID3D12PipelineState* PipelineCache::GetGraphics(const GraphicsPipelineDesc& desc
     // 右手系なので、外向きの面は画面上で反時計回りに見える。
     // 詳細は docs/design/rendering.md の「座標系」を参照。
     psoDesc.RasterizerState.FrontCounterClockwise = TRUE;
+    psoDesc.RasterizerState.DepthBias = desc.depthBias;
+    psoDesc.RasterizerState.SlopeScaledDepthBias = desc.slopeScaledDepthBias;
 
     psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
     psoDesc.DepthStencilState.DepthEnable = desc.depthTest ? TRUE : FALSE;

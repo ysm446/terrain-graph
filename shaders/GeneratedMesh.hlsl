@@ -39,6 +39,10 @@ struct GeneratedMeshConstants {
     float boundaryWidth, boundaryRepeat, boundaryDepth, boundaryCenter;
     float innerOrigin, innerSign; float2 boundaryPadding;
     float3 innerFallbackColor; float innerFallbackRoughness;
+    // 不透明度での切り抜き（区画線など）。cutoutThreshold が 0 なら抜かない。不透明度は
+    // マップ（cutoutOpacity の cutoutChannel）、無ければベースカラーの A、どちらも無ければ cutoutValue。
+    uint cutoutOpacity, cutoutChannel, cutoutBaseColor; float cutoutThreshold;
+    float cutoutUvScale, cutoutValue; float2 cutoutPadding;
     SceneShadowData shadows;
     AtmosphericParameters atmosphere;
     LayerMaterialData material;
@@ -144,6 +148,20 @@ float4 PsMain(PixelInput input) : SV_TARGET {
                                     max(length(ddx(worldMeters)), length(ddy(worldMeters))));
     const float2 xAxis = normalize(tangent.xz + 1e-6f);
     const float2 yAxis = normalize(bitangent.xz + 1e-6f);
+
+    // 不透明度での切り抜き（区画線のかすれなど）。半透明の段はまだ無いので、Translucent も切り抜きで描く。
+    if (g_generated.cutoutThreshold > 0) {
+        const float2 cutoutUv = meters * g_generated.cutoutUvScale;
+        float opacity = g_generated.cutoutValue;
+        if (g_generated.cutoutOpacity != kInvalidTextureIndex) {
+            Texture2D<float4> map = ResourceDescriptorHeap[g_generated.cutoutOpacity];
+            opacity = SelectChannel(map.Sample(g_samplerAnisoWrap, cutoutUv), g_generated.cutoutChannel);
+        } else if (g_generated.cutoutBaseColor != kInvalidTextureIndex) {
+            Texture2D<float4> map = ResourceDescriptorHeap[g_generated.cutoutBaseColor];
+            opacity = map.Sample(g_samplerAnisoWrap, cutoutUv).a;
+        }
+        clip(opacity - g_generated.cutoutThreshold);
+    }
 
     // この帯の材質（接線空間の法線のまま持つ）。
     float3 baseColor = g_generated.fallbackColor;

@@ -1,13 +1,24 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-09-28 06:58
+更新日時: 2026-09-28 07:17
 
 ## 空木岳（utsugidake6）の登山道の引き直し（2026-09-27 05:33）
 
 ユーザーが置いた `utsugidake_routes.geojson`（OSM、trail 16 本）から Path を作り直した（点 341 / エッジ 342。自動経路の仮の 6 点を置き換え）。Heightmap に位置が無かったので、ユーザー指定の 35.7109, 137.8125 を入れた（GeoJSON の範囲の中心と一致し、標高の差は中央値 1.0 m）。変更前は `data/Test/utsugidake6-backup-20260927.zip`。
 
 検証: 陰影図に重ねて尾根に沿うことを確認し、Release でシーンのカメラと真上を撮影（`data/Test/utsugidake6-qa/`）。Debug で開いて保存し直し、警告・エラーが無いことを確認。
+
+## 区画線（Lane Marking）（2026-09-28 07:17）
+
+ユーザー指定で、沿道の帯の区間の切り替えより先に移した。
+
+- `graph/RoadMarking.h/.cpp`: `RoadMarkingSettings`（線の種類ごとの `RoadMarkingLine{enabled, dashed, widthMeters, material}` と、外側線の位置・破線・浮かせる量・繰り返し長・`uvAlongU`）、`ComputeRoadLaneLayout`（左端からの横位置で中央線と車線境界線。轍のマスクと同じ並び）、`BuildRoadMarkings`（路面の行の左右の端を補って帯を作る。破線は道のりで区切り、間の路面の行でも刻む。UV は横が 0〜繰り返し長、長さの向きが道のり）。元の検査（線の重なり、道路の外、車線幅、外側線が中心を越える）も移した。
+- ノード `LaneMarking = 57`（入力 Road の Mesh、出力 Mesh）。`CompileRoadMeshes` は Shoulder と Lane Marking を区別して遡り、`CompiledRoadMesh::markings` に入れる。保存は `laneMarking`。材質の参照の付け替え（`RemapNodeReferences`、アンドゥの復元）にも足した。
+- 描画: `GeneratedMeshItem::decal`（深度バイアス -2000 / 傾き -2、影の段では描かない）と `Cutout`（不透明度のマップの channel、無ければベースカラーの A、どちらも無ければ値。しきい値は `AlphaCutoff`）。パイプラインの記述に `depthBias` / `slopeScaledDepthBias` を足した。`GeneratedMesh.hlsl` で `clip`。
+- アプリ: `RoadChainCache::markings`（種類ごとのメッシュ。路面の形・車線の並び・区画線の設定のハッシュで作り直す）、`MaterialCutout`、`DrawLaneMarkingSettings`。
+
+検証: Debug ビルド（警告 0）、`GeneratedMesh.hlsl` を DXC でコンパイル、CTest 6 件（区画線: 車線の並び、中央線の位置と幅、浮かせる量、横の UV、外側線の位置、一方通行の破線、不正な設定を断る、ノードの鎖を追加）。確認用シーン（`data/Test/roadpath-qa/`。Road Mesh → Lane Marking → Shoulder に挟み、sample_road3 と同じ設定: 中央線は破線 3 m / 6 m、外側線 0.12 m・端から 0.3 m、材質 WhiteLine、長さの向きを U、繰り返し 1.2 m）で、真上（`road_top2_lm.png`）と、植生を外し路面を浮かせた一時の状態の近景・中景（`lm_near.png`、`lm_mid.png`）を撮り、路面の起伏に沿った破線と外側線がちらつかずに出ることを確認。プロパティの上の方（中央線の節）は `ui_lanemarking_crop.png`。**未確認**: WhiteLine のかすれ（不透明度の画像で抜けるのは縁の 1 行と約 8% の 1 mm ほどの点で、画面では見分けられない。切り抜きの経路そのものは画面で確かめていない）、プロパティの全体（欄が低い）。
 
 ## レイヤーマテリアルのサムネイルの道路系マスク（2026-09-28 06:58）
 

@@ -1,7 +1,7 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-09-28 06:17
+更新日時: 2026-09-28 07:17
 
 ## 大気散乱スカイと作業環境（シーン版3）
 
@@ -156,6 +156,7 @@ base' = base + 0.5 * gain     ただしソースが constant のときは base �
 | `blend` | `maskBlend` | `{ mode, intensity }` |
 | `maskPath` | `maskPath` | `{ gamma, invert }` |
 | `path` | `path` | `{ points[], edges[], defaultWidth, defaultFeather, defaultIntensity, nextId }`（下記） |
+| `laneMarking` | `laneMarking` | `{ center / edge / lane: { enabled, dashed, width, material }, edgeInset, dashLength, dashGap, lift, uvRepeat, uvAlongU }` |
 | `shoulder` | `shoulder` | `{ side（both / left / right）, shape（slope / section）, section: [[across, height], ...], width, crossSlope, stepHeight, stepWidth, uvRepeat, material, boundary: { path, uid } }`（`section` は断面の点（内側の端 (0, 0) を含まない。m）で、無ければ書かない。点が無いのに `section` の形なら `slope` として読む。`boundary` は内側の境界の `.tgboundary`。無ければ書かない） |
 | `roadMesh` | `roadMesh` | `{ width, lanesForward, lanesBackward, leftHandTraffic, surfaceOffset, uvRepeat, material }`（`material` は `materials[]` の id、0 ならなし） |
 | `roadPath` | `path`, `roadProfile` | `path` は Path と同じ形。`roadProfile` は `{ verticalPoints[], bankPoints[], bankEnabled, designSpeed, friction, smoothBank, bankSmoothDistance }`（下記） |

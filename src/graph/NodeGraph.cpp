@@ -170,6 +170,12 @@ constexpr std::array<PinDefinition, 2> kShoulderPins = {{
     {PinKind::Output, ValueType::Mesh, "Mesh"},
 }};
 
+// 区画線。道路を受け、路面の上に線の帯を足して出す。
+constexpr std::array<PinDefinition, 2> kLaneMarkingPins = {{
+    {PinKind::Input, ValueType::Mesh, "Road"},
+    {PinKind::Output, ValueType::Mesh, "Mesh"},
+}};
+
 // ユニークなメッシュをビューポートへ出す終端。
 constexpr std::array<PinDefinition, 1> kMeshOutputPins = {{
     {PinKind::Input, ValueType::Mesh, "Mesh"},
@@ -290,7 +296,7 @@ constexpr std::array<PinDefinition, 1> kModelOutputPins = {{
 constexpr std::array<PinDefinition, 1> kSnowPlumePins = {{
     {PinKind::Input, ValueType::Mask, "Source"},
 }};
-constexpr std::array<NodeDefinition, 56> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 57> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kSurfacePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -326,6 +332,7 @@ constexpr std::array<NodeDefinition, 56> kNodeDefinitions = {{
     {NodeKind::RoadMesh, "roadMesh", "Road Mesh", kRoadMeshPins},
     {NodeKind::MeshOutput, "meshOutput", "Mesh Output", kMeshOutputPins},
     {NodeKind::Shoulder, "shoulder", "Shoulder", kShoulderPins},
+    {NodeKind::LaneMarking, "laneMarking", "Lane Marking", kLaneMarkingPins},
     {NodeKind::Cloud, "cloud", "Cloud (Legacy)", kCloudPins},
     {NodeKind::CloudLayer, "cloudLayer", "Cloud Layer (Legacy)", kCloudLayerPins},
     {NodeKind::CloudWeatherLayer, "cloudWeatherLayer", "Cloud Weather Layer", kCloudWeatherPins},
@@ -778,17 +785,19 @@ std::vector<CompiledRoadMesh> NodeGraph::CompileRoadMeshes() const {
         const Node* mesh = FindUpstreamNodeForPin(output.inputs[0].id);
         // 同じ鎖を 2 つの Mesh Output へ繋いでも 1 回だけ描く（Mesh Output の直前のノードで見分ける）。
         if (mesh == nullptr || !visited.insert(mesh->id).second) continue;
-        // 路肩を遡って Road Mesh まで。循環は繋ぐときに弾かれるが、念のため段数で打ち切る。
-        std::vector<GraphId> shoulders;
-        while (mesh != nullptr && mesh->kind == NodeKind::Shoulder && !mesh->inputs.empty() && shoulders.size() < 64) {
-            shoulders.push_back(mesh->id);
+        // 路肩と区画線を遡って Road Mesh まで。循環は繋ぐときに弾かれるが、念のため段数で打ち切る。
+        std::vector<GraphId> shoulders, markings;
+        while (mesh != nullptr && (mesh->kind == NodeKind::Shoulder || mesh->kind == NodeKind::LaneMarking) &&
+               !mesh->inputs.empty() && shoulders.size() + markings.size() < 64) {
+            (mesh->kind == NodeKind::Shoulder ? shoulders : markings).push_back(mesh->id);
             mesh = FindUpstreamNodeForPin(mesh->inputs[0].id);
         }
         if (mesh == nullptr || mesh->kind != NodeKind::RoadMesh || mesh->inputs.empty()) continue;
         const Node* path = FindUpstreamNodeForPin(mesh->inputs[0].id);
         if (path == nullptr || path->kind != NodeKind::RoadPath) continue;
         std::reverse(shoulders.begin(), shoulders.end());
-        result.push_back({output.id, mesh->id, path->id, std::move(shoulders)});
+        std::reverse(markings.begin(), markings.end());
+        result.push_back({output.id, mesh->id, path->id, std::move(shoulders), std::move(markings)});
     }
     return result;
 }
@@ -1014,6 +1023,8 @@ GraphId NodeGraph::CreateNode(NodeKind kind) {
         node.settings = RoadMeshNodeSettings{};
     } else if (kind == NodeKind::Shoulder) {
         node.settings = ShoulderNodeSettings{};
+    } else if (kind == NodeKind::LaneMarking) {
+        node.settings = LaneMarkingNodeSettings{};
     } else if (kind == NodeKind::RoadPath) {
         RoadPathNodeSettings road;
         road.road.path.defaultWidthMeters = kRoadDefaultWidthMeters;

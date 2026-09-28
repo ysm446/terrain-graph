@@ -171,6 +171,7 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
         case graph::NodeKind::RoadMesh:
         case graph::NodeKind::MeshOutput:
         case graph::NodeKind::Shoulder:
+        case graph::NodeKind::LaneMarking:
             return ImVec4(0.84f, 0.80f, 0.60f, 1.0f);
         case graph::NodeKind::Output:
         default:
@@ -1394,6 +1395,7 @@ void Application::DrawGraphEditor() {
             {graph::NodeKind::RoadPath, "Road Path — 道路の線形（縦断曲線・バンク角）を引く"},
             {graph::NodeKind::RoadMesh, "Road Mesh — Road Path から路面のメッシュを作る"},
             {graph::NodeKind::Shoulder, "Shoulder — 路面の端から外へ路肩の帯を張り出す"},
+            {graph::NodeKind::LaneMarking, "Lane Marking — 路面に中央線・外側線・車線境界線を引く"},
             {graph::NodeKind::MeshOutput, "Mesh Output — 道路などのメッシュをビューポートへ出す"},
         });
         section("配置", {
@@ -2613,6 +2615,11 @@ void Application::DrawGraphPanel() {
         }
     } else if (std::get_if<graph::ShoulderNodeSettings>(&selected->settings) != nullptr) {
         if (DrawShoulderSettings(*selected)) {
+            m_graph.MarkDirty();
+            MarkDocumentChanged(false);
+        }
+    } else if (std::get_if<graph::LaneMarkingNodeSettings>(&selected->settings) != nullptr) {
+        if (DrawLaneMarkingSettings(*selected)) {
             m_graph.MarkDirty();
             MarkDocumentChanged(false);
         }

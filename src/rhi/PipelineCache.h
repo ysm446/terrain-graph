@@ -52,6 +52,9 @@ struct GraphicsPipelineDesc {
     bool lineTopology = false;
     // RTV0 に通常のアルファ合成（src.a / 1 - src.a）を掛ける。半透明のガイド線で使う。
     bool alphaBlend = false;
+    // 深度バイアス（D32 なので定数項は深度の指数に対する相対値）。負で手前。路面に貼る帯（白線）で使う。
+    int depthBias = 0;
+    float slopeScaledDepthBias = 0.0f;
 
     std::wstring MakeKey() const;
 };

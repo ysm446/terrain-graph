@@ -188,6 +188,9 @@ private:
     // Road Mesh / Shoulder のプロパティ。変更があれば true。
     bool DrawRoadMeshSettings(graph::Node& node);
     bool DrawShoulderSettings(graph::Node& node);
+    bool DrawLaneMarkingSettings(graph::Node& node);
+    // 材質の不透明度での切り抜き（Masked / Translucent の通常の Material）。区画線の帯で使う。
+    renderer::GeneratedMeshItem::Cutout MaterialCutout(compositor::MaterialAssetId material, float uvRepeatMeters) const;
     bool DrawShoulderSection(graph::RoadShoulderSettings& shoulder);
     // Road Mesh / Shoulder のプロパティの「状態」節（作れなかった理由、延長、メッシュの量）。
     void DrawRoadNodeStatus(graph::GraphId nodeId, const char* disconnectedHint);
@@ -505,9 +508,16 @@ private:
         std::string error;  // 形を作れなかった理由
     };
     // Mesh Output ごと（鎖ごと）の作った形。路肩は作った順（内側から、左右それぞれ）。
+    // 区画線（Lane Marking ごと）。種類ごと（中央線・外側線・車線境界線）のメッシュ。
+    struct RoadMarkingCache {
+        uint64_t key = 0;
+        std::array<renderer::MeshData, graph::kRoadMarkingKindCount> meshes;
+        std::string error;
+    };
     struct RoadChainCache {
         RoadStrip road;
         std::vector<RoadStrip> shoulders;
+        std::vector<RoadMarkingCache> markings;
         float lengthMeters = 0;
     };
     std::unordered_map<graph::GraphId, RoadChainCache> m_roadMeshCache;

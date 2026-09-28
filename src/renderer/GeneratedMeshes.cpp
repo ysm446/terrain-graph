@@ -31,12 +31,18 @@ struct GeneratedMeshConstants {
     float innerOrigin, innerSign, boundaryPadding[2];
     float innerFallbackColor[3];
     float innerFallbackRoughness;
+    uint32_t cutoutOpacity, cutoutChannel, cutoutBaseColor;
+    float cutoutThreshold, cutoutUvScale, cutoutValue, cutoutPadding[2];
     SceneShadowData shadows;
     AtmosphereSettings atmosphere;
     compositor::LayerMaterialGpu material;
     compositor::LayerMaterialGpu innerMaterial;
 };
-static_assert(sizeof(GeneratedMeshConstants) == 176 + 64 + 384 + 352 + 672 * 2);
+static_assert(sizeof(GeneratedMeshConstants) == 176 + 64 + 32 + 384 + 352 + 672 * 2);
+
+// 路面に貼る帯（区画線）の深度バイアス。road-material-editor と同じ値。
+constexpr int kDecalDepthBias = -2000;
+constexpr float kDecalSlopeScaledDepthBias = -2.0f;
 
 // 材質が無いときの路面（アスファルトの目安の灰色）。
 constexpr float kFallbackColor[3] = {0.18f, 0.18f, 0.18f};
@@ -77,6 +83,8 @@ void GeneratedMeshes::Update(rhi::Device& device, const std::vector<GeneratedMes
         entry->innerOrigin = item.innerOrigin;
         entry->innerSign = item.innerSign;
         std::copy(std::begin(item.innerFallbackColor), std::end(item.innerFallbackColor), entry->innerFallbackColor);
+        entry->decal = item.decal;
+        entry->cutout = item.cutout;
         next.push_back(std::move(entry));
     }
     for (auto& stale : m_entries) {
@@ -100,6 +108,11 @@ uint32_t GeneratedMeshes::Draw(rhi::Device& device, rhi::PipelineCache& pipeline
     desc.cullMode = D3D12_CULL_MODE_NONE;
     ID3D12PipelineState* pipeline = pipelineCache.GetGraphics(desc);
     if (pipeline == nullptr) return 0;
+    // 路面に貼る帯は深度を手前へずらす（影の段では描かない）。
+    rhi::GraphicsPipelineDesc decalDesc = desc;
+    decalDesc.depthBias = kDecalDepthBias;
+    decalDesc.slopeScaledDepthBias = kDecalSlopeScaledDepthBias;
+    ID3D12PipelineState* decalPipeline = frame.shadow ? nullptr : pipelineCache.GetGraphics(decalDesc);
 
     PIXBeginEvent(commandList, PIX_COLOR(200, 180, 120), frame.shadow ? "GeneratedMeshesShadow" : "GeneratedMeshes");
     commandList->SetGraphicsRootSignature(pipelineCache.GlobalRootSignature());
@@ -131,8 +144,15 @@ uint32_t GeneratedMeshes::Draw(rhi::Device& device, rhi::PipelineCache& pipeline
     base.atmosphere = frame.atmosphere;
 
     uint32_t drawCalls = 0;
+    ID3D12PipelineState* current = pipeline;
     for (const auto& entry : m_entries) {
         if (!entry || !entry->mesh.IsValid()) continue;
+        if (entry->decal && (frame.shadow || decalPipeline == nullptr)) continue;
+        ID3D12PipelineState* wanted = entry->decal ? decalPipeline : pipeline;
+        if (wanted != current) {
+            commandList->SetPipelineState(wanted);
+            current = wanted;
+        }
         const auto cb = device.Upload().Allocate(sizeof(GeneratedMeshConstants), 256);
         if (!cb.IsValid()) break;
         GeneratedMeshConstants constants = base;
@@ -154,6 +174,13 @@ uint32_t GeneratedMeshes::Draw(rhi::Device& device, rhi::PipelineCache& pipeline
         constants.innerSign = entry->innerSign;
         std::memcpy(constants.innerFallbackColor, entry->innerFallbackColor, sizeof(constants.innerFallbackColor));
         constants.innerFallbackRoughness = kFallbackRoughness;
+        const auto& cutout = entry->cutout;
+        constants.cutoutOpacity = cutout.opacityIndex;
+        constants.cutoutChannel = cutout.channel;
+        constants.cutoutBaseColor = cutout.baseColorIndex;
+        constants.cutoutThreshold = cutout.threshold;
+        constants.cutoutUvScale = cutout.uvScale;
+        constants.cutoutValue = cutout.value;
         std::memcpy(cb.cpu, &constants, sizeof(constants));
         commandList->SetGraphicsRootConstantBufferView(1, cb.gpuAddress);
         entry->mesh.Draw(commandList);

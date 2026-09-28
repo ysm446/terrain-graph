@@ -185,6 +185,11 @@ void Application::ApplyDocument(const DocumentSnapshot& snapshot) {
                 roadMesh->mesh.material = compositor::kNoMaterialAsset;
             continue;
         }
+        if (auto* marking = std::get_if<graph::LaneMarkingNodeSettings>(&node.settings)) {
+            for (graph::RoadMarkingLine& line : marking->marking.lines)
+                if (m_materialLibrary.Find(line.material) == nullptr) line.material = compositor::kNoMaterialAsset;
+            continue;
+        }
         auto* settings = std::get_if<graph::LayerNodeSettings>(&node.settings);
         if (settings == nullptr) {
             continue;

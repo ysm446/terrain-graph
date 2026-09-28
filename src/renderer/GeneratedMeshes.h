@@ -42,6 +42,15 @@ struct GeneratedMeshItem {
     compositor::LayerMaterialGpu innerMaterial;
     float innerOrigin = 0, innerSign = 1;
     float innerFallbackColor[3] = {0.18f, 0.18f, 0.18f};
+    // 路面に貼る帯（区画線）。深度を手前へずらして描き、影は落とさない。
+    bool decal = false;
+    // 不透明度での切り抜き（Masked / Translucent の材質）。threshold が 0 なら抜かない。
+    // 不透明度はマップ（opacityIndex の channel）、無ければベースカラーの A、どちらも無ければ value。
+    // 座標は帯の UV × uvScale（通常の Material は 1 / 繰り返し長）。
+    struct Cutout {
+        uint32_t opacityIndex = 0xffffffffu, channel = 0, baseColorIndex = 0xffffffffu;
+        float threshold = 0, uvScale = 1, value = 1;
+    } cutout;
 };
 
 // 1 回の描画（本描画か影）で共通の値。
@@ -89,6 +98,8 @@ private:
         compositor::LayerMaterialGpu innerMaterial;
         float innerOrigin = 0, innerSign = 1;
         float innerFallbackColor[3] = {0.18f, 0.18f, 0.18f};
+        bool decal = false;
+        GeneratedMeshItem::Cutout cutout;
     };
     std::vector<std::unique_ptr<Entry>> m_entries;
 };

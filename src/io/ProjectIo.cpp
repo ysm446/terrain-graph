@@ -1909,6 +1909,18 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
                     section.push_back(json::array({point.acrossMeters, point.heightMeters}));
                 item["shoulder"]["section"] = std::move(section);
             }
+        } else if (const auto* marking = std::get_if<graph::LaneMarkingNodeSettings>(&node.settings)) {
+            const graph::RoadMarkingSettings& m = marking->marking;
+            static const char* const kLineNames[] = {"center", "edge", "lane"};
+            json values = {{"edgeInset", m.edgeInsetMeters}, {"dashLength", m.dashLengthMeters},
+                           {"dashGap", m.dashGapMeters},     {"lift", m.liftMeters},
+                           {"uvRepeat", m.uvRepeatMeters},   {"uvAlongU", m.uvAlongU}};
+            for (size_t i = 0; i < m.lines.size(); ++i) {
+                const graph::RoadMarkingLine& line = m.lines[i];
+                values[kLineNames[i]] = {{"enabled", line.enabled}, {"dashed", line.dashed},
+                                         {"width", line.widthMeters}, {"material", writeMaterial(line.material)}};
+            }
+            item["laneMarking"] = std::move(values);
         } else if (const auto* roadMesh = std::get_if<graph::RoadMeshNodeSettings>(&node.settings)) {
             const graph::RoadMeshSettings& m = roadMesh->mesh;
             item["roadMesh"] = {{"width", m.widthMeters}, {"lanesForward", m.lanesForward},
@@ -2317,6 +2329,30 @@ bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReade
                     }
                     // 断面の点が無ければ勾配の形に戻す。
                     if (m.section.empty()) m.shape = graph::RoadShoulderShape::Slope;
+                }
+                created.settings = std::move(settings);
+            } else if (created.kind == graph::NodeKind::LaneMarking) {
+                graph::LaneMarkingNodeSettings settings;
+                graph::RoadMarkingSettings& m = settings.marking;
+                if (const json* values = FindMember(item, "laneMarking"); values != nullptr && values->is_object()) {
+                    const graph::RoadMarkingSettings d;
+                    static const char* const kLineNames[] = {"center", "edge", "lane"};
+                    for (size_t i = 0; i < m.lines.size(); ++i) {
+                        const json* line = FindMember(*values, kLineNames[i]);
+                        if (line == nullptr || !line->is_object()) continue;
+                        graph::RoadMarkingLine& l = m.lines[i];
+                        l.enabled = ReadBool(*line, "enabled", d.lines[i].enabled);
+                        l.dashed = ReadBool(*line, "dashed", d.lines[i].dashed);
+                        l.widthMeters = std::clamp(ReadFloat(*line, "width", d.lines[i].widthMeters), 0.05f, 1.0f);
+                        if (const json* material = FindMember(*line, "material"); material != nullptr)
+                            l.material = readMaterial(*material);
+                    }
+                    m.edgeInsetMeters = std::clamp(ReadFloat(*values, "edgeInset", d.edgeInsetMeters), 0.0f, 30.0f);
+                    m.dashLengthMeters = std::clamp(ReadFloat(*values, "dashLength", d.dashLengthMeters), 0.1f, 100.0f);
+                    m.dashGapMeters = std::clamp(ReadFloat(*values, "dashGap", d.dashGapMeters), 0.0f, 100.0f);
+                    m.liftMeters = std::clamp(ReadFloat(*values, "lift", d.liftMeters), 0.0f, 0.1f);
+                    m.uvRepeatMeters = std::clamp(ReadFloat(*values, "uvRepeat", d.uvRepeatMeters), 0.1f, 100.0f);
+                    m.uvAlongU = ReadBool(*values, "uvAlongU", d.uvAlongU);
                 }
                 created.settings = std::move(settings);
             } else if (created.kind == graph::NodeKind::RoadMesh) {
@@ -3023,6 +3059,9 @@ void RemapNodeReferences(graph::NodeSettings& settings, const NodeReferenceRemap
     } else if (auto* roadMesh = std::get_if<graph::RoadMeshNodeSettings>(&settings)) {
         if (roadMesh->mesh.material != compositor::kNoMaterialAsset && remap.material)
             roadMesh->mesh.material = remap.material(roadMesh->mesh.material);
+    } else if (auto* marking = std::get_if<graph::LaneMarkingNodeSettings>(&settings)) {
+        for (graph::RoadMarkingLine& line : marking->marking.lines)
+            if (line.material != compositor::kNoMaterialAsset && remap.material) line.material = remap.material(line.material);
     } else if (auto* scatter = std::get_if<graph::ModelScatterSettings>(&settings)) {
         if (remap.model) {
             for (graph::ModelChoice& choice : scatter->models) choice.model = remap.model(choice.model);

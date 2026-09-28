@@ -132,6 +132,7 @@ set(tg_sources
     src/graph/Path.cpp
     src/graph/RoadPath.cpp
     src/graph/RoadMesh.cpp
+    src/graph/RoadMarking.cpp
     src/graph/PathRoute.cpp
     src/graph/Path.h
     src/compositor/MaterialEvaluator.cpp
@@ -337,6 +338,7 @@ add_executable(terrain_graph_tests
     src/graph/Path.cpp
     src/graph/RoadPath.cpp
     src/graph/RoadMesh.cpp
+    src/graph/RoadMarking.cpp
     src/graph/Path.h
     src/graph/PathRoute.cpp
     src/graph/PathRoute.h
