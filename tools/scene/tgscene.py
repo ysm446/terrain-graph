@@ -268,13 +268,30 @@ class Geo:
         return (u - 0.5) * self.size, (v - 0.5) * self.size
 
 
+def resolve_source(root, source):
+    """元ファイルの参照（path と uid）をルート相対パスにする。パスが古い（ファイルを動かした）ときは、
+    アプリと同じく uid で .meta を探す。"""
+    if os.path.exists(os.path.join(root, source["path"])):
+        return source["path"]
+    uid = source.get("uid")
+    for folder, _, files in os.walk(root):
+        for name in files:
+            if name.endswith(".meta"):
+                try:
+                    if load_json(os.path.join(folder, name)).get("uid") == uid:
+                        return os.path.relpath(os.path.join(folder, name[:-5]), root).replace("\\", "/")
+                except (OSError, ValueError):
+                    continue
+    raise SystemExit(f"見つかりません: {source['path']}（uid {uid}）")
+
+
 def heightmap_image_path(terrain):
     """Heightmap ノードが読む画像のルート相対パス。"""
     hm = terrain.heightmap_node()
     texture_id = hm["layer"]["height"]["texture"]["texture"]
     for t in terrain.data.get("textures", []):
         if t["id"] == texture_id:
-            return t["source"]["path"]
+            return resolve_source(terrain.root, t["source"])
     raise SystemExit("Heightmap の画像が textures にありません")
 
 
