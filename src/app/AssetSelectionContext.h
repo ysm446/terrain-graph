@@ -19,6 +19,9 @@ struct AssetSelectionContext {
     } request;
     std::filesystem::path root;
     std::vector<std::filesystem::path> candidates;
+    // 候補のサムネイル（ImTextureID の値）。まだ無ければ 0。アプリがアセットブラウザと同じ絵を返す
+    // （ディスクに保存したサムネイルを使うので、読み込んでいない素材でも出せる）。
+    std::function<uint64_t(const std::filesystem::path&)> thumbnail;
     uint64_t owner = 0;
     void Scan() {
         candidates.clear();

@@ -424,8 +424,10 @@ inline void DrawAssetPathRow(const char* label, const std::filesystem::path& pat
 inline bool AssetSlotPathMatches(const std::filesystem::path& a, const std::filesystem::path& b) {
     return !a.empty() && !b.empty() && _wcsicmp(a.lexically_normal().c_str(), b.lexically_normal().c_str()) == 0;
 }
+// thumbnailSide が 0 より大きければ、読み込み済みの行と同じくサムネイルと名前で描く（材質の一覧）。
 inline void DrawUnloadedAssetChoices(uint32_t widget, uint32_t previous, bool texture, bool allowLayers,
-                                    const std::function<bool(const std::filesystem::path&)>& loaded) {
+                                    const std::function<bool(const std::filesystem::path&)>& loaded,
+                                    float thumbnailSide = 0.0f) {
     auto* context = g_assetSelectionContext;
     if (!context) return;
     if (ImGui::IsWindowAppearing()) context->Scan();
@@ -436,10 +438,34 @@ inline void DrawUnloadedAssetChoices(uint32_t widget, uint32_t previous, bool te
         if (!accepted || loaded(path)) continue;
         const auto relative = ToUtf8Display(path.lexically_relative(context->root));
         ImGui::PushID(relative.c_str());
-        const float side = ImGui::GetFrameHeight();
-        // ラベルをSelectable自身に持たせ、ポップアップの幅も名前に合わせる。
-        if (ImGui::Selectable(relative.c_str(), false, 0, ImVec2(0, side))) context->Queue(path, widget, previous);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", relative.c_str());
+        if (thumbnailSide > 0.0f && context->thumbnail) {
+            // 読み込み済みの行と同じ形: 行全体をサムネイルの高さの Selectable にし、上へ画像と名前を描く。
+            // 名前はファイル名（拡張子なし）、フォルダは薄い文字で添える。選ぶと読み込んで割り当てる。
+            const ImVec2 rowPos = ImGui::GetCursorPos();
+            const bool picked = ImGui::Selectable("##unloaded", false, 0, ImVec2(0, thumbnailSide));
+            const bool hovered = ImGui::IsItemHovered();
+            const ImVec2 nextPos = ImGui::GetCursorPos();
+            ImGui::SetCursorPos(rowPos);
+            ui::ThumbnailImage(static_cast<ImTextureID>(context->thumbnail(path)), thumbnailSide);
+            ImGui::SameLine();
+            const float textY = rowPos.y + (thumbnailSide - ImGui::GetTextLineHeight()) * 0.5f;
+            ImGui::SetCursorPosY(textY);
+            ImGui::TextUnformatted(ToUtf8Display(path.stem()).c_str());
+            const auto folder = ToUtf8Display(path.parent_path().lexically_relative(context->root));
+            if (!folder.empty() && folder != ".") {
+                ImGui::SameLine();
+                ImGui::SetCursorPosY(textY);  // SameLine は行の先頭の高さへ戻すので、名前と揃え直す
+                ImGui::TextDisabled("%s", folder.c_str());
+            }
+            ImGui::SetCursorPos(nextPos);
+            if (picked) context->Queue(path, widget, previous);
+            if (hovered) ImGui::SetTooltip("%s\n選ぶと読み込んで割り当てる", relative.c_str());
+        } else {
+            const float side = ImGui::GetFrameHeight();
+            // ラベルをSelectable自身に持たせ、ポップアップの幅も名前に合わせる。
+            if (ImGui::Selectable(relative.c_str(), false, 0, ImVec2(0, side))) context->Queue(path, widget, previous);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", relative.c_str());
+        }
         ImGui::PopID();
     }
 }
@@ -534,7 +560,8 @@ inline bool DrawMaterialSlotRow(const char* label, compositor::MaterialAssetId& 
         DrawUnloadedAssetChoices(widget, slot, false, allowLayerMaterials, [&](const auto& path) {
             for (const auto& asset : library.Entries()) if (AssetSlotPathMatches(asset.assetPath, path)) return true;
             return false;
-        });
+        }, thumbnailSize);
+        ImGui::Dummy(ImVec2(0, 0)); // SetCursorPosで戻した最終行の領域を確定。
         ImGui::EndCombo();
     }
     // マテリアル一覧からドラッグしてきたものを受ける。テクスチャのコンボと同じ作りで、
