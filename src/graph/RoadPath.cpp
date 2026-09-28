@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <utility>
 
 namespace tg::graph {
 namespace {
@@ -332,6 +334,163 @@ RoadProfileFrame EvaluateRoadProfileFrame(const RoadPathSettings& road, const Ro
     frame.up = Store(XMVector3Normalize(XMVector3Cross(Load(right), tangent)));
     frame.bankRadians = road.bankEnabled ? EvaluateBankAngleRadians(road, centerline, frame.distance) : 0.0f;
     return frame;
+}
+
+std::vector<RoadVerticalPoint> GenerateVerticalPoints(const RoadProfileCurve& base,
+                                                      const RoadVerticalAutoParams& params) {
+    std::vector<RoadVerticalPoint> result;
+    const size_t count = base.points.size();
+    const float total = base.TotalLength();
+    if (count < 3 || total <= kEps) return result;
+
+    // 1. ならす（道のりの幅 smoothMeters の移動平均。点の間隔が不揃いでも道のりで測る）。
+    std::vector<float> smooth(count);
+    {
+        const float half = std::max(0.0f, params.smoothMeters) * 0.5f;
+        size_t lo = 0;
+        size_t hi = 0;
+        double sum = 0.0;
+        for (size_t i = 0; i < count; ++i) {
+            while (hi < count && base.arcLengths[hi] <= base.arcLengths[i] + half) sum += base.points[hi++].y;
+            while (base.arcLengths[lo] < base.arcLengths[i] - half) sum -= base.points[lo++].y;
+            smooth[i] = static_cast<float>(sum / static_cast<double>(hi - lo));
+        }
+        // 両端は地形の高さのまま（縦断の両端は地形に留まる）。
+        smooth.front() = base.points.front().y;
+        smooth.back() = base.points.back().y;
+    }
+
+    // 2. Douglas-Peucker（縦の差で測る。横は道のりなので、縦の差がそのまま切土・盛土の量）。
+    std::vector<bool> keep(count, false);
+    keep.front() = keep.back() = true;
+    const auto verticalError = [&](size_t a, size_t b, size_t i) {
+        const float t = (base.arcLengths[i] - base.arcLengths[a]) /
+                        std::max(base.arcLengths[b] - base.arcLengths[a], kEps);
+        return std::abs(smooth[i] - (smooth[a] + (smooth[b] - smooth[a]) * t));
+    };
+    std::vector<std::pair<size_t, size_t>> stack{{0, count - 1}};
+    while (!stack.empty()) {
+        const auto [a, b] = stack.back();
+        stack.pop_back();
+        float worst = 0.0f;
+        size_t index = 0;
+        for (size_t i = a + 1; i < b; ++i) {
+            const float error = verticalError(a, b, i);
+            if (error > worst) {
+                worst = error;
+                index = i;
+            }
+        }
+        if (index != 0 && worst > params.toleranceMeters) {
+            keep[index] = true;
+            stack.push_back({a, index});
+            stack.push_back({index, b});
+        }
+    }
+    std::vector<size_t> guides;
+    for (size_t i = 0; i < count; ++i) {
+        if (keep[i]) guides.push_back(i);
+    }
+
+    // 3. 近すぎる点を間引く。両端とは半分の間隔（縦断曲線は両側へ半分ずつ伸びる）。
+    const float spacing = std::max(0.0f, params.minSpacingMeters);
+    const auto tooClose = [&](size_t k) {
+        const float before = base.arcLengths[guides[k]] - base.arcLengths[guides[k - 1]];
+        const float after = base.arcLengths[guides[k + 1]] - base.arcLengths[guides[k]];
+        const float needBefore = (k == 1) ? spacing * 0.5f : spacing;
+        const float needAfter = (k + 2 == guides.size()) ? spacing * 0.5f : spacing;
+        return before < needBefore || after < needAfter;
+    };
+    // 抜いたときに、前後を結ぶ線から一番離れる点の誤差（小さいほど抜いても形が崩れない）。
+    const auto removalCost = [&](size_t k) {
+        float worst = 0.0f;
+        for (size_t i = guides[k - 1] + 1; i < guides[k + 1]; ++i) {
+            worst = std::max(worst, verticalError(guides[k - 1], guides[k + 1], i));
+        }
+        return worst;
+    };
+    while (guides.size() > 2) {
+        size_t best = 0;
+        float bestCost = 0.0f;
+        for (size_t k = 1; k + 1 < guides.size(); ++k) {
+            if (!tooClose(k)) continue;
+            const float cost = removalCost(k);
+            if (best == 0 || cost < bestCost) {
+                best = k;
+                bestCost = cost;
+            }
+        }
+        if (best == 0) break;
+        guides.erase(guides.begin() + static_cast<std::ptrdiff_t>(best));
+    }
+
+    // 4. 勾配を収める。両端を固定し、まず各交点を「両端から最大勾配で届く範囲」に入れてから、
+    //    前から・後ろから隣との勾配で詰める（範囲に入れておけば、前後 1 回ずつで全区間が収まる）。
+    //    勾配は水平距離で測る（道のりは地形の凹凸を含む 3D の長さなので、少し長い）。
+    std::vector<float> horizontal(count, 0.0f);
+    for (size_t i = 1; i < count; ++i) {
+        horizontal[i] = horizontal[i - 1] + std::hypot(base.points[i].x - base.points[i - 1].x,
+                                                       base.points[i].z - base.points[i - 1].z);
+    }
+    std::vector<float> x(guides.size());
+    std::vector<float> h(guides.size());
+    for (size_t k = 0; k < guides.size(); ++k) {
+        x[k] = horizontal[guides[k]];
+        h[k] = smooth[guides[k]];
+    }
+    const float grade = std::max(0.0f, params.maxGradePercent) / 100.0f;
+    const size_t last = h.size() - 1;
+    for (size_t k = 1; k < last; ++k) {
+        const float high = std::min(h[0] + grade * (x[k] - x[0]), h[last] + grade * (x[last] - x[k]));
+        const float low = std::max(h[0] - grade * (x[k] - x[0]), h[last] - grade * (x[last] - x[k]));
+        // 両端の差が急すぎて範囲が空なら、真ん中に置く（収まりきらない）。
+        h[k] = low <= high ? std::clamp(h[k], low, high) : (low + high) * 0.5f;
+    }
+    for (size_t k = 1; k < last; ++k) {
+        const float limit = grade * (x[k] - x[k - 1]);
+        h[k] = std::clamp(h[k], h[k - 1] - limit, h[k - 1] + limit);
+    }
+    for (size_t k = last - 1; k >= 1 && k < last; --k) {
+        const float limit = grade * (x[k + 1] - x[k]);
+        h[k] = std::clamp(h[k], h[k + 1] - limit, h[k + 1] + limit);
+    }
+
+    // 5. 勾配を収めた後の折れ線で、抜いても折れ線が toleranceMeters 以内しか変わらない交点を間引く
+    //    （上限の勾配で並んだ交点がほぼ一直線になる）。抜いた区間の勾配は前後の平均なので、上限は崩れない。
+    while (h.size() > 2) {
+        size_t best = 0;
+        float bestError = params.toleranceMeters;
+        for (size_t k = 1; k + 1 < h.size(); ++k) {
+            const float t = (x[k] - x[k - 1]) / std::max(x[k + 1] - x[k - 1], kEps);
+            const float error = std::abs(h[k] - (h[k - 1] + (h[k + 1] - h[k - 1]) * t));
+            if (error <= bestError) {
+                bestError = error;
+                best = k;
+            }
+        }
+        if (best == 0) break;
+        guides.erase(guides.begin() + static_cast<std::ptrdiff_t>(best));
+        x.erase(x.begin() + static_cast<std::ptrdiff_t>(best));
+        h.erase(h.begin() + static_cast<std::ptrdiff_t>(best));
+    }
+
+    for (size_t k = 1; k + 1 < guides.size(); ++k) {
+        const float along = base.arcLengths[guides[k]];
+        RoadVerticalPoint point;
+        point.u = along / total;
+        point.offsetMeters = h[k] - base.At(along).y;
+        point.vclMeters = std::max(0.0f, params.vclMeters);
+        result.push_back(point);
+    }
+    return result;
+}
+
+void ReplaceVerticalPoints(RoadPathSettings& road, const std::vector<RoadVerticalPoint>& generated) {
+    road.verticalPoints.clear();
+    for (RoadVerticalPoint point : generated) {
+        point.id = road.path.nextId++;
+        road.verticalPoints.push_back(point);
+    }
 }
 
 PathElementId AddVerticalPoint(RoadPathSettings& road, float u) {

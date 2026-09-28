@@ -62,6 +62,79 @@ void RunRoadPathTests() {
         Check(Near(raised.At(400.0f).y, base.At(400.0f).y + 3.0f, 0.01f), "点の高さのずれは地形へ足す");
     }
 
+    Section("Road Path: 縦断ポイントの自動作成");
+    {
+        // 3 km の道。0〜1 km は平ら、1〜2 km で 150 m 登る山、2〜3 km は平ら。そこに 1 m ごとの細かい凹凸。
+        std::vector<DirectX::XMFLOAT3> points;
+        for (int i = 0; i <= 3000; ++i) {
+            const float d = static_cast<float>(i);
+            float y = 0.0f;
+            if (d > 1000.0f && d < 2000.0f) y = 150.0f * std::sin((d - 1000.0f) / 1000.0f * 3.14159265f);
+            y += std::sin(d * 0.9f) * 1.5f;
+            points.push_back({d, y, 0.0f});
+        }
+        const RoadProfileCurve base = BuildRoadProfileCurve(points);
+        RoadVerticalAutoParams params;
+        const std::vector<RoadVerticalPoint> generated = GenerateVerticalPoints(base, params);
+        Check(generated.size() >= 2 && generated.size() <= 20, "山の登り下りに数個の特徴点を取る（細かい凹凸は拾わない）");
+        bool ordered = true;
+        bool spaced = true;
+        const float length = base.TotalLength();
+        for (size_t i = 0; i < generated.size(); ++i) {
+            const float x = generated[i].u * length;
+            if (i > 0) {
+                const float gap = x - generated[i - 1].u * length;
+                ordered &= gap > 0.0f;
+                spaced &= gap >= params.minSpacingMeters - 0.5f;
+            }
+            spaced &= x >= params.minSpacingMeters * 0.5f - 0.5f && length - x >= params.minSpacingMeters * 0.5f - 0.5f;
+        }
+        Check(ordered && spaced, "点は道のりの順で、間隔（両端とは半分）を空ける");
+        Check(!generated.empty() && Near(generated.front().vclMeters, params.vclMeters, 1e-3f), "縦断曲線長は指定の値");
+
+        // 交点を結ぶ勾配は最大勾配以下（両端の差が収まる範囲なので、全区間で収まる）。
+        // 位置 u は道のり（凹凸を含む 3D の長さ）の割合。勾配は水平距離（ここでは x）で測る。
+        const float total = base.TotalLength();
+        const auto hinge = [&](size_t k) {
+            const DirectX::XMFLOAT3 at = base.At(generated[k].u * total);
+            return std::pair<float, float>{at.x, at.y + generated[k].offsetMeters};
+        };
+        std::vector<std::pair<float, float>> guides{{0.0f, base.points.front().y}};
+        for (size_t k = 0; k < generated.size(); ++k) guides.push_back(hinge(k));
+        guides.push_back({3000.0f, base.points.back().y});
+        float steepest = 0.0f;
+        for (size_t k = 1; k < guides.size(); ++k) {
+            steepest = std::max(steepest, std::abs(guides[k].second - guides[k - 1].second) /
+                                              (guides[k].first - guides[k - 1].first));
+        }
+        Check(steepest <= params.maxGradePercent / 100.0f + 1e-3f, "交点を結ぶ勾配は最大勾配以下");
+        // 山は 500 m で 150 m 登る（30 %）ので、10 % では頂上に届かない。一番高い交点が山の真ん中の
+        // あたりにあり、上限の勾配で登った高さ（約 50 m）になっていれば形を捉えている。
+        std::pair<float, float> highest{0.0f, -1e9f};
+        for (size_t k = 0; k < generated.size(); ++k) {
+            if (hinge(k).second > highest.second) highest = hinge(k);
+        }
+        Check(highest.first > 1200.0f && highest.first < 1800.0f && highest.second > 40.0f,
+              "一番高い交点は山の真ん中で、勾配の上限で登れる高さ");
+
+        // 勾配の上限を緩めると交点は地形（ならした高さ）に近い。
+        RoadVerticalAutoParams loose = params;
+        loose.maxGradePercent = 100.0f;
+        bool close = true;
+        for (const RoadVerticalPoint& point : GenerateVerticalPoints(base, loose)) {
+            close &= std::abs(point.offsetMeters) < 5.0f;
+        }
+        Check(close, "勾配の上限が効かなければ、交点はならした地形の上（ずれは凹凸の範囲）");
+
+        RoadPathSettings road = StraightRoad();
+        AddVerticalPoint(road, 0.5f);
+        const PathElementId next = road.path.nextId;
+        ReplaceVerticalPoints(road, generated);
+        Check(road.verticalPoints.size() == generated.size() && road.verticalPoints.front().id == next,
+              "置き換えると今のポイントは消え、新しい ID を振る");
+        Check(GenerateVerticalPoints(RoadProfileCurve{}, params).empty(), "空の中心線では何も作らない");
+    }
+
     Section("Road Path: 縦断曲線");
     {
         RoadPathSettings road = StraightRoad();

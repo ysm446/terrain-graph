@@ -155,8 +155,10 @@ bool Application::DrawRoadPathSettings(graph::Node& node) {
     // （曲線長があると、曲線は交点の内側を通る）。
     RoadProfileEditState& edit = m_roadProfileEdit;
     if (edit.nodeId != node.id) {
+        const graph::RoadVerticalAutoParams keep = edit.autoParams;
         edit = RoadProfileEditState{};
         edit.nodeId = node.id;
+        edit.autoParams = keep;
     }
     if (edit.selected != 0 && graph::FindVerticalPoint(road, edit.selected) == nullptr) edit.selected = 0;
     if (edit.dragging != 0 && graph::FindVerticalPoint(road, edit.dragging) == nullptr) edit.dragging = 0;
@@ -402,8 +404,54 @@ bool Application::DrawRoadPathSettings(graph::Node& node) {
         std::vector<float> taken;
         for (const graph::RoadVerticalPoint& point : road.verticalPoints) taken.push_back(point.u);
         edit.selected = graph::AddVerticalPoint(road, NextProfilePointU(taken));
+        edit.autoReport.clear();
         changed = true;
     }
+
+    // 自動で作成。地形の縦断をならして単純化し、特徴点を縦断ポイントにする（今のポイントは置き換える）。
+    if (valid && ui::BeginPropertyTable("roadVerticalAuto", "縦断曲線長")) {
+        graph::RoadVerticalAutoParams& p = edit.autoParams;
+        const graph::RoadVerticalAutoParams d;
+        ui::PropertyFloat("許容差", &p.toleranceMeters, 0.5f, 50.0f, d.toleranceMeters,
+                          "交点を結ぶ折れ線が、ならした地形から離れてよい量（m）。小さいほど地形に沿い、"
+                          "大きいほど均した道になる（切土・盛土の目安）",
+                          "%.1f m");
+        ui::PropertyFloat("最大勾配", &p.maxGradePercent, 1.0f, 30.0f, d.maxGradePercent,
+                          "交点を結ぶ勾配の上限（%）。超える所は交点の高さを動かして収める。"
+                          "両端の高さの差が急すぎると収まりきらない",
+                          "%.1f %%");
+        if (ui::PropertyFloat("縦断曲線長", &p.vclMeters, 0.0f, 500.0f, d.vclMeters,
+                              "作る縦断ポイントの縦断曲線長（m）。点どうしの間隔もこれ以上空ける",
+                              "%.0f m")) {
+            p.minSpacingMeters = p.vclMeters;
+        }
+        ui::EndPropertyTable();
+    }
+    ImGui::BeginDisabled(!valid);
+    if (ui::Button("縦断ポイントを自動で作成", ui::kWideButtonWidth)) {
+        edit.autoParams.minSpacingMeters = std::max(edit.autoParams.vclMeters, 1.0f);
+        const std::vector<graph::RoadVerticalPoint> generated = graph::GenerateVerticalPoints(base, edit.autoParams);
+        graph::ReplaceVerticalPoints(road, generated);
+        edit.selected = 0;
+        // 結果（点の数、交点を結ぶ勾配の最大、地形との差の最大）。
+        graph::RoadProfileCurve design = base;
+        const std::vector<float> heights = graph::EvaluateVerticalProfile(road, base);
+        float largestCut = 0.0f;
+        float largestFill = 0.0f;
+        for (size_t i = 0; i < design.points.size(); ++i) {
+            largestFill = std::max(largestFill, heights[i] - base.points[i].y);
+            largestCut = std::max(largestCut, base.points[i].y - heights[i]);
+            design.points[i].y = heights[i];
+        }
+        design = graph::BuildRoadProfileCurve(design.points);
+        char report[160] = {};
+        std::snprintf(report, sizeof(report), "%zu 点を作成。最大勾配 %.1f %%、盛土 最大 %.1f m、切土 最大 %.1f m",
+                      generated.size(), MaxGradePercent(design), largestFill, largestCut);
+        edit.autoReport = report;
+        changed = true;
+    }
+    ImGui::EndDisabled();
+    if (!edit.autoReport.empty()) ui::HintText("%s", edit.autoReport.c_str());
     ui::HintText("図の空いた所をクリックで縦断ポイントを追加、菱形をクリックで選び、ドラッグで位置と高さを"
                  "動かす（Delete で削除、Esc で選択を外す）。ポイントが無ければ道路の高さは地形に沿う。"
                  "置くと、両端とポイントの間の勾配を縦断曲線でつなぐ（地形との差が切土・盛土になる）");

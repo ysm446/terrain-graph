@@ -106,6 +106,27 @@ struct RoadProfileFrame {
 RoadProfileFrame EvaluateRoadProfileFrame(const RoadPathSettings& road, const RoadProfileCurve& centerline,
                                           float u);
 
+// --- 縦断ポイントの自動作成 -------------------------------------------------
+// 地形の縦断（base）から縦断ポイントを作る。
+//   1. 地形の高さを smoothMeters の幅でならす（1 m ごとの細かい凹凸を拾わない）。
+//   2. ならした縦断を Douglas-Peucker で単純化し、特徴点を取る（toleranceMeters は、
+//      交点を結ぶ折れ線がならした地形から離れてよい量。切土・盛土の目安になる）。
+//   3. 間隔が minSpacingMeters より近い点は、抜いても誤差が一番小さいものから間引く。
+//   4. 交点の高さを動かし、両端と交点を結ぶ勾配を maxGradePercent 以下に収める
+//      （両端は地形の高さのまま。両端の差そのものが急すぎるときは収まりきらない）。
+// ポイントの位置（u）と、その位置の地形からの高さのずれ（offset）、縦断曲線長を返す。ID は振らない。
+struct RoadVerticalAutoParams {
+    float toleranceMeters = 5.0f;
+    float maxGradePercent = 10.0f;
+    float vclMeters = 80.0f;
+    float minSpacingMeters = 80.0f;
+    float smoothMeters = 40.0f;
+};
+std::vector<RoadVerticalPoint> GenerateVerticalPoints(const RoadProfileCurve& base,
+                                                      const RoadVerticalAutoParams& params);
+// 今の縦断ポイントを generated で置き換える（ID は新しく振る）。
+void ReplaceVerticalPoints(RoadPathSettings& road, const std::vector<RoadVerticalPoint>& generated);
+
 // --- ポイントの編集 ---------------------------------------------------------
 PathElementId AddVerticalPoint(RoadPathSettings& road, float u);
 PathElementId AddBankPoint(RoadPathSettings& road, float u);

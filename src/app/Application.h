@@ -753,6 +753,9 @@ private:
         // 図の縦の範囲（ワールドの高さ）。ドラッグ中は固定する（動かすたびに範囲が広がって点が逃げないように）。
         float plotLow = 0.0f;
         float plotHigh = 0.0f;
+        // 縦断ポイントの自動作成の設定（保存しない。ノードを替えても持ち越す）と、直前の結果の報告。
+        graph::RoadVerticalAutoParams autoParams;
+        std::string autoReport;
     };
     RoadProfileEditState m_roadProfileEdit;
     // パスのクリップボード（アプリ内）。鎖や点の集合をコピーして、カーソルの所へ貼る。
