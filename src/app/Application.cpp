@@ -517,6 +517,22 @@ int Application::Run() {
         if (commandList == nullptr) {
             // フレームを開始できなかった場合は ImGui の状態を捨てて次へ進む。
             ImGui::EndFrame();
+            if (m_device.DeviceRemovedReported()) {
+                // GPU のデバイスが失われると描画は戻らない。黙って固まって見えないよう、一度だけ知らせる
+                // （自動の撮影・書き出しでは止めないよう出さない）。以降は CPU を回し続けないよう休む。
+                if (!m_deviceLostNotified && !Headless()) {
+                    m_deviceLostNotified = true;
+                    std::wstring text =
+                        L"GPU のデバイスが失われたため、描画を止めました（GPU ドライバの内部エラーなど）。\n"
+                        L"アプリを終了して、起動し直してください。保存していない変更は保存できません。";
+                    if (!m_device.DeviceRemovedReportPath().empty())
+                        text += L"\n\n記録: " + m_device.DeviceRemovedReportPath();
+                    MessageBoxW(m_window.Handle(), text.c_str(), L"terrain-graph", MB_OK | MB_ICONERROR);
+                }
+                // 自動の撮影・書き出しは、撮れないまま待ち続けないよう失敗で終える。
+                if (Headless()) return 1;
+                Sleep(50);
+            }
             continue;
         }
         CollectModelScatterStats();
@@ -616,7 +632,10 @@ int Application::Run() {
 
         // レンダラがターゲットを差し替えているので、ImGui を描く前に戻す。
         m_device.BindBackBuffer(commandList);
-        m_imgui.EndFrame(commandList);
+        // フレームの途中で GPU のデバイスが失われていたら ImGui を描かない（フォントのテクスチャの更新が
+        // 作れなかったバッファに触って落ちる）。理由と DRED は CheckDeviceRemoved が記録する。
+        if (m_device.CheckDeviceRemoved()) ImGui::EndFrame();
+        else m_imgui.EndFrame(commandList);
 
         // UI 込みの書き出しは、バックバッファが描き終わったこのフレームで写す。
         // **合成の評価は非同期なので、走っている最中は撮らない**（前回の絵が写る）。

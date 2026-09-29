@@ -1,4 +1,5 @@
 #pragma once
+#include <string>
 
 #include "rhi/Common.h"
 #include "rhi/DeletionQueue.h"
@@ -32,6 +33,16 @@ public:
     // 失敗した場合は nullptr。
     ID3D12GraphicsCommandList* BeginFrame(const float clearColor[4]);
     void EndFrame(bool vsync);
+
+    // GPU のデバイスが失われていないか（TDR やページフォールト）。初めて見つけたときに、理由と
+    // DRED（直前に実行していた命令と、触れたメモリ）をログと %LOCALAPPDATA%\terrain-graph\ の
+    // device-removed-*.txt へ書き、以降のフレームを止める。失われていれば true。
+    // フレームの途中で失われると、そのあとの ImGui のテクスチャの更新が空のバッファに触って落ちるため、
+    // ImGui を描く前にも呼ぶ。
+    bool CheckDeviceRemoved();
+    // デバイスロストを報告済みか（CheckDeviceRemoved が見つけたか）と、書いた記録のパス（書けなければ空）。
+    bool DeviceRemovedReported() const { return m_deviceRemovedReported; }
+    const std::wstring& DeviceRemovedReportPath() const { return m_deviceRemovedReportPath; }
 
     // フレームのグラフィックスキューの GPU 実行時間。未取得は負値。
     // UI・描画内 compute を含む。Present 待機、CPU、別キューの処理は含まない。
@@ -138,6 +149,8 @@ private:
     ComPtr<IDXGIFactory6> m_factory;
     ComPtr<IDXGIAdapter4> m_adapter;
     ComPtr<ID3D12Device> m_device;
+    bool m_deviceRemovedReported = false;
+    std::wstring m_deviceRemovedReportPath;
     // デバッグレイヤーのメッセージ置き場。Release ビルドでは null。
     ComPtr<ID3D12InfoQueue> m_infoQueue;
     ComPtr<ID3D12CommandQueue> m_commandQueue;

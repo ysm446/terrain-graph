@@ -483,6 +483,7 @@ private:
                              const ImVec2& viewportMax);
 
     Window m_window;
+    bool m_deviceLostNotified = false;  // GPU のデバイスロストを知らせたか
     rhi::Device m_device;
     rhi::ShaderCompiler m_shaderCompiler;
     rhi::PipelineCache m_pipelineCache;

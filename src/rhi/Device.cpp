@@ -5,6 +5,8 @@
 #include "core/Log.h"
 
 #include <cstddef>
+#include <cstdio>
+#include <string>
 #include <vector>
 
 #include <pix3.h>
@@ -211,6 +213,19 @@ bool Device::CreateFactoryAndDevice(bool enableDebugLayer, bool gpuValidation) {
     if (SUCCEEDED(m_factory->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING,
                                                  &allowTearing, sizeof(allowTearing)))) {
         m_allowTearing = (allowTearing == TRUE);
+    }
+
+    // DRED（Device Removed Extended Data）。GPU が落ちたとき（TDR・ページフォールト）に、直前に実行していた
+    // 命令の履歴と PIX マーカーの名前、触れたメモリを残す。デバッグレイヤーが無くても使える。
+    // たまにしか起きないデバイスロストの原因を、Release の手元の実行でも追えるようにするため常に有効にする。
+    {
+        ComPtr<ID3D12DeviceRemovedExtendedDataSettings> dred;
+        if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&dred)))) {
+            dred->SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+            dred->SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+            ComPtr<ID3D12DeviceRemovedExtendedDataSettings1> dred1;
+            if (SUCCEEDED(dred.As(&dred1))) dred1->SetBreadcrumbContextEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+        }
     }
 
     // 高性能アダプタから順に、D3D12 デバイスを作れるものを選ぶ。
@@ -489,7 +504,7 @@ void Device::Resize(uint32_t width, uint32_t height) {
 }
 
 ID3D12GraphicsCommandList* Device::BeginFrame(const float clearColor[4]) {
-    if (!m_initialized || m_frameOpen) {
+    if (!m_initialized || m_frameOpen || CheckDeviceRemoved()) {
         return nullptr;
     }
 
@@ -579,6 +594,114 @@ void Device::CaptureBackBuffer() {
     m_pendingCaptureFootprint = footprint;
 }
 
+namespace {
+const char* BreadcrumbOpName(D3D12_AUTO_BREADCRUMB_OP op) {
+    switch (op) {
+        case D3D12_AUTO_BREADCRUMB_OP_SETMARKER: return "SetMarker";
+        case D3D12_AUTO_BREADCRUMB_OP_BEGINEVENT: return "BeginEvent";
+        case D3D12_AUTO_BREADCRUMB_OP_ENDEVENT: return "EndEvent";
+        case D3D12_AUTO_BREADCRUMB_OP_DRAWINSTANCED: return "DrawInstanced";
+        case D3D12_AUTO_BREADCRUMB_OP_DRAWINDEXEDINSTANCED: return "DrawIndexedInstanced";
+        case D3D12_AUTO_BREADCRUMB_OP_EXECUTEINDIRECT: return "ExecuteIndirect";
+        case D3D12_AUTO_BREADCRUMB_OP_DISPATCH: return "Dispatch";
+        case D3D12_AUTO_BREADCRUMB_OP_COPYBUFFERREGION: return "CopyBufferRegion";
+        case D3D12_AUTO_BREADCRUMB_OP_COPYTEXTUREREGION: return "CopyTextureRegion";
+        case D3D12_AUTO_BREADCRUMB_OP_COPYRESOURCE: return "CopyResource";
+        case D3D12_AUTO_BREADCRUMB_OP_RESOLVESUBRESOURCE: return "ResolveSubresource";
+        case D3D12_AUTO_BREADCRUMB_OP_CLEARRENDERTARGETVIEW: return "ClearRenderTargetView";
+        case D3D12_AUTO_BREADCRUMB_OP_CLEARUNORDEREDACCESSVIEW: return "ClearUnorderedAccessView";
+        case D3D12_AUTO_BREADCRUMB_OP_CLEARDEPTHSTENCILVIEW: return "ClearDepthStencilView";
+        case D3D12_AUTO_BREADCRUMB_OP_RESOURCEBARRIER: return "ResourceBarrier";
+        case D3D12_AUTO_BREADCRUMB_OP_PRESENT: return "Present";
+        case D3D12_AUTO_BREADCRUMB_OP_RESOLVEQUERYDATA: return "ResolveQueryData";
+        default: return nullptr;
+    }
+}
+std::string Narrow(const wchar_t* text) {
+    if (text == nullptr) return "(名前なし)";
+    const int size = WideCharToMultiByte(CP_UTF8, 0, text, -1, nullptr, 0, nullptr, nullptr);
+    std::string result(size > 0 ? size - 1 : 0, '\0');
+    if (size > 1) WideCharToMultiByte(CP_UTF8, 0, text, -1, result.data(), size, nullptr, nullptr);
+    return result;
+}
+}  // namespace
+
+bool Device::CheckDeviceRemoved() {
+    if (!m_device) return false;
+    const HRESULT reason = m_device->GetDeviceRemovedReason();
+    if (reason == S_OK) return false;
+    m_initialized = false;
+    if (m_deviceRemovedReported) return true;
+    m_deviceRemovedReported = true;
+
+    // 報告は 1 回だけ。DRED の中身を文字列にまとめ、ログとファイルへ出す。
+    std::string report;
+    char line[512];
+    std::snprintf(line, sizeof(line), "GPU のデバイスが失われました (Reason=0x%08X)\n", static_cast<unsigned int>(reason));
+    report += line;
+    ComPtr<ID3D12DeviceRemovedExtendedData1> dred;
+    if (SUCCEEDED(m_device.As(&dred))) {
+        D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT1 breadcrumbs = {};
+        if (SUCCEEDED(dred->GetAutoBreadcrumbsOutput1(&breadcrumbs))) {
+            report += "--- 実行が終わっていないコマンドリスト（[>] が最後に終わった命令の次）\n";
+            for (const D3D12_AUTO_BREADCRUMB_NODE1* node = breadcrumbs.pHeadAutoBreadcrumbNode; node; node = node->pNext) {
+                const uint32_t completed = node->pLastBreadcrumbValue ? *node->pLastBreadcrumbValue : 0;
+                if (completed >= node->BreadcrumbCount) continue;  // 終わったリストは出さない
+                std::snprintf(line, sizeof(line), "queue=%s list=%s 完了 %u / %u\n", Narrow(node->pCommandQueueDebugNameW).c_str(),
+                              Narrow(node->pCommandListDebugNameW).c_str(), completed, node->BreadcrumbCount);
+                report += line;
+                // PIX マーカーの名前（BeginEvent などの文脈）を命令の番号で引く。
+                const auto contextOf = [&](uint32_t index) -> std::string {
+                    for (uint32_t c = 0; c < node->BreadcrumbContextsCount; ++c)
+                        if (node->pBreadcrumbContexts[c].BreadcrumbIndex == index)
+                            return Narrow(node->pBreadcrumbContexts[c].pContextString);
+                    return {};
+                };
+                const uint32_t first = completed > 24 ? completed - 24 : 0;
+                const uint32_t last = std::min(node->BreadcrumbCount, completed + 8);
+                for (uint32_t i = first; i < last; ++i) {
+                    const char* name = BreadcrumbOpName(node->pCommandHistory[i]);
+                    const std::string context = contextOf(i);
+                    std::snprintf(line, sizeof(line), "  %s %4u %s%s%s\n", i == completed ? "[>]" : "   ", i,
+                                  name ? name : std::to_string(static_cast<int>(node->pCommandHistory[i])).c_str(),
+                                  context.empty() ? "" : "  ", context.c_str());
+                    report += line;
+                }
+            }
+        }
+        D3D12_DRED_PAGE_FAULT_OUTPUT1 pageFault = {};
+        if (SUCCEEDED(dred->GetPageFaultAllocationOutput1(&pageFault)) && pageFault.PageFaultVA != 0) {
+            std::snprintf(line, sizeof(line), "--- ページフォールト VA=0x%016llX\n", static_cast<unsigned long long>(pageFault.PageFaultVA));
+            report += line;
+            for (const auto* node = pageFault.pHeadExistingAllocationNode; node; node = node->pNext)
+                report += "  存在する割り当て: " + Narrow(node->ObjectNameW) + "\n";
+            for (const auto* node = pageFault.pHeadRecentFreedAllocationNode; node; node = node->pNext)
+                report += "  最近解放した割り当て: " + Narrow(node->ObjectNameW) + "\n";
+        }
+    }
+    TG_LOG_ERROR("%s", report.c_str());
+    // ログの窓を開かずに使っていても原因が残るよう、ファイルにも書く。
+    wchar_t* localAppData = nullptr;
+    size_t length = 0;
+    if (_wdupenv_s(&localAppData, &length, L"LOCALAPPDATA") == 0 && localAppData != nullptr) {
+        SYSTEMTIME time;
+        GetLocalTime(&time);
+        wchar_t name[128];
+        swprintf_s(name, L"\\terrain-graph\\device-removed-%04u%02u%02u-%02u%02u%02u.txt", time.wYear, time.wMonth, time.wDay,
+                   time.wHour, time.wMinute, time.wSecond);
+        const std::wstring path = std::wstring(localAppData) + name;
+        free(localAppData);
+        FILE* file = nullptr;
+        if (_wfopen_s(&file, path.c_str(), L"wb") == 0 && file != nullptr) {
+            std::fwrite(report.data(), 1, report.size(), file);
+            std::fclose(file);
+            TG_LOG_ERROR("デバイスロストの記録を書きました: %ls", path.c_str());
+            m_deviceRemovedReportPath = path;
+        }
+    }
+    return true;
+}
+
 void Device::EndFrame(bool vsync) {
     if (!m_frameOpen) {
         return;
@@ -618,10 +741,8 @@ void Device::EndFrame(bool vsync) {
     const UINT presentFlags = (!vsync && m_allowTearing) ? DXGI_PRESENT_ALLOW_TEARING : 0u;
     const HRESULT presentResult = m_swapChain->Present(syncInterval, presentFlags);
     if (presentResult == DXGI_ERROR_DEVICE_REMOVED || presentResult == DXGI_ERROR_DEVICE_RESET) {
-        const HRESULT reason = m_device->GetDeviceRemovedReason();
-        TG_LOG_ERROR(
-            "デバイスロストを検出しました (Present=0x%08X, Reason=0x%08X)。描画を停止します",
-            static_cast<unsigned int>(presentResult), static_cast<unsigned int>(reason));
+        TG_LOG_ERROR("Present がデバイスロストを返しました (0x%08X)", static_cast<unsigned int>(presentResult));
+        CheckDeviceRemoved();
         m_initialized = false;
     } else {
         TG_CHECK_HR(presentResult);
