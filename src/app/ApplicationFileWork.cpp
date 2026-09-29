@@ -154,6 +154,10 @@ void Application::HandleShortcuts() {
     if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_F12, false)) {
         m_screenshotPending = true;
     }
+    // F9 はビューポートだけ（UI なし）のスクリーンショット。
+    if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_F9, false)) {
+        m_viewportScreenshotPending = true;
+    }
 
     if (!io.KeyCtrl || io.KeyAlt) {
         return;

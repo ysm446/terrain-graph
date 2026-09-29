@@ -73,12 +73,16 @@ std::filesystem::path ResolveScreenshotDirectory() {
 }
 
 // 撮った時刻をそのままファイル名にする。連番だと前回の続きが分からない。
-std::string ScreenshotFileName() {
+// ビューポートだけの撮影は `_viewport` を付けて、F12 の画面全体と見分ける。
+std::string ScreenshotFileName(bool viewportOnly = false) {
     const std::time_t now = std::time(nullptr);
     std::tm local = {};
     ::localtime_s(&local, &now);
     char buffer[64] = {};
-    std::strftime(buffer, sizeof(buffer), "terrain_graph_%Y%m%d_%H%M%S.png", &local);
+    std::strftime(buffer, sizeof(buffer),
+                  viewportOnly ? "terrain_graph_%Y%m%d_%H%M%S_viewport.png"
+                               : "terrain_graph_%Y%m%d_%H%M%S.png",
+                  &local);
     return buffer;
 }
 
@@ -264,6 +268,32 @@ void Application::RequestScreenshot() {
             m_toasts.Push("スクリーンショットを保存しました", detail, saved);
             TG_LOG_INFO("スクリーンショットを保存しました: %s", ToUtf8Display(saved).c_str());
         });
+}
+
+// F9 の撮影。UI を除いたビューポートの描画結果（トーンマップ後）だけを書き出す。
+// 読み戻しは同期なので、フレームを送り終えてから GPU を待って呼ぶ。
+void Application::SaveViewportScreenshot() {
+    const std::filesystem::path directory = ResolveScreenshotDirectory();
+    std::error_code error;
+    std::filesystem::create_directories(directory, error);
+    if (error) {
+        TG_LOG_ERROR("スクリーンショットの保存先を作れませんでした: %s",
+                     ToUtf8Display(directory).c_str());
+        m_toasts.Push("スクリーンショットを保存できませんでした", "保存先を作れません");
+        return;
+    }
+
+    const std::filesystem::path path = directory / FromUtf8(ScreenshotFileName(true));
+    m_device.WaitForGpu();
+    if (!m_renderer.SaveOutputToPng(m_device, path)) {
+        m_toasts.Push("スクリーンショットを保存できませんでした", ToUtf8Display(path.filename()));
+        return;
+    }
+    char detail[160] = {};
+    std::snprintf(detail, sizeof(detail), "%u x %u  %s", m_renderer.Width(), m_renderer.Height(),
+                  ToUtf8Display(path.filename()).c_str());
+    m_toasts.Push("ビューポートを保存しました", detail, path);
+    TG_LOG_INFO("ビューポートのスクリーンショットを保存しました: %s", ToUtf8Display(path).c_str());
 }
 
 void Application::PollShaderHotReload() {
@@ -658,6 +688,10 @@ int Application::Run() {
         // デバッグレイヤーが溜めた検証エラーをログ（とステータスバー）へ流す。
         // 汲まないとデバッガを繋がない限り誰の目にも触れない。
         m_device.DrainDebugMessages();
+        if (m_viewportScreenshotPending) {
+            m_viewportScreenshotPending = false;
+            SaveViewportScreenshot();
+        }
         ++m_frameCounter;
         if (m_options.benchmarkFrames && evaluationIdle && m_frameCounter >= 120) {
             if (!benchmarkStartFrame) {

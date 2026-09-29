@@ -106,6 +106,8 @@ private:
     void PollShaderHotReload();
     // F12 で撮ったスクリーンショットの書き出しを要求する。撮れたら通知を出す。
     void RequestScreenshot();
+    // F9 で撮ったビューポート（UI なし）を書き出す。撮れたら通知を出す。
+    void SaveViewportScreenshot();
     void DrawUi();
     // 既定のドックレイアウトを組む。ini に配置が無いときと、明示的な要求で呼ぶ。
     void BuildDefaultLayout(ImGuiID dockspaceId);
@@ -1059,6 +1061,8 @@ private:
     ui::ToastQueue m_toasts;
     // F12 が押されたフレームに立つ。EndFrame で撮ってから下ろす。
     bool m_screenshotPending = false;
+    // F9 が押されたフレームに立つ。フレームを送り終えてからビューポートだけを撮る。
+    bool m_viewportScreenshotPending = false;
 
     // ビューポートの表示サイズ。UI 側で決まり、次のフレーム頭で反映する。
     uint32_t m_requestedViewportWidth = 512;
