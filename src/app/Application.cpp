@@ -730,16 +730,8 @@ int Application::Run() {
 
         // ノードカタログ。設定の行を集め終えたら書いて終了する。
         if (!m_options.catalogPath.empty() && m_propertyProbeDone) {
-            nlohmann::json catalog = io::NodeCatalog();
-            for (auto& node : catalog["nodes"]) {
-                const std::string kind = node["kind"].get<std::string>();
-                if (!m_catalogParameters.contains(kind)) continue;
-                node["parameters"] = m_catalogParameters[kind]["parameters"];
-                if (!m_catalogParameters[kind]["unmappedRows"].empty()) {
-                    node["unmappedRows"] = m_catalogParameters[kind]["unmappedRows"];
-                }
-            }
-            return io::ProjectWorkspace::WriteJson(std::filesystem::absolute(m_options.catalogPath), catalog) ? 0 : 1;
+            return io::ProjectWorkspace::WriteJson(std::filesystem::absolute(m_options.catalogPath),
+                                                   BuildNodeCatalog()) ? 0 : 1;
         }
 
         // 評価のレポート。落ち着いた状態が続いてから（評価器の起動が 1 フレームずつずれるため）、

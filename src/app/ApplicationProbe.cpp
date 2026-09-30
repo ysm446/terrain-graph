@@ -15,6 +15,7 @@
 #include <cstring>
 #include <deque>
 #include <set>
+#include <unordered_map>
 
 namespace tg {
 using nlohmann::json;
@@ -224,7 +225,13 @@ json Application::ProbeNodeParameters(const graph::Node& original) {
                 continue;
             }
             mapped.insert(record.label);
-            if (!parameters.contains(path)) parameters[path] = DescribeProperty(node, record, path);
+            if (!parameters.contains(path)) {
+                parameters[path] = DescribeProperty(node, record, path);
+            } else if (json& known = parameters[path]; known.contains("min") &&
+                       (known["min"] != record.minValue || known["max"] != record.maxValue)) {
+                // 範囲がほかの設定（オン・オフや列挙）で変わる行。
+                known["rangeVaries"] = true;
+            }
             // オン・オフを切り替えた状態を積む。
             if (expand && record.type == ui::PropertyRecord::Type::Bool) {
                 bool& value = *static_cast<bool*>(record.value);
@@ -252,6 +259,52 @@ json Application::ProbeNodeParameters(const graph::Node& original) {
             }
         }
     }
+    // 範囲がほかの数値の設定で変わる行（標高差の上限がサイズの半分、など）。
+    // 置いたときの状態で、数値の行を 1 つずつ端の値にして描き直し、ほかの行の範囲が変わるかを見る。
+    {
+        graph::Node node = original;
+        const std::vector<ui::PropertyRecord> records = RecordNodeProperties(node);
+        const json baseFlat = io::WriteNodeJson(node).flatten();
+        std::unordered_map<const void*, std::string> pathOf;
+        std::unordered_map<std::string, std::pair<double, double>> rangeOf;
+        for (const ui::PropertyRecord& record : records) {
+            const std::string path = FindPropertyPath(node, record, baseFlat);
+            if (path.empty()) continue;
+            pathOf[record.value] = path;
+            rangeOf[path] = {record.minValue, record.maxValue};
+        }
+        for (const ui::PropertyRecord& record : records) {
+            if (record.type != ui::PropertyRecord::Type::Float && record.type != ui::PropertyRecord::Type::Int) continue;
+            const auto source = pathOf.find(record.value);
+            if (source == pathOf.end()) continue;
+            std::vector<ui::PropertyRecord> changed;
+            if (record.type == ui::PropertyRecord::Type::Float) {
+                float& value = *static_cast<float*>(record.value);
+                const float old = value;
+                value = static_cast<float>(value >= record.maxValue ? record.minValue : record.maxValue);
+                changed = RecordNodeProperties(node);
+                value = old;
+            } else {
+                int& value = *static_cast<int*>(record.value);
+                const int old = value;
+                value = static_cast<int>(value >= record.maxValue ? record.minValue : record.maxValue);
+                changed = RecordNodeProperties(node);
+                value = old;
+            }
+            for (const ui::PropertyRecord& other : changed) {
+                const auto target = pathOf.find(other.value);
+                if (target == pathOf.end() || target->second == source->second) continue;
+                const auto range = rangeOf.find(target->second);
+                if (range == rangeOf.end() || !parameters.contains(target->second)) continue;
+                if (range->second.first == other.minValue && range->second.second == other.maxValue) continue;
+                json& dependsOn = parameters[target->second]["rangeDependsOn"];
+                if (!dependsOn.is_array()) dependsOn = json::array();
+                if (std::find(dependsOn.begin(), dependsOn.end(), source->second) == dependsOn.end()) {
+                    dependsOn.push_back(source->second);
+                }
+            }
+        }
+    }
     // 保存のキーに対応づけられなかった行（ラベル）。一時的な値を介して描く行（多くは列挙。
     // 値はカタログの enums にある）や、保存しない表示の設定。どの状態でも対応づかなかったものだけ残す。
     json unmappedRows = json::array();
@@ -259,6 +312,81 @@ json Application::ProbeNodeParameters(const graph::Node& original) {
         if (!mapped.contains(label)) unmappedRows.push_back(label);
     }
     return {{"parameters", std::move(parameters)}, {"unmappedRows", std::move(unmappedRows)}};
+}
+
+namespace {
+
+// 設定の塊（レイヤーの layer.crumbling、マスクの flowline など）。レイヤーとマスクのノードは
+// 全種類ぶんの塊を書くので、この単位で使うかどうかを決める。
+std::string SettingsBlockOf(const std::string& path) {
+    const size_t first = path.find('.');
+    if (first == std::string::npos) return {};
+    if (path.compare(0, first, "layer") != 0) return path.substr(0, first);
+    const size_t second = path.find('.', first + 1);
+    return second == std::string::npos ? std::string("layer") : path.substr(0, second);
+}
+
+// 既定値から、どの行にも出てこない設定の塊を除く。塊の内側（layer.height.texture など）は丸ごと残す。
+// 読み込みでは省いたキーが既定値になるので、除いても意味は変わらない。
+json PruneDefaults(const json& defaults, const std::set<std::string>& usedBlocks) {
+    json pruned = json::object();
+    for (const auto& [key, child] : defaults.items()) {
+        if (key == "layer" && child.is_object()) {
+            json layer = json::object();
+            for (const auto& [inner, value] : child.items()) {
+                if (inner == "kind") continue;  // ノードの種類で決まり、読み込みで使わない
+                if (!value.is_object() || usedBlocks.contains("layer." + inner)) layer[inner] = value;
+            }
+            pruned[key] = std::move(layer);
+        } else if (!child.is_object() || usedBlocks.contains(key)) {
+            pruned[key] = child;
+        }
+    }
+    return pruned;
+}
+
+}  // namespace
+
+json Application::BuildNodeCatalog() {
+    json catalog = io::NodeCatalog();
+    for (json& node : catalog["nodes"]) {
+        const std::string kind = node["kind"].get<std::string>();
+        if (!m_catalogParameters.contains(kind)) continue;
+        json parameters = m_catalogParameters[kind]["parameters"];
+        const json defaults = node["defaults"];
+        // default は新しく置いたときの値。UI のリセットの値が違えば uiResetValue に残す。
+        for (auto& [path, parameter] : parameters.items()) {
+            std::string pointer = "/" + path;
+            std::replace(pointer.begin(), pointer.end(), '.', '/');
+            const json::json_pointer at(pointer);
+            if (!defaults.contains(at)) continue;
+            const json& actual = defaults.at(at);
+            if (parameter.contains("default") && parameter["default"] != actual &&
+                !(parameter["default"].is_number() && actual.is_number() &&
+                  std::abs(parameter["default"].get<double>() - actual.get<double>()) < 1.0e-6)) {
+                parameter["uiResetValue"] = parameter["default"];
+            }
+            parameter["default"] = actual;
+        }
+        // UI の行が 1 つでもある塊だけを使う塊とみなす。列挙も同じ塊の単位で除く
+        // （レイヤーのノードは使わない種類の列挙も書く。Heightmap の layer.crumbling.style など）。
+        std::set<std::string> usedBlocks;
+        for (const auto& [path, parameter] : parameters.items()) usedBlocks.insert(SettingsBlockOf(path));
+        if (node.contains("enums")) {
+            json enums = json::object();
+            for (const auto& [path, values] : node["enums"].items()) {
+                const std::string block = SettingsBlockOf(path);
+                if (block.empty() || block == "layer" || usedBlocks.contains(block)) enums[path] = values;
+            }
+            node["enums"] = std::move(enums);
+        }
+        node["defaults"] = PruneDefaults(defaults, usedBlocks);
+        node["parameters"] = std::move(parameters);
+        if (!m_catalogParameters[kind]["unmappedRows"].empty()) {
+            node["unmappedRows"] = m_catalogParameters[kind]["unmappedRows"];
+        }
+    }
+    return catalog;
 }
 
 void Application::RunPropertyProbes() {

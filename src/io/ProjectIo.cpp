@@ -212,6 +212,7 @@ const char* const kApertureShapeNames[] = {"circle", "triangle", "hexagon", "oct
 struct RecordedEnum {
     std::vector<std::string> names;
     std::string chosen;
+    bool set = false;  // 選択肢の部分集合を配列で書く（channels）
 };
 std::vector<RecordedEnum>* g_enumRecorder = nullptr;
 
@@ -487,6 +488,9 @@ void ReadMaterialBody(const json& node, compositor::MaterialAsset& asset,
 // --- レイヤー -------------------------------------------------------------
 
 json WriteChannelMask(uint32_t channelMask) {
+    if (g_enumRecorder != nullptr) {
+        g_enumRecorder->push_back({{std::begin(kChannelNames), std::end(kChannelNames)}, "", true});
+    }
     json channels = json::array();
     for (uint32_t i = 0; i < static_cast<uint32_t>(compositor::Channel::Count); ++i) {
         if ((channelMask & (1u << i)) != 0) {
@@ -1980,6 +1984,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
 // 呼び出し側が旧 layers からの移行に切り替える。
 // 評価のレポート用。読み込みで読まなかった / 直した値を記録する先（SetGraphReadIssueSink）。
 std::vector<GraphReadIssue>* g_graphReadIssues = nullptr;
+constexpr const char* kUnknownKeyMessage = "知らないキー（読まなかった）";
 
 // ファイルに書いてあった値（input）と、読んだ設定を書き戻した値（written）を比べる。
 // 書き戻しに無いキーは読んでいない、値が違えば読み込みで直した（範囲外・不正・型違い）。
@@ -1994,7 +1999,7 @@ void DiffReadGraphJson(const json& input, const json& written, const std::string
         for (const auto& [key, value] : input.items()) {
             const std::string child = path.empty() ? key : path + "." + key;
             if (!written.contains(key)) {
-                issues.push_back({node, child, "知らないキー（読まなかった）"});
+                issues.push_back({node, child, kUnknownKeyMessage});
             } else {
                 DiffReadGraphJson(value, written[key], child, node, issues);
             }
@@ -2601,7 +2606,38 @@ bool ReadGraph(const json& source, graph::NodeGraph& graphData, const TextureRea
                 input.erase(key);
                 output.erase(key);
             }
-            DiffReadGraphJson(input, output, "", item["id"].get<int>(), *g_graphReadIssues);
+            std::vector<GraphReadIssue> issues;
+            DiffReadGraphJson(input, output, "", item["id"].get<int>(), issues);
+            // 書き戻しに無いキーは、読まないキーとは限らない（既定値のときは書かないキーがある。
+            // 例: scale.baseElevation は 0 なら書かない）。値を変えて読み直し、結果が変わるなら読んでいる。
+            std::erase_if(issues, [&](const GraphReadIssue& issue) {
+                if (issue.message != kUnknownKeyMessage) return false;
+                std::string pointer = "/" + issue.path;
+                std::replace(pointer.begin(), pointer.end(), '.', '/');
+                const json::json_pointer at(pointer);
+                json changed = *found->second;
+                if (!changed.contains(at)) return false;
+                json& value = changed[at];
+                if (value.is_number()) value = value.get<double>() + 1.0;
+                else if (value.is_boolean()) value = !value.get<bool>();
+                else return false;
+                std::vector<GraphReadIssue>* const sink = g_graphReadIssues;
+                g_graphReadIssues = nullptr;
+                graph::NodeGraph reread;
+                const bool read = ReadGraph({{"nodes", json::array({changed})}, {"links", json::array()}}, reread,
+                                            readTexture, readMaterial, readPaint, scaleFallback);
+                g_graphReadIssues = sink;
+                if (!read) return false;
+                json rewritten = WriteGraph(
+                    reread, [&](compositor::TextureId id) { return lookup(textureRefs, id); },
+                    [&](compositor::MaterialAssetId id) { return lookup(materialRefs, id); },
+                    [&](compositor::PaintMaskId id) { return lookup(paintRefs, id); })["nodes"][0];
+                for (const char* key : {"id", "kind", "component", "position", "inputs", "outputs", "note", "bypass"}) {
+                    rewritten.erase(key);
+                }
+                return rewritten != output;
+            });
+            g_graphReadIssues->insert(g_graphReadIssues->end(), issues.begin(), issues.end());
         }
     }
     // Replace が壊れたリンクの除去と次の採番の再構築を行う。
@@ -3237,21 +3273,44 @@ json EnumFieldsOf(const graph::Node& node) {
     const json settings = WriteNodeJson(node);
     g_enumRecorder = nullptr;
     // 文字列の値のうち、EnumName が書いた値と一致し、その表が 1 つに決まるものを列挙とみなす。
+    // 配列の要素（"/layer/channels/2"）は 1 つの値ではないので、下で配列ごとに見る。
     json enums = json::object();
     const json flat = settings.flatten();
+    const auto dotted = [](std::string pointer) {
+        pointer.erase(0, 1);
+        std::replace(pointer.begin(), pointer.end(), '/', '.');
+        return pointer;
+    };
+    std::set<std::string> arrays;
     for (const auto& entry : flat.items()) {
+        const std::string& key = entry.key();
+        const std::string last = key.substr(key.rfind('/') + 1);
+        if (!last.empty() && std::all_of(last.begin(), last.end(), [](char c) { return c >= '0' && c <= '9'; })) {
+            arrays.insert(key.substr(0, key.rfind('/')));
+            continue;
+        }
         if (!entry.value().is_string()) continue;
         const std::string value = entry.value().get<std::string>();
         std::set<std::vector<std::string>> matches;
         for (const RecordedEnum& record : recorded) {
-            if (record.chosen == value) matches.insert(record.names);
+            if (!record.set && record.chosen == value) matches.insert(record.names);
         }
-        if (matches.size() == 1) {
-            std::string path = entry.key().substr(1);
-            std::replace(path.begin(), path.end(), '/', '.');
-            enums[path] = *matches.begin();
+        if (matches.size() == 1) enums[dotted(key)] = *matches.begin();
+    }
+    // 選択肢の部分集合を持つ配列（layer.channels）。要素がすべて同じ表に入るもの。
+    for (const std::string& pointer : arrays) {
+        const json& values = settings.at(json::json_pointer(pointer));
+        for (const RecordedEnum& record : recorded) {
+            if (!record.set) continue;
+            const bool subset = std::all_of(values.begin(), values.end(), [&](const json& value) {
+                return value.is_string() &&
+                       std::find(record.names.begin(), record.names.end(), value.get<std::string>()) != record.names.end();
+            });
+            if (subset) enums[dotted(pointer)] = record.names;
         }
     }
+    // レイヤーの種類はノードの種類で決まり、読み込みでファイルの値を使わない。
+    enums.erase("layer.kind");
     return enums;
 }
 
@@ -3277,6 +3336,7 @@ json NodeCatalog() {
         json item;
         item["kind"] = definition.name;
         item["title"] = definition.title;
+        item["description"] = definition.description;
         json inputs = json::array(), outputs = json::array();
         for (const graph::PinDefinition& pin : definition.pins) {
             (pin.kind == graph::PinKind::Input ? inputs : outputs)

@@ -175,8 +175,12 @@ bool Application::WriteEvaluationReport(bool timedOut, bool& reportOk) {
     report["frames"] = m_frameCounter;
     report["seconds"] = std::chrono::duration<double>(std::chrono::steady_clock::now() - m_reportStart).count();
     report["terrain"] = std::move(terrain);
+    const auto cloudNodes = static_cast<size_t>(std::count_if(m_graph.Nodes().begin(), m_graph.Nodes().end(),
+                                                              [](const graph::Node& node) { return node.component == 1; }));
     report["counts"] = {
         {"nodes", m_graph.Nodes().size()},
+        {"terrainNodes", m_graph.Nodes().size() - cloudNodes},
+        {"cloudNodes", cloudNodes},
         {"links", m_graph.Links().size()},
         {"meshNodes", meshNodes},
         {"meshVertices", meshVertices},

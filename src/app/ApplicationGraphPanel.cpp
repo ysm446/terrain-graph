@@ -1495,88 +1495,89 @@ void Application::DrawGraphEditor() {
         };
         // **まずセクションを出し、そこから種類を選ぶ。** 種類が増えて 1 本のリストでは
         // 探しきれなくなったため。編集中のグラフに出す種類が 1 つも無いセクションは出さない。
-        struct MenuEntry {
-            graph::NodeKind kind;
-            const char* label;
-        };
-        const auto section = [&](const char* title, std::initializer_list<MenuEntry> entries) {
-            if (std::none_of(entries.begin(), entries.end(), [&](const MenuEntry& e) { return offered(e.kind); })) return;
+        // 項目は「表示名 — 説明」。どちらもノードの定義表（NodeDefinitions.cpp）が持つ。
+        const auto section = [&](const char* title, std::initializer_list<graph::NodeKind> kinds) {
+            if (std::none_of(kinds.begin(), kinds.end(), offered)) return;
             if (!ImGui::BeginMenu(title)) return;
-            for (const MenuEntry& entry : entries) addNodeMenuItem(entry.kind, entry.label);
+            for (const graph::NodeKind kind : kinds) {
+                const graph::NodeDefinition* definition = graph::FindNodeDefinition(kind);
+                const std::string label = std::string(definition->title) + " — " + definition->description;
+                addNodeMenuItem(kind, label.c_str());
+            }
             ImGui::EndMenu();
         };
         section("入出力", {
-            {graph::NodeKind::Heightmap, "Heightmap — 画像を地形として読み込む"},
-            {graph::NodeKind::Output, "Output — ここに繋いだ結果をプレビューする"},
-            {graph::NodeKind::Terrain, "Terrain — 地形グラフの結果を取り出す（マスクの Base に繋ぐ）"},
+            graph::NodeKind::Heightmap,
+            graph::NodeKind::Output,
+            graph::NodeKind::Terrain,
         });
         section("合成", {
-            {graph::NodeKind::Surface, "Surface — 素材を高さで張り合わせる"},
-            {graph::NodeKind::Shape, "Shape — 高さへ起伏を加算する"},
-            {graph::NodeKind::Liquid, "Liquid — 水位より低い所に水を張る"},
+            graph::NodeKind::Surface,
+            graph::NodeKind::Shape,
+            graph::NodeKind::Liquid,
         });
         section("侵食", {
-            {graph::NodeKind::FluvialErosion, "Fluvial Erosion — 流れに沿って谷を刻み、細部を戻しながら侵食する"},
-            {graph::NodeKind::MultiScaleErosion, "Multi-Scale Erosion — 大きな谷から細かな溝まで段階的に侵食する"},
-            {graph::NodeKind::Droplet, "Droplet Erosion — 水滴を流して谷を刻み、土砂を運んで積む"},
-            {graph::NodeKind::Sediment, "Sediment — 土砂を重力で再分配して谷に積もらせる"},
-            {graph::NodeKind::Crumbling, "Crumbling — 崩れた岩屑を斜面下へ流して積む"},
+            graph::NodeKind::FluvialErosion,
+            graph::NodeKind::MultiScaleErosion,
+            graph::NodeKind::Droplet,
+            graph::NodeKind::Sediment,
+            graph::NodeKind::Crumbling,
         });
         section("水", {
-            {graph::NodeKind::River, "River — 川筋から河床を掘り、下流へ下がる水面を張る"},
-            {graph::NodeKind::MeanderingRivers, "Meandering Rivers — Path を蛇行させ、河床を掘る"},
-            {graph::NodeKind::Lake, "Lake — 窪みに水を溜め、湖の範囲・水深・水位を出す"},
+            graph::NodeKind::River,
+            graph::NodeKind::MeanderingRivers,
+            graph::NodeKind::Lake,
         });
         section("雪", {
-            {graph::NodeKind::SnowCover, "Snow Cover — 積雪と薄雪を生成し、被覆・雪深・流動量を出す"},
-            {graph::NodeKind::Snow, "Snow — 雪を降らせ、急な雪面から落として積もらせる"},
-            {graph::NodeKind::SnowPlume, "Snow Plume — 稜線から風下へ雪煙をなびかせる（Spindrift を Source に繋ぐ）"},
+            graph::NodeKind::SnowCover,
+            graph::NodeKind::Snow,
+            graph::NodeKind::SnowPlume,
         });
         section("整形", {
-            {graph::NodeKind::Blur, "Heightmap Blur — ハイトをぼかしてならす"},
-            {graph::NodeKind::FlattenBorders, "Flatten Borders — 地形の外周を指定した標高へならす"},
-            {graph::NodeKind::HeightLevels, "Height Levels — 高さの範囲を引き伸ばす（侵食で縮んだ範囲を元の全幅へ戻す）"},
+            graph::NodeKind::Blur,
+            graph::NodeKind::FlattenBorders,
+            graph::NodeKind::HeightLevels,
         });
         section("マスク", {
-            {graph::NodeKind::MaskImage, "Mask Image — 画像をマスクにする（白い所だけ乗る）"},
-            {graph::NodeKind::MaskNoise, "Mask Noise — ノイズをマスクにする（下地に依らない）"},
-            {graph::NodeKind::MaskFlowline, "Mask Flowline — 地形に沿う流跡をマスクにする"},
-            {graph::NodeKind::MaskFluvial, "Mask Fluvial — 下地の川筋をマスクにする"},
-            {graph::NodeKind::MaskHeight, "Mask Height — 下地の標高帯（m）をマスクにする"},
-            {graph::NodeKind::MaskSlope, "Mask Slope — 下地の傾斜（角度）をマスクにする"},
-            {graph::NodeKind::MaskCurvature, "Mask Curvature — 下地の凹凸（尾根 / 谷）をマスクにする"},
-            {graph::NodeKind::MaskLevels, "Mask Levels — マスクの黒点 / 白点 / ガンマを調整する"},
-            {graph::NodeKind::MaskBlur, "Mask Blur — マスクをぼかして境界をなだらかにする"},
-            {graph::NodeKind::MaskBlend, "Mask Blend — マスク 2 枚を合成する"},
-            {graph::NodeKind::WindField, "Wind Field — 地形全体の風の場。地表の風速と粉雪の発生量をマスクにする"},
+            graph::NodeKind::MaskImage,
+            graph::NodeKind::MaskNoise,
+            graph::NodeKind::MaskFlowline,
+            graph::NodeKind::MaskFluvial,
+            graph::NodeKind::MaskHeight,
+            graph::NodeKind::MaskSlope,
+            graph::NodeKind::MaskCurvature,
+            graph::NodeKind::MaskLevels,
+            graph::NodeKind::MaskBlur,
+            graph::NodeKind::MaskBlend,
+            graph::NodeKind::WindField,
         });
         section("パス", {
-            {graph::NodeKind::Path, "Path — 地形の上に線を引く（道路 / 川 / 氷河のガイド）"},
-            {graph::NodeKind::MaskPath, "Mask Path — パスの足跡をマスクにする"},
-            {graph::NodeKind::MaskArea, "Mask Area — パスの閉じた鎖の内側をマスクにする（エリア選択）"},
+            graph::NodeKind::Path,
+            graph::NodeKind::MaskPath,
+            graph::NodeKind::MaskArea,
         });
         section("道路", {
-            {graph::NodeKind::RoadPath, "Road Path — 道路の線形（縦断曲線・バンク角）を引く"},
-            {graph::NodeKind::RoadMesh, "Road Mesh — Road Path から路面のメッシュを作る"},
-            {graph::NodeKind::Shoulder, "Shoulder — 路面の端から外へ路肩の帯を張り出す"},
-            {graph::NodeKind::LaneMarking, "Lane Marking — 路面に中央線・外側線・車線境界線を引く"},
-            {graph::NodeKind::MeshOutput, "Mesh Output — 道路などのメッシュをビューポートへ出す"},
+            graph::NodeKind::RoadPath,
+            graph::NodeKind::RoadMesh,
+            graph::NodeKind::Shoulder,
+            graph::NodeKind::LaneMarking,
+            graph::NodeKind::MeshOutput,
         });
         section("配置", {
-            {graph::NodeKind::Scatter, "Scatter — 単純な形をばら撒き、分布のマスクを出す"},
-            {graph::NodeKind::ModelScatter, "Model Scatter — Points にモデルをランダム配置する"},
-            {graph::NodeKind::ModelMerge, "Model Merge — 複数のモデル配置をまとめる"},
-            {graph::NodeKind::ModelOutput, "Model Output — モデル配置をビューポートへ出す"},
+            graph::NodeKind::Scatter,
+            graph::NodeKind::ModelScatter,
+            graph::NodeKind::ModelMerge,
+            graph::NodeKind::ModelOutput,
         });
         section("雲", {
-            {graph::NodeKind::CloudWeatherLayer, "Cloud Weather Layer — 雲量と雲種のマップで広域の雲層を作る"},
-            {graph::NodeKind::CloudShapeGenerate, "Cloud Shape Generate (Experimental) — 単独の積雲を生成する"},
-            {graph::NodeKind::CloudMapGenerate, "Cloud Map Generate (Experimental) — ポイントの分布から雲形状を生成する"},
-            {graph::NodeKind::CloudMerge, "Cloud Merge (Experimental) — 基本形状を統合する"},
-            {graph::NodeKind::CloudTransform, "Cloud Transform (Experimental) — 雲形状を移動する"},
-            {graph::NodeKind::CloudAnimation, "Cloud Animation — 指定範囲で雲を繰り返し移動する"},
-            {graph::NodeKind::CloudNoise, "Cloud Noise (Experimental) — 輪郭と密度を作る"},
-            {graph::NodeKind::CloudOutput, "Cloud Output — Volume を繋いで雲を表示する"},
+            graph::NodeKind::CloudWeatherLayer,
+            graph::NodeKind::CloudShapeGenerate,
+            graph::NodeKind::CloudMapGenerate,
+            graph::NodeKind::CloudMerge,
+            graph::NodeKind::CloudTransform,
+            graph::NodeKind::CloudAnimation,
+            graph::NodeKind::CloudNoise,
+            graph::NodeKind::CloudOutput,
         });
         ImGui::EndPopup();
     }

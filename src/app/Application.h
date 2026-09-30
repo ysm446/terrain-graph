@@ -374,6 +374,8 @@ private:
     nlohmann::json ProbeNodeParameters(const graph::Node& node);
     // --dump-catalog の行の収集と、--evaluate-report の範囲の検査。DrawUi の最後で 1 度だけ行う。
     void RunPropertyProbes();
+    // io::NodeCatalog に、集めた設定の行（parameters）を合わせたノードカタログ。
+    nlohmann::json BuildNodeCatalog();
     nlohmann::json m_catalogParameters = nlohmann::json::object();  // kind → parameters
     std::vector<nlohmann::json> m_reportRangeIssues;
     bool m_propertyProbeRequested = false, m_propertyProbeDone = false;

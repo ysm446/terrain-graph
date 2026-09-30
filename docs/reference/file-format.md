@@ -1,7 +1,7 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-10-01 04:04
+更新日時: 2026-10-01 04:17
 
 ## 大気散乱スカイと作業環境（シーン版3）
 
@@ -395,6 +395,19 @@ RGB をそのまま使うマップ（ベースカラー / 法線）はテクス�
 - 解決できないリンク（無いノード・無いピン名）は、そのノードにあるピン名を添えて
   ログに警告し、捨てる。
 - ノードの設定を省いた値は既定値で埋まる（どの種類も既定値を持って読む）。
+- `.tgterrain` のヘッダで必須なのは `format`（`"terrain-graph.terrain-graph"`、雲は
+  `"terrain-graph.cloud-graph"`）・`version`（1）・`graph`。`--open-graph` やアセットブラウザで
+  開くには `uid`（`{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}` の大文字の GUID）も要る。
+  `textures` / `materials` / `models` / `paintMasks` は参照が無ければ省いてよい。
+- 地形の実寸は、チェーンの先頭の Heightmap ノードの `scale`（`size` / `height` /
+  `baseElevation`、m）が決める。ヘッダの `geometry`（`planeSize` / `displacementScale`）は
+  プレビューの設定で、ノードが `scale` を持てばそちらで上書きされる。
+- 合成のノード（Surface など）の Mask ピンに繋ぐと、`layer.mask.source` はファイルの値に
+  関わらずノードのマスクになる。繋がなければ `layer.mask` の設定がそのまま効く。
+- レイヤーの `channels` は、そのレイヤーが書き込むチャンネル（`baseColor` / `normal` /
+  `surface` / `height` の部分集合）。色だけを塗り分けるレイヤーは `height` を外すと起伏を変えない。
+- Mask Height の `height.min` / `max` は、地形の一番低い所（ハイト 0）からの高さ（m）。
+  `scale.baseElevation`（最低標高）は含まない。
 - シーンの部品（`.tgterrain` / `.tgcloud`）を展開するとき、ノード・ピン・リンクの ID は
   **先に読んだ部品と重ならない限りファイルの値のまま**使い、重なったものだけ振り直す。
   地形 / 雲グラフをシーンに重ねて開くとき（アセットブラウザ・`--open-graph`）も、
@@ -498,24 +511,34 @@ terrain_graph.exe --dump-catalog path/to/catalog.json
 }
 ```
 
-- `kind` はファイルの `kind`、ピンの `name` はリンクの `from` / `to` に書く名前。
-  リンクは同じ `type` どうしだけ繋がる。`variadicInputs: true` の種類は入力を番号付きで足せる。
+- `kind` はファイルの `kind`、`description` は何をするノードかの一文（追加メニューと同じ文）。
+  ピンの `name` はリンクの `from` / `to` に書く名前。リンクは同じ `type` どうしだけ繋がる。
+  `variadicInputs: true` の種類は入力を番号付きで足せる。
 - `defaults` はそのノードを新しく置いたときの設定を、保存と同じ形で書いたもの。
-  ファイルで省いたキーはこの値になる。
+  ファイルで省いたキーはこの値になる。レイヤーとマスクのノードは保存では全種類ぶんの設定の塊
+  （`layer.crumbling`、`flowline` など）を書くが、カタログでは UI の行が 1 つも無い塊を除く
+  （除いた塊も省けば既定値になる）。`layer.kind` はノードの種類で決まり、読み込みで使わないので出さない。
 - `enums` は `defaults` の中の列挙のキー（`.` 区切りのパス）と、取れる値。保存処理の
-  `EnumName` に渡った名前の表のうち、既定値と一致するものから作る。`EnumName` を通さずに
-  書いている設定（道路の線形や区画線の種類など）と、既定で書かれない値は出ない。
+  `EnumName` に渡った名前の表のうち、既定値と一致するものから作る。配列のキー
+  （`layer.channels`）は、その値の部分集合を書く。`EnumName` を通さずに書いている設定
+  （道路の線形や区画線の種類など）と、既定で書かれない値は出ない。
 - `parameters` はプロパティ UI の行（`ui::Property*`）から取った、キーごとの表示名・型
   （`float` / `int` / `bool` / `enum` / `color`）・範囲（`min` / `max`）・既定値・単位（書式の
   `"%.1f m"` から取る）・説明。**範囲は UI の範囲で、エディタでノードを選ぶとこの範囲へ丸まる。**
+  - `default` は新しく置いたときの値（`defaults` と同じ）。UI の既定値の印（リセット）が
+    別の値なら `uiResetValue` に出す。
+  - `rangeDependsOn` は、範囲がほかの数値の設定で変わる行と、その設定のキー
+    （例: `scale.height` の上限は `scale.size` の半分。出ている `max` は既定のサイズでの値）。
+    `rangeVaries: true` は、オン・オフや列挙の切り替えで範囲が変わる行。
   - 取り方: 見えないウィンドウでノードの複製の設定を描き、ヘルパーに渡った値を記録する。
     行と保存のキーは、値を少し動かして書き出し（`io::WriteNodeJson`）のどこが変わるかで
     対応づける。オン・オフと列挙を切り替えた状態も 2 段まで辿り、条件付きで出る行も拾う
-    （種類ごとに 80 状態まで）。範囲が状態で変わる行（標高差の上限がサイズの半分など）は、
-    最初に見つけた状態の値。
+    （種類ごとに 80 状態まで）。`rangeDependsOn` は、置いたときの状態で数値の行を 1 つずつ
+    端の値にして描き直して求める。
   - `unmappedRows` は保存のキーに対応づけられなかった行の表示名。UI が一時的な値を介して
     描く行（多くは列挙で、値は `enums` にある。解像度の選択肢など数値の選択肢は出ない）と、
     保存しない表示の設定。
+- 表示名や説明は日本語（UTF-8）。Python で読むときは `PYTHONIOENCODING=utf-8` で出力する。
 
 ## 評価レポート（`--evaluate-report`）
 
@@ -549,7 +572,7 @@ terrain_graph.exe --project path/to/scene.tgscene [--open-graph path/to/graph.tg
     "heightfield": { "resolution": 512, "min": 0.001, "max": 0.998, "mean": 0.484,
                      "minElevationMeters": 1798.6, "maxElevationMeters": 3324.3 }
   },
-  "counts": { "nodes": 167, "links": 237, "instances": 69527,
+  "counts": { "nodes": 167, "terrainNodes": 165, "cloudNodes": 2, "links": 237, "instances": 69527,
               "meshNodes": 3, "meshVertices": 129826, "meshTriangles": 200528 },
   "scatters": [ { "node": 169, "source": 103, "outputs": [162], "models": 3,
                   "candidates": 2822400, "instances": 18796 } ],
@@ -566,7 +589,9 @@ terrain_graph.exe --project path/to/scene.tgscene [--open-graph path/to/graph.tg
 - `warnings`: 警告のログ（捨てたリンクなど）、起伏の無い地形、点が残らない配置、
   モデルを選んでいない配置、**読み込みで読まなかった / 直した設定**、**UI の範囲の外の値**。
   - 読み込みの問題は `{ "node", "path", "message" }`。読んだ設定を書き戻してファイルの値と
-    比べて求める（知らないキー、範囲外で丸めた値、使えない列挙名、型違い）。
+    比べて求める（知らないキー、範囲外で丸めた値、使えない列挙名、型違い）。書き戻しに無い
+    キーは、値を変えて読み直して結果が変わらないときだけ「知らないキー」とする（既定値のときは
+    書かないキーがあるため。`scale.baseElevation` が 0 など）。
     例: `{"node": 33, "path": "blend.mode", "message": "値 \"multipy\" は使えないので \"multiply\" にした"}`。
   - 範囲の外の値は、カタログの `parameters` と同じ UI の行で調べる。読み込みでは丸めないが
     エディタでノードを選ぶと丸まる値。

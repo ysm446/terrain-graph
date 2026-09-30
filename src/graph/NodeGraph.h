@@ -170,6 +170,8 @@ struct NodeDefinition {
     const char* name = "";   // 保存名（ファイルには enum の数値ではなくこれを書く）
     const char* title = "";  // 表示名
     std::span<const PinDefinition> pins;
+    // 何をするノードかの一文。追加メニュー（「表示名 — 説明」）とノードカタログに出す。
+    const char* description = "";
 };
 
 struct Pin {
