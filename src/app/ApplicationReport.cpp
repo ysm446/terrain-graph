@@ -150,6 +150,15 @@ bool Application::WriteEvaluationReport(bool timedOut, bool& reportOk) {
         if (!model.error.empty()) addIssue(errors, 0, "モデル " + model.name + ": " + model.error);
     }
 
+    // --- 読み込みで読まなかった / 直した設定 ------------------------------
+    for (const io::GraphReadIssue& issue : m_reportReadIssues) {
+        json item = {{"node", issue.node}, {"path", issue.path}, {"message", issue.message}};
+        warnings.push_back(std::move(item));
+    }
+
+    // --- 設定の値が UI の範囲の外 -----------------------------------------
+    for (const json& issue : m_reportRangeIssues) warnings.push_back(issue);
+
     // --- ログ -----------------------------------------------------------
     json log = json::array();
     for (const auto& [level, text] : m_reportLog) {

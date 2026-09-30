@@ -1,7 +1,7 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-10-01 03:34
+更新日時: 2026-10-01 04:04
 
 ## 大気散乱スカイと作業環境（シーン版3）
 
@@ -471,8 +471,8 @@ RGB をそのまま使うマップ（ベースカラー / 法線）はテクス�
 
 ## ノードカタログ（`--dump-catalog`）
 
-グラフを書くための資料。ノードの定義表（`graph::NodeDefinitions`）と保存処理から作るので、
-コードとずれない。ウィンドウも GPU も使わず、書いたらすぐ終了する。
+グラフを書くための資料。ノードの定義表（`graph::NodeDefinitions`）・保存処理・プロパティ UI から作るので、
+コードとずれない。アプリを非表示で起動して UI を描き、書いたら終了する（Debug で約 100 秒）。
 
 ```
 terrain_graph.exe --dump-catalog path/to/catalog.json
@@ -483,12 +483,17 @@ terrain_graph.exe --dump-catalog path/to/catalog.json
   "format": "terrain-graph.node-catalog", "version": 1,
   "valueTypes": ["Material", "Mask", "Path", "Volume", "CloudShape", "Points", "Instances", "Wind", "RoadPath", "Mesh"],
   "nodes": [
-    { "kind": "lake", "title": "Lake",
-      "inputs":  [ { "name": "Base", "type": "Material" }, { "name": "Water Mask", "type": "Mask" } ],
-      "outputs": [ { "name": "Result", "type": "Material" }, { "name": "Lake", "type": "Mask" },
-                   { "name": "Depth", "type": "Mask" }, { "name": "Water Level", "type": "Mask" } ],
-      "defaults": { "layer": { … } },
-      "enums": { "layer.height.source": ["constant", "noise", "texture"], … } }
+    { "kind": "maskHeight", "title": "Mask Height",
+      "inputs":  [ { "name": "Base", "type": "Material" } ],
+      "outputs": [ { "name": "Mask", "type": "Mask" } ],
+      "defaults": { "height": { "min": 0, "max": 1000, "feather": 0, "gamma": 1, … }, … },
+      "enums": { "blend.mode": ["add", "multiply", "min", "max", "subtract"], … },
+      "parameters": {
+        "height.feather": { "label": "フェザー", "type": "float", "min": 0, "max": 1000,
+                            "default": 0, "unit": "m", "logarithmic": true, "tooltip": "…" },
+        "height.invert":  { "label": "反転", "type": "bool", "default": false, "tooltip": "…" }
+      } },
+    { "kind": "maskBlend", …, "unmappedRows": ["種類"] }
   ]
 }
 ```
@@ -500,7 +505,17 @@ terrain_graph.exe --dump-catalog path/to/catalog.json
 - `enums` は `defaults` の中の列挙のキー（`.` 区切りのパス）と、取れる値。保存処理の
   `EnumName` に渡った名前の表のうち、既定値と一致するものから作る。`EnumName` を通さずに
   書いている設定（道路の線形や区画線の種類など）と、既定で書かれない値は出ない。
-- 値の範囲と単位はまだ出ない（プロパティ UI の中にしか無い）。
+- `parameters` はプロパティ UI の行（`ui::Property*`）から取った、キーごとの表示名・型
+  （`float` / `int` / `bool` / `enum` / `color`）・範囲（`min` / `max`）・既定値・単位（書式の
+  `"%.1f m"` から取る）・説明。**範囲は UI の範囲で、エディタでノードを選ぶとこの範囲へ丸まる。**
+  - 取り方: 見えないウィンドウでノードの複製の設定を描き、ヘルパーに渡った値を記録する。
+    行と保存のキーは、値を少し動かして書き出し（`io::WriteNodeJson`）のどこが変わるかで
+    対応づける。オン・オフと列挙を切り替えた状態も 2 段まで辿り、条件付きで出る行も拾う
+    （種類ごとに 80 状態まで）。範囲が状態で変わる行（標高差の上限がサイズの半分など）は、
+    最初に見つけた状態の値。
+  - `unmappedRows` は保存のキーに対応づけられなかった行の表示名。UI が一時的な値を介して
+    描く行（多くは列挙で、値は `enums` にある。解像度の選択肢など数値の選択肢は出ない）と、
+    保存しない表示の設定。
 
 ## 評価レポート（`--evaluate-report`）
 
@@ -549,7 +564,13 @@ terrain_graph.exe --project path/to/scene.tgscene [--open-graph path/to/graph.tg
   道路 / 路肩 / 区画線を作れない、見つからないテクスチャ、マテリアルとモデルの読み込みエラー、
   読み込みから評価までに出たエラーのログ。
 - `warnings`: 警告のログ（捨てたリンクなど）、起伏の無い地形、点が残らない配置、
-  モデルを選んでいない配置。
+  モデルを選んでいない配置、**読み込みで読まなかった / 直した設定**、**UI の範囲の外の値**。
+  - 読み込みの問題は `{ "node", "path", "message" }`。読んだ設定を書き戻してファイルの値と
+    比べて求める（知らないキー、範囲外で丸めた値、使えない列挙名、型違い）。
+    例: `{"node": 33, "path": "blend.mode", "message": "値 \"multipy\" は使えないので \"multiply\" にした"}`。
+  - 範囲の外の値は、カタログの `parameters` と同じ UI の行で調べる。読み込みでは丸めないが
+    エディタでノードを選ぶと丸まる値。
+    例: `{"node": 96, "path": "height.feather", "message": "「フェザー」の値 -50 は範囲 0〜1000 の外（エディタで開くと丸まる）"}`。
 - `node` はファイルのノード ID。`nodes` には全ノード（`id` / `kind` / `component`、
   レイヤーを持つノードは `name`、あれば `bypass` / `errors` / `stats`）を並べる。
 - `terrain.heightfield` は評価器が CPU へ写した 512² の縮小ハイト（0〜1）から求めた範囲。

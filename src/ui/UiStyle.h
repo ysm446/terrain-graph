@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <string>
+#include <vector>
 
 // UI の見た目とプロパティ行の共通部品。
 //
@@ -11,6 +12,21 @@
 // 個々のパネルが ImGui のウィジェットを直接呼ぶのではなく、
 // ここのヘルパーを通すことで、ラベルの体裁・幅・既定値・ツールチップが揃う。
 namespace tg::ui {
+
+// 設定の行（Property*）に渡った範囲・既定値・書式の記録。記録先を設定している間だけ足す。
+// ノードの設定の範囲と単位をコードから取り出す（ノードカタログ・評価のレポート）ために使う。
+// value は行が編集する値の場所、shown は丸める前の値（範囲外のまま読み込んだ値を見分ける）。
+struct PropertyRecord {
+    enum class Type { Float, Int, Bool, Combo, Color };
+    Type type = Type::Float;
+    std::string label, tooltip, format;
+    void* value = nullptr;
+    double shown = 0.0, minValue = 0.0, maxValue = 0.0, defaultValue = 0.0;
+    bool logarithmic = false;
+    std::vector<std::string> items;  // Combo の選択肢（表示名）
+};
+// nullptr で止める。
+void SetPropertyRecorder(std::vector<PropertyRecord>* recorder);
 
 // 参照欄の右に置く、アセットブラウザへ移動するアイコン。
 bool RevealSourceButton(bool enabled, const char* tooltip);

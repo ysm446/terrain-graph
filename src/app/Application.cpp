@@ -188,6 +188,8 @@ bool Application::Initialize(const StartupOptions& options) {
 
     // ログをステータスバーへ流す。以降の警告やエラーは画面上でも見える。
     SetLogSink([this](LogLevel level, const char* text) { PushStatus(level, text); });
+    // 評価のレポートでは、読み込みで読まなかった / 直した設定も拾う。
+    if (!m_options.reportPath.empty()) io::SetGraphReadIssueSink(&m_reportReadIssues);
 
     // アンドゥの起点。ここを取り忘れると、最初の 1 回が空の文書へ戻ってしまう。
     m_committed = CaptureDocument();
@@ -201,6 +203,7 @@ bool Application::Initialize(const StartupOptions& options) {
 void Application::Shutdown() {
     // シンクは this を掴んでいる。破棄より先に必ず外す。
     SetLogSink({});
+    io::SetGraphReadIssueSink(nullptr);
 
     m_device.WaitForGpu();
     // ImGui のコンテキストより先に破棄する（エディタが ImGui に依存している）。
@@ -725,6 +728,20 @@ int Application::Run() {
             nextScreenshotFrame = static_cast<uint64_t>(m_frameCounter) + m_options.screenshotInterval;
         }
 
+        // ノードカタログ。設定の行を集め終えたら書いて終了する。
+        if (!m_options.catalogPath.empty() && m_propertyProbeDone) {
+            nlohmann::json catalog = io::NodeCatalog();
+            for (auto& node : catalog["nodes"]) {
+                const std::string kind = node["kind"].get<std::string>();
+                if (!m_catalogParameters.contains(kind)) continue;
+                node["parameters"] = m_catalogParameters[kind]["parameters"];
+                if (!m_catalogParameters[kind]["unmappedRows"].empty()) {
+                    node["unmappedRows"] = m_catalogParameters[kind]["unmappedRows"];
+                }
+            }
+            return io::ProjectWorkspace::WriteJson(std::filesystem::absolute(m_options.catalogPath), catalog) ? 0 : 1;
+        }
+
         // 評価のレポート。落ち着いた状態が続いてから（評価器の起動が 1 フレームずつずれるため）、
         // または時間切れで書いて終了する。終了コードは 0: 問題なし、2: 問題あり、1: 書けなかった。
         if (!m_options.reportPath.empty()) {
@@ -732,7 +749,10 @@ int Application::Run() {
             constexpr double kTimeoutSeconds = 600.0;
             m_reportSettledFrames = EvaluationSettled(evaluationIdle) ? m_reportSettledFrames + 1 : 0;
             const bool timedOut = std::chrono::duration<double>(std::chrono::steady_clock::now() - m_reportStart).count() > kTimeoutSeconds;
-            if (m_reportSettledFrames >= kSettledFrames || timedOut) {
+            if (m_reportSettledFrames >= kSettledFrames && !m_propertyProbeDone) {
+                // 次のフレームの UI で、設定の値が範囲の外にないかを見てから書く。
+                m_propertyProbeRequested = true;
+            } else if (m_reportSettledFrames >= kSettledFrames || timedOut) {
                 m_device.WaitForGpu();
                 bool reportOk = false;
                 if (!WriteEvaluationReport(timedOut, reportOk)) return 1;
@@ -830,7 +850,7 @@ bool Application::Headless() const {
     if (m_options.benchmarkFrames) return true;
     return !m_options.screenshotPath.empty() || !m_options.uiScreenshotPath.empty() ||
            !m_options.exportDirectory.empty() || !m_options.saveProjectPath.empty() ||
-           !m_options.reportPath.empty();
+           !m_options.reportPath.empty() || !m_options.catalogPath.empty();
 }
 
 void Application::DrawUi() {
@@ -984,6 +1004,9 @@ void Application::DrawUi() {
     if (!m_screenshotPending) {
         m_toasts.Draw();
     }
+    // --dump-catalog / --evaluate-report の設定の行の調べもの。
+    const bool catalogReady = !m_options.catalogPath.empty() && m_frameCounter >= 3;
+    if ((catalogReady || m_propertyProbeRequested) && !m_propertyProbeDone) RunPropertyProbes();
 }
 
 // 既定のドックレイアウト。

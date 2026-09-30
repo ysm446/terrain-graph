@@ -1,5 +1,6 @@
 #include "graph/NodeGraph.h"
 
+#include <algorithm>
 #include <array>
 
 // ノードの定義テーブル（種類・保存名・表示名・ピン構成）。
@@ -286,7 +287,7 @@ constexpr std::array<PinDefinition, 1> kModelOutputPins = {{
 constexpr std::array<PinDefinition, 1> kSnowPlumePins = {{
     {PinKind::Input, ValueType::Mask, "Source"},
 }};
-constexpr std::array<NodeDefinition, 57> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 54> kNodeDefinitions = {{
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins},
     {NodeKind::Surface, "surface", "Surface", kSurfacePins},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins},
@@ -343,6 +344,12 @@ constexpr std::array<NodeDefinition, 57> kNodeDefinitions = {{
     // 追加メニューには出さない。読み込みで定義が見つからなかったノードの受け皿。
     {NodeKind::Missing, "missing", "Missing", {}},
 }};
+// 宣言の要素数が実際より多いと、名前の空の定義（種類は Surface）が混ざり、
+// kind が空のノードを Surface として読んでしまう。
+static_assert(std::ranges::all_of(kNodeDefinitions, [](const NodeDefinition& definition) {
+                  return definition.name[0] != '\0';
+              }),
+              "kNodeDefinitions の要素数と定義の数を揃える");
 
 }  // namespace
 

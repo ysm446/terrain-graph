@@ -123,6 +123,7 @@ set(tg_sources
     src/app/ApplicationRoadPath.cpp
     src/app/ApplicationRoadMesh.cpp
     src/app/ApplicationReport.cpp
+    src/app/ApplicationProbe.cpp
     src/app/UndoHistory.cpp
     src/app/UndoHistory.h
     src/core/Log.cpp

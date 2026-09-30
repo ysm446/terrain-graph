@@ -27,6 +27,7 @@
 #include "rhi/PipelineCache.h"
 #include "rhi/ShaderCompiler.h"
 #include "ui/ImGuiLayer.h"
+#include "ui/UiStyle.h"
 #include "ui/Toast.h"
 #include "ui/AxisTranslationDrag.h"
 
@@ -348,12 +349,35 @@ private:
     // 開発用オプション（スクリーンショット / 書き出し / 保存）で動いているか。
     // 真のときはフレームレートを落とさない。
     bool Headless() const;
+    // 選択したノードの設定の行（グラフのパネルの下半分）。selected が nullptr なら案内だけ。
+    void DrawNodeProperties(graph::Node* selected);
     // --evaluate-report: 評価が落ち着いたか（本体の評価・雲や雪煙のマスク・配置の点の数まで）。
     bool EvaluationSettled(bool evaluationIdle);
     // --evaluate-report: レポートを書く。書けなければ偽。reportOk は問題が無かったか。
     bool WriteEvaluationReport(bool timedOut, bool& reportOk);
     // 読み込みから溜めた警告とエラー（--evaluate-report のときだけ）。
     std::vector<std::pair<LogLevel, std::string>> m_reportLog;
+    // 読み込みで読まなかった / 直した設定（io::SetGraphReadIssueSink の記録先）。
+    std::vector<io::GraphReadIssue> m_reportReadIssues;
+
+    // --- 設定の行の範囲（ノードカタログと評価のレポート。ApplicationProbe.cpp） ---
+    // 見えないウィンドウでノードの複製の設定を描き、行の範囲・既定値・書式を記録する。フレームの中で呼ぶ。
+    std::vector<ui::PropertyRecord> RecordNodeProperties(graph::Node& node);
+    bool CanTouchProperty(const graph::Node& node, const ui::PropertyRecord& record) const;
+    // 記録した行が編集する値の保存のキー（"." 区切り）。値を動かして書き出しを比べて求める。
+    // 求まらなければ空。
+    std::string FindPropertyPath(graph::Node& node, const ui::PropertyRecord& record,
+                                 const nlohmann::json& baseFlat);
+    nlohmann::json DescribeProperty(graph::Node& node, const ui::PropertyRecord& record,
+                                    const std::string& path);
+    // 種類の設定の行を、選択肢やオン・オフを切り替えて辿りながら集める（ノードカタログ用）。
+    nlohmann::json ProbeNodeParameters(const graph::Node& node);
+    // --dump-catalog の行の収集と、--evaluate-report の範囲の検査。DrawUi の最後で 1 度だけ行う。
+    void RunPropertyProbes();
+    nlohmann::json m_catalogParameters = nlohmann::json::object();  // kind → parameters
+    std::vector<nlohmann::json> m_reportRangeIssues;
+    bool m_propertyProbeRequested = false, m_propertyProbeDone = false;
+    int m_probeId = 0;
     uint32_t m_reportSettledFrames = 0;
     std::chrono::steady_clock::time_point m_reportStart = std::chrono::steady_clock::now();
     // 設定から決まる UI の拡大率。追従なら Windows の表示スケール。

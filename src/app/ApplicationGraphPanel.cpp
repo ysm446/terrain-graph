@@ -1988,6 +1988,15 @@ void Application::DrawGraphPanel() {
         }
         ui::EndPropertyTable();
     }
+    DrawNodeProperties(selected);
+    ImGui::EndChild();
+
+    ImGui::End();
+}
+
+// 選択したノードの設定の行。グラフのパネルのほか、ノードカタログと評価のレポートが
+// ノードの複製を渡して描き、行の範囲と既定値を記録する（ui::SetPropertyRecorder）。
+void Application::DrawNodeProperties(graph::Node* selected) {
     if (selected == nullptr) {
         ui::HintText("ノードを選ぶと設定が出る。背景の右クリックで追加、"
                      "ピンをドラッグして接続、Ctrl+C / Ctrl+V でコピー");
@@ -2806,9 +2815,6 @@ void Application::DrawGraphPanel() {
     } else {
         ui::HintText("出力ノード。「マテリアル」へ繋いだチェーンがプレビューになる");
     }
-    ImGui::EndChild();
-
-    ImGui::End();
 }
 
 }  // namespace tg

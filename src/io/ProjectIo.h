@@ -99,6 +99,28 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device, const P
 bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
                  rhi::PipelineCache& pipelineCache, const ProjectRefs& refs, ProjectWorkspace* workspace = nullptr);
 
+// グラフの読み込みで、ファイルに書いてあったのに読まなかった / 直した設定。
+// 読んだ設定を書き戻してファイルの値と比べて求める（知らないキー・範囲外で丸めた値・
+// 使えない列挙名・型違い）。node はファイルのノード ID、path は設定の中のキー（"." 区切り）。
+struct GraphReadIssue {
+    graph::GraphId node = 0;
+    std::string path;
+    std::string message;
+};
+// 設定している間、グラフの読み込みで GraphReadIssue を sink へ足す（評価のレポート用）。
+// nullptr で止める。普段の読み込みでは比べない。
+void SetGraphReadIssueSink(std::vector<GraphReadIssue>* sink);
+
+// ノード 1 つの設定を、保存と同じ形の JSON で返す（id・kind・ピン・位置などは除く）。
+// テクスチャなどの参照はライブラリの ID のまま書く。設定の行と保存のキーを対応づけるのに使う。
+nlohmann::json WriteNodeJson(const graph::Node& node);
+
+// WriteNodeJson の形の設定を読み、base の設定だけを差し替えたノードを out に作る。
+// 設定の JSON を書き換えて別の状態のノードを作るのに使う。
+bool ReadNodeJson(const graph::Node& base, const nlohmann::json& settings, graph::Node& out);
+// ノードの設定のうち列挙のキー（"." 区切り）と、取れる値（保存に書く名前）。
+nlohmann::json EnumFieldsOf(const graph::Node& node);
+
 // ノードカタログ。種類ごとの保存名・表示名・ピン（名前と型）・既定の設定（保存と同じ形）と、
 // 設定のうち列挙のキーが取る値。定義表と保存処理から作るので、コードとずれない。
 // スクリプトや LLM がグラフを書くときの資料にする（--dump-catalog）。GPU は使わない。

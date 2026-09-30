@@ -21,6 +21,7 @@
 #include <string>
 #include <system_error>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace tg::io {
@@ -1977,13 +1978,83 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
 
 // 戻り値はノードを 1 つ以上読めたか。空のグラフ節は「グラフ未使用」とみなし、
 // 呼び出し側が旧 layers からの移行に切り替える。
-bool ReadGraph(const json& source, graph::NodeGraph& graphData, const TextureReader& readTexture,
-               const std::function<compositor::MaterialAssetId(const json&)>& readMaterial,
-               const std::function<compositor::PaintMaskId(const json&)>& readPaint,
+// 評価のレポート用。読み込みで読まなかった / 直した値を記録する先（SetGraphReadIssueSink）。
+std::vector<GraphReadIssue>* g_graphReadIssues = nullptr;
+
+// ファイルに書いてあった値（input）と、読んだ設定を書き戻した値（written）を比べる。
+// 書き戻しに無いキーは読んでいない、値が違えば読み込みで直した（範囲外・不正・型違い）。
+void DiffReadGraphJson(const json& input, const json& written, const std::string& path,
+                       graph::GraphId node, std::vector<GraphReadIssue>& issues) {
+    const auto issue = [&](std::string message) { issues.push_back({node, path, std::move(message)}); };
+    if (input.is_object()) {
+        if (!written.is_object()) {
+            issue("オブジェクトとしては読まない（無視した）");
+            return;
+        }
+        for (const auto& [key, value] : input.items()) {
+            const std::string child = path.empty() ? key : path + "." + key;
+            if (!written.contains(key)) {
+                issues.push_back({node, child, "知らないキー（読まなかった）"});
+            } else {
+                DiffReadGraphJson(value, written[key], child, node, issues);
+            }
+        }
+        return;
+    }
+    if (input.is_array()) {
+        if (!written.is_array()) {
+            issue("配列としては読まない（無視した）");
+            return;
+        }
+        if (input.size() != written.size()) {
+            issue("要素数 " + std::to_string(input.size()) + " を " + std::to_string(written.size()) + " として読んだ");
+        }
+        for (size_t i = 0; i < std::min(input.size(), written.size()); ++i) {
+            DiffReadGraphJson(input[i], written[i], path + "." + std::to_string(i), node, issues);
+        }
+        return;
+    }
+    if (input.is_number() && written.is_number()) {
+        const double a = input.get<double>(), b = written.get<double>();
+        if (std::abs(a - b) > 1.0e-4 * std::max(1.0, std::abs(a))) {
+            issue("値 " + input.dump() + " を " + written.dump() + " に直した（範囲外か不正）");
+        }
+        return;
+    }
+    if (input == written) return;
+    if (input.type() != written.type()) {
+        issue("型が違うので使わなかった（" + input.dump() + " → " + written.dump() + "）");
+    } else {
+        issue("値 " + input.dump() + " は使えないので " + written.dump() + " にした");
+    }
+}
+
+bool ReadGraph(const json& source, graph::NodeGraph& graphData, const TextureReader& readTextureSource,
+               const std::function<compositor::MaterialAssetId(const json&)>& readMaterialSource,
+               const std::function<compositor::PaintMaskId(const json&)>& readPaintSource,
                const graph::TerrainScale& scaleFallback) {
     // ピンを名前で指したリンクや、ID を省いたピン / リンクを正規の形に直してから読む。
     json node = source;
     NormalizeGraphJson(node);
+    // 参照（テクスチャ / マテリアル / ペイント）は、書き戻しで元の書き方に戻せるように覚えておく。
+    std::unordered_map<compositor::TextureId, json> textureRefs;
+    std::unordered_map<compositor::MaterialAssetId, json> materialRefs;
+    std::unordered_map<compositor::PaintMaskId, json> paintRefs;
+    const TextureReader readTexture = [&](const json& value) {
+        const compositor::TextureId id = readTextureSource(value);
+        textureRefs.emplace(id, value);
+        return id;
+    };
+    const std::function<compositor::MaterialAssetId(const json&)> readMaterial = [&](const json& value) {
+        const compositor::MaterialAssetId id = readMaterialSource(value);
+        materialRefs.emplace(id, value);
+        return id;
+    };
+    const std::function<compositor::PaintMaskId(const json&)> readPaint = [&](const json& value) {
+        const compositor::PaintMaskId id = readPaintSource(value);
+        paintRefs.emplace(id, value);
+        return id;
+    };
     std::vector<graph::Node> nodes;
     std::vector<graph::Link> links;
     graph::GraphId maxId = 0;
@@ -2494,6 +2565,44 @@ bool ReadGraph(const json& source, graph::NodeGraph& graphData, const TextureRea
 
     if (nodes.empty()) {
         return false;
+    }
+    // 評価のレポート用: 読んだ設定を書き戻して、ファイルの値と比べる。
+    if (g_graphReadIssues != nullptr) {
+        std::unordered_map<graph::GraphId, const json*> sourceItems;
+        if (const json* items = FindMember(node, "nodes"); items != nullptr && items->is_array()) {
+            for (const json& item : *items) {
+                if (item.is_object() && item.contains("id") && item["id"].is_number_integer()) {
+                    sourceItems[item["id"].get<int>()] = &item;
+                }
+            }
+        }
+        graph::NodeGraph readBack;
+        readBack.Replace(nodes, {});
+        const auto lookup = [](const auto& refs, auto id) {
+            const auto found = refs.find(id);
+            return found != refs.end() ? found->second : json();
+        };
+        const json written = WriteGraph(
+            readBack, [&](compositor::TextureId id) { return lookup(textureRefs, id); },
+            [&](compositor::MaterialAssetId id) { return lookup(materialRefs, id); },
+            [&](compositor::PaintMaskId id) { return lookup(paintRefs, id); });
+        std::unordered_set<graph::GraphId> missingNodes;
+        for (const graph::Node& created : nodes) {
+            if (created.kind == graph::NodeKind::Missing) missingNodes.insert(created.id);
+        }
+        for (const json& item : written["nodes"]) {
+            const auto found = sourceItems.find(item["id"].get<int>());
+            // 扱えない種類のノードは設定を読んでいないので比べない（別にエラーになる）。
+            if (found == sourceItems.end() || missingNodes.contains(item["id"].get<int>())) continue;
+            // グラフの構造（ID・ピン・位置など）は比べない。設定だけを見る。
+            json input = *found->second;
+            json output = item;
+            for (const char* key : {"id", "kind", "component", "position", "inputs", "outputs", "note", "bypass"}) {
+                input.erase(key);
+                output.erase(key);
+            }
+            DiffReadGraphJson(input, output, "", item["id"].get<int>(), *g_graphReadIssues);
+        }
     }
     // Replace が壊れたリンクの除去と次の採番の再構築を行う。
     graphData.Replace(std::move(nodes), std::move(links));
@@ -3084,6 +3193,72 @@ void RemoveStalePaintMasks(const fs::path& directory, const std::vector<fs::path
 
 }  // namespace
 
+json WriteNodeJson(const graph::Node& node) {
+    graph::NodeGraph single;
+    single.Replace({node}, {});
+    // 参照は ID をそのまま書く（比べるためだけで、ファイルには出さない）。
+    json written = WriteGraph(
+        single, [](compositor::TextureId id) { return json(id); },
+        [](compositor::MaterialAssetId id) { return json(id); },
+        [](compositor::PaintMaskId id) { return json(id); });
+    json settings = json::object();
+    if (written.contains("nodes") && !written["nodes"].empty()) {
+        settings = std::move(written["nodes"][0]);
+        for (const char* key : {"id", "kind", "component", "position", "inputs", "outputs", "note", "bypass"}) {
+            settings.erase(key);
+        }
+    }
+    return settings;
+}
+
+bool ReadNodeJson(const graph::Node& base, const json& settings, graph::Node& out) {
+    const graph::NodeDefinition* definition = graph::FindNodeDefinition(base.kind);
+    if (definition == nullptr || !settings.is_object()) return false;
+    json item = settings;
+    item["id"] = 1;
+    item["kind"] = definition->name;
+    const json graphJson = {{"nodes", json::array({item})}, {"links", json::array()}};
+    // WriteNodeJson が ID のまま書いた参照を、そのまま ID として読む。
+    const auto asId = [](const json& value) {
+        return value.is_number_unsigned() ? value.get<uint32_t>() : 0u;
+    };
+    graph::NodeGraph graphData;
+    if (!ReadGraph(graphJson, graphData, asId, asId, asId, graph::TerrainScale{}) || graphData.Nodes().empty()) {
+        return false;
+    }
+    out = base;
+    out.settings = graphData.Nodes().front().settings;
+    return true;
+}
+
+json EnumFieldsOf(const graph::Node& node) {
+    std::vector<RecordedEnum> recorded;
+    g_enumRecorder = &recorded;
+    const json settings = WriteNodeJson(node);
+    g_enumRecorder = nullptr;
+    // 文字列の値のうち、EnumName が書いた値と一致し、その表が 1 つに決まるものを列挙とみなす。
+    json enums = json::object();
+    const json flat = settings.flatten();
+    for (const auto& entry : flat.items()) {
+        if (!entry.value().is_string()) continue;
+        const std::string value = entry.value().get<std::string>();
+        std::set<std::vector<std::string>> matches;
+        for (const RecordedEnum& record : recorded) {
+            if (record.chosen == value) matches.insert(record.names);
+        }
+        if (matches.size() == 1) {
+            std::string path = entry.key().substr(1);
+            std::replace(path.begin(), path.end(), '/', '.');
+            enums[path] = *matches.begin();
+        }
+    }
+    return enums;
+}
+
+void SetGraphReadIssueSink(std::vector<GraphReadIssue>* sink) {
+    g_graphReadIssues = sink;
+}
+
 json NodeCatalog() {
     static const char* const kValueTypeNames[] = {"Material", "Mask", "Path", "Volume", "",
                                                   "CloudShape", "Points", "Instances", "Wind",
@@ -3116,31 +3291,13 @@ json NodeCatalog() {
         // 既定の設定を保存と同じ書き方で出す。ファイルで省いた値はこの値になる。
         graph::NodeGraph graphData;
         graphData.CreateNode(definition.kind);
-        std::vector<RecordedEnum> recorded;
-        g_enumRecorder = &recorded;
         json written = WriteGraph(graphData, noTexture, noMaterial, noPaint);
-        g_enumRecorder = nullptr;
         json defaults = json::object();
         if (written.contains("nodes") && !written["nodes"].empty()) {
             defaults = written["nodes"][0];
             for (const char* key : {"id", "kind", "component", "position", "inputs", "outputs"}) defaults.erase(key);
         }
-        // 文字列の値のうち、EnumName が書いた値と一致し、その表が 1 つに決まるものを列挙とみなす。
-        json enums = json::object();
-        const json flat = defaults.flatten();
-        for (const auto& entry : flat.items()) {
-            if (!entry.value().is_string()) continue;
-            const std::string value = entry.value().get<std::string>();
-            std::set<std::vector<std::string>> matches;
-            for (const RecordedEnum& record : recorded) {
-                if (record.chosen == value) matches.insert(record.names);
-            }
-            if (matches.size() == 1) {
-                std::string path = entry.key().substr(1);
-                std::replace(path.begin(), path.end(), '/', '.');
-                enums[path] = *matches.begin();
-            }
-        }
+        const json enums = EnumFieldsOf(graphData.Nodes().front());
         item["defaults"] = std::move(defaults);
         if (!enums.empty()) item["enums"] = std::move(enums);
         nodes.push_back(std::move(item));

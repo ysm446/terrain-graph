@@ -802,9 +802,37 @@ void UnsavedMark(const char* tooltip, float size) {
     if (tooltip != nullptr && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", tooltip);
 }
 
+namespace {
+std::vector<PropertyRecord>* g_propertyRecorder = nullptr;
+
+void RecordProperty(PropertyRecord::Type type, const char* label, const char* tooltip, void* value,
+                    double shown, double minValue, double maxValue, double defaultValue,
+                    const char* format = "", bool logarithmic = false) {
+    if (g_propertyRecorder == nullptr) return;
+    PropertyRecord record;
+    record.type = type;
+    record.label = label != nullptr ? label : "";
+    record.tooltip = tooltip != nullptr ? tooltip : "";
+    record.format = format != nullptr ? format : "";
+    record.value = value;
+    record.shown = shown;
+    record.minValue = minValue;
+    record.maxValue = maxValue;
+    record.defaultValue = defaultValue;
+    record.logarithmic = logarithmic;
+    g_propertyRecorder->push_back(std::move(record));
+}
+}  // namespace
+
+void SetPropertyRecorder(std::vector<PropertyRecord>* recorder) {
+    g_propertyRecorder = recorder;
+}
+
 bool PropertyFloat(const char* label, float* value, float minValue, float maxValue,
                    float defaultValue, const char* tooltip, const char* format,
                    ImGuiSliderFlags flags, float snapStep) {
+    RecordProperty(PropertyRecord::Type::Float, label, tooltip, value, *value, minValue, maxValue,
+                   defaultValue, format, (flags & ImGuiSliderFlags_Logarithmic) != 0);
     // 読み込み直後の範囲外値を UI 側で吸収する。
     *value = std::clamp(*value, minValue, maxValue);
 
@@ -830,6 +858,7 @@ bool PropertyFloat(const char* label, float* value, float minValue, float maxVal
 
 bool PropertyInt(const char* label, int* value, int minValue, int maxValue, int defaultValue,
                  const char* tooltip) {
+    RecordProperty(PropertyRecord::Type::Int, label, tooltip, value, *value, minValue, maxValue, defaultValue);
     *value = std::clamp(*value, minValue, maxValue);
 
     PropertyLabel(label, NumericTooltip(tooltip));
@@ -852,6 +881,8 @@ bool PropertyInt(const char* label, int* value, int minValue, int maxValue, int 
 }
 
 bool PropertyBool(const char* label, bool* value, bool defaultValue, const char* tooltip) {
+    RecordProperty(PropertyRecord::Type::Bool, label, tooltip, value, *value ? 1.0 : 0.0, 0.0, 1.0,
+                   defaultValue ? 1.0 : 0.0);
     PropertyLabel(label, tooltip);
     bool changed = ImGui::Checkbox("##value", value);
 
@@ -871,6 +902,8 @@ namespace {
 // 変換の丸め誤差が少しずつ積もって値が動いてしまう。
 bool PropertyColorImpl(const char* label, float* rgb, const float* defaultRgb,
                        const char* tooltip, bool linear) {
+    RecordProperty(PropertyRecord::Type::Color, label, tooltip, rgb, 0.0, 0.0, 1.0, 0.0,
+                   linear ? "linear" : "srgb");
     PropertyLabel(label, tooltip);
 
     float shown[3];
@@ -924,6 +957,8 @@ bool PropertyCombo(const char* label, int* value, const char* const items[], int
     if (itemCount <= 0) {
         return false;
     }
+    RecordProperty(PropertyRecord::Type::Combo, label, tooltip, value, *value, 0, itemCount - 1, defaultValue);
+    if (g_propertyRecorder != nullptr) g_propertyRecorder->back().items.assign(items, items + itemCount);
     *value = std::clamp(*value, 0, itemCount - 1);
 
     PropertyLabel(label, tooltip);

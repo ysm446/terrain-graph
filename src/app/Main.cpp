@@ -124,10 +124,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         if (options.projectRoot.empty() || !workspace.Open(options.projectRoot)) return 1;
         return tg::io::MigrateSceneComponents(workspace, options.projectPath).empty() ? 1 : 0;
     }
-    if (!options.catalogPath.empty()) {
-        return tg::io::ProjectWorkspace::WriteJson(std::filesystem::absolute(options.catalogPath),
-                                                   tg::io::NodeCatalog()) ? 0 : 1;
-    }
     tg::Application app;
     if (!app.Initialize(options)) {
         app.Shutdown();
