@@ -167,21 +167,26 @@ C: "OO",21,0
         }
         const auto& lods = named.geometry->lods;
         if (lods.size() != 2 || lods[0].triangles != 2 || lods[1].triangles != 1) return 9;
-        // 既定は最大寸法（2 m）の 4 倍、次の段は 3 倍。設定があればそれを使う。
+        // 既定は基準の画角で最大寸法（2 m）の 4 倍の距離、次の段は 3 倍。設定があればそれを使う。
         using tg::renderer::LodStartDistance;
-        if (LodStartDistance(named, 0) != 0 || std::abs(LodStartDistance(named, 1) - 8) > 1e-4f ||
-            std::abs(LodStartDistance(named, 2) - 24) > 1e-4f)
+        constexpr float fov = tg::renderer::kLodReferenceFovY;
+        if (LodStartDistance(named, 0, fov) != 0 || std::abs(LodStartDistance(named, 1, fov) - 8) > 1e-3f ||
+            std::abs(LodStartDistance(named, 2, fov) - 24) > 1e-3f)
             return 10;
-        named.lodDistances = {5};
-        if (LodStartDistance(named, 1) != 5 || std::abs(LodStartDistance(named, 2) - 24) > 1e-4f) return 11;
+        named.lodScreenSizes = {tg::renderer::LodScreenSizeFromDistance(named, 5)};
+        if (std::abs(LodStartDistance(named, 1, fov) - 5) > 1e-3f || std::abs(LodStartDistance(named, 2, fov) - 24) > 1e-3f)
+            return 11;
+        // 画角を狭めて（tan を半分に）同じ画面サイズを保つには、倍の距離で替わる。
+        const float narrow = 2.0f * std::atan(std::tan(fov * 0.5f) * 0.5f);
+        if (std::abs(LodStartDistance(named, 1, narrow) - 10) > 1e-3f) return 13;
         // 背の高いモデルでも既定の距離は 300 m で頭打ち（インポスターへ早く替える）。
         ModelAsset tall;
         auto geometry = std::make_shared<tg::renderer::ModelGeometry>();
         geometry->minimum = {0, 0, 0};
         geometry->maximum = {6, 24, 6};
         tall.geometry = geometry;
-        if (std::abs(LodStartDistance(tall, 1) - 96) > 1e-4f || std::abs(LodStartDistance(tall, 2) - 288) > 1e-4f ||
-            std::abs(LodStartDistance(tall, 3) - 300) > 1e-4f)
+        if (std::abs(LodStartDistance(tall, 1, fov) - 96) > 1e-3f || std::abs(LodStartDistance(tall, 2, fov) - 288) > 1e-3f ||
+            std::abs(LodStartDistance(tall, 3, fov) - 300) > 1e-3f)
             return 12;
     }
     {

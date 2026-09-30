@@ -46,13 +46,20 @@ struct ModelAsset {
     std::filesystem::path path;
     std::shared_ptr<const ModelGeometry> geometry;
     std::vector<compositor::MaterialAssetId> materials;
-    // LOD の切り替え距離（m、等倍のとき）。[i] が LOD i+1 に替わる距離。
-    // 足りない段は LodStartDistance の既定値を使う。空なら全段が既定値。
-    std::vector<float> lodDistances;
+    // LOD の切り替えの画面サイズ。画面の高さに対する、モデルの最大寸法（等倍のとき）の割合。
+    // [i] が LOD i+1 に替わる大きさで、これより小さく映ると替わる。
+    // 足りない段は LodScreenSize の既定値を使う。空なら全段が既定値。
+    std::vector<float> lodScreenSizes;
     ModelImpostor impostor;
     std::string error;
 };
 bool LoadModel(const std::filesystem::path& path, ModelAsset& asset);
-// LOD lod に替わるカメラ距離（m、等倍のとき）。lod 0 は 0。
-float LodStartDistance(const ModelAsset& asset, size_t lod);
+// 既定の画面サイズと、旧形式（切り替え距離）からの換算に使う縦の画角。カメラの既定と同じ 45°。
+inline constexpr float kLodReferenceFovY = 0.7853981634f;
+// LOD lod に替わる画面サイズ（画面の高さに対する割合）。lod 0 は 1。
+float LodScreenSize(const ModelAsset& asset, size_t lod);
+// 縦の画角 fovY で LOD lod に替わるカメラ距離（m、等倍のとき）。lod 0 は 0。
+float LodStartDistance(const ModelAsset& asset, size_t lod, float fovY);
+// 旧形式の切り替え距離（基準の画角での m、等倍のとき）を画面サイズへ換算する。
+float LodScreenSizeFromDistance(const ModelAsset& asset, float distance);
 }  // namespace tg::renderer

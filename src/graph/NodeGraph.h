@@ -435,8 +435,8 @@ struct ModelScatterSettings {
     bool usePointSize = true;
     float maxDistance = 0; // m。0は距離制限なし
     int lod = 0;           // autoLod が偽のときに使う固定の段階
-    // 距離で LOD を選ぶ。切り替え距離はモデル側（ModelAsset::lodDistances）に持ち、
-    // インスタンスの倍率と lodBias を掛けて使う。
+    // 画面上の大きさで LOD を選ぶ。切り替えの画面サイズはモデル側（ModelAsset::lodScreenSizes）に持ち、
+    // カメラの画角で距離へ直し、インスタンスの倍率と lodBias を掛けて使う。
     bool autoLod = true;
     float lodBias = 1.0f;
 };

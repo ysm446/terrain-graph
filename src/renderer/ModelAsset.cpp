@@ -32,22 +32,33 @@ int LodFromName(const ufbx_string& name) {
     return lod;
 }
 }  // namespace
-float LodStartDistance(const ModelAsset& asset, size_t lod) {
-    if (lod == 0) return 0.0f;
-    if (lod - 1 < asset.lodDistances.size()) return asset.lodDistances[lod - 1];
-    // 未設定なら**描画効率を優先する**。最大寸法の 4 倍から段ごとに 3 倍ずつ遠くし、
-    // どの段も kDefaultLodMaxDistance で頭打ちにする。以前の「10 倍から」では、背の高い木
-    // （高さ 24 m のカラマツ）がインポスターへ替わるのが 2 km 先になり、数 km 先まで
+namespace {
+// 画面サイズの基準にするモデルの大きさ（バウンディングボックスの最大寸法）。
+float LodModelSize(const ModelAsset& asset) {
+    if (!asset.geometry) return 1.0f;
+    const auto& g = *asset.geometry;
+    return std::max({g.maximum.x - g.minimum.x, g.maximum.y - g.minimum.y, g.maximum.z - g.minimum.z, 0.01f});
+}
+}  // namespace
+float LodScreenSizeFromDistance(const ModelAsset& asset, float distance) {
+    return LodModelSize(asset) / (2.0f * std::tan(kLodReferenceFovY * 0.5f) * std::max(distance, 1.0e-4f));
+}
+float LodScreenSize(const ModelAsset& asset, size_t lod) {
+    if (lod == 0) return 1.0f;
+    if (lod - 1 < asset.lodScreenSizes.size()) return asset.lodScreenSizes[lod - 1];
+    // 未設定なら**描画効率を優先する**。基準の画角で最大寸法の 4 倍の距離から段ごとに 3 倍ずつ
+    // 遠くし、どの段も kDefaultLodMaxDistance で頭打ちにした距離に当たる大きさ。以前の「10 倍から」では、
+    // 背の高い木（高さ 24 m のカラマツ）がインポスターへ替わるのが 2 km 先になり、数 km 先まで
     // メッシュのまま大量に描かれて重かった。インポスター段（メッシュ段の数と同じ番号）も同じ式。
     constexpr float kFirstScale = 4.0f, kStep = 3.0f, kDefaultLodMaxDistance = 300.0f;
-    float size = 1.0f;
-    if (asset.geometry) {
-        const auto& g = *asset.geometry;
-        size = std::max({g.maximum.x - g.minimum.x, g.maximum.y - g.minimum.y,
-                         g.maximum.z - g.minimum.z, 0.01f});
-    }
-    return std::min(size * kFirstScale * std::pow(kStep, static_cast<float>(lod - 1)),
-                    kDefaultLodMaxDistance);
+    const float distance = std::min(LodModelSize(asset) * kFirstScale * std::pow(kStep, static_cast<float>(lod - 1)),
+                                    kDefaultLodMaxDistance);
+    return LodScreenSizeFromDistance(asset, distance);
+}
+float LodStartDistance(const ModelAsset& asset, size_t lod, float fovY) {
+    if (lod == 0) return 0.0f;
+    // 最大寸法 size が距離 d で画面の高さに占める割合は size / (2 d tan(fovY / 2))。
+    return LodModelSize(asset) / (2.0f * std::tan(fovY * 0.5f) * std::max(LodScreenSize(asset, lod), 1.0e-6f));
 }
 bool LoadModel(const std::filesystem::path& path, ModelAsset& asset) {
     std::ifstream stream(path, std::ios::binary | std::ios::ate);

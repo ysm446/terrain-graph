@@ -266,7 +266,7 @@ bool ModelPreview::CullInstances(rhi::Device& device, rhi::PipelineCache& cache,
     for (size_t level = 1; level < lods; ++level) {
         const bool impostor = m_impostorLevel && level + 1 == lods;
         const size_t modelLevel = impostor ? m_geometry->lods.size() : m_firstLod + level;
-        constants.lodStart[level] = LodStartDistance(model, modelLevel) * std::max(draw.lodBias, 0.0f);
+        constants.lodStart[level] = LodStartDistance(model, modelLevel, draw.fovY) * std::max(draw.lodBias, 0.0f);
     }
     for (size_t segment = 0; segment < segments; ++segment)
         constants.segmentFirst[segment] = m_segmentFirstArgument[segment];

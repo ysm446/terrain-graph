@@ -136,6 +136,7 @@ void Application::DrawModelScatters(ID3D12GraphicsCommandList* commandList,
             draw.usePointSize=scatter.settings.usePointSize; draw.shadow=shadow;
             draw.lodView=m_renderer.Debug()==renderer::DebugView::Lod;
             draw.viewProjection=viewProjection; draw.cameraPosition=m_renderer.GetCamera().Position();
+            draw.fovY=m_renderer.GetCamera().FovY();
             if (!shadow) {
                 draw.shadows=m_renderer.InstanceShadows();
                 const auto& clouds=m_renderer.InstanceClouds();
@@ -477,34 +478,44 @@ void Application::DrawModelPreviewWindow() {
         ui::EndPropertyTable();
     }
     if (!asset.error.empty()) ui::HintText(asset.error.c_str());
-    // インポスターを焼いてあれば、メッシュの段の後ろにインポスターの距離を足す。
+    // インポスターを焼いてあれば、メッシュの段の後ろにインポスターの段を足す。
     if (asset.geometry && (asset.geometry->lods.size() > 1 || asset.impostor.baked)) {
         const size_t count = asset.geometry->lods.size() + (asset.impostor.baked ? 1 : 0);
         ui::SectionHeader("LOD");
-        if (ui::BeginPropertyTable("modelLods", "インポスターの距離")) {
+        if (ui::BeginPropertyTable("modelLods", "インポスターの画面サイズ")) {
             renderer::ModelAsset defaults;
             defaults.geometry = asset.geometry;
             for (size_t lod = 1; lod < count; ++lod) {
                 ImGui::PushID(static_cast<int>(lod));
-                float value = renderer::LodStartDistance(asset, lod);
+                // 画面の高さに対する割合を % で見せる。
+                float value = renderer::LodScreenSize(asset, lod) * 100.0f;
                 const bool impostorLevel = asset.impostor.baked && lod + 1 == count;
-                const std::string label = impostorLevel ? "インポスターの距離" : "LOD" + std::to_string(lod) + " の距離";
-                if (ui::PropertyFloat(label.c_str(), &value, 0.0f, 100000.0f,
-                                      renderer::LodStartDistance(defaults, lod),
-                                      "カメラからこの距離より遠いと、この段階以降を使います。"
-                                      "等倍のときの値で、配置の倍率に合わせて伸び縮みします",
-                                      "%.1f m")) {
-                    // 未設定の段も今の値で埋めてから書き換える。手前の段より近くはしない。
-                    std::vector<float> distances(count - 1);
-                    for (size_t i = 1; i < count; ++i) distances[i - 1] = renderer::LodStartDistance(asset, i);
-                    distances[lod - 1] = std::max(value, lod > 1 ? distances[lod - 2] : 0.0f);
-                    asset.lodDistances = std::move(distances);
+                const std::string label = impostorLevel ? "インポスターの画面サイズ" : "LOD" + std::to_string(lod) + " の画面サイズ";
+                if (ui::PropertyFloat(label.c_str(), &value, 0.01f, 100.0f,
+                                      renderer::LodScreenSize(defaults, lod) * 100.0f,
+                                      "モデルの最大寸法が画面の高さに占める割合がこれより小さくなると、"
+                                      "この段階以降を使います。カメラの画角（焦点距離）を変えても同じ大きさで替わります",
+                                      "%.2f %%", ImGuiSliderFlags_Logarithmic)) {
+                    // 未設定の段も今の値で埋めてから書き換える。手前の段より大きくはしない。
+                    std::vector<float> sizes(count - 1);
+                    for (size_t i = 1; i < count; ++i) sizes[i - 1] = renderer::LodScreenSize(asset, i);
+                    sizes[lod - 1] = std::min(value / 100.0f, lod > 1 ? sizes[lod - 2] : 1.0f);
+                    asset.lodScreenSizes = std::move(sizes);
                     changed = true;
                 }
                 ImGui::PopID();
             }
             ui::EndPropertyTable();
         }
+        // 今のカメラの画角で、等倍の株がどの距離で替わるかの目安。
+        std::string distances = "今の画角での切り替え距離（等倍）:";
+        for (size_t lod = 1; lod < count; ++lod) {
+            char text[32];
+            std::snprintf(text, sizeof(text), "%s %.0f m", lod > 1 ? " /" : "",
+                          renderer::LodStartDistance(asset, lod, m_renderer.GetCamera().FovY()));
+            distances += text;
+        }
+        ui::HintText("%s", distances.c_str());
         ui::HintText("Model Scatter の「LOD 自動」で使います");
     }
     if (asset.geometry) DrawImpostorSection(asset);

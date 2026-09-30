@@ -287,9 +287,9 @@ compositor::NoiseParams ReadNoise(const json& node, const char* key,
 
 // --- モデル ---------------------------------------------------------------
 //
-// LOD の切り替え距離。未設定（空）のときは書かず、読み手は既定値を使う。
-void WriteModelLodDistances(const renderer::ModelAsset& asset, json& node) {
-    if (!asset.lodDistances.empty()) node["lodDistances"] = asset.lodDistances;
+// LOD の切り替えの画面サイズ。未設定（空）のときは書かず、読み手は既定値を使う。
+void WriteModelLodScreenSizes(const renderer::ModelAsset& asset, json& node) {
+    if (!asset.lodScreenSizes.empty()) node["lodScreenSizes"] = asset.lodScreenSizes;
 }
 // インポスター。画像のパスの書き方は file に任せる（文書では相対パス、.tgmodel では参照）。
 // 既定の設定で焼いていなければ書かない。
@@ -351,12 +351,20 @@ fs::path ImpostorPathFromString(const json& value, const fs::path& base) {
                ? base / FromUtf8(value.get<std::string>())
                : fs::path{};
 }
-void ReadModelLodDistances(const json& node, renderer::ModelAsset& asset) {
-    asset.lodDistances.clear();
+// 形状を読んだ後に呼ぶ。旧形式の切り替え距離（lodDistances、基準の画角での m）は
+// モデルの寸法から画面サイズへ換算して読む（基準の画角なら同じ距離で替わる）。
+void ReadModelLodScreenSizes(const json& node, renderer::ModelAsset& asset) {
+    asset.lodScreenSizes.clear();
+    if (const json* values = FindMember(node, "lodScreenSizes"); values != nullptr && values->is_array()) {
+        for (const json& value : *values)
+            asset.lodScreenSizes.push_back(value.is_number() ? std::clamp(value.get<float>(), 1.0e-6f, 10.0f) : 1.0f);
+        return;
+    }
     const json* values = FindMember(node, "lodDistances");
     if (values == nullptr || !values->is_array()) return;
     for (const json& value : *values)
-        asset.lodDistances.push_back(value.is_number() ? std::clamp(value.get<float>(), 0.0f, 1.0e6f) : 0.0f);
+        asset.lodScreenSizes.push_back(std::clamp(renderer::LodScreenSizeFromDistance(
+            asset, value.is_number() ? std::clamp(value.get<float>(), 0.0f, 1.0e6f) : 0.0f), 1.0e-6f, 10.0f));
 }
 
 // --- マテリアル -----------------------------------------------------------
@@ -3175,7 +3183,7 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
             models.push_back({{"id", asset.id}, {"name", asset.name},
                               {"path", RelativePathString(asset.path, baseDir)},
                               {"materials", slots}});
-            WriteModelLodDistances(asset, models.back());
+            WriteModelLodScreenSizes(asset, models.back());
             WriteModelImpostor(asset, models.back(), [&](const fs::path& path) { return json(RelativePathString(path, baseDir)); });
             if (workspace) { models.back()["_assetPath"] = ToUtf8Portable(asset.assetPath); models.back()["uid"] = asset.assetUid; }
         }
@@ -3406,7 +3414,7 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
                 if (!renderer::LoadModel(asset.path, asset)) {
                     TG_LOG_WARN("モデルの読み込みに失敗: %s", asset.error.c_str());
                 }
-                ReadModelLodDistances(node, asset);
+                ReadModelLodScreenSizes(node, asset);
                 ReadModelImpostor(node, asset, [&](const json& value) { return ImpostorPathFromString(value, baseDir); });
                 if (const json* slots = FindMember(node, "materials"); slots && slots->is_array()) {
                     asset.materials.resize(std::max(asset.materials.size(), slots->size()));
@@ -3694,7 +3702,7 @@ bool SaveSharedAssets(ProjectWorkspace& workspace, const ProjectRefs& refs, cons
         }
         json body = {{"name", asset.name}, {"uid", asset.assetUid},
                      {"source", source(asset.path)}, {"materials", slots}};
-        WriteModelLodDistances(asset, body);
+        WriteModelLodScreenSizes(asset, body);
         // 画像が消えていても保存は止めない（参照を落とし、読むときは焼いていない扱い）。
         WriteModelImpostor(asset, body, [&](const fs::path& path) {
             std::error_code error;
@@ -3797,7 +3805,7 @@ bool LoadSharedAsset(ProjectWorkspace& workspace, const fs::path& path,
             const auto source = FromUtf8(ReadString(node, "path"));
             if (!loaded->geometry || loaded->path != source) { loaded->path = source; renderer::LoadModel(source, *loaded); }
             loaded->materials.resize(std::max(loaded->materials.size(), node["materials"].size()), compositor::kNoMaterialAsset);
-            ReadModelLodDistances(node, *loaded);
+            ReadModelLodScreenSizes(node, *loaded);
             ReadModelImpostor(node, *loaded, [&](const json& value) { return ImpostorPathFromString(value, {}); });
             size_t slot = 0;
             for (const auto& value : node["materials"]) {
@@ -3813,7 +3821,7 @@ bool LoadSharedAsset(ProjectWorkspace& workspace, const fs::path& path,
         asset.name = ReadString(node, "name"); asset.path = FromUtf8(ReadString(node, "path"));
         renderer::LoadModel(asset.path, asset);
         asset.materials.resize(std::max(asset.materials.size(), node["materials"].size()));
-        ReadModelLodDistances(node, asset);
+        ReadModelLodScreenSizes(node, asset);
         ReadModelImpostor(node, asset, [&](const json& value) { return ImpostorPathFromString(value, {}); });
         size_t i = 0;
         for (const auto& value : node["materials"]) {
@@ -3989,9 +3997,9 @@ std::map<fs::path, size_t> FingerprintAssets(const ProjectRefs& refs) {
     for (const auto& asset : refs.materials.Entries())
         add(asset.assetPath, WriteMaterialBody(asset, [](compositor::TextureId id) { return json(id); }));
     if (refs.models) for (const auto& asset : *refs.models) {
-        // LOD の距離とインポスターも保存する中身なので含める（焼いただけで未保存にならなかった）。
+        // LOD の画面サイズとインポスターも保存する中身なので含める（焼いただけで未保存にならなかった）。
         json body = {{"source", ToUtf8Portable(asset.path)}, {"materials", asset.materials}, {"name", asset.name}};
-        WriteModelLodDistances(asset, body);
+        WriteModelLodScreenSizes(asset, body);
         WriteModelImpostor(asset, body, [](const fs::path& path) { return json(ToUtf8Portable(path)); });
         add(asset.assetPath, body);
     }

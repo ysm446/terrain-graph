@@ -26,7 +26,8 @@ struct ModelInstanceDraw {
     float maxDistance = 0;
     // 全 LOD を用意したときだけ使う。lodBias はモデルの切り替え距離に掛ける倍率。
     // fadeBand は切り替え距離に対する重ね合わせの幅（0.15 なら距離の 15% をかけて移る）。
-    float lodBias = 1, fadeBand = 0.15f;
+    // fovY はカメラの縦の画角。モデルの画面サイズを切り替え距離へ直すのに使う（影でも本描画のカメラ）。
+    float lodBias = 1, fadeBand = 0.15f, fovY = kLodReferenceFovY;
     SceneShadowData shadows;
     // 雲影。地形（MeshPbr）と同じ大気設定で CloudShadow を引く。atmosphericMode が 0 なら掛けない。
     AtmosphereSettings atmosphere;
