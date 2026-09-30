@@ -1,8 +1,10 @@
 #include "io/SceneComponents.h"
+#include "io/GraphJson.h"
 #include "app/AssetSelectionContext.h"
 #include "io/AssetRelations.h"
 #include <fstream>
 #include <iostream>
+#include <set>
 
 int main() {
     namespace fs = std::filesystem;
@@ -57,6 +59,44 @@ int main() {
             {"asset", workspace.Reference(asset)}}})}};
         check(ExpandSceneComponents(workspace, document) && document["graph"]["nodes"].size() == 1,
               "new graph expands as scene component");
+    }
+    // ピン ID を振らず、リンクを [ノード ID, ピン名 か 番号] で書いたグラフを正規の形に直す。
+    {
+        json graph = json::parse(R"({
+            "nodes": [
+                {"id": 10, "kind": "heightmap"},
+                {"id": 11, "kind": "lake"},
+                {"id": 1, "kind": "output", "inputs": [2]},
+                {"id": 20, "kind": "cloudMerge"}
+            ],
+            "links": [
+                {"from": [10, "result"], "to": [11, "Base"]},
+                {"from": [11, 0], "to": [1, "Material"]},
+                {"from": [11, "water_level"], "to": [20, "Shape 3"]},
+                {"from": [10, "Nope"], "to": [11, "Water Mask"]},
+                {"from": [99, "Result"], "to": [11, "Water Mask"]}
+            ]})");
+        NormalizeGraphJson(graph);
+        const auto pin = [&](size_t node, const char* key, size_t index) { return graph["nodes"][node][key][index]; };
+        const auto& links = graph["links"];
+        check(pin(0, "outputs", 0).is_number_integer() && graph["nodes"][1]["inputs"].size() == 2 &&
+              graph["nodes"][1]["outputs"].size() == 4 && pin(2, "inputs", 0) == 2,
+              "normalize fills missing pin IDs and keeps given ones");
+        check(links.size() == 3, "normalize drops links to unknown pins or nodes");
+        check(links.size() == 3 && links[0]["start"] == pin(0, "outputs", 0) && links[0]["end"] == pin(1, "inputs", 0) &&
+              links[1]["start"] == pin(1, "outputs", 0) && links[1]["end"] == 2 &&
+              links[2]["start"] == pin(1, "outputs", 3),
+              "normalize resolves pins by name (case / space / underscore insensitive) and index");
+        check(graph["nodes"][3]["inputs"].size() == 3 && links.size() == 3 && links[2]["end"] == pin(3, "inputs", 2),
+              "normalize grows variadic merge inputs by numbered name");
+        std::set<int> ids;
+        bool unique = true;
+        for (const auto& node : graph["nodes"]) {
+            unique &= ids.insert(node["id"].get<int>()).second;
+            for (const auto* key : {"inputs", "outputs"}) for (const auto& id : node[key]) unique &= ids.insert(id.get<int>()).second;
+        }
+        for (const auto& link : links) unique &= !link.contains("from") && ids.insert(link["id"].get<int>()).second;
+        check(unique, "normalized IDs are unique across nodes, pins and links");
     }
     check(CreateGraphAsset(workspace, root.parent_path(), false).empty(), "create outside root refused");
     std::error_code folderError;

@@ -1,6 +1,7 @@
 #include "io/ProjectIo.h"
 #include "io/LayerMaterialIo.h"
 #include "io/SceneComponents.h"
+#include "io/GraphJson.h"
 #include <set>
 #include <map>
 
@@ -1966,10 +1967,13 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
 
 // 戻り値はノードを 1 つ以上読めたか。空のグラフ節は「グラフ未使用」とみなし、
 // 呼び出し側が旧 layers からの移行に切り替える。
-bool ReadGraph(const json& node, graph::NodeGraph& graphData, const TextureReader& readTexture,
+bool ReadGraph(const json& source, graph::NodeGraph& graphData, const TextureReader& readTexture,
                const std::function<compositor::MaterialAssetId(const json&)>& readMaterial,
                const std::function<compositor::PaintMaskId(const json&)>& readPaint,
                const graph::TerrainScale& scaleFallback) {
+    // ピンを名前で指したリンクや、ID を省いたピン / リンクを正規の形に直してから読む。
+    json node = source;
+    NormalizeGraphJson(node);
     std::vector<graph::Node> nodes;
     std::vector<graph::Link> links;
     graph::GraphId maxId = 0;

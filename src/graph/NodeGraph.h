@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <span>
 #include <string>
@@ -723,6 +724,11 @@ private:
 std::span<const NodeDefinition> NodeDefinitions();
 const NodeDefinition* FindNodeDefinition(NodeKind kind);
 const NodeDefinition* FindNodeDefinitionByName(std::string_view name);
+// 定義のピンを名前で探し、同じ向き（入力 / 出力）のピンの中での番号を返す。
+// ファイルのリンクを「ノード ID + ピン名」でも書けるようにするため。ラベルと、
+// 大文字小文字・空白・'_'・'-' を無視して比べる（"waterLevel" は "Water Level" に一致）。
+std::optional<size_t> FindPinDefinitionIndex(const NodeDefinition& definition, PinKind kind,
+                                             std::string_view name);
 // レイヤー設定を持つ種類か（サーフェス / シェイプ / 水面 / ハイトマップ）。
 bool IsLayerNodeKind(NodeKind kind);
 // 入力を持たないソースか。下地が無いのでマスクも効かない。

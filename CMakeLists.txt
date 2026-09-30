@@ -128,6 +128,7 @@ set(tg_sources
     src/core/Log.h
     src/graph/SurfacePresetGraph.cpp
     src/graph/NodeGraph.cpp
+    src/graph/NodeDefinitions.cpp
     src/graph/NodeGraph.h
     src/graph/Path.cpp
     src/graph/RoadPath.cpp
@@ -166,6 +167,7 @@ set(tg_sources
     src/io/MaterialExport.cpp
     src/io/MaterialExport.h
     src/io/ProjectWorkspace.cpp src/io/SceneComponents.cpp
+    src/io/GraphJson.cpp src/io/GraphJson.h
     src/app/ApplicationAssetSaving.cpp
     src/app/ApplicationAssetBrowser.cpp
     src/app/ApplicationReferenceViewer.cpp
@@ -335,6 +337,7 @@ add_executable(terrain_graph_tests
     src/compositor/MaterialStack.h
     src/graph/SurfacePresetGraph.cpp
     src/graph/NodeGraph.cpp
+    src/graph/NodeDefinitions.cpp
     src/graph/NodeGraph.h
     src/graph/Path.cpp
     src/graph/RoadPath.cpp
@@ -369,6 +372,8 @@ add_library(terrain_graph_test_io STATIC
     src/graph/SurfacePresetGraph.cpp
     src/io/ProjectWorkspace.cpp
     src/io/SceneComponents.cpp
+    src/io/GraphJson.cpp
+    src/graph/NodeDefinitions.cpp
     src/core/Log.cpp
 )
 target_include_directories(terrain_graph_test_io PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")

@@ -46,9 +46,44 @@ bool StartsWithNeutralPlane(const tg::graph::CompiledGraph& compiled) {
            layer.heightBase == tg::compositor::kHeightPivot;
 }
 
+// ファイルのリンクはピンを名前でも指せる。名前で一意に決まらないと繋ぎ先がずれる。
+void RunPinNameTests() {
+    Section("ピン名での指定");
+    using tg::graph::FindPinDefinitionIndex;
+    using tg::graph::PinKind;
+    bool unique = true;
+    for (const tg::graph::NodeDefinition& definition : tg::graph::NodeDefinitions()) {
+        for (const PinKind kind : {PinKind::Input, PinKind::Output}) {
+            size_t index = 0;
+            for (const tg::graph::PinDefinition& pin : definition.pins) {
+                if (pin.kind != kind) {
+                    continue;
+                }
+                if (FindPinDefinitionIndex(definition, kind, pin.label) != index) {
+                    unique = false;
+                    std::printf("    %s の %s が一意に引けない\n", definition.name, pin.label);
+                }
+                ++index;
+            }
+        }
+    }
+    Check(unique, "全ノードのピンはラベルで一意に引ける");
+
+    const tg::graph::NodeDefinition* lake = tg::graph::FindNodeDefinition(NodeKind::Lake);
+    Check(lake != nullptr && FindPinDefinitionIndex(*lake, PinKind::Output, "Water Level") == 3u &&
+              FindPinDefinitionIndex(*lake, PinKind::Output, "waterLevel") == 3u &&
+              FindPinDefinitionIndex(*lake, PinKind::Output, "water_level") == 3u &&
+              FindPinDefinitionIndex(*lake, PinKind::Input, "water-mask") == 1u,
+          "大文字小文字・空白・'_'・'-' を無視して引ける");
+    Check(lake != nullptr && !FindPinDefinitionIndex(*lake, PinKind::Input, "Water Level") &&
+              !FindPinDefinitionIndex(*lake, PinKind::Output, ""),
+          "向きの違うピンと空の名前は引けない");
+}
+
 }  // namespace
 
 void RunNodeGraphTests() {
+    RunPinNameTests();
     {
         Section("バイパス（ノードを飛ばす）");
         auto graph = NodeGraph::CreateDefault();

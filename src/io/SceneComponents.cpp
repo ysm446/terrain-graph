@@ -1,4 +1,5 @@
 #include "io/SceneComponents.h"
+#include "io/GraphJson.h"
 #include "core/PathUtf8.h"
 #include "core/Log.h"
 #include <algorithm>
@@ -368,8 +369,10 @@ bool ExpandSceneComponents(ProjectWorkspace& workspace, json& document) {
         const int component = role == "cloud" ? 1 : 0;
         const auto path = workspace.Resolve(entry.value("asset", json::object()));
         json body;
-        if (path.empty() || !workspace.ReadAsset(path, Kind(component), body) ||
-            !GraphValid(body.value("graph", json()))) return false;
+        if (path.empty() || !workspace.ReadAsset(path, Kind(component), body)) return false;
+        // ピンを名前で指したリンクなどを、ID の付け替えの前に正規の形へ直す。
+        if (body.contains("graph")) NormalizeGraphJson(body["graph"]);
+        if (!GraphValid(body.value("graph", json()))) return false;
         std::map<int, int> resources[4];
         for (int table = 0; table < 4; ++table) {
             const auto values = body.value(Tables[table], json::array());
