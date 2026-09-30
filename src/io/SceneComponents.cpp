@@ -361,6 +361,7 @@ bool ExpandSceneComponents(ProjectWorkspace& workspace, json& document) {
     result["graph"] = {{"nodes", json::array()}, {"links", json::array()}};
     for (const auto* key : Tables) result[key] = json::array();
     int nextGraphId = 1;
+    std::set<int> usedGraphIds;  // 部品をまたいで ID を重ねない
     std::map<std::string, int> knownResources[4];
     std::set<std::string> roles;
     for (const auto& entry : document["components"]) {
@@ -403,7 +404,17 @@ bool ExpandSceneComponents(ProjectWorkspace& workspace, json& document) {
         std::map<int, int> ids;
         const auto remap = [&](json& id) {
             const int old = id.get<int>();
-            if (!ids.contains(old)) ids[old] = nextGraphId++;
+            if (!ids.contains(old)) {
+                // ファイルの ID は、先に読んだ部品と重ならない限りそのまま使う。
+                // ログや評価のレポートに出る ID が、手で書いたファイルの ID と一致するように。
+                int assigned = old;
+                if (usedGraphIds.contains(assigned)) {
+                    while (usedGraphIds.contains(nextGraphId)) ++nextGraphId;
+                    assigned = nextGraphId;
+                }
+                usedGraphIds.insert(assigned);
+                ids[old] = assigned;
+            }
             id = ids.at(old);
         };
         for (auto& node : graph["nodes"]) {

@@ -98,6 +98,29 @@ int main() {
         for (const auto& link : links) unique &= !link.contains("from") && ids.insert(link["id"].get<int>()).second;
         check(unique, "normalized IDs are unique across nodes, pins and links");
     }
+    // 部品を展開するとき、ファイルの ID は重ならない限りそのまま使い、重なったものだけ振り直す。
+    {
+        const auto terrainAsset = CreateGraphAsset(workspace, root, false);
+        const auto cloudAsset = CreateGraphAsset(workspace, root, true);
+        json terrainBody;
+        check(ProjectWorkspace::ReadJson(terrainAsset, terrainBody), "read terrain asset for ID test");
+        terrainBody["graph"]["nodes"].push_back({{"id", 9001}, {"kind", "maskNoise"}});
+        check(ProjectWorkspace::WriteJson(terrainAsset, terrainBody), "write terrain asset for ID test");
+        json document = {{"components", json::array({
+            {{"role", "terrain"}, {"asset", workspace.Reference(terrainAsset)}},
+            {{"role", "cloud"}, {"asset", workspace.Reference(cloudAsset)}}})}};
+        check(ExpandSceneComponents(workspace, document), "expand terrain and cloud components");
+        std::set<int> ids;
+        bool unique = true, keptTerrain = false, keptHandWritten = false;
+        for (const auto& node : document["graph"]["nodes"]) {
+            unique &= ids.insert(node["id"].get<int>()).second;
+            for (const auto* key : {"inputs", "outputs"}) for (const auto& id : node[key]) unique &= ids.insert(id.get<int>()).second;
+            if (node["component"] == 0 && node["kind"] == "output") keptTerrain = node["id"] == 1;
+            if (node["kind"] == "maskNoise") keptHandWritten = node["id"] == 9001;
+        }
+        check(unique, "expanded component IDs are unique across components");
+        check(keptTerrain && keptHandWritten, "expanded component keeps file IDs that do not collide");
+    }
     check(CreateGraphAsset(workspace, root.parent_path(), false).empty(), "create outside root refused");
     std::error_code folderError;
     const auto emptyFolder = workspace.UniquePath(root, "empty-folder", "");

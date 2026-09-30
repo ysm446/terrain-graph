@@ -73,6 +73,10 @@ tg::StartupOptions ParseCommandLine() {
         } else if (argument == L"--export" && (i + 1) < argc) {
             options.exportDirectory = argv[i + 1];
             ++i;
+        } else if (argument == L"--evaluate-report" && (i + 1) < argc) {
+            options.reportPath = argv[++i];
+        } else if (argument == L"--report-thumbnail" && (i + 1) < argc) {
+            options.reportThumbnailPath = argv[++i];
         } else if (argument == L"--screenshot-ui" && (i + 1) < argc) {
             options.uiScreenshotPath = argv[i + 1];
             ++i;

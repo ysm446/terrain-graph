@@ -3879,8 +3879,26 @@ bool LoadSharedAsset(ProjectWorkspace& workspace, const fs::path& path,
         for (const auto& link : links) nextId = std::max(nextId, link.id + 1);
         std::erase_if(nodes, [&](const auto& node) { return node.component == graphComponent; });
         std::erase_if(links, [&](const auto& link) { return removedPins.contains(link.startPin) || removedPins.contains(link.endPin); });
+        std::set<graph::GraphId> used;  // 残す部品の ID
+        for (const auto& node : nodes) {
+            used.insert(node.id);
+            for (const auto* pins : {&node.inputs, &node.outputs}) for (const auto& pin : *pins) used.insert(pin.id);
+        }
+        for (const auto& link : links) used.insert(link.id);
         std::map<graph::GraphId, graph::GraphId> ids;
-        const auto remap = [&](graph::GraphId id) { if (!ids.contains(id)) ids[id] = nextId++; return ids.at(id); };
+        // 残す部品と重ならない限りファイルの ID のまま使う（ログや評価のレポートの ID をファイルと揃える）。
+        const auto remap = [&](graph::GraphId id) {
+            if (!ids.contains(id)) {
+                graph::GraphId assigned = id;
+                if (used.contains(assigned)) {
+                    while (used.contains(nextId)) ++nextId;
+                    assigned = nextId;
+                }
+                used.insert(assigned);
+                ids[id] = assigned;
+            }
+            return ids.at(id);
+        };
         for (auto node : imported.Nodes()) {
             node.id = remap(node.id); node.component = graphComponent;
             for (auto* pins : {&node.inputs, &node.outputs}) for (auto& pin : *pins) { pin.id = remap(pin.id); pin.nodeId = node.id; }

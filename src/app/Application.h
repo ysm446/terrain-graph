@@ -74,6 +74,11 @@ struct StartupOptions {
     // 指定すると、ウィンドウ全体（UI 込み）を PNG に書き出して終了する。
     // 画面キャプチャは他ウィンドウを掴むことがあるため、確認にはこちらを使う。
     std::filesystem::path uiScreenshotPath;
+    // 指定すると、読み込んだグラフの評価が落ち着くまで待ってから、エラー・寸法・メッシュ数・
+    // 配置数などを JSON に書いて終了する（--evaluate-report）。スクリプトや LLM が UI を見ずに
+    // グラフを確かめるための経路。reportThumbnailPath を指定するとビューポートの縮小画像も書く。
+    std::filesystem::path reportPath;
+    std::filesystem::path reportThumbnailPath;
     uint32_t benchmarkFrames = 0;
     bool referenceCloudLighting = false;
     // --gpu-validation。Debug のデバッグレイヤーに加えて GPU ベースバリデーションを有効にする。
@@ -341,6 +346,14 @@ private:
     // 開発用オプション（スクリーンショット / 書き出し / 保存）で動いているか。
     // 真のときはフレームレートを落とさない。
     bool Headless() const;
+    // --evaluate-report: 評価が落ち着いたか（本体の評価・雲や雪煙のマスク・配置の点の数まで）。
+    bool EvaluationSettled(bool evaluationIdle);
+    // --evaluate-report: レポートを書く。書けなければ偽。reportOk は問題が無かったか。
+    bool WriteEvaluationReport(bool timedOut, bool& reportOk);
+    // 読み込みから溜めた警告とエラー（--evaluate-report のときだけ）。
+    std::vector<std::pair<LogLevel, std::string>> m_reportLog;
+    uint32_t m_reportSettledFrames = 0;
+    std::chrono::steady_clock::time_point m_reportStart = std::chrono::steady_clock::now();
     // 設定から決まる UI の拡大率。追従なら Windows の表示スケール。
     float DesiredUiScale() const;
     // 拡大率を掛けた既定のクライアント領域。1920x1080 を拡大率倍したもの。

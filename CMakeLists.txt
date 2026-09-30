@@ -122,6 +122,7 @@ set(tg_sources
     src/app/ApplicationViewport.cpp
     src/app/ApplicationRoadPath.cpp
     src/app/ApplicationRoadMesh.cpp
+    src/app/ApplicationReport.cpp
     src/app/UndoHistory.cpp
     src/app/UndoHistory.h
     src/core/Log.cpp

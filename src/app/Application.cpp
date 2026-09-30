@@ -725,6 +725,21 @@ int Application::Run() {
             nextScreenshotFrame = static_cast<uint64_t>(m_frameCounter) + m_options.screenshotInterval;
         }
 
+        // 評価のレポート。落ち着いた状態が続いてから（評価器の起動が 1 フレームずつずれるため）、
+        // または時間切れで書いて終了する。終了コードは 0: 問題なし、2: 問題あり、1: 書けなかった。
+        if (!m_options.reportPath.empty()) {
+            constexpr uint32_t kSettledFrames = 10;
+            constexpr double kTimeoutSeconds = 600.0;
+            m_reportSettledFrames = EvaluationSettled(evaluationIdle) ? m_reportSettledFrames + 1 : 0;
+            const bool timedOut = std::chrono::duration<double>(std::chrono::steady_clock::now() - m_reportStart).count() > kTimeoutSeconds;
+            if (m_reportSettledFrames >= kSettledFrames || timedOut) {
+                m_device.WaitForGpu();
+                bool reportOk = false;
+                if (!WriteEvaluationReport(timedOut, reportOk)) return 1;
+                return reportOk ? 0 : 2;
+            }
+        }
+
     }
     return 0;
 }
@@ -814,7 +829,8 @@ void Application::SubmitSnowPlumes() {
 bool Application::Headless() const {
     if (m_options.benchmarkFrames) return true;
     return !m_options.screenshotPath.empty() || !m_options.uiScreenshotPath.empty() ||
-           !m_options.exportDirectory.empty() || !m_options.saveProjectPath.empty();
+           !m_options.exportDirectory.empty() || !m_options.saveProjectPath.empty() ||
+           !m_options.reportPath.empty();
 }
 
 void Application::DrawUi() {
@@ -1025,6 +1041,7 @@ void Application::PushStatus(LogLevel level, const char* text) {
     if (text == nullptr) {
         return;
     }
+    if (!m_options.reportPath.empty() && level != LogLevel::Info) m_reportLog.emplace_back(level, text);
     m_status.text = text;
     m_status.level = level;
     m_status.time = std::chrono::steady_clock::now();

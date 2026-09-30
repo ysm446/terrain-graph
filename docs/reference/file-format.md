@@ -1,7 +1,7 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-10-01 03:07
+更新日時: 2026-10-01 03:17
 
 ## 大気散乱スカイと作業環境（シーン版3）
 
@@ -395,6 +395,11 @@ RGB をそのまま使うマップ（ベースカラー / 法線）はテクス�
 - 解決できないリンク（無いノード・無いピン名）は、そのノードにあるピン名を添えて
   ログに警告し、捨てる。
 - ノードの設定を省いた値は既定値で埋まる（どの種類も既定値を持って読む）。
+- シーンの部品（`.tgterrain` / `.tgcloud`）を展開するとき、ノード・ピン・リンクの ID は
+  **先に読んだ部品と重ならない限りファイルの値のまま**使い、重なったものだけ振り直す。
+  地形 / 雲グラフをシーンに重ねて開くとき（アセットブラウザ・`--open-graph`）も、
+  残す部品と重ならない限り同じ。ログや評価のレポートに出るノード ID は、手で書いた
+  ファイルの ID と一致する。
 - 版 3 のファイルには `apply`（当時の「プレビューに適用」）がある。
   読み込みの分岐だけに使い、書き出しはしない。
 
@@ -463,6 +468,60 @@ RGB をそのまま使うマップ（ベースカラー / 法線）はテクス�
 `mask` / `height` は画像への参照（ルートからの相対パスと `.meta` の ID）。`width` は境界の幅、`repeat` は道に沿って
 模様が 1 周する長さ、`depth` は凹凸の深さ（どれも m）。マスクとハイトは R を読む。ワークスペースは `.tgboundary` を
 ネイティブのアセット（本文に ID を持つ）として索引し、アセットブラウザにも出す。
+
+## 評価レポート（`--evaluate-report`）
+
+UI を見ずにグラフを確かめるための出力。スクリプトや LLM がグラフを書いて評価させ、
+結果を読んで直す、という使い方を想定する。
+
+```
+terrain_graph.exe --project path/to/scene.tgscene [--open-graph path/to/graph.tgterrain]
+                  --evaluate-report path/to/report.json [--report-thumbnail path/to/thumb.png]
+```
+
+- シーン（`.tgscene` / `.tgproj`）を開き、`--open-graph` があればその地形 / 雲グラフを
+  シーンの上で開く（アセットブラウザで開くのと同じ一時プレビュー）。
+- 評価が**落ち着くまで**待ってから書いて終了する。落ち着いたとみなすのは、本体の評価が
+  グラフの今の版に追いつき、後処理（侵食など）・雲と雪煙のマスク・配置の点の数の
+  読み戻しがすべて済んだ状態が 10 フレーム続いたとき。600 秒で打ち切る（`timedOut`）。
+- `--report-thumbnail` は、ビューポート（UI なし、長辺 512 px）の PNG。
+- 終了コードは 0: 問題なし、2: `errors` がある（時間切れを含む）、1: レポートを書けなかった。
+- ウィンドウは開く。検証では `Start-Process -WindowStyle Hidden` で起動する（最小化すると描画が止まる）。
+
+```json
+{
+  "format": "terrain-graph.evaluate-report", "version": 1,
+  "ok": true, "timedOut": false, "frames": 17, "seconds": 25.5,
+  "scene": "data/Scenes/albura-pass/albura-pass.tgscene",
+  "errors":   [ { "node": 9001, "message": "扱えないノードの種類: fooBar" } ],
+  "warnings": [ { "message": "ノード 8（heightmap）に出力ピン \"Heights\" がありません（あるのは: Result）" } ],
+  "terrain": {
+    "sizeMeters": 6720, "heightMeters": 1530, "baseElevationMeters": 1797, "resolution": 4096,
+    "location": { "latitude": 46.59, "longitude": 9.84 },
+    "heightfield": { "resolution": 512, "min": 0.001, "max": 0.998, "mean": 0.484,
+                     "minElevationMeters": 1798.6, "maxElevationMeters": 3324.3 }
+  },
+  "counts": { "nodes": 167, "links": 237, "instances": 69527,
+              "meshNodes": 3, "meshVertices": 129826, "meshTriangles": 200528 },
+  "scatters": [ { "node": 169, "source": 103, "outputs": [162], "models": 3,
+                  "candidates": 2822400, "instances": 18796 } ],
+  "nodes": [ { "id": 605, "kind": "roadMesh", "component": "terrain",
+               "stats": { "lengthMeters": 8077.1, "vertices": 56406, "triangles": 96684 } } ],
+  "log": [ { "level": "warn", "message": "…" } ],
+  "thumbnail": "D:/…/thumb.png"
+}
+```
+
+- `errors`（`ok` を偽にする）: 時間切れ、シーンを読めない、扱えない種類のノード、循環、
+  道路 / 路肩 / 区画線を作れない、見つからないテクスチャ、マテリアルとモデルの読み込みエラー、
+  読み込みから評価までに出たエラーのログ。
+- `warnings`: 警告のログ（捨てたリンクなど）、起伏の無い地形、点が残らない配置、
+  モデルを選んでいない配置。
+- `node` はファイルのノード ID。`nodes` には全ノード（`id` / `kind` / `component`、
+  レイヤーを持つノードは `name`、あれば `bypass` / `errors` / `stats`）を並べる。
+- `terrain.heightfield` は評価器が CPU へ写した 512² の縮小ハイト（0〜1）から求めた範囲。
+  標高は `baseElevationMeters + 値 × heightMeters`。
+- `scatters[].instances` は間引いた後に残った配置の数、`candidates` は候補の数。
 
 ## 壊れたファイルの扱い
 
