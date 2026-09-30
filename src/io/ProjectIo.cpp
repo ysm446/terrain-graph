@@ -206,9 +206,19 @@ const char* const kCloudSpeciesNames[] = {"humilis", "mediocris", "congestus"};
 const char* const kProceduralCloudNoiseNames[] = {"perlin", "perlinFbm", "perlinWorley"};
 const char* const kApertureShapeNames[] = {"circle", "triangle", "hexagon", "octagon"};
 
+// ノードカタログ（NodeCatalog）を作る間だけ、EnumName に渡った名前の表を記録する。
+// 書いた値（chosen）と既定値の JSON の文字列を突き合わせて、どのキーがどの選択肢を取るかを出す。
+struct RecordedEnum {
+    std::vector<std::string> names;
+    std::string chosen;
+};
+std::vector<RecordedEnum>* g_enumRecorder = nullptr;
+
 template <size_t N>
 const char* EnumName(const char* const (&names)[N], uint32_t value) {
-    return (value < N) ? names[value] : names[0];
+    const char* chosen = (value < N) ? names[value] : names[0];
+    if (g_enumRecorder != nullptr) g_enumRecorder->push_back({{std::begin(names), std::end(names)}, chosen});
+    return chosen;
 }
 
 template <size_t N>
@@ -3073,6 +3083,79 @@ void RemoveStalePaintMasks(const fs::path& directory, const std::vector<fs::path
 }
 
 }  // namespace
+
+json NodeCatalog() {
+    static const char* const kValueTypeNames[] = {"Material", "Mask", "Path", "Volume", "",
+                                                  "CloudShape", "Points", "Instances", "Wind",
+                                                  "RoadPath", "Mesh"};
+    const auto typeName = [](graph::ValueType type) {
+        const auto index = static_cast<size_t>(type);
+        return index < std::size(kValueTypeNames) ? kValueTypeNames[index] : "";
+    };
+    const TextureWriter noTexture = [](compositor::TextureId) { return json(); };
+    const auto noMaterial = [](compositor::MaterialAssetId) { return json(); };
+    const auto noPaint = [](compositor::PaintMaskId) { return json(); };
+
+    json nodes = json::array();
+    for (const graph::NodeDefinition& definition : graph::NodeDefinitions()) {
+        if (definition.kind == graph::NodeKind::Missing) continue;
+        json item;
+        item["kind"] = definition.name;
+        item["title"] = definition.title;
+        json inputs = json::array(), outputs = json::array();
+        for (const graph::PinDefinition& pin : definition.pins) {
+            (pin.kind == graph::PinKind::Input ? inputs : outputs)
+                .push_back({{"name", pin.label}, {"type", typeName(pin.valueType)}});
+        }
+        item["inputs"] = std::move(inputs);
+        item["outputs"] = std::move(outputs);
+        if (definition.kind == graph::NodeKind::CloudMerge || definition.kind == graph::NodeKind::ModelMerge) {
+            item["variadicInputs"] = true;
+        }
+
+        // 既定の設定を保存と同じ書き方で出す。ファイルで省いた値はこの値になる。
+        graph::NodeGraph graphData;
+        graphData.CreateNode(definition.kind);
+        std::vector<RecordedEnum> recorded;
+        g_enumRecorder = &recorded;
+        json written = WriteGraph(graphData, noTexture, noMaterial, noPaint);
+        g_enumRecorder = nullptr;
+        json defaults = json::object();
+        if (written.contains("nodes") && !written["nodes"].empty()) {
+            defaults = written["nodes"][0];
+            for (const char* key : {"id", "kind", "component", "position", "inputs", "outputs"}) defaults.erase(key);
+        }
+        // 文字列の値のうち、EnumName が書いた値と一致し、その表が 1 つに決まるものを列挙とみなす。
+        json enums = json::object();
+        const json flat = defaults.flatten();
+        for (const auto& entry : flat.items()) {
+            if (!entry.value().is_string()) continue;
+            const std::string value = entry.value().get<std::string>();
+            std::set<std::vector<std::string>> matches;
+            for (const RecordedEnum& record : recorded) {
+                if (record.chosen == value) matches.insert(record.names);
+            }
+            if (matches.size() == 1) {
+                std::string path = entry.key().substr(1);
+                std::replace(path.begin(), path.end(), '/', '.');
+                enums[path] = *matches.begin();
+            }
+        }
+        item["defaults"] = std::move(defaults);
+        if (!enums.empty()) item["enums"] = std::move(enums);
+        nodes.push_back(std::move(item));
+    }
+
+    json catalog;
+    catalog["format"] = "terrain-graph.node-catalog";
+    catalog["version"] = 1;
+    catalog["nodes"] = std::move(nodes);
+    catalog["valueTypes"] = json::array();
+    for (const char* name : kValueTypeNames) {
+        if (*name != '\0') catalog["valueTypes"].push_back(name);
+    }
+    return catalog;
+}
 
 // ノードの設定が持つ参照を 1 つずつ置き換える。保存と同じ書き出し / 読み込みを
 // 通すので、レイヤーの中に散らばった参照（マスク・ハイト・マテリアル）を漏れなく辿れる。

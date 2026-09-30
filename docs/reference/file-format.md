@@ -1,7 +1,7 @@
 # file-format — プロジェクトとマテリアルのファイル形式
 
 作成日時: 2026-08-31 15:12
-更新日時: 2026-10-01 03:17
+更新日時: 2026-10-01 03:34
 
 ## 大気散乱スカイと作業環境（シーン版3）
 
@@ -468,6 +468,39 @@ RGB をそのまま使うマップ（ベースカラー / 法線）はテクス�
 `mask` / `height` は画像への参照（ルートからの相対パスと `.meta` の ID）。`width` は境界の幅、`repeat` は道に沿って
 模様が 1 周する長さ、`depth` は凹凸の深さ（どれも m）。マスクとハイトは R を読む。ワークスペースは `.tgboundary` を
 ネイティブのアセット（本文に ID を持つ）として索引し、アセットブラウザにも出す。
+
+## ノードカタログ（`--dump-catalog`）
+
+グラフを書くための資料。ノードの定義表（`graph::NodeDefinitions`）と保存処理から作るので、
+コードとずれない。ウィンドウも GPU も使わず、書いたらすぐ終了する。
+
+```
+terrain_graph.exe --dump-catalog path/to/catalog.json
+```
+
+```json
+{
+  "format": "terrain-graph.node-catalog", "version": 1,
+  "valueTypes": ["Material", "Mask", "Path", "Volume", "CloudShape", "Points", "Instances", "Wind", "RoadPath", "Mesh"],
+  "nodes": [
+    { "kind": "lake", "title": "Lake",
+      "inputs":  [ { "name": "Base", "type": "Material" }, { "name": "Water Mask", "type": "Mask" } ],
+      "outputs": [ { "name": "Result", "type": "Material" }, { "name": "Lake", "type": "Mask" },
+                   { "name": "Depth", "type": "Mask" }, { "name": "Water Level", "type": "Mask" } ],
+      "defaults": { "layer": { … } },
+      "enums": { "layer.height.source": ["constant", "noise", "texture"], … } }
+  ]
+}
+```
+
+- `kind` はファイルの `kind`、ピンの `name` はリンクの `from` / `to` に書く名前。
+  リンクは同じ `type` どうしだけ繋がる。`variadicInputs: true` の種類は入力を番号付きで足せる。
+- `defaults` はそのノードを新しく置いたときの設定を、保存と同じ形で書いたもの。
+  ファイルで省いたキーはこの値になる。
+- `enums` は `defaults` の中の列挙のキー（`.` 区切りのパス）と、取れる値。保存処理の
+  `EnumName` に渡った名前の表のうち、既定値と一致するものから作る。`EnumName` を通さずに
+  書いている設定（道路の線形や区画線の種類など）と、既定で書かれない値は出ない。
+- 値の範囲と単位はまだ出ない（プロパティ UI の中にしか無い）。
 
 ## 評価レポート（`--evaluate-report`）
 

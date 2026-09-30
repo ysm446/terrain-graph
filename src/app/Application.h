@@ -79,6 +79,8 @@ struct StartupOptions {
     // グラフを確かめるための経路。reportThumbnailPath を指定するとビューポートの縮小画像も書く。
     std::filesystem::path reportPath;
     std::filesystem::path reportThumbnailPath;
+    // 指定すると、ノードカタログ（io::NodeCatalog）を JSON に書いて終了する。ウィンドウも GPU も使わない。
+    std::filesystem::path catalogPath;
     uint32_t benchmarkFrames = 0;
     bool referenceCloudLighting = false;
     // --gpu-validation。Debug のデバッグレイヤーに加えて GPU ベースバリデーションを有効にする。

@@ -75,6 +75,8 @@ tg::StartupOptions ParseCommandLine() {
             ++i;
         } else if (argument == L"--evaluate-report" && (i + 1) < argc) {
             options.reportPath = argv[++i];
+        } else if (argument == L"--dump-catalog" && (i + 1) < argc) {
+            options.catalogPath = argv[++i];
         } else if (argument == L"--report-thumbnail" && (i + 1) < argc) {
             options.reportThumbnailPath = argv[++i];
         } else if (argument == L"--screenshot-ui" && (i + 1) < argc) {
@@ -121,6 +123,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         tg::io::ProjectWorkspace workspace;
         if (options.projectRoot.empty() || !workspace.Open(options.projectRoot)) return 1;
         return tg::io::MigrateSceneComponents(workspace, options.projectPath).empty() ? 1 : 0;
+    }
+    if (!options.catalogPath.empty()) {
+        return tg::io::ProjectWorkspace::WriteJson(std::filesystem::absolute(options.catalogPath),
+                                                   tg::io::NodeCatalog()) ? 0 : 1;
     }
     tg::Application app;
     if (!app.Initialize(options)) {

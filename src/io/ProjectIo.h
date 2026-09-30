@@ -99,6 +99,11 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device, const P
 bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
                  rhi::PipelineCache& pipelineCache, const ProjectRefs& refs, ProjectWorkspace* workspace = nullptr);
 
+// ノードカタログ。種類ごとの保存名・表示名・ピン（名前と型）・既定の設定（保存と同じ形）と、
+// 設定のうち列挙のキーが取る値。定義表と保存処理から作るので、コードとずれない。
+// スクリプトや LLM がグラフを書くときの資料にする（--dump-catalog）。GPU は使わない。
+nlohmann::json NodeCatalog();
+
 // --- マテリアル単体 (.tgmat) ----------------------------------------------
 //
 // プロジェクト間でマテリアルを持ち回るための書き出し / 読み込み。
