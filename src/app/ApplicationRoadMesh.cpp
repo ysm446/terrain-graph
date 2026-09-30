@@ -283,6 +283,10 @@ void Application::PrepareRoadMeshes() {
         const float roadWidth = std::clamp(mesh->mesh.widthMeters, graph::kRoadMinWidthMeters, graph::kRoadMaxWidthMeters);
         Edge edges[2] = {{&cache.road, 0, 1, roadTrack, 0.0f, -1.0f},
                          {&cache.road, cache.road.stride - 1, cache.road.stride - 2, roadTrack, roadWidth, 1.0f}};
+        // 描く項目（item.geometry）と次の路肩の張り出し元（edges）が帯を指すので、ループの途中で
+        // shoulders を伸ばして付け替えさせない。路肩 1 つにつき帯は左右の 2 本まで。
+        // 付け替わると解放済みのメッシュを読み、でたらめな大きさのバッファを頼んでデバイスが失われていた。
+        cache.shoulders.reserve(compiled.shoulders.size() * 2);
         size_t stripIndex = 0;
         for (const graph::GraphId shoulderId : compiled.shoulders) {
             const graph::Node* shoulderNode = m_graph.FindNode(shoulderId);
