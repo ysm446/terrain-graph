@@ -511,6 +511,9 @@ private:
                              const std::vector<graph::PathElementId>* edges);
     // 正規化 UV をワールド座標へ。高さは CPU 側のハイトから引く。
     DirectX::XMFLOAT3 PathWorldPosition(float u, float v, float heightOffsetMeters) const;
+    // 編集中のパスで選んでいる点（鎖なら両端と内側の点）の重心（ワールド）。選択が無ければ偽。
+    // F キーで視点をそこへ寄せるのに使う。
+    bool SelectedPathWorldCenter(DirectX::XMFLOAT3& outCenter) const;
     // Path ノードのプロパティ（グラフパネルのプロパティ欄から呼ぶ）。変更があれば true。
     bool DrawPathSettings(graph::Node& node);
     // --- Road Path（ApplicationRoadPath.cpp） ---

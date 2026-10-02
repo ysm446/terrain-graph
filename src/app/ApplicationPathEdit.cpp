@@ -16,6 +16,7 @@
 //   右クリック              点 / エッジ / 空のメニュー（分離、削除、反転、挿入…）
 //   Delete                  選択した点（またはエッジ）を消す。鎖の途中の点なら線は繋ぎ直す
 //   R                       選択した点に付くエッジ（または選択した鎖）の向きを反転
+//   F                       選択した点（または鎖）の重心へ視点を寄せる（選択が無ければ地形の中心）
 //   Esc                     選択を外す
 //   Shift                   吸着しない
 //
@@ -490,6 +491,37 @@ graph::Node* Application::CurrentPathNode() {
         return nullptr;
     }
     return node;
+}
+
+bool Application::SelectedPathWorldCenter(XMFLOAT3& outCenter) const {
+    const graph::Node* node = m_graph.FindNode(m_pathEdit.nodeId);
+    const graph::PathSettings* path = node ? graph::EditablePathSettings(*node) : nullptr;
+    if (path == nullptr) return false;
+    // 点の集合ならその点。鎖なら両端と内側の点（selectedStrandInterior は両端を含まないので、エッジの端から拾う）。
+    std::vector<graph::PathElementId> ids = m_pathEdit.selected;
+    if (ids.empty()) {
+        for (const graph::PathElementId edgeId : m_pathEdit.selectedEdges) {
+            if (const graph::PathEdge* edge = path->FindEdge(edgeId)) {
+                ids.push_back(edge->from);
+                ids.push_back(edge->to);
+            }
+        }
+    }
+    XMFLOAT3 sum{0.0f, 0.0f, 0.0f};
+    size_t count = 0;
+    for (const graph::PathElementId id : ids) {
+        const graph::PathPoint* point = path->FindPoint(id);
+        if (point == nullptr) continue;
+        const XMFLOAT3 world = PathWorldPosition(point->u, point->v, point->heightOffsetMeters);
+        sum.x += world.x;
+        sum.y += world.y;
+        sum.z += world.z;
+        ++count;
+    }
+    if (count == 0) return false;
+    const float inverse = 1.0f / static_cast<float>(count);
+    outCenter = {sum.x * inverse, sum.y * inverse, sum.z * inverse};
+    return true;
 }
 
 XMFLOAT3 Application::PathWorldPosition(float u, float v, float heightOffsetMeters) const {
@@ -1372,7 +1404,7 @@ void Application::DrawPathOverlay(const graph::Node& node, const ImVec2& viewpor
                 {"右クリック", "挿入 / 切り離し / ここで切る"},
                 {"Ctrl+C / Ctrl+V", "鎖をコピー / カーソルへ貼る"},
                 {"Delete / R", "鎖を消す / 向きを反転"},
-                {"Esc", "選択を外す"}};
+                {"F / Esc", "鎖へ視点 / 選択を外す"}};
     } else if (!state.selected.empty()) {
         rows = {{"Ctrl + クリック", "伸ばす（点や線の上で繋ぐ）"},
                 {"ドラッグ", "動かす"},
@@ -1380,7 +1412,7 @@ void Application::DrawPathOverlay(const graph::Node& node, const ImVec2& viewpor
                 {"右クリック", "分離 / 反転 / 削除"},
                 {"Ctrl+C / Ctrl+V", "コピー / カーソルへ貼る"},
                 {"Delete / R", "消す / 向きを反転"},
-                {"Esc", "選択を外す"}};
+                {"F / Esc", "点へ視点 / 選択を外す"}};
     } else {
         rows = {{"クリック", "点や線（鎖）を選ぶ"},
                 {"Ctrl + クリック", "線を始める"},

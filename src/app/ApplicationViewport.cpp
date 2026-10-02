@@ -467,7 +467,10 @@ void Application::HandleCameraShortcuts(bool itemHovered) {
     constexpr DirectX::XMFLOAT3 kMeshCenter{0.0f, 0.0f, 0.0f};
 
     if (ImGui::IsKeyPressed(ImGuiKey_F, false)) {
-        camera.Focus(kMeshCenter);
+        // パスの点（か鎖）を選んでいれば、その重心へ（DCC の「選択をフレーム」）。無ければメッシュの中心へ。
+        DirectX::XMFLOAT3 center = kMeshCenter;
+        SelectedPathWorldCenter(center);
+        camera.Focus(center);
     } else if (ImGui::IsKeyPressed(ImGuiKey_A, false)) {
         camera.Frame(kMeshCenter, m_renderer.BoundingRadius());
     }
