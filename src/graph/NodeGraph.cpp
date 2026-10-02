@@ -507,22 +507,27 @@ std::vector<CompiledRoadMesh> NodeGraph::CompileRoadMeshes() const {
         const Node* mesh = FindUpstreamNodeForPin(terminal.inputs[0].id);
         if (mesh == nullptr) return false;
         // 路肩と区画線を遡って Road Mesh まで。循環は繋ぐときに弾かれるが、念のため段数で打ち切る。
-        std::vector<GraphId> shoulders, markings;
+        std::vector<GraphId> shoulders, markings, chain;
         while (mesh != nullptr && (mesh->kind == NodeKind::Shoulder || mesh->kind == NodeKind::LaneMarking) &&
                !mesh->inputs.empty() && shoulders.size() + markings.size() < 64) {
             (mesh->kind == NodeKind::Shoulder ? shoulders : markings).push_back(mesh->id);
+            chain.push_back(mesh->id);
             mesh = FindUpstreamNodeForPin(mesh->inputs[0].id);
         }
         if (mesh == nullptr || mesh->kind != NodeKind::RoadMesh || mesh->inputs.empty()) return false;
         const Node* path = FindUpstreamNodeForPin(mesh->inputs[0].id);
         if (path == nullptr || path->kind != NodeKind::RoadPath) return false;
+        chain.push_back(mesh->id);
+        chain.push_back(path->id);
         std::reverse(shoulders.begin(), shoulders.end());
         std::reverse(markings.begin(), markings.end());
+        std::reverse(chain.begin(), chain.end());
         out.output = terminal.id;
         out.roadMesh = mesh->id;
         out.roadPath = path->id;
         out.shoulders = std::move(shoulders);
         out.markings = std::move(markings);
+        out.chain = std::move(chain);
         return true;
     };
     // 先に Mesh Output（描く鎖）。

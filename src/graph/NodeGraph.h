@@ -466,6 +466,10 @@ struct CompiledRoadMesh {
     std::vector<GraphId> shoulders;
     // 鎖に挟んだ Lane Marking（Road Mesh に近い順）。線はどれも路面の上に引く。
     std::vector<GraphId> markings;
+    // 鎖の順（Road Path、Road Mesh、そのあと路肩と区画線を繋いだ順）。終端は含めない。
+    // 選択したノードより下流の帯を作らずに済ませる判定に使う（shoulders / markings は種類ごとに分けて
+    // あるので、どちらが先かはここでしか分からない）。
+    std::vector<GraphId> chain;
     // ビューポートへ描くか（Mesh Output に繋がっている）。Mask Mesh だけが読む鎖は形を作るが描かない。
     bool drawn = true;
     // この鎖の形（路面と路肩）を足跡として読む Mask Mesh。鎖のどのメッシュに繋いでも鎖全体の足跡を読む。

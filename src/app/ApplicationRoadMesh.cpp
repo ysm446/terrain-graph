@@ -5,6 +5,12 @@
 // GeneratedMeshes で描く。形は中心線・バンク・幅が
 // 変わったときだけ作り直す（中心線は毎フレーム引いて、値のハッシュで比べる）。
 // 材質は毎フレーム定数として差し替える（焼かない。GeneratedMesh.hlsl が画素ごとに評価する）。
+//
+// **鎖の途中のノードを選んでいる間は、そのノードより下流の帯を作らず、描かない。** Road Path を選べば
+// 中心線のカーブだけ、Road Mesh を選べば路面だけ、Shoulder を選べば路面とその路肩まで。点をドラッグ
+// している間に路面・路肩・区画線（と Mask Mesh の足跡 → 本体スタックの改版）が毎フレーム作り直される
+// のを避けるためで、下流のキャッシュと足跡はそのまま残し、選択を外したときに 1 回だけ作り直す。
+// 出口の表示フラグとは別の仕組み（フラグは触らない。選択はプロパティに出すノード = m_selectedGraphNode）。
 
 #include "app/Application.h"
 
@@ -172,6 +178,8 @@ void Application::PrepareRoadMeshes() {
     std::vector<renderer::GeneratedMeshItem> items;
     std::vector<graph::GraphId> alive;
     std::vector<graph::GraphId> aliveFootprints;
+    // 作らずに済ませた下流のノードは、前のフレームの状態をそのまま残す（選択を外して戻ったときに空にならないように）。
+    const std::unordered_map<graph::GraphId, RoadNodeStatus> previousStatus = std::move(m_roadNodeStatus);
     m_roadNodeStatus.clear();
     for (const graph::CompiledRoadMesh& compiled : m_graph.CompileRoadMeshes()) {
         const graph::Node* meshNode = m_graph.FindNode(compiled.roadMesh);
@@ -185,6 +193,28 @@ void Application::PrepareRoadMeshes() {
         const bool visible = compiled.drawn && !OutputHidden(compiled.output);
         const bool reference = OutputReference(compiled.output);
         RoadChainCache& cache = m_roadMeshCache[compiled.output];
+
+        // 選択したノードが鎖の途中なら、その下流は作らない（ファイル冒頭の説明）。
+        // cutFrom は鎖の中で最初に作らないノードの添字（鎖の長さなら何も省かない）。
+        const auto selectedAt = std::find(compiled.chain.begin(), compiled.chain.end(), m_selectedGraphNode);
+        const size_t cutFrom = selectedAt == compiled.chain.end()
+                                   ? compiled.chain.size()
+                                   : static_cast<size_t>(selectedAt - compiled.chain.begin()) + 1;
+        const bool cut = cutFrom < compiled.chain.size();
+        const auto isBuilt = [&](graph::GraphId nodeId) {
+            const auto at = std::find(compiled.chain.begin(), compiled.chain.end(), nodeId);
+            return at == compiled.chain.end() || static_cast<size_t>(at - compiled.chain.begin()) < cutFrom;
+        };
+        const auto keepPrevious = [&](graph::GraphId nodeId) {
+            if (const auto found = previousStatus.find(nodeId); found != previousStatus.end())
+                m_roadNodeStatus[nodeId] = found->second;
+        };
+        if (cut) {
+            // 足跡の読み手は生きている（捨てない）。中身は選択を外すまで前のまま。
+            for (const graph::GraphId maskId : compiled.maskNodes) aliveFootprints.push_back(maskId);
+            for (size_t i = cutFrom; i < compiled.chain.size(); ++i) keepPrevious(compiled.chain[i]);
+        }
+        if (!isBuilt(compiled.roadMesh)) continue;  // Road Path を選んでいる。カーブはビューポートの重ね描きが出す
         RoadNodeStatus& roadStatus = m_roadNodeStatus[compiled.roadMesh];
         roadStatus = {};
 
@@ -240,7 +270,7 @@ void Application::PrepareRoadMeshes() {
             const graph::GraphId markingId = compiled.markings[m];
             const graph::Node* markingNode = m_graph.FindNode(markingId);
             const auto* marking = markingNode ? std::get_if<graph::LaneMarkingNodeSettings>(&markingNode->settings) : nullptr;
-            if (marking == nullptr) continue;
+            if (marking == nullptr || !isBuilt(markingId)) continue;  // 選択より下流は前の形を残して作らない
             RoadNodeStatus& status = m_roadNodeStatus[markingId];
             RoadMarkingCache& markingCache = cache.markings[m];
             const uint64_t markingKey = MarkingGeometryKey(cache.road.key, mesh->mesh, marking->marking);
@@ -296,6 +326,8 @@ void Application::PrepareRoadMeshes() {
             const graph::Node* shoulderNode = m_graph.FindNode(shoulderId);
             const auto* shoulder = shoulderNode ? std::get_if<graph::ShoulderNodeSettings>(&shoulderNode->settings) : nullptr;
             if (shoulder == nullptr) continue;
+            // 選択より下流の路肩は作らない。鎖の順に並んでいるので、ここから先は全部下流。
+            if (!isBuilt(shoulderId)) break;
             RoadNodeStatus& status = m_roadNodeStatus[shoulderId];
             const graph::RoadShoulderSettings& settings = shoulder->shoulder;
             for (int side = 0; side < 2; ++side) {
@@ -394,12 +426,14 @@ void Application::PrepareRoadMeshes() {
                 edges[side] = {&strip, strip.stride - 1, strip.stride - 2, item.track, stripWidth, 1.0f};
             }
         }
-        cache.shoulders.resize(stripIndex);
+        // 下流を省いている間は、省いた路肩の帯を捨てない（選択を外したときにキーが合えばそのまま使う）。
+        if (!cut) cache.shoulders.resize(stripIndex);
 
         // --- 足跡（Mask Mesh が読む） ---
         // 鎖の路面と路肩の三角形を、地形平面の正規化 UV と正規化ハイトへ写す。区画線は路面の上の
         // 帯で足跡は路面に含まれるので入れない。鎖のどのメッシュに繋いだ Mask Mesh も鎖全体を読む。
-        if (!compiled.maskNodes.empty()) {
+        // 下流を省いている間は足跡を更新しない（本体スタックの改版が毎フレーム起きないように。読み手は上で生かした）。
+        if (!compiled.maskNodes.empty() && !cut) {
             compositor::MeshFootprint footprint;
             const float sizeMeters = std::max(m_renderer.PlaneSize(), 1e-3f);
             const float heightMeters = std::max(m_renderer.DisplacementScale(), 1e-3f);

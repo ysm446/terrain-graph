@@ -510,6 +510,8 @@ void RunRoadPathTests() {
                   marked[0].markings[0] == marking && marked[0].shoulders.size() == 2,
               "区画線を挟んでも Road Mesh まで辿り、区画線と路肩を分けて返す");
         Check(marked[0].drawn && marked[0].maskNodes.empty(), "Mesh Output の鎖は描く。足跡の読み手は無い");
+        Check(marked[0].chain == std::vector<GraphId>{roadNode, meshNode, marking, shoulderA, shoulderB},
+              "鎖の順は Road Path → Road Mesh → 区画線 → 路肩 → 路肩（繋いだ順。終端は含めない）");
     }
 
     Section("Mask Mesh: メッシュの足跡");
