@@ -1,7 +1,16 @@
 # design-guide — UI の設計ガイド
 
 作成日時: 2026-08-31 14:36
-更新日時: 2026-09-29 04:47
+更新日時: 2026-10-02 18:31
+
+## Mountain のプロパティ
+
+入力画像なしで山岳地形の土台を作るソース。追加メニューの「入出力」で Heightmap の隣に Mountain を置き、アクセント色も既存の地形ソースと共通にする。入力なし、Result 出力 1 本。
+
+- 「山岳地形」節を `Property*` の表で描く。山の間隔（m）・尾根の強さ・尖り具合・山並みの方向（度）・山並みの長さ（倍率）・うねり・細部の強さ・シード。ラベル列は「山並みの方向」に合わせる。
+- 画像やノイズのソース選択、素材の設定、マスクの設定は出さない。地形の実寸と位置は既存ソースの節を共用する。
+- 既定は一辺 4000 m、ハイトの換算幅 1200 m、山の間隔 1200 m。標高差は 0〜1 の換算幅であり、実際の最高・最低地点の差ではないことを補足する。
+- 土台の生成と侵食は分ける。Result を既存の侵食ノード、Surface、Output につなげられる。
 
 ## Road Path の縦断とバンク角
 
@@ -22,7 +31,7 @@ Road Path を選んだときのプロパティは、Path と同じ「パス」�
 
 | セクション | 種類 |
 | --- | --- |
-| 入出力 | Heightmap / Output / Terrain（雲グラフのときだけ） |
+| 入出力 | Heightmap / Mountain / Output / Terrain（雲グラフのときだけ） |
 | 合成 | Surface / Shape / Liquid |
 | 侵食 | Fluvial Erosion / Multi-Scale Erosion / Droplet Erosion / Sediment / Crumbling |
 | 水 | River / Meandering Rivers / Lake |

@@ -1767,6 +1767,12 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
         item["outputs"] = std::move(outputs);
         if (const auto* settings = std::get_if<graph::LayerNodeSettings>(&node.settings)) {
             item["layer"] = WriteLayer(settings->layer, writeTexture, writeMaterial, writePaint);
+            if (node.kind == graph::NodeKind::Mountain) {
+                const auto& p = settings->mountain;
+                item["mountain"] = {{"spacing", p.spacing}, {"ridge", p.ridge},
+                    {"sharpness", p.sharpness}, {"direction", p.direction},
+                    {"elongation", p.elongation}, {"warp", p.warp}, {"detail", p.detail}, {"seed", p.seed}};
+            }
             // 地形の実寸（m）。ソース（Heightmap）だけが持つ。
             if (graph::IsSourceNodeKind(node.kind)) {
                 json scale;
@@ -2182,7 +2188,21 @@ bool ReadGraph(const json& source, graph::NodeGraph& graphData, const TextureRea
                 }
                 created.settings = std::move(settings);
             } else if (graph::IsLayerNodeKind(created.kind)) {
-                graph::LayerNodeSettings settings;
+                const bool isMountain = created.kind == graph::NodeKind::Mountain;
+                graph::LayerNodeSettings settings = isMountain ? graph::MakeMountainNodeSettings() : graph::LayerNodeSettings{};
+                if (isMountain) {
+                    if (const json* values = FindMember(item, "mountain"); values && values->is_object()) {
+                        auto& p = settings.mountain;
+                        p.spacing = std::clamp(ReadFloat(*values, "spacing", p.spacing), 50.0f, 16000.0f);
+                        p.ridge = std::clamp(ReadFloat(*values, "ridge", p.ridge), 0.0f, 1.0f);
+                        p.sharpness = std::clamp(ReadFloat(*values, "sharpness", p.sharpness), 0.5f, 4.0f);
+                        p.direction = std::clamp(ReadFloat(*values, "direction", p.direction), -180.0f, 180.0f);
+                        p.elongation = std::clamp(ReadFloat(*values, "elongation", p.elongation), 1.0f, 5.0f);
+                        p.warp = std::clamp(ReadFloat(*values, "warp", p.warp), 0.0f, 1.5f);
+                        p.detail = std::clamp(ReadFloat(*values, "detail", p.detail), 0.0f, 0.8f);
+                        p.seed = std::clamp(ReadInt(*values, "seed", p.seed), 0, 65535);
+                    }
+                }
                 if (const json* layer = FindMember(item, "layer");
                     layer != nullptr && layer->is_object()) {
                     settings.layer = ReadLayer(*layer, readTexture, readMaterial, readPaint);
@@ -2190,13 +2210,14 @@ bool ReadGraph(const json& source, graph::NodeGraph& graphData, const TextureRea
                 // scale を持たないのは、実寸をノードへ移す前に保存されたファイル。
                 // **プレビュー設定の値を引き継ぐ**（既定値を入れると地形の
                 // 大きさが勝手に変わってしまう）。
-                settings.scale = scaleFallback;
+                const auto sourceScale = isMountain ? settings.scale : scaleFallback;
+                settings.scale = sourceScale;
                 if (const json* scale = FindMember(item, "scale");
                     scale != nullptr && scale->is_object()) {
                     settings.scale.sizeMeters =
-                        ReadFloat(*scale, "size", scaleFallback.sizeMeters);
+                        ReadFloat(*scale, "size", sourceScale.sizeMeters);
                     settings.scale.heightMeters =
-                        ReadFloat(*scale, "height", scaleFallback.heightMeters);
+                        ReadFloat(*scale, "height", sourceScale.heightMeters);
                     settings.scale.baseElevationMeters =
                         std::clamp(ReadFloat(*scale, "baseElevation", 0.0f), -12000.0f, 9000.0f);
                     if (const json* location = FindMember(*scale, "location");

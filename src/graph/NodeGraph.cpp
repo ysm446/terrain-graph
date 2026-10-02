@@ -16,9 +16,19 @@
 
 namespace tg::graph {
 
+LayerNodeSettings MakeMountainNodeSettings() {
+    LayerNodeSettings settings;
+    settings.layer.kind = compositor::LayerKind::Shape;
+    settings.layer.name = "Mountain";
+    settings.layer.heightSource = compositor::ValueSource::Constant;
+    settings.scale.sizeMeters = 4000.0f;
+    settings.scale.heightMeters = 1200.0f;
+    return settings;
+}
+
 bool IsLayerNodeKind(NodeKind kind) {
     return kind == NodeKind::Surface || kind == NodeKind::Shape || kind == NodeKind::Liquid ||
-           kind == NodeKind::Heightmap || kind == NodeKind::Blur ||
+           kind == NodeKind::Heightmap || kind == NodeKind::Mountain || kind == NodeKind::Blur ||
            kind == NodeKind::Sediment || kind == NodeKind::Crumbling ||
            kind == NodeKind::Snow || kind == NodeKind::SnowCover || kind == NodeKind::Lake || kind == NodeKind::MeanderingRivers || kind == NodeKind::River || kind == NodeKind::Droplet ||
            kind == NodeKind::Scatter || kind == NodeKind::MultiScaleErosion ||
@@ -27,7 +37,7 @@ bool IsLayerNodeKind(NodeKind kind) {
 }
 
 bool IsSourceNodeKind(NodeKind kind) {
-    return kind == NodeKind::Heightmap;
+    return kind == NodeKind::Heightmap || kind == NodeKind::Mountain;
 }
 
 bool IsMaskNodeKind(NodeKind kind) {
@@ -131,6 +141,7 @@ compositor::LayerKind LayerKindFor(NodeKind kind) {
         // ハイトマップは合成規則としてはシェイプ（高さへの加算）。
         // 先頭に置く前提なので、加算がそのまま地形になる。
         case NodeKind::Heightmap:
+        case NodeKind::Mountain:
         case NodeKind::Shape:
             return compositor::LayerKind::Shape;
         case NodeKind::Liquid:
@@ -693,7 +704,7 @@ GraphId NodeGraph::CreateNode(NodeKind kind) {
     node.id = AllocateGraphId();
     node.kind = kind;
     if (IsLayerNodeKind(kind)) {
-        LayerNodeSettings settings;
+        LayerNodeSettings settings = kind == NodeKind::Mountain ? MakeMountainNodeSettings() : LayerNodeSettings{};
         settings.layer.kind = LayerKindFor(kind);
         node.settings = std::move(settings);
     } else if (IsMaskNodeKind(kind)) {
@@ -1511,6 +1522,12 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace,
             // 古いファイルが別の値を持っていても、ここで 1.0 に正す。
             if (IsSourceNodeKind((*it)->kind)) {
                 layer.heightGain = 1.0f;
+            }
+            layer.mountainSource = (*it)->kind == NodeKind::Mountain;
+            if (layer.mountainSource) {
+                layer.mountain = settings->mountain;
+                layer.heightBase = compositor::kHeightPivot;
+                layer.uvScale = 1.0f;
             }
             compiled.layers.push_back(layer);
             layerNodes.push_back(*it);

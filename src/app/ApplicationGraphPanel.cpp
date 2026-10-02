@@ -113,6 +113,7 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
             return ImGui::ColorConvertU32ToFloat4(ui::ErrorColor());
         case graph::NodeKind::Surface:
             return ImVec4(0.55f, 0.66f, 0.58f, 1.0f);
+        case graph::NodeKind::Mountain:
         case graph::NodeKind::Heightmap:
             return ImVec4(0.72f, 0.66f, 0.50f, 1.0f);
         case graph::NodeKind::Shape:
@@ -1475,9 +1476,11 @@ void Application::DrawGraphEditor() {
             }
             if (auto* settings = std::get_if<graph::LayerNodeSettings>(&node->settings)) {
                 // 追加時の初期値は旧レイヤーパネルと同じ既定値を使う。
-                settings->layer = (kind == graph::NodeKind::Heightmap)
-                                      ? kDefaultHeightmapLayer
-                                      : DefaultLayerFor(graph::LayerKindFor(kind));
+                if (kind != graph::NodeKind::Mountain) {
+                    settings->layer = (kind == graph::NodeKind::Heightmap)
+                                          ? kDefaultHeightmapLayer
+                                          : DefaultLayerFor(graph::LayerKindFor(kind));
+                }
                 settings->layer.name +=
                     " " + std::to_string(m_graph.Nodes().size());
             }
@@ -1508,6 +1511,7 @@ void Application::DrawGraphEditor() {
         };
         section("入出力", {
             graph::NodeKind::Heightmap,
+            graph::NodeKind::Mountain,
             graph::NodeKind::Output,
             graph::NodeKind::Terrain,
         });
@@ -2044,8 +2048,35 @@ void Application::DrawNodeProperties(graph::Node* selected) {
                 }
             }
         }
-        changed |= DrawLayerSettings(settings->layer, isBase, isSource, maskFromNode,
-                                     m_graph.MaskSourceResolves(*selected), pathUvConnected);
+        const bool isMountain = selected->kind == graph::NodeKind::Mountain;
+        if (isMountain) {
+            auto& p = settings->mountain;
+            const compositor::MountainParams defaults;
+            ui::SectionHeader("山岳地形");
+            if (ui::BeginPropertyTable("mountainRows", "山並みの方向")) {
+                changed |= ui::PropertyFloat("山の間隔", &p.spacing, 50.0f, 16000.0f, defaults.spacing,
+                    "起伏の基準となる長さ。大きくすると山の数が減る", "%.1f m", ImGuiSliderFlags_Logarithmic);
+                changed |= ui::PropertyFloat("尾根の強さ", &p.ridge, 0.0f, 1.0f, defaults.ridge,
+                    "丸い起伏から連続した尾根へ変える");
+                changed |= ui::PropertyFloat("尖り具合", &p.sharpness, 0.5f, 4.0f, defaults.sharpness,
+                    "大きいほど山頂が絞られ、裾野が広がる");
+                changed |= ui::PropertyFloat("山並みの方向", &p.direction, -180.0f, 180.0f, defaults.direction,
+                    "山並みを伸ばす方向。0 度は X 方向", "%.1f deg");
+                changed |= ui::PropertyFloat("山並みの長さ", &p.elongation, 1.0f, 5.0f, defaults.elongation,
+                    "1 は方向性なし。大きいほど指定方向へ山並みが伸びる", "%.2f 倍");
+                changed |= ui::PropertyFloat("うねり", &p.warp, 0.0f, 1.5f, defaults.warp,
+                    "尾根の流れを曲げて規則的な形を崩す");
+                changed |= ui::PropertyFloat("細部の強さ", &p.detail, 0.0f, 0.8f, defaults.detail,
+                    "大きな山に重ねる細かな起伏。侵食は後ろのノードで加える");
+                changed |= ui::PropertyInt("シード", &p.seed, 0, 65535, defaults.seed,
+                    "同じ設定とシードで同じ山並みを再生成する");
+                ui::EndPropertyTable();
+            }
+            ui::HintText("画像なしで地形を生成する。Result を侵食・Surface・Output へ接続する");
+        } else {
+            changed |= DrawLayerSettings(settings->layer, isBase, isSource, maskFromNode,
+                                         m_graph.MaskSourceResolves(*selected), pathUvConnected);
+        }
 
         // 地形の実寸。**ソースだけが持ち、読み込むときに一度だけ決める。**
         // プレビュー設定ではなくここに置くのは、実寸が見え方の設定ではなく
@@ -2053,7 +2084,7 @@ void Application::DrawNodeProperties(graph::Node* selected) {
         if (isSource) {
             ui::SectionHeader("スケール");
             if (ui::BeginPropertyTable("graphNodeScaleRows")) {
-                const graph::TerrainScale defaults;
+                const graph::TerrainScale defaults = isMountain ? graph::MakeMountainNodeSettings().scale : graph::TerrainScale{};
                 changed |= ui::PropertyFloat(
                     "サイズ", &settings->scale.sizeMeters, 0.5f, 32768.0f, defaults.sizeMeters,
                     "地形の一辺の長さ（m）。カメラと影の範囲もこれに追従する", "%.1f m",
@@ -2073,7 +2104,9 @@ void Application::DrawNodeProperties(graph::Node* selected) {
                                   settings->scale.baseElevationMeters + settings->scale.heightMeters);
                 ui::EndPropertyTable();
             }
-            ui::HintText("読み込んだ地形の実寸。プレビュー設定の平面のサイズと変位量はこれに従う");
+            ui::HintText(isMountain
+                ? "生成する地形の実寸。標高差はハイト 0〜1 の換算幅で、実際の起伏は形によって変わる"
+                : "読み込んだ地形の実寸。プレビュー設定の平面のサイズと変位量はこれに従う");
 
             // 現実の場所。記録だけで評価には効かない。外部のツールや LLM が
             // OSM などから周辺の情報を引く手がかりにする。

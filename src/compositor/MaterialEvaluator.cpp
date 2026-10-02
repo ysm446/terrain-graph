@@ -85,6 +85,9 @@ struct LayerConstants {
     uint32_t pathUvIndices[4];
     // 縁のカーブ（ガンマ）, マスク画像の繰り返し長（m）, マスク画像の幅方向の枚数, マスク画像を反転（0 / 1）
     float pathUvParams2[4];
+    float mountain0[4]; // 有効、周波数、尾根、尖り
+    float mountain1[4]; // 方向（rad）、伸長、うねり、細部
+    uint32_t mountain2[4]; // シード、未使用
     LayerMaterialGpu layerMaterial;
 };
 
@@ -246,6 +249,8 @@ uint64_t HashHeightState(uint64_t seed, const MaterialLayer& layer) {
     hash = HashBytes(hash, &layer.heightBase, sizeof(layer.heightBase));
     hash = HashBytes(hash, &layer.heightGain, sizeof(layer.heightGain));
     hash = HashBytes(hash, &layer.heightNoise, sizeof(layer.heightNoise));
+    hash = HashBytes(hash, &layer.mountainSource, sizeof(layer.mountainSource));
+    if (layer.mountainSource) hash = HashBytes(hash, &layer.mountain, sizeof(layer.mountain));
     hash = HashBytes(hash, &layer.heightTexture, sizeof(layer.heightTexture));
     hash = HashBytes(hash, &layer.blendRange, sizeof(layer.blendRange));
     hash = HashBytes(hash, &layer.wrapToUnderlying, sizeof(layer.wrapToUnderlying));
@@ -5547,6 +5552,15 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         constants.maskParams[2] = layer.mask.levelsHigh;
         constants.maskParams[3] = static_cast<float>(layer.mask.source);
 
+        constants.mountain0[0] = layer.mountainSource ? 1.0f : 0.0f;
+        constants.mountain0[1] = std::max(stack.SizeMeters(), 0.5f) / std::max(layer.mountain.spacing, 50.0f);
+        constants.mountain0[2] = std::clamp(layer.mountain.ridge, 0.0f, 1.0f);
+        constants.mountain0[3] = std::clamp(layer.mountain.sharpness, 0.5f, 4.0f);
+        constants.mountain1[0] = layer.mountain.direction * DirectX::XM_PI / 180.0f;
+        constants.mountain1[1] = std::clamp(layer.mountain.elongation, 1.0f, 5.0f);
+        constants.mountain1[2] = std::clamp(layer.mountain.warp, 0.0f, 1.5f);
+        constants.mountain1[3] = std::clamp(layer.mountain.detail, 0.0f, 0.8f);
+        constants.mountain2[0] = static_cast<uint32_t>(layer.mountain.seed);
         constants.heightNoise[0] = layer.heightNoise.scale;
         // ハイトはノイズの amount ではなく heightGain を使う。
         constants.heightNoise[1] = layer.heightGain;

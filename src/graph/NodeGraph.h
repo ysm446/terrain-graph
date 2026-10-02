@@ -155,6 +155,7 @@ enum class NodeKind : uint32_t {
     // 区画線（白線）。Road Mesh の路面の上に中央線・外側線・車線境界線の帯を足す（graph/RoadMarking.h）。
     // Mesh を受けて、そのまま出す（鎖のどこに挟んでも、線は路面の上に引く）。
     LaneMarking = 57,
+    Mountain = 58, // 画像を使わず山岳地形を生成するソース。
 };
 
 struct PinDefinition {
@@ -188,11 +189,11 @@ struct Pin {
 // (3) NodeGraph.cpp の定義テーブルへ登録し、(4) 保存とプロパティ UI の
 // 対応を足す。それ以外の場所を触る必要がないように保つ。
 
-// ジオメトリの実寸（m）。**ソース（Heightmap）だけが持つ。**
+// ジオメトリの実寸（m）。**ソース（Heightmap / Mountain）だけが持つ。**
 //
-// 「この地形は一辺 2048m、標高差 604m」を**読み込むときに一度だけ**決める。
+// 地形の一辺とハイトの換算幅を、読み込み元または生成元のノードで決める。
 // プレビュー設定ではなくノードに置くのは、実寸がプレビューの都合ではなく
-// 読み込んだデータそのものの性質だから。後から触るものではない。
+// 地形そのものの性質だから。生成元の形と実寸は後から調整できる。
 //
 // **メートルなのはジオメトリだけ。** ハイトは 0〜1 の正規化値のままで、
 // heightMeters はその全幅が何 m かを表す（[design/rendering.md]）。
@@ -215,7 +216,11 @@ struct TerrainScale {
 struct LayerNodeSettings {
     compositor::MaterialLayer layer;
     TerrainScale scale;
+    compositor::MountainParams mountain;
 };
+
+// UI・ファイル読み込み・カタログで同じ初期値を使う。
+LayerNodeSettings MakeMountainNodeSettings();
 
 // マスクのソース。レイヤーの Mask 入力へ繋ぐと、そのレイヤーは
 // **白い所にだけ**乗る。どちらを使うかはノードの種類で決まる。
@@ -623,7 +628,7 @@ public:
     // 繋いでいない場合と、他の種類のマスクは常に true。
     bool MaskSourceResolves(const Node& consumer) const;
 
-    // チェーンの根にあるソース（Heightmap）の実寸。無ければ nullptr。
+    // チェーンの根にあるソース（Heightmap / Mountain）の実寸。無ければ nullptr。
     // プレビューの平面のサイズと変位量はこれに従う。
     // nodeId が 0 なら出力ノードのチェーンを見る。
     const TerrainScale* FindChainScale(GraphId nodeId) const;

@@ -287,7 +287,9 @@ constexpr std::array<PinDefinition, 1> kModelOutputPins = {{
 constexpr std::array<PinDefinition, 1> kSnowPlumePins = {{
     {PinKind::Input, ValueType::Mask, "Source"},
 }};
-constexpr std::array<NodeDefinition, 54> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 55> kNodeDefinitions = {{
+    {NodeKind::Mountain, "mountain", "Mountain", kSourceNodePins,
+     "画像なしで山並みと尾根を生成する"},
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins,
      "画像を地形として読み込む"},
     {NodeKind::Surface, "surface", "Surface", kSurfacePins,

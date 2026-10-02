@@ -85,6 +85,33 @@ void RunPinNameTests() {
 void RunNodeGraphTests() {
     RunPinNameTests();
     {
+        Section("Mountain ソースと侵食への接続");
+        NodeGraph graph;
+        const auto mountain = graph.CreateNode(NodeKind::Mountain);
+        const auto erosion = graph.CreateNode(NodeKind::Droplet);
+        const auto output = graph.CreateNode(NodeKind::Output);
+        const auto* source = graph.FindNode(mountain);
+        Check(source && source->inputs.empty() && source->outputs.size() == 1,
+              "Mountain は入力なし・Result 出力のみ");
+        graph.CreateLink(source->outputs[0].id, graph.FindNode(erosion)->inputs[0].id);
+        graph.CreateLink(graph.FindNode(erosion)->outputs[0].id, graph.FindNode(output)->inputs[0].id);
+        auto& settings = std::get<tg::graph::LayerNodeSettings>(graph.FindMutableNode(mountain)->settings);
+        settings.mountain.seed = 4321;
+        settings.mountain.spacing = 870.0f;
+        settings.layer.heightGain = 0.0f; // ソースの振幅は実寸だけで決める。
+        const auto compiled = graph.CompileLayers();
+        Check(compiled.layers.size() == 2 && compiled.layers[0].mountainSource &&
+              compiled.layers[0].mountain.seed == 4321 && compiled.layers[0].mountain.spacing == 870.0f &&
+              compiled.layers[0].heightGain == 1.0f && !compiled.layers[1].mountainSource,
+              "専用パラメータを評価へ渡し、後段の侵食には生成フラグを付けない");
+        const auto* scale = graph.FindChainScale(output);
+        Check(scale && scale->sizeMeters == 4000.0f && scale->heightMeters == 1200.0f,
+              "侵食の後ろまで Mountain の実寸を引き継ぐ");
+        tg::graph::SetBypassed(*graph.FindMutableNode(mountain), true);
+        graph.MarkDirty();
+        Check(IsNeutralPlane(graph.CompileLayers()), "ソースのバイパスで前の山を残さず平面へ戻す");
+    }
+    {
         Section("バイパス（ノードを飛ばす）");
         auto graph = NodeGraph::CreateDefault();
         const auto pin = [&](tg::graph::GraphId id, bool output, size_t index) {

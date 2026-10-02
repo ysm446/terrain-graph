@@ -63,6 +63,9 @@ struct LayerConstants
     uint4 pathUvIndices;
     // 縁のカーブ（ガンマ）, マスク画像の繰り返し長（m）, マスク画像の幅方向の枚数, マスク画像を反転（0 / 1）
     float4 pathUvParams2;
+    float4 mountain0; // 有効、周波数、尾根、尖り
+    float4 mountain1; // 方向（rad）、伸長、うねり、細部
+    uint4 mountain2; // シード、未使用
     LayerMaterialData layerMaterial;
 };
 
@@ -194,10 +197,67 @@ LayerUv ComputeLayerUv(float2 outputUv, float2 texelSize, uint begin, uint end)
 // compositor::kHeightPivot と一致させること。
 static const float kHeightPivot = 0.5f;
 
+// シード付きの非周期勾配ノイズ。タイル境界ではなく出力全体の UV で評価する。
+// 整数ハッシュを使い、シードを座標の巨大なずらし量にして精度を失わない。
+float2 MountainGradient(int2 cell, uint seed)
+{
+    uint h = uint(cell.x) * 0x8da6b343u ^ uint(cell.y) * 0xd8163841u ^ seed * 0xcb1ab31fu;
+    h ^= h >> 16; h *= 0x7feb352du; h ^= h >> 15; h *= 0x846ca68bu; h ^= h >> 16;
+    const float2 gradients[8] = {
+        float2(1,0), float2(-1,0), float2(0,1), float2(0,-1),
+        float2(0.70710678,0.70710678), float2(-0.70710678,0.70710678),
+        float2(0.70710678,-0.70710678), float2(-0.70710678,-0.70710678)};
+    return gradients[h & 7u];
+}
+
+float MountainNoise(float2 p, uint seed)
+{
+    int2 cell = int2(floor(p));
+    float2 f = frac(p);
+    float2 u = f * f * f * (f * (f * 6.0f - 15.0f) + 10.0f);
+    float a = dot(MountainGradient(cell, seed), f);
+    float b = dot(MountainGradient(cell + int2(1,0), seed), f - float2(1,0));
+    float c = dot(MountainGradient(cell + int2(0,1), seed), f - float2(0,1));
+    float d = dot(MountainGradient(cell + int2(1,1), seed), f - float2(1,1));
+    return clamp(lerp(lerp(a,b,u.x), lerp(c,d,u.x), u.y) * 1.41421356f, -1.0f, 1.0f);
+}
+
+float SampleMountain(float2 uv, float uvPerOutputTexel)
+{
+    float sn, cs;
+    sincos(g_layer.mountain1.x, sn, cs);
+    float2 q = (uv - 0.5f) * g_layer.mountain0.y;
+    float2 p = float2(cs*q.x + sn*q.y, -sn*q.x + cs*q.y);
+    p.x /= g_layer.mountain1.y;
+    p += float2(17.31f, 29.73f);
+    uint seed = g_layer.mountain2.x;
+    p += g_layer.mountain1.z * float2(MountainNoise(p * 0.6f, seed + 101u),
+                                                     MountainNoise(p * 0.6f, seed + 307u));
+    float sum = 0.0f, weight = 0.0f, amplitude = 1.0f, frequency = 1.0f;
+    float parent = 1.0f;
+    // 細部を解像度に合わせて減衰し、縮小時のちらつきを抑える。
+    for (int i = 0; i < 7; ++i)
+    {
+        float footprint = uvPerOutputTexel * g_layer.mountain0.y * frequency;
+        float aa = 1.0f - smoothstep(0.2f, 0.5f, footprint);
+        float n = MountainNoise(p * frequency, seed + uint(i) * 137u);
+        float ridge = 1.0f - abs(n);
+        ridge *= ridge;
+        float h = lerp(n * 0.5f + 0.5f, ridge, g_layer.mountain0.z);
+        sum += h * amplitude * parent * aa;
+        weight += amplitude * aa;
+        parent = lerp(1.0f, saturate(h * 2.0f), g_layer.mountain0.z);
+        amplitude *= g_layer.mountain1.w;
+        frequency *= 2.03f;
+    }
+    return pow(saturate(sum / max(weight, 1e-6f)), g_layer.mountain0.w);
+}
+
 // h = 基準の高さ + (ソースの値 - 基準面) * 起伏の強さ。
 // 基準面を挟むことで、起伏の強さを変えても平均の高さが動かない。
 float SampleLayerHeight(float2 uv, float uvPerOutputTexel)
 {
+    if (g_layer.mountain0.x > 0.5f) return SampleMountain(uv, uvPerOutputTexel);
     const float base = g_layer.surfaceParams.w;
     const float gain = g_layer.heightNoise.y;
 

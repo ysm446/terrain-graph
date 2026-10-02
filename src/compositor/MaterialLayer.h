@@ -172,6 +172,18 @@ struct NoiseParams {
     float offset = 0.0f;   // 同じレイヤー内で別パターンにしたいときにずらす
 };
 
+// 山岳ソース。間隔は実寸で保持し、評価時に地形の一辺から周波数へ変換する。
+struct MountainParams {
+    float spacing = 1200.0f;
+    float ridge = 0.8f;
+    float sharpness = 1.8f;
+    float direction = 0.0f;
+    float elongation = 1.8f;
+    float warp = 0.65f;
+    float detail = 0.45f;
+    int seed = 1;
+};
+
 // マスクのソース。合成の中間結果に由来するものを含む。
 //
 // 「下地」とは、このレイヤーより下のレイヤーを合成した結果のこと。
@@ -300,6 +312,9 @@ struct MaterialLayer {
     float heightBase = 0.5f;
     float heightGain = 1.0f;
     NoiseParams heightNoise{NoiseType::Fbm, 6.0f, 1.0f, 5, 0.0f};
+    // グラフの Mountain からだけ設定する。既存の画像・ノイズの評価は変えない。
+    bool mountainSource = false;
+    MountainParams mountain;
 
     // レイヤー直結のハイトマップ。**マテリアルを持たないレイヤー（シェイプ）用。**
     // サーフェスのハイトはマテリアルのハイトマップから引く（同じ意味の値を
