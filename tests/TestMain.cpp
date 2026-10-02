@@ -11,6 +11,7 @@ void RunCloudScatteringTests();
 void RunFrameLimiterTests();
 void RunNodeGraphTests();
 void RunRoadPathTests();
+void RunPathFitTests();
 void RunMultiScaleBreachingTests();
 void RunUiInteractionTests();
 void RunUndoHistoryTests();
@@ -29,6 +30,7 @@ int main() {
     RunFrameLimiterTests();
     RunNodeGraphTests();
     RunRoadPathTests();
+    RunPathFitTests();
     RunMultiScaleBreachingTests();
 
     std::printf("\n%s\n", (tg::tests::g_failures == 0) ? "すべて成功" : "失敗あり");

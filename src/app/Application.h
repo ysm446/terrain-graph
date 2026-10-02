@@ -863,6 +863,8 @@ private:
     graph::PathClip m_pathClipboard;
     // 鎖の設定（曲線 / 幅 / 蛇行 / 経路探索）のクリップボード。選んだ鎖へ上書きで貼る。
     std::optional<graph::PathEdgeStyle> m_pathStyleClipboard;
+    // 鎖をクロソイドの制御点へ置き換えるときの許容誤差（m）。作業中の値で、保存しない。
+    float m_pathFitToleranceMeters = 2.0f;
     // 経路探索が読む地形。**Path ノードの Base に繋いだチェーン**を、プレビューとは別に
     // 焼いた Height の写し（プレビューが別の地形を見ていても Base を使う）。
     // 上流を変えても経路は勝手に作り直さないが、写し自体は編集中に追従させておく

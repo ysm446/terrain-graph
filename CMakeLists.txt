@@ -137,6 +137,8 @@ set(tg_sources
     src/graph/RoadMesh.cpp
     src/graph/RoadMarking.cpp
     src/graph/PathRoute.cpp
+    src/graph/PathFit.cpp
+    src/graph/PathFit.h
     src/graph/Path.h
     src/compositor/MaterialEvaluator.cpp
     src/compositor/MaterialEvaluator.h
@@ -320,6 +322,7 @@ add_executable(terrain_graph_tests
     tests/FrameLimiterTests.cpp
     tests/NodeGraphTests.cpp
     tests/RoadPathTests.cpp
+    tests/PathFitTests.cpp
     tests/MultiScaleBreachingTests.cpp
     tests/UiInteractionTests.cpp
     tests/UndoHistoryTests.cpp
@@ -351,6 +354,8 @@ add_executable(terrain_graph_tests
     src/graph/RoadMarking.cpp
     src/graph/Path.h
     src/graph/PathRoute.cpp
+    src/graph/PathFit.cpp
+    src/graph/PathFit.h
     src/graph/PathRoute.h
     src/ui/UiStyle.cpp
     src/ui/UiStyle.h

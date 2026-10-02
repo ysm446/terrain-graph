@@ -36,6 +36,7 @@
 #include "app/ApplicationUiHelpers.h"
 #include "core/Log.h"
 #include "graph/Path.h"
+#include "graph/PathFit.h"
 #include "graph/PathRoute.h"
 #include "ui/UiStyle.h"
 
@@ -1701,6 +1702,47 @@ bool Application::DrawPathSettings(graph::Node& node) {
                     ui::PropertyLabelEmpty("pathRouteStrand");
                     if (ui::Button("この鎖を再計算", ui::kWideButtonWidth)) {
                         RecomputePathRoutes(node, true, &m_pathEdit.selectedEdges);
+                    }
+                    ui::PropertyEnd();
+                }
+                // 取り込んだ密な点列を、クロソイドの制御点（直線の交点）へ置き換える。
+                // 鎖の 1 本のエッジだけを選んでいても、置き換えるのはそのエッジが属する鎖全体。
+                {
+                    const std::vector<graph::PathStrand> strands = graph::BuildPathStrands(path);
+                    const graph::PathStrand* strand = graph::FindStrandOfEdge(strands, edges.front()->id);
+                    const bool fittable = strand != nullptr && !strand->closed && strand->points.size() >= 3;
+                    ui::PropertyFloat("変換の許容誤差", &m_pathFitToleranceMeters, 0.1f, 20.0f, 2.0f,
+                                      "下の変換で、元の折れ線からのずれをここまで許す。"
+                                      "小さいほど制御点が増えて元の形に近づく",
+                                      "%.1f m");
+                    ui::PropertyLabelEmpty("pathFitClothoid");
+                    ImGui::BeginDisabled(!fittable);
+                    if (ui::Button("クロソイドの制御点に変換", ui::kWideButtonWidth)) {
+                        graph::PathClothoidFitOptions options;
+                        options.toleranceMeters = m_pathFitToleranceMeters;
+                        options.clothoidRatio = clothoidRatio;
+                        graph::PathClothoidFitResult result;
+                        if (fittable && graph::FitStrandToClothoid(path, *strand, std::max(m_renderer.PlaneSize(), 1e-3f),
+                                                       options, &result)) {
+                            m_pathEdit.selected.clear();
+                            m_pathEdit.selectedEdges = result.edges;
+                            m_pathEdit.selectedStrandInterior = result.interiorPoints;
+                            char detail[128];
+                            std::snprintf(detail, sizeof(detail), "点 %zu → %zu（元の線からのずれ 最大 %.1f m）",
+                                          result.pointsBefore, result.pointsAfter, result.maxErrorMeters);
+                            m_toasts.Push("鎖をクロソイドの制御点に置き換えました", detail);
+                            changed = true;
+                        } else {
+                            m_toasts.Push("鎖を置き換えられませんでした", "開いた鎖で、点が 3 つ以上のときだけ");
+                        }
+                    }
+                    ImGui::EndDisabled();
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                        ImGui::SetTooltip("鎖の点を間引き、直線の交点を制御点にしてクロソイド（丸め 1.0）で引き直す。"
+                                          "取り込んだ 10 m おきの点列を、設計の線形に戻すためのもの。\n"
+                                          "両端の点は残り、幅・高さのずれは元の最寄りの点から引き継ぐ。"
+                                          "経路探索は「なし」になる。アンドゥで戻せる。\n"
+                                          "閉じた輪と 2 点の鎖には使えない");
                     }
                     ui::PropertyEnd();
                 }
