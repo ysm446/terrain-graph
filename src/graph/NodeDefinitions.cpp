@@ -178,6 +178,12 @@ constexpr std::array<PinDefinition, 2> kMaskPathPins = {{
     {PinKind::Output, ValueType::Mask, "Mask"},
 }};
 
+// メッシュ（道路）の足跡をマスクにするピン。Road Mesh か Shoulder の出力を繋ぐ。
+constexpr std::array<PinDefinition, 2> kMaskMeshPins = {{
+    {PinKind::Input, ValueType::Mesh, "Mesh"},
+    {PinKind::Output, ValueType::Mask, "Mask"},
+}};
+
 constexpr std::array<PinDefinition, 1> kOutputNodePins = {{
     {PinKind::Input, ValueType::Material, "Material"},
 }};
@@ -287,7 +293,7 @@ constexpr std::array<PinDefinition, 1> kModelOutputPins = {{
 constexpr std::array<PinDefinition, 1> kSnowPlumePins = {{
     {PinKind::Input, ValueType::Mask, "Source"},
 }};
-constexpr std::array<NodeDefinition, 55> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 56> kNodeDefinitions = {{
     {NodeKind::Mountain, "mountain", "Mountain", kSourceNodePins,
      "画像なしで山並みと尾根を生成する"},
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins,
@@ -362,6 +368,8 @@ constexpr std::array<NodeDefinition, 55> kNodeDefinitions = {{
      "路面の端から外へ路肩の帯を張り出す"},
     {NodeKind::LaneMarking, "laneMarking", "Lane Marking", kLaneMarkingPins,
      "路面に中央線・外側線・車線境界線を引く"},
+    {NodeKind::MaskMesh, "maskMesh", "Mask Mesh", kMaskMeshPins,
+     "道路などのメッシュの足跡をマスクにする（植生の除外など）"},
     {NodeKind::Cloud, "cloud", "Cloud (Legacy)", kCloudPins,
      "旧形式の雲。保存済みのシーンを表示するために残している（追加メニューには出さない）"},
     {NodeKind::CloudLayer, "cloudLayer", "Cloud Layer (Legacy)", kCloudLayerPins,

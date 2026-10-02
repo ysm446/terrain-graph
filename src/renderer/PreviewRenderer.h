@@ -378,6 +378,10 @@ public:
     // いまマスクをプレビューしているか。Application が毎フレーム写す。
     bool& MaskPreviewActive() { return m_maskPreviewActive; }
     const compositor::MaterialEvaluator& Evaluator() const { return m_evaluator; }
+    // メッシュの足跡の置き場（Mask Mesh の op が読む）。アプリが持ち、評価器より長生きすること。
+    void SetMeshFootprints(const compositor::MeshFootprintStore* footprints) {
+        m_evaluator.SetMeshFootprints(footprints);
+    }
     // 直前のフレームの描画の量。
     const RenderStats& Stats() const { return m_stats; }
     uint32_t MaterialResolution() const { return m_materialResolution; }

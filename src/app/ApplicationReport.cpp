@@ -23,6 +23,19 @@ bool Application::EvaluationSettled(bool evaluationIdle) {
         evaluator.EvaluatedRevision() != m_graphStack.Revision()) {
         return false;
     }
+    // Road Path の Base の地形は本体の後に 1 つずつ評価し、中心線 → 道路の形 → 足跡 → マスクと
+    // 伝わる。評価中か、高さがまだ届いていなければ落ち着いていない（足跡が変われば本体の
+    // スタックが改版されるので、その先は上の判定で待つ）。
+    for (const auto& [id, slot] : m_roadBaseSlots) {
+        if (slot->evaluator.Resolution() == 0) continue;
+        if (slot->evaluator.IsEvaluating() || slot->evaluator.WillRecordEvaluation(slot->stack) ||
+            slot->evaluator.HasPendingPostprocess() ||
+            slot->evaluator.EvaluatedRevision() != slot->stack.Revision() ||
+            !slot->evaluator.Heightfield().IsValid()) {
+            return false;
+        }
+    }
+    if (m_meshFootprintRevisionSeen != m_meshFootprints.Revision()) return false;
     // 配置の点は本体の評価の後に 1 つずつ作り、残った数は読み戻しで届く。
     for (const graph::CompiledModelScatter& scatter : m_modelScatters) {
         const compositor::PlacementPointSet* points = nullptr;

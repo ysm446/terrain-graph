@@ -826,6 +826,24 @@ inline bool DrawAreaMaskRows(compositor::AreaMaskParams& params) {
     return changed;
 }
 
+// Mask Mesh の行。形はメッシュの三角形が持つので、外側への余白と縁の扱いだけ。
+inline bool DrawMeshMaskRows(compositor::MeshMaskParams& params) {
+    const compositor::MeshMaskParams defaults;
+    bool changed = false;
+    changed |= ui::PropertyFloat("余白", &params.marginMeters, 0.0f, 50.0f, defaults.marginMeters,
+                                 "メッシュの外側へ広げる幅（m）。路肩の外まで木を生やさないときなどに",
+                                 "%.1f m");
+    changed |= ui::PropertyFloat("フェザー", &params.featherMeters, 0.0f, 50.0f, defaults.featherMeters,
+                                 "余白の外側を 0 へ落とす幅（m）。0 で二値", "%.1f m",
+                                 ImGuiSliderFlags_Logarithmic);
+    changed |= ui::PropertyFloat("ガンマ", &params.gamma, 0.05f, 8.0f, defaults.gamma,
+                                 "フェザーのカーブ。1 未満で外側まで明るく、1 より大きいと内側へ締まる",
+                                 "%.2f", ImGuiSliderFlags_Logarithmic);
+    changed |= ui::PropertyBool("反転", &params.invert, defaults.invert,
+                                "白黒を入れ替える。植生の除外に使うときはオン");
+    return changed;
+}
+
 inline bool DrawFlowlineRows(compositor::FlowlineParams& p) {
     const compositor::FlowlineParams d;
     bool changed = false;

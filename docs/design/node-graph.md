@@ -1,7 +1,7 @@
 # node-graph — ノードグラフの設計
 
 作成日時: 2026-09-02 12:50
-更新日時: 2026-09-18 02:40
+更新日時: 2026-10-02 20:25
 
 `src/graph/` とグラフパネル（`src/app/ApplicationGraphPanel.cpp`）の設計。
 **ノード 1 つずつの役割・ピン・パラメータは
@@ -58,6 +58,7 @@ terrain-editor から移植したのは**仕組み**であって、ノードの�
 | Path | `path` | Base(入力) / Path(出力) | `PathSettings`（点とエッジ） |
 | Mask Path | `maskPath` | Path(入力) / Mask(出力) | `PathMaskParams` |
 | Mask Area | `maskArea` | Path(入力) / Mask(出力) | `AreaMaskParams`（閉じた鎖の内側） |
+| Mask Mesh | `maskMesh` | Mesh(入力) / Mask(出力) | `MeshMaskParams`（メッシュの足跡。三角形は `MeshFootprintStore` から） |
 | Output | `output` | Material(入力) | なし |
 
 サーフェス / シェイプ / 水面は**旧レイヤーそのもの**をノード化したもの。
@@ -320,6 +321,11 @@ terrain-editor の Mask Fluvial。**下地の川筋**（水が集まる所）を
   クリック位置の地形への投影（レイマーチ + 二分法）、点の表示位置、
   仮のエッジの描画がこれを使う。UV バッファ（ペイントが使うもの）は素材の
   タイル UV なので地形の位置には使えない。
+  **結果を作るものは最終出力を読まない。** 表示と投影は見えている地形（最終出力）で
+  よいが、Path の経路探索と Road Path の中心線は Base までのレイヤー列を別の評価器で
+  評価して読む（`CompilePathRouteInputs` / `Application::PrepareRoadBaseTerrain`）。
+  最終出力を読むと、下流のノード（地形の均しなど）の結果に自分の入力が左右されて、
+  グラフの順序が壊れる。
 - 描画は ImGui の draw list（深度テストなし。丘の向こう側の線も見える）。
   直線の鎖のエッジは画面上の長さで細かく割り、各点を地形の高さで描くので線が地形に沿う。
   **曲線の鎖のエッジ（ガイド）は点と点を 3D の直線で結ぶ**（地形に沿わせない）。

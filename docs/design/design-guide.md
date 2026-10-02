@@ -1,7 +1,7 @@
 # design-guide — UI の設計ガイド
 
 作成日時: 2026-08-31 14:36
-更新日時: 2026-10-02 18:31
+更新日時: 2026-10-02 20:25
 
 ## Mountain のプロパティ
 
@@ -39,7 +39,7 @@ Road Path を選んだときのプロパティは、Path と同じ「パス」�
 | 整形 | Heightmap Blur / Flatten Borders / Height Levels |
 | マスク | Mask Image / Noise / Flowline / Fluvial / Height / Slope / Curvature / Levels / Blur / Blend、Wind Field |
 | パス | Path / Mask Path / Mask Area |
-| 道路 | Road Path / Road Mesh / Shoulder / Mesh Output（Lane Marking などは移植中） |
+| 道路 | Road Path / Road Mesh / Shoulder / Lane Marking / Mask Mesh / Mesh Output |
 | 配置 | Scatter / Model Scatter / Model Merge / Model Output |
 | 雲 | Cloud Weather Layer ほか雲グラフ用の種類 |
 

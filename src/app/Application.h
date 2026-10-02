@@ -515,10 +515,21 @@ private:
     bool DrawPathSettings(graph::Node& node);
     // --- Road Path（ApplicationRoadPath.cpp） ---
     // 平面の点とエッジの編集は Path と共通（上の関数が Road Path も扱う）。ここは縦断・バンク角。
-    // 中心線（base: 地形 + ずれ、centerline: 縦断を反映）。高さは CPU 側のハイトから引く。
-    // Road Path でない / 線が 1 本でないときは偽で、error に理由を入れる。
+    // 中心線（base: 地形 + ずれ、centerline: 縦断を反映）。高さは **Road Path の Base に繋いだ地形**
+    // （RoadBaseHeightfield）から引く。最終出力ではないので、地形の均しなど下流の結果に左右されない。
+    // Road Path でない / 線が 1 本でないときは偽で、error に理由を入れる。Base の地形がまだ
+    // 評価できていないときも偽で、pending があれば真を入れる（前の形を保つ判断に使う）。
     bool BuildRoadCenterline(const graph::Node& node, graph::RoadProfileCurve& base,
-                             graph::RoadProfileCurve& centerline, std::string* error) const;
+                             graph::RoadProfileCurve& centerline, std::string* error,
+                             bool* pending = nullptr) const;
+    // Road Path ごとに、Base に繋いだチェーンを別の評価器（512²）で評価して高さを CPU へ写す。
+    // フレームの外で呼ぶ（Road Path の無くなった評価器を捨てる）。評価そのものはフレームの中で
+    // 配置の点の評価器と同じ順番で進める。
+    void PrepareRoadBaseTerrain();
+    // Road Path の Base の高さ（CPU 側の写し）。まだ評価できていなければ nullptr。
+    const compositor::CpuHeightfield* RoadBaseHeightfield(graph::GraphId roadPathId) const;
+    // Road Path の Base に線が繋がっているか。繋がっていなければ変位 0 の平面に沿う。
+    bool RoadBaseConnected(const graph::Node& node) const;
     // 縦断曲線とバンク角のプロパティ（縦断図を含む）。変更があれば true。
     bool DrawRoadPathSettings(graph::Node& node);
     // 縦断を反映した中心線、切土・盛土の目安、縦断・バンクのポイントをビューポートへ重ねる。
@@ -558,9 +569,23 @@ private:
     struct ModelPointSlot {
         compositor::MaterialStack stack;
         compositor::MaterialEvaluator evaluator;
-        uint64_t graphRevision = 0, documentRevision = 0, paintRevision = 0;
+        uint64_t graphRevision = 0, documentRevision = 0, paintRevision = 0, footprintRevision = 0;
     };
     std::unordered_map<graph::GraphId, std::unique_ptr<ModelPointSlot>> m_modelPoints;
+    // Road Path ごとの Base の地形（ApplicationRoadPath.cpp）。Base に繋いだチェーンを 512² で
+    // 評価し、評価器の CPU 側のハイトを中心線が読む。
+    struct RoadBaseSlot {
+        compositor::MaterialStack stack;
+        compositor::MaterialEvaluator evaluator;
+        uint64_t graphRevision = 0, paintRevision = 0;
+        // 組んだレイヤー列のハッシュ。点を動かしただけ（Base は同じ）では評価し直さない。
+        uint64_t stackHash = 0;
+    };
+    std::unordered_map<graph::GraphId, std::unique_ptr<RoadBaseSlot>> m_roadBaseSlots;
+    // メッシュの足跡（Mask Mesh が読む）。鎖ごとの路面と路肩の三角形を Mask Mesh の ID で置く。
+    // 中身が変わったら本体のスタックを改版して焼き直す（ペイントマスクと同じ扱い）。
+    compositor::MeshFootprintStore m_meshFootprints;
+    uint64_t m_meshFootprintRevisionSeen = 0;
     // 本体の評価器が点まで作っている元（出力のチェーンをプレビューしているときだけ）。
     // ここに無い元は m_modelPoints の評価器で作る。
     std::vector<graph::GraphId> m_mainPointSources;

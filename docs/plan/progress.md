@@ -1,7 +1,20 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-10-02 18:37
+更新日時: 2026-10-02 20:25
+
+## Mask Mesh と Road Path の Base（2026-10-02 20:25）
+
+ユーザー依頼「道路メッシュをマスクにして植生を生やさない」。将来は車線数の変化や駐車場で幅が一様でなくなる、地形の均し（切土・盛土）のノードも作る、という前提で相談して決めた。
+
+- **Road Path が最終出力の高さを読んでいた**（`m_renderer.Evaluator().Heightfield()`。移植時に表示用の `PathWorldPosition` と同じ換算を借りたもの）。Base を持つノードが最終出力を読むとグラフの順序が壊れ、均しが入ると中心線が路面の高さを読み直して浮いていく循環になる。最終出力を読む 5 か所を洗い出し、問題なのはここだけだった（表示・クリックの投影・レポートは最終出力でよく、Path の経路探索は既に Base を別評価器で読んでいた）。
+- **直し方**: Road Path ごとに `RoadBaseSlot`（512² の非同期評価器）を持ち、`CompileLayersTo(roadPathId)`（Base までのレイヤー列。未接続なら変位 0 の平面）を評価して、その CPU 側のハイトを中心線が読む（`Application::PrepareRoadBaseTerrain` / `RoadBaseHeightfield`）。レイヤー列のハッシュ（`HashStackHeightState`）が同じなら点を動かしても評価し直さない。評価は配置の点の評価器と同じ列（本体の後、1 フレームに 1 本）。高さが届くまでは `BuildRoadCenterline` が `pending` を返し、前の形を保つ。
+- **Mask Mesh**（NodeKind 59 / `maskMesh`、Mesh 入力 → Mask 出力、`MaskOpKind::Mesh`）: 中心線＋幅の近似ではなく、アプリが組み立てた路面と路肩の三角形を地形平面の UV へ写して焼く。置き場は `compositor::MeshFootprintStore`（Mask Mesh の ID がキー。ハッシュが変わったときだけ世代が進む。頂点に正規化ハイトも持たせてあり、均しノードが使う）。評価器は `SetMeshFootprints` で置き場を指し、op のハッシュに足跡のハッシュを混ぜる。アプリは世代が変わったら本体のスタックを改版し、配置の点の評価器は `footprintRevision` で追う。`CompileRoadMeshes` は Mesh Output に加えて Mask Mesh も終端として鎖を作る（`drawn` / `maskNodes`）。シェーダ `CompositeMaskMesh.hlsl` は Mask Path と同じ 8×8 ごとの間引き。
+- **評価レポート**の「落ち着いた」判定に、Road Path の Base の評価器と足跡の世代を足した。
+
+検証: Debug ビルド（警告 0）、DXC `cs_6_6`、CTest 6 件（Mask Mesh の鎖・op・置き場、Road Path の Base のコンパイルを追加）。西伊豆の実データで、(1) 既存シーンの評価レポートが `ok: true`、道路 5,663 m・三角形 140,594 で変わらず、(2) Shoulder に Mask Mesh（反転、余白 1 m）を繋いで 5 つの Scatter の分布に乗算したグラフ（`--open-graph`）で、インスタンスが 2,004,725 → 2,003,393（既存の Mask Path で既に道路沿いを除いているので差は小さい）、(3) 余白 3 m の Mask Mesh で赤い Surface を塗ったサムネイルで、足跡が路肩に沿って出ることを目視。`--screenshot-ui` でプロパティ（余白・フェザー・ガンマ・反転、状態の三角形数）を目視。検証データは `data/Test/mask-mesh/`。手で書くテストの地形ファイルは `uid` を元と変え、ノードの `component` は整数（文字列だと開けない）。
+
+残り・注意: 足跡の三角形が多い（11 万枚）と 8×8 ごとの間引きでも全三角形を舐めるので、更に長い道路や複数の道路では CPU 側で格子に振り分けてから渡す方式に替える余地がある。Road Path の点の表示（`PathWorldPosition`）は最終出力の高さのままなので、均しを入れると点と中心線の高さが見かけ上ずれる（表示を Base に合わせるかは均しの実装時に決める）。雲・雪煙のマスクの評価器は足跡の世代を見ていない（Mask Mesh を雲の分布に使うことは想定していない）。法面のマスクは段階 3 の均しノードで。
 
 ## Mountain — 画像なしの山岳ソース（2026-10-02 18:33）
 

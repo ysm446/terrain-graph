@@ -777,6 +777,29 @@ json WritePathMask(const compositor::PathMaskParams& params) {
     return node;
 }
 
+json WriteMeshMask(const compositor::MeshMaskParams& params) {
+    json node;
+    node["margin"] = params.marginMeters;
+    node["feather"] = params.featherMeters;
+    node["gamma"] = params.gamma;
+    node["invert"] = params.invert;
+    return node;
+}
+
+compositor::MeshMaskParams ReadMeshMask(const json& parent, const char* key) {
+    const compositor::MeshMaskParams defaults;
+    const json* node = FindMember(parent, key);
+    if (node == nullptr || !node->is_object()) {
+        return defaults;
+    }
+    compositor::MeshMaskParams params;
+    params.marginMeters = ReadFloat(*node, "margin", defaults.marginMeters);
+    params.featherMeters = ReadFloat(*node, "feather", defaults.featherMeters);
+    params.gamma = ReadFloat(*node, "gamma", defaults.gamma);
+    params.invert = ReadBool(*node, "invert", defaults.invert);
+    return params;
+}
+
 compositor::PathMaskParams ReadPathMask(const json& parent, const char* key) {
     const compositor::PathMaskParams defaults;
     const json* node = FindMember(parent, key);
@@ -1808,6 +1831,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["blend"] = WriteBlend(mask->blend);
             item["maskPath"] = WritePathMask(mask->pathMask);
             item["maskArea"] = WriteAreaMask(mask->areaMask);
+            item["maskMesh"] = WriteMeshMask(mask->meshMask);
         } else if (const auto* cloudMerge = std::get_if<graph::CloudMergeSettings>(&node.settings)) {
             item["proceduralCloud"]["smoothness"] = cloudMerge->smoothness;
         } else if (const auto* map = std::get_if<graph::CloudMapSettings>(&node.settings)) {
@@ -2247,6 +2271,7 @@ bool ReadGraph(const json& source, graph::NodeGraph& graphData, const TextureRea
                 settings.blend = ReadBlend(item, "blend");
                 settings.pathMask = ReadPathMask(item, "maskPath");
                 settings.areaMask = ReadAreaMask(item, "maskArea");
+                settings.meshMask = ReadMeshMask(item, "maskMesh");
                 created.settings = std::move(settings);
             } else if (created.kind == graph::NodeKind::CloudMerge) {
                 graph::CloudMergeSettings settings;

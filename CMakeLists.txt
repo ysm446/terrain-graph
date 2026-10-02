@@ -147,6 +147,8 @@ set(tg_sources
     src/compositor/MultiScaleBreaching.h
     src/compositor/MaterialStack.cpp
     src/compositor/MaterialStack.h
+    src/compositor/MeshFootprint.cpp
+    src/compositor/MeshFootprint.h
     src/compositor/PaintMask.cpp
     src/compositor/PaintMask.h
     src/compositor/TextureLibrary.cpp
@@ -337,6 +339,8 @@ add_executable(terrain_graph_tests
     src/compositor/MultiScaleBreaching.h
     src/compositor/MaterialStack.cpp
     src/compositor/MaterialStack.h
+    src/compositor/MeshFootprint.cpp
+    src/compositor/MeshFootprint.h
     src/graph/SurfacePresetGraph.cpp
     src/graph/NodeGraph.cpp
     src/graph/NodeDefinitions.cpp

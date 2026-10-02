@@ -3,13 +3,17 @@
 // 平面の点とエッジの編集は Path と共通（ApplicationPathEdit.cpp が EditablePathSettings を通して
 // Road Path も扱う）。ここは道路の線形だけ。
 //
-// 中心線の高さは Path の表示と同じ CPU 側のハイト（評価器が写したもの）から引く。
+// 中心線の高さは **Road Path の Base に繋いだチェーン**の高さから引く。Base までのレイヤー列を
+// Road Path ごとの評価器（512²。配置の点の評価器と同じ流儀）で評価し、その CPU 側のハイトを
+// 読む。最終出力（Path の表示が読むもの）ではないので、この先の地形の均し（切土・盛土）が
+// 路面の高さを地形へ書き戻しても、中心線がそれを読み直して浮いていく循環にはならない。
 // 縦断ポイントが無ければ中心線は地形に沿い、置くとその間を縦断曲線でつなぐ。
 // 地形との差（切土・盛土）は Road Mesh の段で地形を均すときの量になる。
 
 #include "app/Application.h"
 
 #include "app/ApplicationUiHelpers.h"
+#include "core/Log.h"
 #include "graph/RoadPath.h"
 #include "ui/UiStyle.h"
 
@@ -86,18 +90,94 @@ bool PropertyAlong(const char* label, float* u, float total, const char* tooltip
 
 }  // namespace
 
+bool Application::RoadBaseConnected(const graph::Node& node) const {
+    for (const graph::Pin& pin : node.inputs) {
+        if (pin.valueType != graph::ValueType::Material) continue;
+        for (const graph::Link& link : m_graph.Links()) {
+            if (link.endPin == pin.id) return true;
+        }
+    }
+    return false;
+}
+
+const compositor::CpuHeightfield* Application::RoadBaseHeightfield(graph::GraphId roadPathId) const {
+    const auto found = m_roadBaseSlots.find(roadPathId);
+    if (found == m_roadBaseSlots.end() || found->second->evaluator.Resolution() == 0) return nullptr;
+    const compositor::CpuHeightfield& heightfield = found->second->evaluator.Heightfield();
+    return heightfield.IsValid() ? &heightfield : nullptr;
+}
+
+void Application::PrepareRoadBaseTerrain() {
+    // Base の地形の写しは 512²（パスの表示や経路探索の写しと同じ。2 km の地形で 4 m）。
+    constexpr uint32_t kResolution = 512;
+    std::vector<graph::GraphId> alive;
+    for (const graph::Node& node : m_graph.Nodes()) {
+        if (node.kind != graph::NodeKind::RoadPath) continue;
+        alive.push_back(node.id);
+        auto& slot = m_roadBaseSlots[node.id];
+        if (!slot) slot = std::make_unique<RoadBaseSlot>();
+        if (slot->evaluator.Resolution() == 0) {
+            if (!slot->evaluator.Create(m_device, kResolution, /*asynchronous=*/true)) {
+                TG_LOG_WARN("Road Path の Base の地形の評価器を作れませんでした");
+                continue;
+            }
+            slot->evaluator.SetTileSize(kResolution);
+            slot->evaluator.SetMeshFootprints(&m_meshFootprints);
+        }
+        const graph::TerrainScale* scale = m_graph.FindChainScale(node.id);
+        slot->stack.SetTerrainScale(scale ? scale->sizeMeters : m_renderer.PlaneSize(),
+                                    scale ? scale->heightMeters : m_renderer.DisplacementScale());
+        if (slot->graphRevision == m_graph.TerrainRevision() && slot->paintRevision == m_paintMasks.Revision()) {
+            continue;
+        }
+        slot->graphRevision = m_graph.TerrainRevision();
+        slot->paintRevision = m_paintMasks.Revision();
+        // Base までのレイヤー列（Base が繋がっていなければ変位 0 の平面）。点を動かしただけでは
+        // 列は変わらないので、中身のハッシュが同じなら評価し直さない。
+        graph::CompiledGraph compiled = m_graph.CompileLayersTo(node.id);
+        compositor::MaterialStack candidate;
+        candidate.Layers() = std::move(compiled.layers);
+        candidate.MaskOps() = std::move(compiled.maskOps);
+        candidate.SetTerrainScale(slot->stack.SizeMeters(), slot->stack.HeightMeters());
+        uint64_t hash = compositor::HashStackHeightState(candidate);
+        const uint64_t paintRevision = m_paintMasks.Revision();
+        hash ^= paintRevision * 0x9E3779B97F4A7C15ull;
+        if (hash == slot->stackHash && slot->evaluator.Heightfield().IsValid()) continue;
+        slot->stackHash = hash;
+        slot->stack.Layers() = std::move(candidate.Layers());
+        slot->stack.MaskOps() = std::move(candidate.MaskOps());
+        slot->stack.MarkDirty();
+        slot->evaluator.Invalidate();
+    }
+    for (auto it = m_roadBaseSlots.begin(); it != m_roadBaseSlots.end();) {
+        if (std::find(alive.begin(), alive.end(), it->first) == alive.end()) {
+            if (it->second->evaluator.Resolution() != 0) it->second->evaluator.Destroy(m_device);
+            it = m_roadBaseSlots.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 bool Application::BuildRoadCenterline(const graph::Node& node, graph::RoadProfileCurve& base,
-                                      graph::RoadProfileCurve& centerline, std::string* error) const {
+                                      graph::RoadProfileCurve& centerline, std::string* error,
+                                      bool* pending) const {
+    if (pending) *pending = false;
     const auto* settings = std::get_if<graph::RoadPathNodeSettings>(&node.settings);
     if (settings == nullptr) {
         if (error) *error = "Road Path ではありません";
         return false;
     }
+    const compositor::CpuHeightfield* heightfield = RoadBaseHeightfield(node.id);
+    if (heightfield == nullptr) {
+        if (pending) *pending = true;
+        if (error) *error = "Base の地形を評価中";
+        return false;
+    }
     const float scale = m_renderer.DisplacementScale();
-    const compositor::CpuHeightfield& heightfield = m_renderer.Evaluator().Heightfield();
-    // ワールドの高さ（PathWorldPosition と同じ換算）。
-    const graph::RoadHeightSampler height = [&heightfield, scale](float u, float v) {
-        return (heightfield.Sample(u, v) - 0.5f) * scale;
+    // ワールドの高さ（PathWorldPosition と同じ換算。読む元だけが Base の地形）。
+    const graph::RoadHeightSampler height = [heightfield, scale](float u, float v) {
+        return (heightfield->Sample(u, v) - 0.5f) * scale;
     };
     if (!graph::BuildRoadBaseline(settings->road, m_renderer.PlaneSize(), height, base, error)) {
         return false;
@@ -133,6 +213,11 @@ bool Application::DrawRoadPathSettings(graph::Node& node) {
     if (!valid) {
         ui::HintText("縦断とバンク角は、分岐・閉ループ・孤立点のない 1 本の線で求める（%s）",
                      error.c_str());
+    }
+    // 中心線は Base に繋いだ地形に沿う（最終出力ではない）。繋いでいなければ平らな板の上。
+    if (!RoadBaseConnected(node)) {
+        ui::HintText("Base が繋がっていないので、中心線は変位 0 の平面に沿う。"
+                     "均す前の地形を Base に繋ぐと、その地形に沿う");
     }
     if (valid && ui::BeginPropertyTable("roadProfileRows")) {
         float low = centerline.points.front().y;

@@ -46,7 +46,7 @@ bool IsMaskNodeKind(NodeKind kind) {
            kind == NodeKind::MaskSlope || kind == NodeKind::MaskCurvature ||
            kind == NodeKind::MaskLevels || kind == NodeKind::MaskBlur ||
            kind == NodeKind::MaskBlend || kind == NodeKind::MaskPath ||
-           kind == NodeKind::MaskArea || kind == NodeKind::WindField;
+           kind == NodeKind::MaskArea || kind == NodeKind::MaskMesh || kind == NodeKind::WindField;
 }
 
 // 下地の Height を読むマスクか。**チェーンのどこを読むか**を Base 入力で指す。
@@ -499,12 +499,13 @@ std::vector<CompiledModelScatter> NodeGraph::CompileModelScatters() const {
 
 std::vector<CompiledRoadMesh> NodeGraph::CompileRoadMeshes() const {
     std::vector<CompiledRoadMesh> result;
-    std::unordered_set<GraphId> visited;
-    for (const Node& output : m_nodes) {
-        if (output.kind != NodeKind::MeshOutput || output.inputs.empty()) continue;
-        const Node* mesh = FindUpstreamNodeForPin(output.inputs[0].id);
-        // 同じ鎖を 2 つの Mesh Output へ繋いでも 1 回だけ描く（Mesh Output の直前のノードで見分ける）。
-        if (mesh == nullptr || !visited.insert(mesh->id).second) continue;
+    // 終端の直前のノード → result の添字。同じ鎖を 2 つの Mesh Output へ繋いでも 1 回だけ描き、
+    // Mask Mesh を Mesh Output と同じメッシュに繋げば、描く鎖の足跡を読む。
+    std::unordered_map<GraphId, size_t> visited;
+    // 終端（Mesh Output か Mask Mesh）から Road Mesh まで遡って鎖を作る。作れなければ偽。
+    const auto compileChain = [&](const Node& terminal, CompiledRoadMesh& out) {
+        const Node* mesh = FindUpstreamNodeForPin(terminal.inputs[0].id);
+        if (mesh == nullptr) return false;
         // 路肩と区画線を遡って Road Mesh まで。循環は繋ぐときに弾かれるが、念のため段数で打ち切る。
         std::vector<GraphId> shoulders, markings;
         while (mesh != nullptr && (mesh->kind == NodeKind::Shoulder || mesh->kind == NodeKind::LaneMarking) &&
@@ -512,12 +513,43 @@ std::vector<CompiledRoadMesh> NodeGraph::CompileRoadMeshes() const {
             (mesh->kind == NodeKind::Shoulder ? shoulders : markings).push_back(mesh->id);
             mesh = FindUpstreamNodeForPin(mesh->inputs[0].id);
         }
-        if (mesh == nullptr || mesh->kind != NodeKind::RoadMesh || mesh->inputs.empty()) continue;
+        if (mesh == nullptr || mesh->kind != NodeKind::RoadMesh || mesh->inputs.empty()) return false;
         const Node* path = FindUpstreamNodeForPin(mesh->inputs[0].id);
-        if (path == nullptr || path->kind != NodeKind::RoadPath) continue;
+        if (path == nullptr || path->kind != NodeKind::RoadPath) return false;
         std::reverse(shoulders.begin(), shoulders.end());
         std::reverse(markings.begin(), markings.end());
-        result.push_back({output.id, mesh->id, path->id, std::move(shoulders), std::move(markings)});
+        out.output = terminal.id;
+        out.roadMesh = mesh->id;
+        out.roadPath = path->id;
+        out.shoulders = std::move(shoulders);
+        out.markings = std::move(markings);
+        return true;
+    };
+    // 先に Mesh Output（描く鎖）。
+    for (const Node& output : m_nodes) {
+        if (output.kind != NodeKind::MeshOutput || output.inputs.empty()) continue;
+        const Node* mesh = FindUpstreamNodeForPin(output.inputs[0].id);
+        if (mesh == nullptr || visited.contains(mesh->id)) continue;
+        CompiledRoadMesh compiled;
+        if (!compileChain(output, compiled)) continue;
+        visited[mesh->id] = result.size();
+        result.push_back(std::move(compiled));
+    }
+    // 次に Mask Mesh。描く鎖の同じメッシュに繋いであればその鎖へ加え、無ければ描かない鎖を作る。
+    for (const Node& maskNode : m_nodes) {
+        if (maskNode.kind != NodeKind::MaskMesh || maskNode.inputs.empty()) continue;
+        const Node* mesh = FindUpstreamNodeForPin(maskNode.inputs[0].id);
+        if (mesh == nullptr) continue;
+        if (const auto found = visited.find(mesh->id); found != visited.end()) {
+            result[found->second].maskNodes.push_back(maskNode.id);
+            continue;
+        }
+        CompiledRoadMesh compiled;
+        if (!compileChain(maskNode, compiled)) continue;
+        compiled.drawn = false;
+        compiled.maskNodes.push_back(maskNode.id);
+        visited[mesh->id] = result.size();
+        result.push_back(std::move(compiled));
     }
     return result;
 }
@@ -966,8 +998,10 @@ bool NodeGraph::MaskDependsOnHeight(const Node& maskNode, int depth) const {
             return true;
         // パスは 2D で高さを読まないが、**地形の上に引いたもの**なので、
         // 平らな板ではなく地形の上に貼って見せる（線と地形の対応こそが見たいもの）。
+        // メッシュの足跡も同じ（道路と地形の対応を見る）。
         case NodeKind::MaskPath:
         case NodeKind::MaskArea:
+        case NodeKind::MaskMesh:
             return true;
         case NodeKind::MaskLevels:
         case NodeKind::MaskBlur:
@@ -1178,6 +1212,12 @@ bool NodeGraph::PathInputLinked(const Node& node) const {
     return false;
 }
 
+bool NodeGraph::MeshInputLinked(const Node& node) const {
+    for (const Pin& pin : node.inputs)
+        if (pin.valueType == ValueType::Mesh && FindLinkedNodeForPin(pin.id) != nullptr) return true;
+    return false;
+}
+
 int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
                            const std::vector<const Node*>& layerNodes,
                            compositor::MaskProgram& ops,
@@ -1385,6 +1425,20 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
             op.areaMask = settings->areaMask;
             // 閉じた鎖が無ければ「面が無い」マスク（0。反転なら 1）。Mask Path と同じ理由。
             op.pathSegments = BuildPathAreaSegments(pathSettings->path);
+            break;
+        }
+        case NodeKind::MaskMesh: {
+            // Mesh が繋がっていなければ「繋がっていない」のと同じ扱い。繋いだ先をバイパスして
+            // いれば「足跡が無い」（全面 0）。
+            const Node* meshNode = UpstreamOf(maskNode, ValueType::Mesh);
+            if (meshNode == nullptr) {
+                return MeshInputLinked(maskNode) ? EmitEmptyMaskOp(ops, emitted) : -1;
+            }
+            op.kind = compositor::MaskOpKind::Mesh;
+            op.meshMask = settings->meshMask;
+            // 三角形はアプリが組み立てたメッシュから作り、この Mask Mesh の ID をキーに置き場へ入れる
+            // （鎖のどのメッシュに繋いでも鎖全体の足跡。CompileRoadMeshes の maskNodes）。
+            op.meshSource = static_cast<uint32_t>(maskNode.id);
             break;
         }
         default:

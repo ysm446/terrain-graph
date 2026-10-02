@@ -2,6 +2,7 @@
 
 #include "compositor/MaterialLibrary.h"
 #include "compositor/MaterialStack.h"
+#include "compositor/MeshFootprint.h"
 #include "compositor/PaintMask.h"
 #include "compositor/TextureLibrary.h"
 
@@ -329,6 +330,10 @@ public:
     // 表側の結果が、どの版のスタックを評価したものか。
     uint64_t EvaluatedRevision() const { return m_evaluatedRevision; }
 
+    // メッシュの足跡（Mask Mesh の op が読む）。アプリが持つ置き場を指す。評価器より長生きすること。
+    // 無ければ Mesh の op は足跡の無いマスク（全面 0。反転なら 1）になる。
+    void SetMeshFootprints(const MeshFootprintStore* footprints) { m_meshFootprints = footprints; }
+
     // 変更を検知していなくても次回に評価し直す。
     void Invalidate() {
         for (auto& [id, set] : m_placementPoints) {
@@ -379,6 +384,14 @@ private:
     uint32_t UploadPathSegmentsTo(rhi::Device& device, rhi::GpuBuffer& buffer,
                                   const std::vector<PathSegment>& segments);
     bool ApplyPathMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                       ID3D12GraphicsCommandList* commandList, const MaskOp& op, size_t index,
+                       const MaterialStack& stack, rhi::GpuTexture& target);
+    // 任意のバイト列を op のバッファへ写す（足りなければ作り直す）。SRV（RAW）の添字を返す。
+    // 失敗なら kInvalidTextureIndex。メッシュの足跡の三角形列が使う。
+    uint32_t UploadBytesTo(rhi::Device& device, rhi::GpuBuffer& buffer, const void* data,
+                           uint64_t bytes, uint64_t minimumCapacity, const wchar_t* name);
+    // メッシュの足跡を焼く。三角形列は m_meshFootprints から op.meshSource で引く。
+    bool ApplyMeshMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                        ID3D12GraphicsCommandList* commandList, const MaskOp& op, size_t index,
                        const MaterialStack& stack, rhi::GpuTexture& target);
     // 川筋の作業リソース（1 組を使い回す）。
@@ -668,6 +681,9 @@ private:
     uint64_t m_asyncRevision = 0;
     // 表側に描ける結果があるか。無いうちは同期で評価する。
     bool m_hasResult = false;
+
+    // メッシュの足跡の置き場（アプリが持つ）。SetMeshFootprints で指す。
+    const MeshFootprintStore* m_meshFootprints = nullptr;
 
     // --- CPU 側のハイト -----------------------------------------------------
     CpuHeightfield m_heightfield;

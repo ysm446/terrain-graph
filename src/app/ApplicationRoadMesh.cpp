@@ -171,6 +171,7 @@ renderer::GeneratedMeshItem::Cutout Application::MaterialCutout(compositor::Mate
 void Application::PrepareRoadMeshes() {
     std::vector<renderer::GeneratedMeshItem> items;
     std::vector<graph::GraphId> alive;
+    std::vector<graph::GraphId> aliveFootprints;
     m_roadNodeStatus.clear();
     for (const graph::CompiledRoadMesh& compiled : m_graph.CompileRoadMeshes()) {
         const graph::Node* meshNode = m_graph.FindNode(compiled.roadMesh);
@@ -180,7 +181,8 @@ void Application::PrepareRoadMeshes() {
         if (mesh == nullptr || path == nullptr) continue;
         alive.push_back(compiled.output);
         // 表示フラグで隠している鎖も形と状態は作り続け、描くかだけを切り替える。
-        const bool visible = !OutputHidden(compiled.output);
+        // Mask Mesh だけが読む鎖（drawn が偽）は形を作って足跡にするだけで、描かない。
+        const bool visible = compiled.drawn && !OutputHidden(compiled.output);
         const bool reference = OutputReference(compiled.output);
         RoadChainCache& cache = m_roadMeshCache[compiled.output];
         RoadNodeStatus& roadStatus = m_roadNodeStatus[compiled.roadMesh];
@@ -190,9 +192,11 @@ void Application::PrepareRoadMeshes() {
         graph::RoadProfileCurve base;
         graph::RoadProfileCurve centerline;
         std::string error;
-        if (!BuildRoadCenterline(*pathNode, base, centerline, &error)) {
+        bool pending = false;
+        if (!BuildRoadCenterline(*pathNode, base, centerline, &error, &pending)) {
             roadStatus.error = error;
-            cache = {};
+            // Base の地形がまだ無いだけなら形は捨てない（次のフレームで続きから）。
+            if (!pending) cache = {};
             continue;
         }
         const uint64_t key = RoadGeometryKey(centerline, path->road, mesh->mesh);
@@ -227,7 +231,7 @@ void Application::PrepareRoadMeshes() {
             roadTrack = item.track;
             item.visible = visible;
             item.reference = reference;
-            items.push_back(item);
+            if (compiled.drawn) items.push_back(item);
         }
 
         // --- 区画線（路面の上。鎖のどこに挟んでも路面に引く） ---
@@ -267,7 +271,7 @@ void Application::PrepareRoadMeshes() {
                 item.cutout = MaterialCutout(line.material, marking->marking.uvRepeatMeters);
                 item.visible = visible;
                 item.reference = reference;
-                items.push_back(item);
+                if (compiled.drawn) items.push_back(item);
             }
         }
 
@@ -386,15 +390,56 @@ void Application::PrepareRoadMeshes() {
                 item.innerSign = edges[side].sign;
                 item.visible = visible;
                 item.reference = reference;
-                items.push_back(item);
+                if (compiled.drawn) items.push_back(item);
                 edges[side] = {&strip, strip.stride - 1, strip.stride - 2, item.track, stripWidth, 1.0f};
             }
         }
         cache.shoulders.resize(stripIndex);
+
+        // --- 足跡（Mask Mesh が読む） ---
+        // 鎖の路面と路肩の三角形を、地形平面の正規化 UV と正規化ハイトへ写す。区画線は路面の上の
+        // 帯で足跡は路面に含まれるので入れない。鎖のどのメッシュに繋いだ Mask Mesh も鎖全体を読む。
+        if (!compiled.maskNodes.empty()) {
+            compositor::MeshFootprint footprint;
+            const float sizeMeters = std::max(m_renderer.PlaneSize(), 1e-3f);
+            const float heightMeters = std::max(m_renderer.DisplacementScale(), 1e-3f);
+            const auto append = [&](const renderer::MeshData& mesh) {
+                const uint32_t baseVertex = static_cast<uint32_t>(footprint.vertices.size());
+                footprint.vertices.reserve(footprint.vertices.size() + mesh.vertices.size());
+                for (const renderer::MeshVertex& vertex : mesh.vertices) {
+                    compositor::MeshFootprintVertex out;
+                    out.u = vertex.position.x / sizeMeters + 0.5f;
+                    out.v = vertex.position.z / sizeMeters + 0.5f;
+                    out.height = vertex.position.y / heightMeters + 0.5f;
+                    footprint.vertices.push_back(out);
+                }
+                footprint.indices.reserve(footprint.indices.size() + mesh.indices.size());
+                for (const uint32_t index : mesh.indices) footprint.indices.push_back(baseVertex + index);
+            };
+            append(cache.road.mesh);
+            for (const RoadStrip& strip : cache.shoulders) append(strip.mesh);
+            for (const graph::GraphId maskId : compiled.maskNodes) {
+                aliveFootprints.push_back(maskId);
+                m_meshFootprints.Set(static_cast<uint32_t>(maskId), footprint);
+            }
+        }
     }
     for (auto it = m_roadMeshCache.begin(); it != m_roadMeshCache.end();) {
         if (std::find(alive.begin(), alive.end(), it->first) == alive.end()) it = m_roadMeshCache.erase(it);
         else ++it;
+    }
+    // 読み手の無くなった足跡（Mask Mesh の削除・切断、鎖が作れなくなった）は捨てる。
+    for (const uint32_t key : m_meshFootprints.Keys()) {
+        if (std::find(aliveFootprints.begin(), aliveFootprints.end(), static_cast<graph::GraphId>(key)) ==
+            aliveFootprints.end()) {
+            m_meshFootprints.Remove(key);
+        }
+    }
+    // 足跡が変わったら本体のスタックを改版する（評価器が op のハッシュで焼き直す）。
+    // 配置の点の評価器は自分の footprintRevision で追う。
+    if (m_meshFootprintRevisionSeen != m_meshFootprints.Revision()) {
+        m_meshFootprintRevisionSeen = m_meshFootprints.Revision();
+        m_graphStack.MarkDirty();
     }
     m_generatedMeshes.Update(m_device, items);
 }

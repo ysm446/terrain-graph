@@ -63,6 +63,9 @@ enum class MaskOpKind : uint32_t {
     MeanderingRivers = 21,
     // 地形全体の風の場（Wind Field）。出力ピンによって地表の風速か粉雪の発生量になる。
     Wind = 22,
+    // メッシュ（道路など）の足跡。三角形を地形平面へ投影し、内側（と余白）を 1 にする。
+    // 三角形は評価器の外（アプリ）が MeshFootprintStore へ入れ、meshSource で引く。
+    Mesh = 23,
 };
 
 // 曲率マスクの向き。シェーダの TG_CURVATURE_* と一致させること。
@@ -229,6 +232,15 @@ struct AreaMaskParams {
     bool invert = false;
 };
 
+// メッシュ（道路など）の足跡をマスクにするときの調整。形はメッシュの三角形が持つ
+// （MeshFootprintStore）。三角形の内側と、外側の余白までを 1 にし、フェザーで 0 へ落とす。
+struct MeshMaskParams {
+    float marginMeters = 0.0f;   // 三角形の外側へ広げる幅（m）
+    float featherMeters = 2.0f;  // 余白の外側を 0 へ落とす幅（m）。0 で二値
+    float gamma = 1.0f;
+    bool invert = false;
+};
+
 // マスクのぼかし（terrain-editor の Mask Blur）。
 //
 // **半径は実寸（m）。** マスクの op は合成解像度で焼くので、テクセル数で持つと
@@ -269,7 +281,10 @@ struct MaskOp {
     ScatterMaskParams scatterMask;
     PathMaskParams pathMask;
     AreaMaskParams areaMask;
+    MeshMaskParams meshMask;
     WindParams wind;
+    // Mesh のときだけ。MeshFootprintStore のキー（Mask Mesh ノードの ID）。0 なら足跡が無い。
+    uint32_t meshSource = 0;
     // Path / Area のときだけ。コンパイルがパスから作る線分列（正規化 UV）。
     // Area は閉じた鎖だけを多角形として並べたもの（幅などは読まない）。
     std::vector<PathSegment> pathSegments;

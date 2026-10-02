@@ -1810,6 +1810,31 @@ void RunNodeGraphTests() {
               "Base 接続中の Path は自身の入力地形を表示する");
     }
 
+    Section("ノードグラフ — Road Path の Base");
+    {
+        // Road Path の中心線は、Path の経路探索と同じく Base までのレイヤー列から高さを読む
+        // （最終出力ではない。地形の均しが路面の高さを書き戻しても中心線が追いかけない）。
+        NodeGraph graph;
+        const tg::graph::GraphId heightmapId = graph.CreateNode(NodeKind::Heightmap);
+        const tg::graph::GraphId outputId = graph.CreateNode(NodeKind::Output);
+        const tg::graph::GraphId roadId = graph.CreateNode(NodeKind::RoadPath);
+        const tg::graph::GraphId shapeId = graph.CreateNode(NodeKind::Shape);
+        // ノードを足すと並びが作り直されうるので、ピンは足した後に引き直す。
+        const bool outputConnected = graph.CreateLink(graph.FindNode(heightmapId)->outputs.front().id,
+                                                      graph.FindNode(outputId)->inputs.front().id);
+        Check(outputConnected && IsNeutralPlane(graph.CompileLayersTo(roadId)),
+              "Base 未接続の Road Path は Output 側の地形ではなく変位 0 の平面になる");
+        const bool roadBaseLinked =
+            graph.CreateLink(graph.FindNode(heightmapId)->outputs.front().id,
+                             graph.FindNode(shapeId)->inputs.front().id) &&
+            graph.CreateLink(graph.FindNode(shapeId)->outputs.front().id,
+                             graph.FindNode(roadId)->inputs.front().id);
+        const tg::graph::CompiledGraph roadBase = graph.CompileLayersTo(roadId);
+        Check(roadBaseLinked && roadBase.layers.size() == 2 && !IsNeutralPlane(roadBase) &&
+                  roadBase.layers.back().kind == tg::compositor::LayerKind::Shape,
+              "Base に繋いだ Road Path は Base までのレイヤー列（Heightmap → Shape）を読む");
+    }
+
     Section("ノードグラフ — Mask Flowline の入力とマスク出力");
     {
         NodeGraph graph;

@@ -126,6 +126,7 @@ bool Application::Initialize(const StartupOptions& options) {
     if (!m_renderer.Initialize(m_device, m_pipelineCache)) {
         return false;
     }
+    m_renderer.SetMeshFootprints(&m_meshFootprints);
     if (!m_renderer.Resize(m_device, m_requestedViewportWidth, m_requestedViewportHeight)) {
         return false;
     }
@@ -216,6 +217,9 @@ void Application::Shutdown() {
     m_modelPreviews.clear();
     m_impostors.Destroy(m_device);
     for (auto& [id,slot] : m_modelPoints) slot->evaluator.Destroy(m_device);
+    for (auto& [id, slot] : m_roadBaseSlots)
+        if (slot->evaluator.Resolution() != 0) slot->evaluator.Destroy(m_device);
+    m_roadBaseSlots.clear();
     for (auto& [id, slot] : m_snowPlumeMasks)
         if (slot->mask.evaluator.Resolution() != 0) slot->mask.evaluator.Destroy(m_device);
     m_snowPlumeMasks.clear();
@@ -543,6 +547,7 @@ int Application::Run() {
         SyncGraphStack();
         SyncOutputDisplay();
         PrepareModelScatters();
+        PrepareRoadBaseTerrain();
         PrepareRoadMeshes();
 
         ID3D12GraphicsCommandList* commandList =
@@ -611,15 +616,37 @@ int Application::Run() {
                 break;
             }
         }
+        // Road Path の Base の地形の評価器も同じ列に並ぶ（走っている間はほかを始めない）。
+        const RoadBaseSlot* activeRoadBaseSlot = nullptr;
+        for (const auto& [id, slot] : m_roadBaseSlots) {
+            if (slot->evaluator.Resolution() != 0 && slot->evaluator.IsEvaluating()) {
+                activeRoadBaseSlot = slot.get();
+                break;
+            }
+        }
         for (auto& [id, slot] : m_modelPoints) {
             if (slot->evaluator.WillRecordEvaluation(slot->stack)) {
-                if (pointEvaluationBlocked ||
+                if (pointEvaluationBlocked || activeRoadBaseSlot != nullptr ||
                     (activePointSlot != nullptr && activePointSlot != slot.get())) {
                     continue;
                 }
                 pointEvaluationBlocked = true;
             }
             slot->evaluator.Update(m_device,m_pipelineCache,commandList,slot->stack,m_textureLibrary,m_materialLibrary,m_paintMasks);
+        }
+        // Road Path の Base の地形も同じ流儀（本体の後、1 フレームに 1 本）。中心線は評価器の
+        // CPU 側のハイトを読むので、終わるまでは前の形のまま。
+        for (auto& [id, slot] : m_roadBaseSlots) {
+            if (slot->evaluator.Resolution() == 0) continue;
+            if (slot->evaluator.WillRecordEvaluation(slot->stack)) {
+                if (pointEvaluationBlocked || activePointSlot != nullptr ||
+                    (activeRoadBaseSlot != nullptr && activeRoadBaseSlot != slot.get())) {
+                    continue;
+                }
+                pointEvaluationBlocked = true;
+            }
+            slot->evaluator.Update(m_device, m_pipelineCache, commandList, slot->stack, m_textureLibrary,
+                                   m_materialLibrary, m_paintMasks);
         }
         m_renderer.SetCloudDistributionMask(m_cloudMasks[0].Srv(), m_cloudMasks[0].Revision());
         m_renderer.SetCloudTypeMask(m_cloudMasks[1].Srv(), m_cloudMasks[1].Revision());
@@ -774,7 +801,11 @@ bool Application::PrepareCloudMask(CloudMaskSlot& slot, graph::GraphId maskNode,
         slot.paintRevision = m_paintMasks.Revision();
     }
     slot.pin = maskPin;
-    return !maskPin || slot.evaluator.Resolution() != 0 || slot.evaluator.Create(m_device, 512, false);
+    if (maskPin && slot.evaluator.Resolution() == 0) {
+        if (!slot.evaluator.Create(m_device, 512, false)) return false;
+        slot.evaluator.SetMeshFootprints(&m_meshFootprints);
+    }
+    return true;
 }
 
 void Application::PrepareSnowPlumes() {

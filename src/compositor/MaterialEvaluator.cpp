@@ -154,6 +154,17 @@ struct RiverConstants {
 // パスの線分 1 本ぶんのバイト数（float 12 個）。シェーダの TG_PATH_SEGMENT_BYTES と一致させること。
 constexpr uint32_t kPathSegmentStride = 48;
 
+// メッシュの足跡の三角形 1 枚ぶんのバイト数（float 12 個: a.xy, b.xy, c.xy, 高さ ×3, 未使用 ×3）。
+// シェーダ（CompositeMaskMesh.hlsl）の TG_MESH_TRIANGLE_BYTES と一致させること。
+constexpr uint32_t kMeshTriangleStride = 48;
+
+// GPU 側の MeshMaskConstants と一致させること。
+struct MeshMaskConstants {
+    uint32_t indices[4];  // 出力 UAV, 出力の一辺, 三角形数, 三角形バッファの SRV
+    float params[4];      // 一辺（m）, ガンマ, 反転, フェザー（m）
+    float params2[4];     // 余白（m）, 未使用 x3
+};
+
 // GPU 側の WindConstants と一致させること。
 struct WindConstants {
     uint32_t indices0[4];  // Height SRV, 速度 UAV, 圧力 A UAV, 圧力 B UAV
@@ -461,6 +472,12 @@ uint64_t HashMaskOpParams(uint64_t seed, const MaskOp& op) {
         case MaskOpKind::FluvialErosion:
         case MaskOpKind::Droplet:
             return HashBytes(seed, &op.dropletMask, sizeof(op.dropletMask));
+        case MaskOpKind::Mesh: {
+            // 三角形の中身は置き場（MeshFootprintStore）にあり、そのハッシュは評価器が
+            // op のハッシュを作るときに混ぜる（HashStackHeightState の maskOpHashOf）。
+            uint64_t hash = HashBytes(seed, &op.meshMask, sizeof(op.meshMask));
+            return HashBytes(hash, &op.meshSource, sizeof(op.meshSource));
+        }
         case MaskOpKind::Path:
         case MaskOpKind::Area: {
             // 線分列の中身まで混ぜる（点を 1 つ動かしただけでも焼き直すため）。
@@ -1413,6 +1430,10 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
     if (op.kind == MaskOpKind::Path || op.kind == MaskOpKind::Area) {
         return ApplyPathMask(device, pipelineCache, commandList, op, index, stack, target);
     }
+    // メッシュの足跡は三角形の列をバッファで受ける専用のシェーダ。
+    if (op.kind == MaskOpKind::Mesh) {
+        return ApplyMeshMask(device, pipelineCache, commandList, op, index, stack, target);
+    }
     // ぼかしは近傍を読むので、1 ディスパッチでは書けない（水平 / 垂直に分ける）。
     if (op.kind == MaskOpKind::Blur) {
         return ApplyMaskBlur(device, pipelineCache, commandList, op, stack,
@@ -1668,6 +1689,124 @@ uint32_t MaterialEvaluator::UploadPathSegmentsTo(rhi::Device& device, rhi::GpuBu
     const D3D12_RANGE writtenRange = {0, static_cast<SIZE_T>(bytes)};
     buffer.resource->Unmap(0, &writtenRange);
     return buffer.srv.index;
+}
+
+uint32_t MaterialEvaluator::UploadBytesTo(rhi::Device& device, rhi::GpuBuffer& buffer,
+                                          const void* data, uint64_t bytes,
+                                          uint64_t minimumCapacity, const wchar_t* name) {
+    if (data == nullptr || bytes == 0) {
+        return kInvalidTextureIndex;
+    }
+    if (!buffer.IsValid() || buffer.sizeInBytes < bytes || !buffer.srv.IsValid()) {
+        device.DeferRelease(buffer);
+        // 少し余らせて作り、形が少し変わるたびに作り直さないようにする。
+        const uint64_t capacity = std::max<uint64_t>(bytes + bytes / 2, minimumCapacity);
+        if (!device.Allocator().CreateUploadBuffer(capacity, name, buffer)) {
+            return kInvalidTextureIndex;
+        }
+        buffer.srv = device.SrvHeap().Allocate();
+        if (!buffer.srv.IsValid()) {
+            device.DeferRelease(buffer);
+            return kInvalidTextureIndex;
+        }
+        // ByteAddressBuffer（RAW）。要素は 4 バイト単位で数える。
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+        srvDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.Buffer.FirstElement = 0;
+        srvDesc.Buffer.NumElements = static_cast<UINT>(buffer.sizeInBytes / 4);
+        srvDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_RAW;
+        device.GetDevice()->CreateShaderResourceView(buffer.resource.Get(), &srvDesc,
+                                                     buffer.srv.cpu);
+    }
+    void* mapped = nullptr;
+    const D3D12_RANGE readRange = {0, 0};
+    if (!TG_CHECK_HR(buffer.resource->Map(0, &readRange, &mapped))) {
+        return kInvalidTextureIndex;
+    }
+    std::memcpy(mapped, data, static_cast<size_t>(bytes));
+    const D3D12_RANGE writtenRange = {0, static_cast<SIZE_T>(bytes)};
+    buffer.resource->Unmap(0, &writtenRange);
+    return buffer.srv.index;
+}
+
+// メッシュの足跡（Mesh）。三角形を地形平面の UV で受け、内側（と余白）を 1 にする。
+// 三角形は置き場（アプリが道路の形から作る）から op.meshSource で引く。
+bool MaterialEvaluator::ApplyMeshMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+                                      ID3D12GraphicsCommandList* commandList, const MaskOp& op,
+                                      size_t index, const MaterialStack& stack,
+                                      rhi::GpuTexture& target) {
+    if (!target.IsValid() || index >= m_maskOpBuffers.size()) {
+        return false;
+    }
+    ID3D12PipelineState* pipeline = pipelineCache.GetCompute(L"CompositeMaskMesh.hlsl", L"CsMesh");
+    if (pipeline == nullptr) {
+        return false;
+    }
+    const MeshFootprint* footprint =
+        (m_meshFootprints != nullptr) ? m_meshFootprints->Find(op.meshSource) : nullptr;
+    // 三角形列を GPU の形（float 12 個 / 枚）へ並べる。足跡が無ければ三角形 0 枚として評価する
+    // （足跡の無いマスク）。バッファは空では作れないので、読まれない 1 枚を置く。
+    std::vector<float> triangles;
+    uint32_t count = 0;
+    if (footprint != nullptr) {
+        const size_t triangleCount = footprint->TriangleCount();
+        triangles.reserve(std::max<size_t>(triangleCount, 1) * (kMeshTriangleStride / sizeof(float)));
+        for (size_t t = 0; t < triangleCount; ++t) {
+            const uint32_t ia = footprint->indices[t * 3 + 0];
+            const uint32_t ib = footprint->indices[t * 3 + 1];
+            const uint32_t ic = footprint->indices[t * 3 + 2];
+            if (ia >= footprint->vertices.size() || ib >= footprint->vertices.size() ||
+                ic >= footprint->vertices.size()) {
+                continue;
+            }
+            const MeshFootprintVertex& a = footprint->vertices[ia];
+            const MeshFootprintVertex& b = footprint->vertices[ib];
+            const MeshFootprintVertex& c = footprint->vertices[ic];
+            const float values[kMeshTriangleStride / sizeof(float)] = {
+                a.u, a.v, b.u, b.v, c.u, c.v, a.height, b.height, c.height, 0.0f, 0.0f, 0.0f};
+            triangles.insert(triangles.end(), std::begin(values), std::end(values));
+            ++count;
+        }
+    }
+    if (triangles.empty()) {
+        triangles.assign(kMeshTriangleStride / sizeof(float), 0.0f);
+    }
+    const uint32_t trianglesSrv =
+        UploadBytesTo(device, m_maskOpBuffers[index], triangles.data(),
+                      static_cast<uint64_t>(triangles.size()) * sizeof(float),
+                      64 * kMeshTriangleStride, L"MaskMeshTriangles");
+    if (trianglesSrv == kInvalidTextureIndex) {
+        return false;
+    }
+    const uint32_t resolution = m_resolution;
+    const float sizeMeters = (stack.SizeMeters() > 0.0f) ? stack.SizeMeters() : 1.0f;
+
+    const rhi::UploadAllocation cb = AllocateConstants(device, sizeof(MeshMaskConstants));
+    if (!cb.IsValid()) {
+        return false;
+    }
+    MeshMaskConstants constants = {};
+    constants.indices[0] = target.UavIndex();
+    constants.indices[1] = resolution;
+    constants.indices[2] = count;
+    constants.indices[3] = trianglesSrv;
+    constants.params[0] = sizeMeters;
+    constants.params[1] = std::clamp(op.meshMask.gamma, 0.05f, 8.0f);
+    constants.params[2] = op.meshMask.invert ? 1.0f : 0.0f;
+    constants.params[3] = std::max(0.0f, op.meshMask.featherMeters);
+    constants.params2[0] = std::max(0.0f, op.meshMask.marginMeters);
+    std::memcpy(cb.cpu, &constants, sizeof(constants));
+
+    PIXBeginEvent(commandList, PIX_COLOR(200, 170, 120), "CompositeMaskMesh");
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    commandList->SetPipelineState(pipeline);
+    commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+    commandList->Dispatch(DispatchCount(resolution), DispatchCount(resolution), 1);
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    PIXEndEvent(commandList);
+    return true;
 }
 
 // パスの足跡（Path）と面（Area）。線分列はバッファから 1 回で読む。
@@ -5238,6 +5377,14 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             if (op.kind == MaskOpKind::Image) {
                 const uint32_t srv = textures.SrvIndex(op.map.texture, false);
                 hash = HashBytes(hash, &srv, sizeof(srv));
+            }
+            // メッシュの足跡は ID（meshSource）が同じまま中身が変わる。置き場の中身のハッシュを混ぜて、
+            // 道路の形が変わったら焼き直されるようにする。
+            if (op.kind == MaskOpKind::Mesh) {
+                const MeshFootprint* footprint =
+                    (m_meshFootprints != nullptr) ? m_meshFootprints->Find(op.meshSource) : nullptr;
+                const uint64_t footprintHash = (footprint != nullptr) ? footprint->hash : 0;
+                hash = HashBytes(hash, &footprintHash, sizeof(footprintHash));
             }
             // **下地の Height か、レイヤーの作業用テクスチャを読む op はここへ足すこと。**
             // 抜けると 2 つ壊れる。(1) 焼く位置が「ループ前」になり、出どころの

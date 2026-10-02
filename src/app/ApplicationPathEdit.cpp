@@ -1816,6 +1816,7 @@ bool Application::BakePathRouteTerrain(const graph::Node& node) {
             return false;
         }
         m_pathRouteEvaluator.SetTileSize(kResolution);
+        m_pathRouteEvaluator.SetMeshFootprints(&m_meshFootprints);
     }
     std::vector<compositor::TileRect> tiles(1);
     tiles[0].width = kResolution;

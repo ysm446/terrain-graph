@@ -3,6 +3,7 @@
 #endif
 // Road Path の線形（地形に沿う中心線、縦断曲線、バンク角）とノードの登録を確かめる。
 
+#include "compositor/MeshFootprint.h"
 #include "graph/NodeGraph.h"
 #include "graph/RoadMarking.h"
 #include "graph/RoadMesh.h"
@@ -508,5 +509,110 @@ void RunRoadPathTests() {
         Check(marked.size() == 1 && marked[0].roadMesh == meshNode && marked[0].markings.size() == 1 &&
                   marked[0].markings[0] == marking && marked[0].shoulders.size() == 2,
               "区画線を挟んでも Road Mesh まで辿り、区画線と路肩を分けて返す");
+        Check(marked[0].drawn && marked[0].maskNodes.empty(), "Mesh Output の鎖は描く。足跡の読み手は無い");
+    }
+
+    Section("Mask Mesh: メッシュの足跡");
+    {
+        // Road Path → Road Mesh → Shoulder → Mask Mesh → Surface の Mask。Mesh Output は繋がない。
+        NodeGraph graph;
+        const GraphId baseNode = graph.CreateNode(NodeKind::Heightmap);
+        const GraphId roadNode = graph.CreateNode(NodeKind::RoadPath);
+        const GraphId meshNode = graph.CreateNode(NodeKind::RoadMesh);
+        const GraphId shoulderNode = graph.CreateNode(NodeKind::Shoulder);
+        const GraphId maskNode = graph.CreateNode(NodeKind::MaskMesh);
+        const GraphId surfaceNode = graph.CreateNode(NodeKind::Surface);
+        Check(graph.FindNode(maskNode) != nullptr &&
+                  std::holds_alternative<MaskNodeSettings>(graph.FindNode(maskNode)->settings) &&
+                  graph.FindNode(maskNode)->inputs.size() == 1 &&
+                  graph.FindNode(maskNode)->inputs[0].valueType == ValueType::Mesh &&
+                  graph.FindNode(maskNode)->outputs.size() == 1 &&
+                  graph.FindNode(maskNode)->outputs[0].valueType == ValueType::Mask,
+              "Mask Mesh はマスクのノードで、Mesh を受けて Mask を出す");
+        const GraphId maskPath = graph.CreateNode(NodeKind::MaskPath);
+        Check(!graph.CreateLink(graph.FindNode(meshNode)->outputs[0].id, graph.FindNode(maskPath)->inputs[0].id),
+              "Mesh は Mask Path（Path の型）へ繋がらない");
+        graph.CreateLink(graph.FindNode(baseNode)->outputs[0].id, graph.FindNode(roadNode)->inputs[0].id);
+        graph.CreateLink(graph.FindNode(roadNode)->outputs[0].id, graph.FindNode(meshNode)->inputs[0].id);
+        graph.CreateLink(graph.FindNode(meshNode)->outputs[0].id, graph.FindNode(shoulderNode)->inputs[0].id);
+        Check(graph.CreateLink(graph.FindNode(shoulderNode)->outputs[0].id, graph.FindNode(maskNode)->inputs[0].id),
+              "Shoulder の Mesh を Mask Mesh へ繋げる");
+        graph.CreateLink(graph.FindNode(baseNode)->outputs[0].id, graph.FindNode(surfaceNode)->inputs[0].id);
+        Check(graph.CreateLink(graph.FindNode(maskNode)->outputs[0].id, graph.FindNode(surfaceNode)->inputs[1].id),
+              "Mask Mesh の Mask を Surface へ繋げる");
+
+        // Mesh Output が無くても、Mask Mesh が終端の鎖として形を作る（描かない）。
+        const auto chains = graph.CompileRoadMeshes();
+        Check(chains.size() == 1 && chains[0].roadMesh == meshNode && chains[0].roadPath == roadNode &&
+                  chains[0].shoulders.size() == 1 && chains[0].shoulders[0] == shoulderNode && !chains[0].drawn &&
+                  chains[0].output == maskNode && chains[0].maskNodes.size() == 1 && chains[0].maskNodes[0] == maskNode,
+              "Mask Mesh だけの鎖は描かずに形を作り、Mask Mesh を足跡の読み手として返す");
+
+        // Mask Mesh の op。足跡のキーは Mask Mesh 自身の ID。
+        const CompiledGraph compiled = graph.CompileLayersTo(surfaceNode);
+        const auto& layerMask = compiled.layers.back().mask;
+        Check(compiled.layers.size() == 2 && layerMask.source == tg::compositor::MaskSource::Node &&
+                  layerMask.maskOp >= 0 &&
+                  compiled.maskOps[static_cast<size_t>(layerMask.maskOp)].kind == tg::compositor::MaskOpKind::Mesh &&
+                  compiled.maskOps[static_cast<size_t>(layerMask.maskOp)].meshSource ==
+                      static_cast<uint32_t>(maskNode),
+              "Mask Mesh は Mesh の op になり、足跡のキーは自分の ID");
+
+        // 同じ Shoulder を Mesh Output へも繋ぐと、描く鎖 1 本にまとまり、Mask Mesh はその読み手になる。
+        const GraphId outputNode = graph.CreateNode(NodeKind::MeshOutput);
+        graph.CreateLink(graph.FindNode(shoulderNode)->outputs[0].id, graph.FindNode(outputNode)->inputs[0].id);
+        const auto merged = graph.CompileRoadMeshes();
+        Check(merged.size() == 1 && merged[0].drawn && merged[0].output == outputNode &&
+                  merged[0].maskNodes.size() == 1 && merged[0].maskNodes[0] == maskNode,
+              "Mesh Output と同じメッシュに繋いだ Mask Mesh は、描く鎖の足跡を読む");
+
+        // 鎖の途中（Road Mesh）に繋いだ Mask Mesh は別の鎖（路肩なし）として形を作る。
+        const GraphId innerMask = graph.CreateNode(NodeKind::MaskMesh);
+        graph.CreateLink(graph.FindNode(meshNode)->outputs[0].id, graph.FindNode(innerMask)->inputs[0].id);
+        const auto split = graph.CompileRoadMeshes();
+        size_t innerChains = 0;
+        for (const auto& chain : split) {
+            if (chain.output == innerMask) {
+                ++innerChains;
+                Check(!chain.drawn && chain.shoulders.empty() && chain.roadMesh == meshNode,
+                      "Road Mesh に直接繋いだ Mask Mesh は路肩を含まない足跡になる");
+            }
+        }
+        Check(split.size() == 2 && innerChains == 1, "鎖の途中に繋いだ Mask Mesh は別の（描かない）鎖になる");
+
+        // Mesh 入力が無い Mask Mesh は未接続（レイヤーは自分の定数マスク）。
+        NodeGraph empty;
+        const GraphId emptyMask = empty.CreateNode(NodeKind::MaskMesh);
+        const GraphId emptyBase = empty.CreateNode(NodeKind::Heightmap);
+        const GraphId emptySurface = empty.CreateNode(NodeKind::Surface);
+        empty.CreateLink(empty.FindNode(emptyBase)->outputs[0].id, empty.FindNode(emptySurface)->inputs[0].id);
+        empty.CreateLink(empty.FindNode(emptyMask)->outputs[0].id, empty.FindNode(emptySurface)->inputs[1].id);
+        const CompiledGraph emptyCompiled = empty.CompileLayersTo(emptySurface);
+        Check(emptyCompiled.layers.size() == 2 && emptyCompiled.layers.back().mask.maskOp < 0,
+              "Mesh 入力の無い Mask Mesh は未接続と同じ扱い");
+        Check(empty.CompileRoadMeshes().empty(), "Mesh 入力の無い Mask Mesh は鎖を作らない");
+    }
+
+    Section("Mask Mesh: 足跡の置き場");
+    {
+        tg::compositor::MeshFootprintStore store;
+        const uint64_t initial = store.Revision();
+        tg::compositor::MeshFootprint footprint;
+        footprint.vertices = {{0.1f, 0.1f, 0.5f}, {0.2f, 0.1f, 0.5f}, {0.1f, 0.2f, 0.6f}};
+        footprint.indices = {0, 1, 2};
+        Check(store.Set(7, footprint) && store.Revision() == initial + 1 && store.Find(7) != nullptr &&
+                  store.Find(7)->TriangleCount() == 1 && store.Find(7)->hash != 0,
+              "足跡を置くと世代が進み、ハッシュが付く");
+        Check(!store.Set(7, footprint) && store.Revision() == initial + 1, "同じ中身を置き直しても世代は進まない");
+        tg::compositor::MeshFootprint jitter = footprint;
+        jitter.vertices[0].u += 1e-7f;  // 浮動小数の揺れ（1/65536 より小さい）
+        Check(!store.Set(7, jitter) && store.Revision() == initial + 1, "座標の微かな揺れでは世代は進まない");
+        tg::compositor::MeshFootprint moved = footprint;
+        moved.vertices[0].u += 0.01f;
+        Check(store.Set(7, moved) && store.Revision() == initial + 2, "形が変われば世代が進む");
+        Check(store.Find(8) == nullptr && !store.Remove(8) && store.Revision() == initial + 2,
+              "無いキーの取り除きは何もしない");
+        Check(store.Remove(7) && store.Find(7) == nullptr && store.Revision() == initial + 3 && store.Count() == 0,
+              "取り除くと世代が進む");
     }
 }

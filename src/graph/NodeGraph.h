@@ -156,6 +156,9 @@ enum class NodeKind : uint32_t {
     // Mesh を受けて、そのまま出す（鎖のどこに挟んでも、線は路面の上に引く）。
     LaneMarking = 57,
     Mountain = 58, // 画像を使わず山岳地形を生成するソース。
+    // メッシュ（Road Mesh / Shoulder の出力）の足跡をマスクにする。三角形を地形平面へ投影し、
+    // 内側（と余白）を 1 にする。形はアプリが組み立てたメッシュから取る（compositor::MeshFootprintStore）。
+    MaskMesh = 59,
 };
 
 struct PinDefinition {
@@ -239,6 +242,7 @@ struct MaskNodeSettings {
     compositor::MaskBlurParams blur;
     compositor::PathMaskParams pathMask;
     compositor::AreaMaskParams areaMask;
+    compositor::MeshMaskParams meshMask;
     compositor::WindParams wind;
 };
 
@@ -457,10 +461,15 @@ struct CompiledModelScatter {
 // Mesh Output から辿った道路のメッシュ。Road Mesh と、その Road Path、間に挟んだ路肩
 // （Road Mesh に近い順。内側の路肩から外側へ張り出す）。
 struct CompiledRoadMesh {
+    // output は鎖の終端。Mesh Output か、Mesh Output の無い鎖なら最初の Mask Mesh。
     GraphId output = 0, roadMesh = 0, roadPath = 0;
     std::vector<GraphId> shoulders;
     // 鎖に挟んだ Lane Marking（Road Mesh に近い順）。線はどれも路面の上に引く。
     std::vector<GraphId> markings;
+    // ビューポートへ描くか（Mesh Output に繋がっている）。Mask Mesh だけが読む鎖は形を作るが描かない。
+    bool drawn = true;
+    // この鎖の形（路面と路肩）を足跡として読む Mask Mesh。鎖のどのメッシュに繋いでも鎖全体の足跡を読む。
+    std::vector<GraphId> maskNodes;
 };
 // 雪煙（Snow Plume ノード）。Source のマスクが強い所から、風下へ半透明の帯を伸ばす。
 // 帯は評価器ではなくビューポートの描画で作る（頂点シェーダが格子の種から組み立てる）。
@@ -598,8 +607,9 @@ public:
     CompiledGraph CompilePathRouteInputs(GraphId pathNodeId, int& avoidOp) const;
     CompiledCloud CompileCloud() const;
     std::vector<CompiledModelScatter> CompileModelScatters() const;
-    // Mesh Output に繋がった Road Mesh（と、その入力の Road Path）。Road Path が繋がって
+    // Mesh Output か Mask Mesh に繋がった Road Mesh（と、その入力の Road Path）。Road Path が繋がって
     // いない Road Mesh は入れない。同じ Road Mesh へ複数の経路があっても 1 回だけ。
+    // Mask Mesh だけが読む鎖は drawn が偽（形は作るが描かない）。
     std::vector<CompiledRoadMesh> CompileRoadMeshes() const;
     // Snow Plume ノードをすべて集める。Source の上流に Wind Field があればその風を使う。
     std::vector<CompiledSnowPlume> CompileSnowPlumes() const;
@@ -705,6 +715,8 @@ private:
     static int EmitEmptyMaskOp(compositor::MaskProgram& ops, std::vector<EmittedMaskOp>& emitted);
     // Path の入力に線が繋がっているか（バイパスで読み替える前）。
     bool PathInputLinked(const Node& node) const;
+    // Mesh の入力に線が繋がっているか（バイパスで読み替える前）。
+    bool MeshInputLinked(const Node& node) const;
     // ノードの入力ピン（型を指定）に繋がっている上流ノード。無ければ nullptr。
     const Node* UpstreamOf(const Node& node, ValueType type, size_t which = 0) const;
     // Mask 入力に繋がっている出どころ。node が nullptr なら未接続。

@@ -173,6 +173,7 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
         case graph::NodeKind::MeshOutput:
         case graph::NodeKind::Shoulder:
         case graph::NodeKind::LaneMarking:
+        case graph::NodeKind::MaskMesh:
             return ImVec4(0.84f, 0.80f, 0.60f, 1.0f);
         case graph::NodeKind::Output:
         default:
@@ -1565,6 +1566,7 @@ void Application::DrawGraphEditor() {
             graph::NodeKind::RoadMesh,
             graph::NodeKind::Shoulder,
             graph::NodeKind::LaneMarking,
+            graph::NodeKind::MaskMesh,
             graph::NodeKind::MeshOutput,
         });
         section("配置", {
@@ -2231,6 +2233,12 @@ void Application::DrawNodeProperties(graph::Node* selected) {
                 hint = "Path 入力の閉じた鎖を多角形とみなし、内側を 1 にする。"
                        "輪の中に輪を描けば穴になる。開いた鎖と点ごとの幅は読まない";
                 break;
+            case graph::NodeKind::MaskMesh:
+                header = "メッシュの足跡";
+                hint = "Mesh 入力（Road Mesh か Shoulder）のメッシュを地形平面へ投影し、三角形の内側を 1 にする。"
+                       "鎖のどこに繋いでも路面と路肩をまとめた足跡になる。反転して Model Scatter のマスクに掛けると、"
+                       "道路の上に植生が生えなくなる";
+                break;
             default:
                 break;
         }
@@ -2273,6 +2281,9 @@ void Application::DrawNodeProperties(graph::Node* selected) {
                 case graph::NodeKind::MaskArea:
                     changed |= DrawAreaMaskRows(mask->areaMask);
                     break;
+                case graph::NodeKind::MaskMesh:
+                    changed |= DrawMeshMaskRows(mask->meshMask);
+                    break;
                 default:
                     changed |= DrawMapSlotRow("画像", mask->map, m_textureLibrary, m_pendingAssetReveal);
                     break;
@@ -2280,6 +2291,21 @@ void Application::DrawNodeProperties(graph::Node* selected) {
             ui::EndPropertyTable();
         }
         ui::HintText("%s", hint);
+        // Mask Mesh の足跡は、繋いだ鎖の形ができてから届く。何も繋いでいない / まだ無いときは知らせる。
+        if (selected->kind == graph::NodeKind::MaskMesh) {
+            const graph::Node* meshNode = m_graph.FindUpstreamNodeForPin(selected->inputs.front().id);
+            const compositor::MeshFootprint* footprint =
+                m_meshFootprints.Find(static_cast<uint32_t>(selected->id));
+            ui::SectionHeader("状態");
+            if (meshNode == nullptr) {
+                ui::HintText("Mesh 入力が繋がっていないので、マスクは空になる");
+            } else if (footprint == nullptr) {
+                ui::HintText("道路の形を組み立て中（Road Path に線が無い、または形を作れないときは空のまま）");
+            } else if (ui::BeginPropertyTable("maskMeshStatusRows")) {
+                ui::PropertyValue("足跡", "三角形 %zu", footprint->TriangleCount());
+                ui::EndPropertyTable();
+            }
+        }
         // Mask Area は閉じた鎖しか読まない。無いと黙って空のマスクになるので注意書きを出す。
         if (selected->kind == graph::NodeKind::MaskArea) {
             const graph::Node* pathNode = m_graph.FindUpstreamNodeForPin(selected->inputs.front().id);

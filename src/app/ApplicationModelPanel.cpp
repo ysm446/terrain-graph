@@ -42,13 +42,17 @@ void Application::PrepareModelScatters() {
         auto& slot = m_modelPoints[scatter.source];
         if (!slot) slot = std::make_unique<ModelPointSlot>();
         const uint32_t resolution = m_renderer.MaterialResolution();
-        if (slot->evaluator.Resolution() == 0) slot->evaluator.Create(m_device,resolution);
+        if (slot->evaluator.Resolution() == 0) {
+            slot->evaluator.Create(m_device,resolution);
+            slot->evaluator.SetMeshFootprints(&m_meshFootprints);
+        }
         else if (slot->evaluator.Resolution() != resolution) slot->evaluator.Resize(m_device,resolution);
         const auto* scale = m_graph.FindChainScale(scatter.source);
         slot->stack.SetTerrainScale(scale ? scale->sizeMeters : m_renderer.PlaneSize(),
                                    scale ? scale->heightMeters : m_renderer.DisplacementScale());
         if (slot->graphRevision != m_graph.TerrainRevision() ||
-            slot->documentRevision != m_graphStack.Revision() || slot->paintRevision != m_paintMasks.Revision()) {
+            slot->documentRevision != m_graphStack.Revision() || slot->paintRevision != m_paintMasks.Revision() ||
+            slot->footprintRevision != m_meshFootprints.Revision()) {
             auto compiled = m_graph.CompileLayersTo(scatter.source);
             for (size_t i=0;i<compiled.layerSources.size();++i)
                 if (compiled.layerSources[i] == scatter.source) {
@@ -63,6 +67,7 @@ void Application::PrepareModelScatters() {
             slot->graphRevision = m_graph.TerrainRevision();
             slot->documentRevision = m_graphStack.Revision();
             slot->paintRevision = m_paintMasks.Revision();
+            slot->footprintRevision = m_meshFootprints.Revision();
         }
     }
     for (auto it=m_modelPoints.begin();it!=m_modelPoints.end();) {
