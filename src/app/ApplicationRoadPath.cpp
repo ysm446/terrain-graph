@@ -620,7 +620,8 @@ bool Application::DrawRoadPathSettings(graph::Node& node) {
 // ずれは保つ）、**Shift を押して掴むと高さ**（ポイントを通る鉛直線の上で、カーソルのレイに一番近い
 // 高さにする）。どちらにするかは押したときに決め、離すまで変えない。掴んだ菱形とカーソルのずれは
 // 保って、押した瞬間に跳ばないようにする（縦断図と同じ）。
-// 追加は入れない（Ctrl + クリックはパスの「伸ばす」）。追加は縦断図のクリックかプロパティのボタン。
+// 追加は V キー（カーソルに一番近い中心線上の位置へ挿入）。クリックでは入れない（Ctrl + クリックは
+// パスの「伸ばす」）。縦断図のクリックとプロパティのボタンでも追加できる。
 // アンドゥはビューポートの画像がアクティブな間 1 段に畳まれる（パスの点のドラッグと同じ）。
 bool Application::HandleRoadProfileInput(graph::Node& node, bool itemHovered, const ImVec2& viewportMin,
                                          const ImVec2& viewportMax) {
@@ -775,6 +776,19 @@ bool Application::HandleRoadProfileInput(graph::Node& node, bool itemHovered, co
         } else if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
             edit.selected = 0;
         }
+    }
+    // V（Vertical）で、カーソルに一番近い中心線上の位置へ縦断ポイントを挿入して選ぶ。高さは今の設計の
+    // 高さ（置いた瞬間に道路が地形へ跳ばないように）。修飾キーは付けない（Ctrl + V はパスの貼り付け）。
+    // 菱形の上では入れない（同じ位置に重ねない）。右ボタンを押している間はフライなので受けない。
+    if (itemHovered && !io.WantTextInput && edit.viewportDrag == 0 && edit.viewportHover == 0 && !m_fly.held &&
+        !io.KeyCtrl && !io.KeyShift && total > 0.0f && ImGui::IsKeyPressed(ImGuiKey_V, false)) {
+        const float distance = nearestDistanceOnCenterline();
+        const graph::PathElementId id = graph::AddVerticalPoint(road, distance / total);
+        if (graph::RoadVerticalPoint* point = graph::FindVerticalPoint(road, id)) {
+            point->offsetMeters = centerline.At(distance).y - base.At(distance).y;
+        }
+        edit.selected = id;
+        changed = true;
     }
 
     // --- 案内 -------------------------------------------------------------------

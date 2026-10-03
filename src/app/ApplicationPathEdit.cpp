@@ -1430,6 +1430,11 @@ void Application::DrawPathOverlay(const graph::Node& node, const ImVec2& viewpor
                 {"Ctrl+V", "コピーしたパスをカーソルへ貼る"},
                 {"Alt + ドラッグ", "視点"}};
     }
+    // Road Path は、パスの操作の下に縦断ポイントの挿入を足す（HandleRoadProfileInput が受ける）。
+    if (node.kind == graph::NodeKind::RoadPath && !profileHot && !io.KeyCtrl && !state.dragging &&
+        !state.gizmoDragging) {
+        rows.push_back({"V", "カーソルの所に縦断ポイントを挿入"});
+    }
     {
         float keyWidth = 0.0f;
         float actionWidth = 0.0f;
