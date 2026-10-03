@@ -121,6 +121,7 @@ set(tg_sources
     src/app/ApplicationUiHelpers.h
     src/app/ApplicationViewport.cpp
     src/app/ApplicationRoadPath.cpp
+    src/app/ApplicationChannelPreview.cpp
     src/app/ApplicationRoadMesh.cpp
     src/app/ApplicationReport.cpp
     src/app/ApplicationProbe.cpp

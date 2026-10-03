@@ -99,6 +99,8 @@ struct StartupOptions {
     std::vector<std::filesystem::path> bakeImpostors;
     std::filesystem::path revealAsset; // 開発用。参照元への移動を画面確認する。
     graph::GraphId selectNode = 0; // 開発用。読み込んだグラフのプロパティを画像で確認する。
+    // 開発用。「チャンネル」パネルを前面にして、この番号のチャンネルを出す（--screenshot-ui で確かめる）。負なら何もしない。
+    int channelPreview = -1;
     // 開発用。読み込んだシーンの全項目を未保存扱いにし、階層の印と保存ボタンを画像で確認する。
     bool showUnsaved = false;
 };
@@ -344,6 +346,10 @@ private:
     // テクスチャプレビューの窓（拡大表示 + 詳細）。
     // 一覧のサムネイルをダブルクリックするか、ウィンドウメニューから開く。
     void DrawTexturePreviewWindow();
+    // 「チャンネル」パネル（合成結果のチャンネルを 1 枚の絵で見る）。ApplicationChannelPreview.cpp。
+    void DrawChannelPreviewPanel();
+    void PrepareChannelPreview(ID3D12GraphicsCommandList* commandList);
+    void DestroyChannelPreview();
     // アプリの設定ウィンドウ（ウィンドウ > 設定）。プロジェクトに保存しない設定を置く。
     void DrawSettingsWindow();
     // 合成結果を画像へ書き出すウィンドウ（ファイル > テクスチャを書き出す…）。
@@ -1097,6 +1103,34 @@ private:
     bool m_showMaterialSphere = false;
     // テクスチャプレビューの窓。同じくドックへは収めない。
     bool m_showTexturePreview = false;
+    // 「チャンネル」パネルの状態。UI が要求（どのチャンネルを、どの範囲で）を置き、
+    // 同じフレームの描画（PrepareChannelPreview）が表示用のテクスチャを焼く。保存しない。
+    struct ChannelPreviewState {
+        int mode = 0;
+        // 表示する範囲。中心の UV と拡大率（1 で全体）。
+        float centerU = 0.5f;
+        float centerV = 0.5f;
+        float zoom = 1.0f;
+        // このフレームに焼くか（パネルが見えているときだけ真）。
+        bool requested = false;
+        bool imageReady = false;
+        // カーソルの位置（UV）と、読み戻した値（表示用に直す前の 4 成分）。
+        bool probeHovered = false;
+        float probeU = 0.0f;
+        float probeV = 0.0f;
+        float probeValue[4] = {};
+        bool probeValueValid = false;
+        // 「水際からの距離」の等値線の間隔（m）。見えている範囲から毎フレーム決める。
+        float contourMeters = 25.0f;
+        rhi::GpuTexture image;
+        rhi::GpuBuffer result;
+        rhi::GpuBuffer readback;
+        bool pending[rhi::kFrameCount] = {};
+        bool pendingProbe[rhi::kFrameCount] = {};
+    };
+    ChannelPreviewState m_channelPreview;
+    // ビューポートが入っているドックの ID（「チャンネル」を同じ枠へタブで入れるため）。
+    ImGuiID m_viewportDockId = 0;
     // 天球プレビューの窓。同じくドックへは収めない。
     bool m_showSkyPreview = false;
     // その窓の中身をこのフレームに描いたか（折りたたまれていれば球も描かない）。

@@ -947,6 +947,8 @@ void Application::DrawViewportPanel() {
                                    ImGuiWindowFlags_NoScrollbar |
                                        ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
+    // 「チャンネル」パネルを同じ枠へタブで入れるために控える。
+    m_viewportDockId = ImGui::GetWindowDockID();
 
     if (open) {
         const ImVec2 available = ImGui::GetContentRegionAvail();

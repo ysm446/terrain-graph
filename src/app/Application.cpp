@@ -209,6 +209,7 @@ void Application::Shutdown() {
     m_device.WaitForGpu();
     // ImGui のコンテキストより先に破棄する（エディタが ImGui に依存している）。
     m_assetThumbnails.Destroy(m_device);
+    DestroyChannelPreview();
     DestroyGraphEditor();
     DestroyReferenceViewer();
     for (auto& slot : m_cloudMasks) if (slot.evaluator.Resolution() != 0) slot.evaluator.Destroy(m_device);
@@ -659,6 +660,8 @@ int Application::Run() {
         m_renderer.Render(m_device, m_pipelineCache, commandList, m_graphStack,
                           m_textureLibrary, m_materialLibrary, m_paintMasks);
 
+        // 「チャンネル」パネルの絵。合成結果が描画から読める状態になった後に焼く。
+        PrepareChannelPreview(commandList);
         RenderModelPreviews(commandList);
         m_assetThumbnails.Render(m_device, m_pipelineCache, commandList, m_renderer);
         // 一覧のマテリアルサムネイル。ImGui の描画より前に積む。
@@ -1002,6 +1005,8 @@ void Application::DrawUi() {
     ImGui::DockSpaceOverViewport(dockspaceId, ImGui::GetMainViewport());
 
     DrawViewportPanel();
+    // ビューポートの後に描く（同じ枠のタブで、前面はビューポートのまま）。
+    DrawChannelPreviewPanel();
     // タブが重なる枠では、**最初に submit したパネルが前面のタブになり、
     // タブは submit した順に並ぶ**（ini に配置が無いとき）。
     // 作業の起点はグラフなので、右カラムの他のパネルより先に描く。
@@ -1108,6 +1113,8 @@ void Application::BuildDefaultLayout(ImGuiID dockspaceId) {
     ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.28f, &bottom, &center);
 
     ImGui::DockBuilderDockWindow("ビューポート", center);
+    // 合成結果のチャンネルを 1 枚の絵で見るパネル。ビューポートと同じ枠のタブ（前面はビューポート）。
+    ImGui::DockBuilderDockWindow("チャンネル", center);
     // アセット帯の左にフォルダ階層、右にその内容を表示する。
     ImGui::DockBuilderDockWindow("アセット", bottom);
     // 右カラムへタブで重ねる。縦に積むと 1 枚あたりが短くなり、
