@@ -1,7 +1,7 @@
 # nodes — ノードのリファレンス
 
 作成日時: 2026-09-03 17:30
-更新日時: 2026-10-04 16:30
+更新日時: 2026-10-04 17:00
 
 ## Model Merge
 
@@ -59,7 +59,7 @@ Cloud Shape Generate（`cloudShapeGenerate`）または Cloud Map Generate（`cl
 | **Heightmap** | `heightmap` | — | Result | 画像を地形として読み込む。**チェーンの起点** |
 | **Surface** | `surface` | Base, Mask, UV Path | Result | 素材を高さで張り合わせる。UV Path を繋ぐとパスに沿った帯に貼る |
 | **Shape** | `shape` | Base, Mask | Result | 高さへ起伏を加算する |
-| **Liquid** | `liquid` | Base, Mask | Result, Water, Depth, Shore | 水位より低い所に水を張る |
+| **Sea** | `liquid` | Base, Mask | Result, Water, Depth, Shore | 水位より低い所に海（水）を張る。旧名 Liquid |
 | **Heightmap Blur** | `heightmapBlur` | Base, Mask | Result | ハイトをぼかしてならす |
 | **Height Levels** | `heightLevels` | Base, Mask | Result | 高さの範囲を写し直す（侵食で縮んだ範囲を元の全幅へ戻す） |
 | **Sediment** | `sediment` | Base, Emission | Result, **Mask** | 土砂を重力で再分配する。Emission で供給する場所を絞れる |
@@ -220,9 +220,11 @@ Cloud Shape Generate（`cloudShapeGenerate`）または Cloud Map Generate（`cl
   作る（色は後ろの Surface で付ける）。**「水を描く」が入の水の上に、色を付けるための Surface を
   重ねないこと**（陸として扱われ、水が消える）。古いファイルの Lake / River は切で読む。
 
-## Liquid
+## Sea
 
-水位より低い所に水面を張るノード。
+水位より低い所に水面を張るノード。**旧名は Liquid**（2026-10-04 に表示名を変えた。保存名は `liquid` のまま
+なので、既存のファイルはそのまま開ける。以下の説明と他の文書に残る「Liquid」は、このノードのこと）。
+海に限らず、水位を決めて平らに水を張りたい所（ダム湖など）にも使える。
 
 **Result（水を張った地形）と、Water（水面の範囲）/ Depth（水深）/ Shore（水際の帯）の 3 つの Mask を出す。**
 Mask は水の場から焼くので、**この Liquid より後ろのノード**で使う（手前へ繋ぐと循環になる）。
@@ -232,7 +234,7 @@ Water は水の中が 1・陸が 0。Depth は「Depth の深さ」で 1。Shore
 
 | パラメータ | 既定 | 意味 |
 | --- | --- | --- |
-| 名前 | `Liquid` | |
+| 名前 | `Sea` | |
 | ベースカラー | (0.003, 0.012, 0.04) | **深い所の色**（水中の散乱・吸収の色。赤が最も吸収される） |
 | ラフネス / メタルネス / AO | 0.07 / 0.0 / 1.0 | |
 | 水面 / 水位 | 0.35 | この高さより低い所に水面が張る |

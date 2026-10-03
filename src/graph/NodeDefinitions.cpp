@@ -22,7 +22,7 @@ constexpr std::array<PinDefinition, 3> kLayerNodePins = {{
     {PinKind::Output, ValueType::Material, "Result"},
 }};
 
-// Liquid のピン。Result のほかに、水と陸を分ける Mask を出す（水の場から焼く）。
+// Sea（Liquid）のピン。Result のほかに、水と陸を分ける Mask を出す（水の場から焼く）。
 // 古いファイルは出力 1 本で保存されているので、Mask は末尾に足す（欠けたぶんは採番し直される）。
 constexpr std::array<PinDefinition, 6> kLiquidPins = {{
     {PinKind::Input, ValueType::Material, "Base"},
@@ -313,8 +313,10 @@ constexpr std::array<NodeDefinition, 56> kNodeDefinitions = {{
      "素材を高さで張り合わせる"},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins,
      "高さへ起伏を加算する"},
-    {NodeKind::Liquid, "liquid", "Liquid", kLiquidPins,
-     "水位より低い所に水を張る"},
+    // 表示名は Sea（ユーザー指定 2026-10-04）。保存名（"liquid"）と識別子（Liquid）は変えない
+    // （既存のファイルを開けるように。元は Mixer の Liquid に倣った汎用の名前だった）。
+    {NodeKind::Liquid, "liquid", "Sea", kLiquidPins,
+     "水位より低い所に海（水）を張る"},
     {NodeKind::Blur, "heightmapBlur", "Heightmap Blur", kBlurPins,
      "ハイトをぼかしてならす"},
     {NodeKind::Sediment, "sediment", "Sediment", kSedimentPins,

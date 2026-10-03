@@ -69,7 +69,7 @@ inline const compositor::MaterialLayer kDefaultShapeLayer = [] {
 inline const compositor::MaterialLayer kDefaultLiquidLayer = [] {
     compositor::MaterialLayer layer;
     layer.kind = compositor::LayerKind::Liquid;
-    layer.name = "Liquid";
+    layer.name = "Sea";  // 表示名（種類の識別子は Liquid のまま）
     layer.roughness = 0.07f;
     layer.metallic = 0.0f;
     layer.heightSource = compositor::ValueSource::Constant;

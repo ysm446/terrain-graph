@@ -217,7 +217,7 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
         ui::HintText("窪みに水を溜めて水面の高さへ変形する。Lake は湖の範囲、Depth は水深（m）、"
                      "Water Level は周囲へ延長した水位（Height と同じ 0〜1 基準）。"
                      "「水を描く」が入なら、水の色・波・波打ち際はこのノードが付ける。"
-                     "波の大きさや波打ち際の細かい設定は Liquid のものを使う（Liquid が無ければ既定）");
+                     "波の大きさや波打ち際の細かい設定は Sea のものを使う（Sea が無ければ既定）");
         return changed;
     }
     // 積雪も合成レイヤーではなく「下地のハイトへ雪を積む加工」。
@@ -1189,7 +1189,7 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
             ui::EndPropertyTable();
         }
         ui::HintText("波と波打ち際は地形の描画で動かす（合成結果や書き出すテクスチャには入らない）。"
-                     "Liquid が複数あるときは、最初の有効な 1 つの設定を使う");
+                     "Sea が複数あるときは、最初の有効な 1 つの設定を使う");
         // Mask 出力（Water / Depth / Shore）の目盛り。
         ui::SectionHeader("マスク出力");
         if (ui::BeginPropertyTable("layerLiquidMaskRows")) {
@@ -1202,7 +1202,7 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
             ui::EndPropertyTable();
         }
         ui::HintText("Water は水面の範囲（水の中が 1）、Depth は水深、Shore は水際の帯。"
-                     "この Liquid より後ろのノードで使う");
+                     "この Sea より後ろのノードで使う");
     } else if (layeredMaterial) {
         ui::SectionHeader("ハイト");
         if (ui::BeginPropertyTable("layerHeightRows")) {

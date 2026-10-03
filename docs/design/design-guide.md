@@ -1,7 +1,7 @@
 # design-guide — UI の設計ガイド
 
 作成日時: 2026-08-31 14:36
-更新日時: 2026-10-04 16:30
+更新日時: 2026-10-04 17:00
 
 ## Mountain のプロパティ
 
@@ -35,7 +35,7 @@ Road Path を選んだときのプロパティは、Path と同じ「パス」�
 | 入出力 | Heightmap / Mountain / Output / Terrain（雲グラフのときだけ） |
 | 合成 | Surface / Shape |
 | 侵食 | Fluvial Erosion / Multi-Scale Erosion / Droplet Erosion / Sediment / Crumbling |
-| 水 | Liquid / River / Meandering Rivers / Lake（Liquid はユーザー指定 2026-10-04 で合成から移した。水を張るノードは水にまとめる） |
+| 水 | Sea / River / Meandering Rivers / Lake（Sea は旧名 Liquid。ユーザー指定 2026-10-04 で合成から移し、表示名を Sea にした。水を張るノードは水にまとめる） |
 | 雪 | Snow Cover / Snow / Snow Plume |
 | 整形 | Heightmap Blur / Flatten Borders / Height Levels |
 | マスク | Mask Image / Noise / Flowline / Fluvial / Height / Slope / Curvature / Levels / Blur / Blend、Wind Field |
@@ -56,7 +56,7 @@ Road Path を選んだときのプロパティは、Path と同じ「パス」�
   - 「横に等間隔」「縦に等間隔」。端の 2 つを動かさずに間の隙間を等しくする。3 個以上で有効。重なっていて端の間に収まらないときも最低 16 空ける。
 - どの整列もアンドゥ 1 段になる（揃える前の位置へ戻る）。
 
-## Liquid のプロパティ
+## Sea（旧名 Liquid）のプロパティ
 
 「水面」節は PropertyFloat の「水位」「フェザー」の下に、PropertyColorLinear の「浅瀬の色」、PropertyFloat の「色の変わる深さ」（m、0〜100、`%.1f m`）「透ける深さ」（m、0〜50、`%.1f m`）を並べる（ユーザー指定 2026-10-04。海の見た目。参考は `docs/references/sea/`）。深い所の色は節を足さず、上の「ベースカラー」をそのまま使う（同じ意味の値を 2 か所に置かない）。ツールチップでその関係を書く。
 

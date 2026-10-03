@@ -187,7 +187,7 @@ void Application::DrawChannelPreviewPanel() {
 
     if (ui::BeginPropertyTable("channelPreviewRows")) {
         ui::PropertyCombo("チャンネル", &state.mode, kChannelPreviewLabels, ChannelModeCount, ChannelBaseColor,
-                          "合成結果のどのチャンネルを見るか。「水」は水を張るノード（Liquid / Lake / River）が"
+                          "合成結果のどのチャンネルを見るか。「水」は水を張るノード（Sea / Lake / River）が"
                           "書く水チャンネル");
         ui::EndPropertyTable();
     }
