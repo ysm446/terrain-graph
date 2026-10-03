@@ -905,41 +905,8 @@ void Application::DrawGraphNode(const graph::Node& node) {
             DrawNoteIcon();
             if (ImGui::IsItemHovered()) m_graphNoteHover = node.id;
         }
-        // 表示フラグ（目）。見出しの右端に置く。右端は前のフレームのノードの大きさから取る。
-        // リファレンス表示にできる出口（Output / Mesh Output）は、目の左に網のトグルを並べる。
-        if (displayOutput) {
-            const float eyeSize = ui::Scaled(14.0f);
-            const bool referenceable = graph::IsReferenceOutputKind(node.kind);
-            const float gap = ImGui::GetStyle().ItemInnerSpacing.x;
-            ImGui::SameLine();
-            const ImVec2 rowPos = ImGui::GetCursorScreenPos();
-            const float iconsWidth = referenceable ? eyeSize * 2.0f + gap : eyeSize;
-            const float iconsX = std::max(rowPos.x, nodeRightX - kNodePaddingX - iconsWidth);
-            const float iconY = rowPos.y + (ImGui::GetTextLineHeight() - eyeSize) * 0.5f;
-            // ノードの中でも ImGui の ID はノードごとに分かれないので、ノードの ID を積む。
-            ImGui::PushID(static_cast<int>(node.id));
-            if (referenceable) {
-                ImGui::SetCursorScreenPos(ImVec2(iconsX, iconY));
-                bool reference = OutputReference(node.id);
-                if (ui::WireframeToggle("##outputReference", &reference, eyeSize)) {
-                    ToggleOutputReference(node.id);
-                }
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-                    ImGui::SetTooltip("リファレンス表示。灰色のワイヤーフレームで描き、影を落とさない\n"
-                                      "Ctrl+クリックの単独表示でも隠れない。作業中だけの切り替えで、保存しない");
-                }
-            }
-            ImGui::SetCursorScreenPos(ImVec2(iconsX + iconsWidth - eyeSize, iconY));
-            bool shown = !outputHidden;
-            if (ui::EyeToggle("##outputDisplay", &shown, eyeSize)) {
-                ToggleOutputDisplay(node.id, ImGui::GetIO().KeyCtrl);
-            }
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-                ImGui::SetTooltip("ビューポートへの表示。作業中だけの切り替えで、保存しない\n"
-                                  "Ctrl+クリックでこの出口だけを表示 / もう一度で全部を表示");
-            }
-            ImGui::PopID();
-        }
+        // 表示フラグ（目）とリファレンス表示のトグルは、シーン階層の出口の行に置く（ノードには置かない）。
+        // 隠している出口は、上で名前を落とした色にして分かるようにしている。
         // 種類はヘッダの下に小さく添える。名前と種類の両方が分かるようにする。
         if (const graph::NodeDefinition* definition = graph::FindNodeDefinition(node.kind);
             definition != nullptr && layerSettings != nullptr) {
@@ -1519,7 +1486,6 @@ void Application::DrawGraphEditor() {
         section("合成", {
             graph::NodeKind::Surface,
             graph::NodeKind::Shape,
-            graph::NodeKind::Liquid,
         });
         section("侵食", {
             graph::NodeKind::FluvialErosion,
@@ -1529,6 +1495,7 @@ void Application::DrawGraphEditor() {
             graph::NodeKind::Crumbling,
         });
         section("水", {
+            graph::NodeKind::Liquid,
             graph::NodeKind::River,
             graph::NodeKind::MeanderingRivers,
             graph::NodeKind::Lake,
@@ -1640,6 +1607,11 @@ void Application::DrawGraphEditor() {
         const auto* pending = m_graph.FindNode(m_pendingSelectGraphNode);
         if (pending == nullptr || (m_editComponent >= 0 && pending->component != m_editComponent)) {
             m_pendingSelectGraphNode = 0;
+        } else if (m_pendingSelectReplace) {
+            // 今の選択を外して選び直す。次のフレームで選択が付いていれば、下の分岐で要求を下ろす。
+            m_pendingSelectReplace = false;
+            ed::ClearSelection();
+            ed::SelectNode(ed::NodeId(m_pendingSelectGraphNode));
         } else if (selectedCount > 0) {
             m_pendingSelectGraphNode = 0;
         } else {
@@ -1753,6 +1725,89 @@ void Application::DrawSceneHierarchy() {
         ImGui::SetCursorPosY(rowY);
     };
 
+    // 目の右の、出口の行を畳む三角。open が無い行（出口を持たない部品）は同じ幅を空けて見出しを揃える。
+    const auto fold = [&](const char* id, bool* open) {
+        const float rowY = ImGui::GetCursorPosY();
+        ImGui::SetCursorPosY(rowY + (ImGui::GetTextLineHeight() - eyeSize) * 0.5f);
+        const ImVec2 min = ImGui::GetCursorScreenPos();
+        if (open == nullptr) {
+            ImGui::Dummy(ImVec2(eyeSize, eyeSize));
+        } else {
+            if (ImGui::InvisibleButton(id, ImVec2(eyeSize, eyeSize))) *open = !*open;
+            const ImU32 color = ImGui::GetColorU32(ImGui::IsItemHovered() ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                ImGui::SetTooltip("%s", *open ? "出口ノードの行を畳む" : "出口ノードの行を開く");
+            }
+            const ImVec2 c(min.x + eyeSize * 0.5f, min.y + eyeSize * 0.5f);
+            const float r = eyeSize * 0.3f;
+            ImDrawList* draw = ImGui::GetWindowDrawList();
+            if (*open) {
+                draw->AddTriangleFilled(ImVec2(c.x - r, c.y - r * 0.6f), ImVec2(c.x + r, c.y - r * 0.6f),
+                                        ImVec2(c.x, c.y + r * 0.8f), color);
+            } else {
+                draw->AddTriangleFilled(ImVec2(c.x - r * 0.6f, c.y - r), ImVec2(c.x + r * 0.8f, c.y),
+                                        ImVec2(c.x - r * 0.6f, c.y + r), color);
+            }
+        }
+        ImGui::SameLine();
+        ImGui::SetCursorPosY(rowY);
+    };
+    // グラフの行の下に並べる出口ノードの行。目は出口ノードの表示フラグ、網はリファレンス表示
+    // （Output / Mesh Output だけ。無い種類は同じ幅を空けて名前を揃える）。どちらも作業中だけの
+    // 切り替えで保存しない。行のクリックで、そのグラフを開いてノードを選ぶ。
+    const auto outputRows = [&](int component, const std::vector<const graph::Node*>& outputs) {
+        ImGui::Indent(eyeSize + style.ItemSpacing.x);
+        for (const graph::Node* node : outputs) {
+            ImGui::PushID(static_cast<int>(node->id));
+            const float rowY = ImGui::GetCursorPosY();
+            ImGui::SetCursorPosY(rowY + (ImGui::GetTextLineHeight() - eyeSize) * 0.5f);
+            bool shown = !OutputHidden(node->id);
+            if (ui::EyeToggle("##outputDisplay", &shown, eyeSize)) {
+                ToggleOutputDisplay(node->id, ImGui::GetIO().KeyCtrl);
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                ImGui::SetTooltip("ビューポートへの表示。作業中だけの切り替えで、保存しない\n"
+                                  "Ctrl+クリックでこの出口だけを表示 / もう一度で全部を表示");
+            }
+            ImGui::SameLine();
+            if (graph::IsReferenceOutputKind(node->kind)) {
+                bool reference = OutputReference(node->id);
+                if (ui::WireframeToggle("##outputReference", &reference, eyeSize)) ToggleOutputReference(node->id);
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                    ImGui::SetTooltip("リファレンス表示。灰色のワイヤーフレームで描き、影を落とさない\n"
+                                      "Ctrl+クリックの単独表示でも隠れない。作業中だけの切り替えで、保存しない");
+                }
+            } else {
+                ImGui::Dummy(ImVec2(eyeSize, eyeSize));
+            }
+            ImGui::SameLine();
+            ImGui::SetCursorPosY(rowY);
+            // 同じ名前の出口が並ぶときは、グラフの並び順の番号で区別する。
+            std::string label = NodeDisplayName(*node);
+            const std::string baseName = label;
+            size_t same = 0, index = 0;
+            for (const graph::Node* other : outputs) {
+                if (baseName != NodeDisplayName(*other)) continue;
+                ++same;
+                if (other == node) index = same;
+            }
+            if (same > 1) label += " " + std::to_string(index);
+            // 隠している出口は、名前を補助文字の色へ落とす（OutputHidden を読み直す。目を押した直後でも合う）。
+            const bool hidden = OutputHidden(node->id);
+            if (hidden) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            const bool clicked = ImGui::Selectable(label.c_str(), m_selectedGraphNode == node->id);
+            if (hidden) ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("クリックでグラフのこのノードを選ぶ");
+            if (clicked) {
+                OpenComponentEditor(components ? component : -1);
+                m_pendingSelectGraphNode = node->id;
+                m_pendingSelectReplace = true;
+            }
+            ImGui::PopID();
+        }
+        ImGui::Unindent(eyeSize + style.ItemSpacing.x);
+    };
+
     ImGui::TextUnformatted(m_projectPath.empty() ? "新規シーン" : ToUtf8Display(m_projectPath.stem()).c_str());
     unsavedControls(sceneDirty != 0, 3,
                     components ? "シーン本体だけを保存する。部品のファイルは書き換えない" : "シーンを保存する");
@@ -1818,9 +1873,12 @@ void Application::DrawSceneHierarchy() {
         const bool dirty = components && (m_sceneDirty & (component ? kDirtyCloud : kDirtyTerrain));
         // 出口ノードの表示フラグで隠しているときは、目が開いていても見えない理由を添える。
         bool flagHidden = false;
-        for (const graph::Node& node : m_graph.Nodes())
-            if (node.component == component && graph::IsDisplayOutputKind(node.kind) && OutputHidden(node.id))
-                flagHidden = true;
+        std::vector<const graph::Node*> outputs;
+        for (const graph::Node& node : m_graph.Nodes()) {
+            if (node.component != component || !graph::IsDisplayOutputKind(node.kind)) continue;
+            outputs.push_back(&node);
+            flagHidden |= OutputHidden(node.id);
+        }
         if (component) eye("##eyeCloud", &m_renderer.ShowClouds(),
                            flagHidden ? "雲と雲影の表示。雲グラフの設定は保持する\n"
                                         "いまは Cloud Output の表示フラグで一時的に隠しています"
@@ -1829,6 +1887,8 @@ void Application::DrawSceneHierarchy() {
                  flagHidden ? "地形と配置したモデルの表示。影も一緒に消える\n"
                               "いまは一部の出口ノードを表示フラグで一時的に隠しています"
                             : "地形と配置したモデルの表示。影も一緒に消える");
+        bool& outputsOpen = m_hierarchyOutputsOpen[component ? 1 : 0];
+        fold("##foldOutputs", outputs.empty() ? nullptr : &outputsOpen);
         std::filesystem::path placed;
         if (components) for (const auto& entry : m_sceneComponents)
             if (io::ProjectWorkspace::String(entry, "role") == (component ? "cloud" : "terrain"))
@@ -1854,12 +1914,14 @@ void Application::DrawSceneHierarchy() {
             ImGui::EndPopup();
         }
         unsavedControls(dirty, component, "このグラフのファイルだけを保存する");
+        if (outputsOpen) outputRows(component, outputs);
         ImGui::PopID();
     };
     graphEntry(0);
     {
         const bool atmosphereDirty = components && (m_sceneDirty & kDirtyAtmosphere);
         eye("##eyeSky", &m_renderer.ShowSkybox(), "空の背景の表示。環境光と地形の手前の雲は残る");
+        fold("##foldSky", nullptr);
         const auto path = m_sceneAtmosphere.is_null() ? std::filesystem::path{} : m_workspace.Resolve(m_sceneAtmosphere);
         if (row("##atmosphereRow", path, path.empty() && components ? "大気散乱スカイ（シーン保存時に作成）" : "大気散乱スカイ",
                 false, atmosphereDirty, "ダブルクリックでライティングへ。右クリックで改名・新規作成・読み込み")) {

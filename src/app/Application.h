@@ -661,6 +661,8 @@ private:
     // 次にエディタを描くときに選ぶノード（--select-node）。エディタ側の選択も合わせないと、
     // 毎フレームの選択同期（未選択 → 0）に消されてしまう。
     graph::GraphId m_pendingSelectGraphNode = 0;
+    // 真なら、今の選択を外してから選ぶ（シーン階層の出口の行から）。偽なら、選択があれば譲る。
+    bool m_pendingSelectReplace = false;
     // フライ（UE5 と同じ）: ビューポートで右ボタンを押している間、マウスで見回し WASD / QE で動く。
     // 動かさずに放したら右クリック（パスのメニューなど）として扱う。
     struct FlyCamera {
@@ -731,6 +733,8 @@ private:
     // リファレンス表示にした出口ノード（Output / Mesh Output）。表示フラグと同じく保存しない。
     // 表示フラグで隠していれば描かない（隠すほうが勝つ）。
     std::unordered_set<graph::GraphId> m_referenceOutputs;
+    // シーン階層で、グラフの行の下に出口ノードの行を開いているか（0 地形 / 1 雲）。保存しない。
+    bool m_hierarchyOutputsOpen[2] = {true, true};
     // プレビューしている出力ピン。0 なら最初の出力。
     // **堆積は Result と Mask を出す**ので、ノードだけでは決まらない。
     graph::GraphId m_previewGraphPin = 0;
@@ -868,6 +872,11 @@ private:
         bool viewportDragHeight = false;
         float viewportGrabDistance = 0.0f;  // 掴んだ点の道のり − カーソルの道のり（跳ばないように保つ）
         float viewportGrabHeight = 0.0f;    // 掴んだ点の高さ − カーソルの高さ
+        // V を押している間は挿入の構え（離すと挿入、Esc でやめる）。入る位置（中心線上の道のり）を控え、
+        // 重ね描きが同じフレームの番号のときだけ印を出す（入力が呼ばれないフレームに残さない）。
+        bool viewportInsertArmed = false;
+        int viewportInsertFrame = -1;
+        float viewportInsertDistance = 0.0f;
         // 縦断ポイントの自動作成の設定（保存しない。ノードを替えても持ち越す）と、直前の結果の報告。
         graph::RoadVerticalAutoParams autoParams;
         std::string autoReport;

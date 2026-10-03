@@ -620,8 +620,9 @@ bool Application::DrawRoadPathSettings(graph::Node& node) {
 // ずれは保つ）、**Shift を押して掴むと高さ**（ポイントを通る鉛直線の上で、カーソルのレイに一番近い
 // 高さにする）。どちらにするかは押したときに決め、離すまで変えない。掴んだ菱形とカーソルのずれは
 // 保って、押した瞬間に跳ばないようにする（縦断図と同じ）。
-// 追加は V キー（カーソルに一番近い中心線上の位置へ挿入）。クリックでは入れない（Ctrl + クリックは
-// パスの「伸ばす」）。縦断図のクリックとプロパティのボタンでも追加できる。
+// 追加は V キー。押している間、カーソルに一番近い中心線上の位置に中を透かした菱形を出し、離すとそこへ
+// 挿入する（Esc でやめる）。パスの Ctrl と同じく、押している間だけ印が出る。クリックでは入れない
+// （Ctrl + クリックはパスの「伸ばす」）。縦断図のクリックとプロパティのボタンでも追加できる。
 // アンドゥはビューポートの画像がアクティブな間 1 段に畳まれる（パスの点のドラッグと同じ）。
 bool Application::HandleRoadProfileInput(graph::Node& node, bool itemHovered, const ImVec2& viewportMin,
                                          const ImVec2& viewportMax) {
@@ -629,6 +630,7 @@ bool Application::HandleRoadProfileInput(graph::Node& node, bool itemHovered, co
     auto* settings = std::get_if<graph::RoadPathNodeSettings>(&node.settings);
     if (settings == nullptr) {
         edit.viewportHover = edit.viewportDrag = 0;
+        edit.viewportInsertArmed = false;
         return false;
     }
     graph::RoadPathSettings& road = settings->road;
@@ -641,12 +643,14 @@ bool Application::HandleRoadProfileInput(graph::Node& node, bool itemHovered, co
     // パスの点やギズモを動かしている間は横取りしない。
     if (m_pathEdit.dragging || m_pathEdit.gizmoDragging) {
         edit.viewportHover = edit.viewportDrag = 0;
+        edit.viewportInsertArmed = false;
         return false;
     }
     graph::RoadProfileCurve base;
     graph::RoadProfileCurve centerline;
     if (!BuildRoadCenterline(node, base, centerline, nullptr) || centerline.points.size() < 2) {
         edit.viewportHover = edit.viewportDrag = 0;
+        edit.viewportInsertArmed = false;
         return false;
     }
     const ImVec2 size(viewportMax.x - viewportMin.x, viewportMax.y - viewportMin.y);
@@ -777,18 +781,37 @@ bool Application::HandleRoadProfileInput(graph::Node& node, bool itemHovered, co
             edit.selected = 0;
         }
     }
-    // V（Vertical）で、カーソルに一番近い中心線上の位置へ縦断ポイントを挿入して選ぶ。高さは今の設計の
-    // 高さ（置いた瞬間に道路が地形へ跳ばないように）。修飾キーは付けない（Ctrl + V はパスの貼り付け）。
-    // 菱形の上では入れない（同じ位置に重ねない）。右ボタンを押している間はフライなので受けない。
-    if (itemHovered && !io.WantTextInput && edit.viewportDrag == 0 && edit.viewportHover == 0 && !m_fly.held &&
-        !io.KeyCtrl && !io.KeyShift && total > 0.0f && ImGui::IsKeyPressed(ImGuiKey_V, false)) {
-        const float distance = nearestDistanceOnCenterline();
-        const graph::PathElementId id = graph::AddVerticalPoint(road, distance / total);
-        if (graph::RoadVerticalPoint* point = graph::FindVerticalPoint(road, id)) {
-            point->offsetMeters = centerline.At(distance).y - base.At(distance).y;
+    // V（Vertical）で縦断ポイントを挿入する。押している間は、カーソルに一番近い中心線上の位置を控えて
+    // 印を出し（DrawRoadPathOverlay）、離すとそこへ挿入して選ぶ。Esc でやめる。高さは今の設計の高さ
+    // （置いた瞬間に道路が地形へ跳ばないように）。修飾キーは付けない（Ctrl + V はパスの貼り付け）。
+    // 菱形の上では始めない（同じ位置に重ねない）。右ボタンを押している間はフライなので受けない。
+    if (!edit.viewportInsertArmed && itemHovered && !io.WantTextInput && edit.viewportDrag == 0 &&
+        edit.viewportHover == 0 && !m_fly.held && !io.KeyCtrl && !io.KeyShift && total > 0.0f &&
+        ImGui::IsKeyPressed(ImGuiKey_V, false)) {
+        edit.viewportInsertArmed = true;
+    }
+    if (edit.viewportInsertArmed) {
+        const bool usable = itemHovered && edit.viewportDrag == 0 && !m_fly.held && total > 0.0f;
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            edit.viewportInsertArmed = false;
+        } else if (ImGui::IsKeyDown(ImGuiKey_V)) {
+            if (usable) {
+                edit.viewportInsertFrame = ImGui::GetFrameCount();
+                edit.viewportInsertDistance = nearestDistanceOnCenterline();
+            }
+        } else {
+            // 離した。ビューポートの外や、入力が呼ばれない間（Alt 中など）に離したときは入れない。
+            if (usable && ImGui::IsKeyReleased(ImGuiKey_V)) {
+                const float distance = nearestDistanceOnCenterline();
+                const graph::PathElementId id = graph::AddVerticalPoint(road, distance / total);
+                if (graph::RoadVerticalPoint* point = graph::FindVerticalPoint(road, id)) {
+                    point->offsetMeters = centerline.At(distance).y - base.At(distance).y;
+                }
+                edit.selected = id;
+                changed = true;
+            }
+            edit.viewportInsertArmed = false;
         }
-        edit.selected = id;
-        changed = true;
     }
 
     // --- 案内 -------------------------------------------------------------------
@@ -808,7 +831,8 @@ bool Application::HandleRoadProfileInput(graph::Node& node, bool itemHovered, co
     }
     // グラフの版は上げない（縦断は路面にしか効かない。プロパティ側と同じ理由）。
     if (changed) MarkDocumentChanged(false);
-    return edit.viewportHover != 0 || edit.viewportDrag != 0;
+    // 挿入の構えの間もパスの編集に渡さない（Esc が選択を外したり、クリックが点を選んだりしないように）。
+    return edit.viewportHover != 0 || edit.viewportDrag != 0 || edit.viewportInsertArmed;
 }
 
 void Application::DrawRoadPathOverlay(const graph::Node& node, const ImVec2& viewportMin,
@@ -884,6 +908,20 @@ void Application::DrawRoadPathOverlay(const graph::Node& node, const ImVec2& vie
         if (isHot) {
             drawList->AddQuad(ImVec2(c.x, c.y - r), ImVec2(c.x + r, c.y), ImVec2(c.x, c.y + r), ImVec2(c.x - r, c.y),
                               IM_COL32(255, 255, 255, 230), ui::Scaled(1.5f));
+        }
+    }
+    // V を押している間の、挿入される位置の印。中を透かした菱形（置かれる菱形と同じ大きさ）。
+    if (m_roadProfileEdit.nodeId == node.id && m_roadProfileEdit.viewportInsertFrame == ImGui::GetFrameCount()) {
+        const ProjectedPoint p = project(centerline.At(m_roadProfileEdit.viewportInsertDistance));
+        if (p.visible) {
+            const float r = ui::Scaled(6.0f);
+            const ImVec2 c = p.screen;
+            drawList->AddQuadFilled(ImVec2(c.x, c.y - r - 1), ImVec2(c.x + r + 1, c.y), ImVec2(c.x, c.y + r + 1),
+                                    ImVec2(c.x - r - 1, c.y), shadow);
+            drawList->AddQuadFilled(ImVec2(c.x, c.y - r), ImVec2(c.x + r, c.y), ImVec2(c.x, c.y + r),
+                                    ImVec2(c.x - r, c.y), IM_COL32(245, 225, 140, 90));
+            drawList->AddQuad(ImVec2(c.x, c.y - r), ImVec2(c.x + r, c.y), ImVec2(c.x, c.y + r), ImVec2(c.x - r, c.y),
+                              designColor, ui::Scaled(1.5f));
         }
     }
     // バンク。ポイントの位置（無ければ一定間隔）に、道路の幅ぶんの傾いた横棒を描く。

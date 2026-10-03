@@ -1266,6 +1266,39 @@ void Application::DrawPathOverlay(const graph::Node& node, const ImVec2& viewpor
     const ImGuiIO& io = ImGui::GetIO();
     const bool viewportHovered = ImGui::IsMouseHoveringRect(viewportMin, viewportMax);
     const graph::PathElementId anchor = state.selected.empty() ? 0 : state.selected.front();
+    // 挿入の印。Ctrl + クリックで新しい点が入る所（線の上ならその位置、空いた所ならカーソルの下の地形）。
+    // 点の上は既存の点へ繋ぐだけで、新しい点は入らないので出さない。
+    ImVec2 insertAt{};
+    bool hasInsert = false;
+    float insertU = 0.0f;
+    float insertV = 0.0f;
+    bool insertOnTerrain = false;
+    if (io.KeyCtrl && !io.KeyAlt && viewportHovered && !state.dragging && !state.gizmoDragging &&
+        state.hoverPoint == 0) {
+        if (state.hoverEdge != 0) {
+            // クリックで InsertPathPointOnEdge に渡すのと同じ t の位置（カーソルではなく線の上）。
+            for (const PathScreenEdge& edge : cache.edges) {
+                if (edge.id != state.hoverEdge) continue;
+                for (size_t i = 0; i + 1 < edge.polyline.size(); ++i) {
+                    if (state.hoverEdgeT < edge.t[i] || state.hoverEdgeT > edge.t[i + 1]) continue;
+                    if (!edge.visible[i] || !edge.visible[i + 1]) break;
+                    const float span = edge.t[i + 1] - edge.t[i];
+                    const float local = span > 1e-9f ? (state.hoverEdgeT - edge.t[i]) / span : 0.0f;
+                    insertAt = ImVec2(edge.polyline[i].x + (edge.polyline[i + 1].x - edge.polyline[i].x) * local,
+                                      edge.polyline[i].y + (edge.polyline[i + 1].y - edge.polyline[i].y) * local);
+                    hasInsert = true;
+                    break;
+                }
+                break;
+            }
+        } else if (PickTerrainUv(io.MousePos, viewportMin, viewportMax, insertU, insertV)) {
+            insertOnTerrain = true;
+            const ProjectedPoint projected =
+                ProjectToViewport(viewProjection, worldOf(insertU, insertV, 0.0f), viewportMin, size);
+            insertAt = projected.screen;
+            hasInsert = projected.visible;
+        }
+    }
     if (io.KeyCtrl && anchor != 0 && viewportHovered && !state.dragging) {
         const PathScreenPoint* tail = cache.Find(anchor);
         ImVec2 target{};
@@ -1276,12 +1309,12 @@ void Application::DrawPathOverlay(const graph::Node& node, const ImVec2& viewpor
                 hasTarget = point->visible;
             }
         } else if (state.hoverEdge != 0) {
-            target = ImGui::GetIO().MousePos;
+            target = hasInsert ? insertAt : io.MousePos;
             hasTarget = true;
         } else {
-            float u = 0.0f;
-            float v = 0.0f;
-            if (PickTerrainUv(ImGui::GetIO().MousePos, viewportMin, viewportMax, u, v)) {
+            const float u = insertU;
+            const float v = insertV;
+            if (insertOnTerrain) {
                 // 地形に沿わせて描く（空中を横切る直線だと距離感が狂う）。
                 const graph::PathPoint* from = path.FindPoint(anchor);
                 if (from != nullptr && tail != nullptr && tail->visible) {
@@ -1308,6 +1341,13 @@ void Application::DrawPathOverlay(const graph::Node& node, const ImVec2& viewpor
         if (hasTarget && tail != nullptr && tail->visible) {
             drawList->AddLine(tail->screen, target, IM_COL32(255, 220, 120, 160), lineWidth);
         }
+    }
+    if (hasInsert) {
+        // 中を透かした点。置かれる点と同じ大きさで、伸ばす起点の輪と同じ色。
+        const float radius = ui::Scaled(4.5f);
+        drawList->AddCircleFilled(insertAt, radius + ui::Scaled(1.5f), lineShadow, 16);
+        drawList->AddCircleFilled(insertAt, radius, IM_COL32(255, 220, 120, 110), 16);
+        drawList->AddCircle(insertAt, radius, tailColor, 16, ui::Scaled(1.5f));
     }
 
     // --- 点 ---------------------------------------------------------------------
@@ -1383,9 +1423,12 @@ void Application::DrawPathOverlay(const graph::Node& node, const ImVec2& viewpor
     };
     std::vector<HintRow> rows;
     const bool profileHot = node.kind == graph::NodeKind::RoadPath && m_roadProfileEdit.nodeId == node.id &&
-                            (m_roadProfileEdit.viewportHover != 0 || m_roadProfileEdit.viewportDrag != 0);
+                            (m_roadProfileEdit.viewportHover != 0 || m_roadProfileEdit.viewportDrag != 0 ||
+                             m_roadProfileEdit.viewportInsertArmed);
     if (profileHot) {
-        if (m_roadProfileEdit.viewportDrag != 0) {
+        if (m_roadProfileEdit.viewportInsertArmed) {
+            rows = {{"V を離す", "印の所に縦断ポイントを挿入"}, {"Esc", "やめる"}};
+        } else if (m_roadProfileEdit.viewportDrag != 0) {
             rows = {{"離す", m_roadProfileEdit.viewportDragHeight ? "高さを確定" : "位置を確定"}};
         } else {
             rows = {{"ドラッグ", "縦断ポイントを道なりに動かす"},
@@ -1433,7 +1476,7 @@ void Application::DrawPathOverlay(const graph::Node& node, const ImVec2& viewpor
     // Road Path は、パスの操作の下に縦断ポイントの挿入を足す（HandleRoadProfileInput が受ける）。
     if (node.kind == graph::NodeKind::RoadPath && !profileHot && !io.KeyCtrl && !state.dragging &&
         !state.gizmoDragging) {
-        rows.push_back({"V", "カーソルの所に縦断ポイントを挿入"});
+        rows.push_back({"V を押す / 離す", "縦断ポイントの入る位置を表示 / 挿入"});
     }
     {
         float keyWidth = 0.0f;
