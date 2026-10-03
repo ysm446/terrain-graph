@@ -88,6 +88,15 @@ struct MeshConstants
     uint atmosphericMode;
     uint clearIrradianceIndex;  // 雲なしの環境の irradiance。0xFFFFFFFF なら混ぜない
     float ambientOcclusion;     // 雲が環境光を遮る強さ（0〜1）
+
+    // 水の場（x = 水際からの符号付き距離 m、y = 符号付きの水深 m。水の中が正）と、波打ち際の設定。
+    uint materialWaterIndex;
+    float shoreFoam;     // 泡の量（0〜1）
+    float shoreRunup;    // 寄せる波が水位より上へ這い上がる高さ（m）
+    float shoreSpacing;  // 泡の筋の間隔（m）
+
+    float shoreWidth;    // 泡の筋が出る、水際からの幅（m）
+    float3 shorePad;
 };
 
 // 「ハイト（ローカル）」で周りの平均を取る半径（合成テクセル）と、
@@ -147,7 +156,27 @@ float SampleMaterialScalarLevel(Texture2D<float> map, float2 uv)
 // 波長を段々に小さくした勾配ノイズを、向きを少しずつ振りながら流して重ねる。大きい段がうねり、
 // 小さい段が太陽のきらめきを作るさざ波。速さは深水波の分散（√波長に比例）に合わせる。
 // footprint は 1 画素が水面で張る幅（m）。それより細かい段は消す（遠くでちらつかないように）。
-static const int kWaveOctaves = 4;
+static const int kWaveOctaves = 6;
+
+// 段 i が、1 画素の幅 footprint に対してどれだけ残るか（0 で消える）。
+float WaveOctaveFade(float wavelength, float footprint)
+{
+    return saturate(wavelength / max(footprint, 1e-4f) * 0.5f - 1.0f);
+}
+
+// 画素より細かくて消した段の割合（0〜1）。消した波の傾きは、鏡面の広がり（ラフネス）として戻す。
+// そうしないと、遠くの水面が鏡のように平らになり、太陽の反射が細い線や点滅になる。
+float WaveFilteredFraction(float footprint)
+{
+    float wavelength = max(g_mesh.waveScale, 0.1f);
+    float lost = 0.0f;
+    for (int i = 0; i < kWaveOctaves; ++i)
+    {
+        lost += 1.0f - WaveOctaveFade(wavelength, footprint);
+        wavelength *= 0.37f;
+    }
+    return lost / float(kWaveOctaves);
+}
 
 float WaveHeight(float2 positionMeters, float footprint)
 {
@@ -157,7 +186,7 @@ float WaveHeight(float2 positionMeters, float footprint)
     float sum = 0.0f;
     for (int i = 0; i < kWaveOctaves; ++i)
     {
-        const float fade = saturate(wavelength / max(footprint, 1e-4f) * 0.5f - 1.0f);
+        const float fade = WaveOctaveFade(wavelength, footprint);
         if (fade > 0.0f)
         {
             const float2 direction = float2(cos(angle), sin(angle));
@@ -182,6 +211,155 @@ float2 WaveSlope(float2 positionMeters, float footprint)
     return float2(WaveHeight(positionMeters + ex, footprint) - WaveHeight(positionMeters - ex, footprint),
                   WaveHeight(positionMeters + ez, footprint) - WaveHeight(positionMeters - ez, footprint)) /
            (2.0f * epsilon);
+}
+
+// --- 波打ち際 ------------------------------------------------------------------
+// 水の場（水際からの距離と水深）から、岸へ向かって進む泡の筋と、浜を這い上がって引く波を作る。
+//
+// - 泡の筋の位相は「水際からの距離 / 間隔 + 時刻」。距離の等値線は岸の形に沿うので、どの筋も
+//   向きを指定しなくても岸へ進む。位相を場所ごとに大きくずらすので、筋は岸と平行に揃わず、
+//   着く時刻も間隔も場所でばらつく。
+// - **波には 1 本ずつ番号がある**（位相の整数部）。番号ごとに違う模様で「岸に沿ったどこで強いか」を
+//   決めるので、1 本の波が岸の全周で同時に寄せることはなく、区間ごとにばらばらに押し寄せる。
+//   強い区間は浜の高い所まで這い上がり、弱い区間はほとんど上がらない。
+// - 寄せ返しは、筋が水際へ着いた瞬間から始まる。素早く這い上がり、ゆっくり引く。
+//   **引く波**は、水の膜に乗った泡の模様を沖の向き（距離の傾き）へ流して見せ、引いた跡には
+//   しばらくつやが残る。浅い水の中でも、同じ模様が沖へ流れる。
+struct ShoreSample
+{
+    float foam;      // 泡（0〜1）
+    float wash;      // 寄せた波に覆われている（陸の側。0〜1）
+    float sheen;     // 波が引いた直後のつや（陸の側。0〜1）
+    float wet;       // 波が届く範囲の濡れ（陸の側。0〜1）
+};
+
+// 水の場の「Liquid が書いていない」値（CompositeLayer.hlsl と揃える）。
+static const float kWaterNone = -10000.0f;
+// 泡の筋が岸へ進む速さ（m/s。浅瀬の波は水深が浅いほど遅い。数 m の水深の目安）。
+static const float kShoreWaveSpeed = 3.0f;
+// 寄せ返しの 1 周期のうち、這い上がるのに使う割合（残りで引く）。
+static const float kShoreUprush = 0.25f;
+
+float ShoreNoise(float2 p)
+{
+    return PerlinNoise(p, 4096.0f);
+}
+
+// 番号 index の波が、この場所でどれだけ強いか（0〜1）。番号ごとに模様をずらす。
+float ShoreWaveStrength(float2 setCoordinate, float index)
+{
+    return saturate(ShoreNoise(setCoordinate + index * float2(13.7f, 7.3f)) * 1.4f + 0.5f);
+}
+
+ShoreSample SampleShore(float2 uv, float2 worldXz)
+{
+    ShoreSample result;
+    result.foam = 0.0f;
+    result.wash = 0.0f;
+    result.sheen = 0.0f;
+    result.wet = 0.0f;
+
+    Texture2D<float2> waterMap = ResourceDescriptorHeap[g_mesh.materialWaterIndex];
+    const float2 field = waterMap.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
+    const float distance = field.x;  // 水の中が正
+    const float depth = field.y;     // 水の中が正。陸では −（水位からの高さ）
+
+    // 沖へ向かう向き（ワールドの XZ）。距離の傾きを、画面微分から XZ の傾きへ直す
+    // （UV とワールドの対応に依らない）。分岐の前で取る。
+    const float2 dx = ddx(worldXz);
+    const float2 dy = ddy(worldXz);
+    const float distanceDx = ddx(distance);
+    const float distanceDy = ddy(distance);
+    const float determinant = dx.x * dy.y - dx.y * dy.x;
+    float2 offshore = float2(0.0f, 0.0f);
+    if (abs(determinant) > 1e-12f)
+    {
+        const float2 gradient = float2(dy.y * distanceDx - dx.y * distanceDy,
+                                       dx.x * distanceDy - dy.x * distanceDx) / determinant;
+        const float gradientLength = length(gradient);
+        if (gradientLength > 1e-4f)
+        {
+            offshore = gradient / gradientLength;
+        }
+    }
+
+    if ((g_mesh.shoreFoam <= 0.0f && g_mesh.shoreRunup <= 0.0f) || depth < kWaterNone * 0.5f)
+    {
+        return result;
+    }
+
+    const float spacing = max(g_mesh.shoreSpacing, 1.0f);
+    const float time = g_mesh.waterTime * g_mesh.waveSpeed;
+    // 位相のずれ。大きい模様で着く時刻を 1 周期以上ずらし（筋が岸に対して斜めになり、間隔もばらつく）、
+    // 小さい模様で筋の線をうねらせる。
+    const float along = ShoreNoise(worldXz / (spacing * 6.0f)) * 1.5f +
+                        ShoreNoise(worldXz / (spacing * 1.7f) + 31.7f) * 0.35f;
+    // 水際（距離 0）での位相。整数部が「いま水際へ着いている波の番号」、小数部 0 が着いた瞬間。
+    const float arrival = time * kShoreWaveSpeed / spacing + along;
+    // 波ごとの強さの模様（岸に沿った区間の大きさ）。
+    const float2 setCoordinate = worldXz / (spacing * 2.5f);
+
+    // --- 寄せ返しの状態（水際へ着いている波） -----------------------------------------
+    const float swashIndex = floor(arrival);
+    const float swash = arrival - swashIndex;
+    const float swashStrength = ShoreWaveStrength(setCoordinate, swashIndex);
+    const float up = smoothstep(0.0f, kShoreUprush, swash);     // 這い上がり（0 → 1）
+    const float down = smoothstep(kShoreUprush, 1.0f, swash);   // 引き（0 → 1）
+    const bool retreating = swash >= kShoreUprush;
+    // この波が届く一番高い所と、いまの水の縁の高さ（m。水位から）。
+    const float crestLevel = g_mesh.shoreRunup * (0.25f + 1.0f * swashStrength);
+    const float level = crestLevel * (retreating ? 1.0f - down : up);
+    // 水の膜に乗った泡の模様。這い上がる間は陸へ、引く間は沖へ流す（m）。
+    const float slide = retreating ? down * 6.0f : -up * 2.5f;
+    const float lace = saturate(ShoreNoise((worldXz - offshore * slide) / 0.9f) * 1.7f + 0.3f) *
+                       saturate(ShoreNoise((worldXz - offshore * slide * 0.6f) / 3.1f + 11.0f) * 1.5f + 0.6f);
+    // 膜の泡の濃さ。寄せた直後が一番濃く、引くにつれて消える。
+    const float laceAmount = retreating ? (1.0f - down) : up;
+
+    // 泡のむら（細かく切れる）。
+    const float breakup = saturate(ShoreNoise(worldXz / 3.0f + time * 0.15f) * 0.8f + 0.65f);
+
+    if (depth > 0.0f)
+    {
+        // --- 水の中: 岸へ進む泡の筋 -------------------------------------------------
+        if (g_mesh.shoreFoam > 0.0f && g_mesh.shoreWidth > 0.0f)
+        {
+            const float raw = distance / spacing + arrival;
+            const float index = floor(raw);
+            const float phase = raw - index;
+            // 筋の前（岸側）は切り立ち、後ろへ尾を引く。phase 0 が筋の前縁。
+            const float crest = smoothstep(0.0f, 0.06f, phase) * pow(saturate(1.0f - phase), 4.0f);
+            // 沖では出さず、岸へ近づくほど濃く。
+            const float zone = saturate(1.0f - distance / g_mesh.shoreWidth);
+            // この波がこの区間で強いか。弱い区間は筋が途切れる。
+            const float strength = ShoreWaveStrength(setCoordinate, index);
+            result.foam = crest * zone * breakup * 2.4f * strength * strength;
+            // 汀線の縁の泡（水深がごく浅い帯に細く残る）。
+            result.foam += smoothstep(0.25f, 0.0f, depth) * breakup * 0.5f;
+            // 浅い所では、引く波に乗った泡が沖へ流れる。
+            result.foam += (1.0f - smoothstep(0.0f, 0.6f, depth)) * lace * laceAmount * swashStrength * 0.9f;
+            result.foam *= g_mesh.shoreFoam;
+        }
+    }
+    else if (g_mesh.shoreRunup > 0.0f)
+    {
+        // --- 陸の側: 寄せる波、引く波、濡れ -------------------------------------------
+        const float above = -depth;  // 水位からの高さ（m）
+        result.wash = smoothstep(level, level - 0.03f, above);
+        // 先端の泡。這い上がる間は濃く、引く間は薄れる。
+        const float edge = smoothstep(level - 0.12f, level - 0.02f, above) * result.wash;
+        // 膜に乗った泡（引く間は沖へ流れて消えていく）。
+        const float sheet = result.wash * lace * laceAmount * 0.8f;
+        result.foam = (edge * (1.0f - 0.7f * down) * 1.5f + sheet) * g_mesh.shoreFoam;
+        // 引いた跡。この波が届いた高さまで、つやが残って乾いていく。
+        result.sheen = retreating
+            ? smoothstep(crestLevel, crestLevel - 0.05f, above) * (1.0f - result.wash) * (1.0f - down)
+            : 0.0f;
+        // 波が届きうる範囲は濡れている（一番強い波が届く高さの少し上まで、ぼかして）。
+        result.wet = smoothstep(g_mesh.shoreRunup * 1.45f, g_mesh.shoreRunup * 1.1f, above);
+    }
+    result.foam = saturate(result.foam);
+    return result;
 }
 
 struct VsInput
@@ -481,6 +659,23 @@ PsOutput PsMain(VsOutput input)
             // 勾配ノイズの傾きは 1 前後まで出る。強さ 1 で「荒れた海」程度（傾き 0.3 前後）に収める。
             const float2 slope = WaveSlope(worldXz, footprint) * (g_mesh.waveStrength * 0.3f * water);
             normal = normalize(normal + float3(-slope.x, 0.0f, -slope.y));
+            // 画素より細かい波は、ラフネスとして残す。
+            const float filtered = 0.45f * g_mesh.waveStrength * sqrt(WaveFilteredFraction(footprint));
+            roughnessValue = lerp(roughnessValue, max(roughnessValue, filtered), water);
+        }
+
+        // 波打ち際。濡れた浜は暗くつややかに、寄せた波は薄い水の膜に、泡は白くざらつかせる。
+        const ShoreSample shore = SampleShore(uv, input.worldPosition.xz);
+        if (shore.wet > 0.0f || shore.foam > 0.0f || shore.sheen > 0.0f)
+        {
+            baseColor = lerp(baseColor, baseColor * 0.55f, shore.wet);
+            roughnessValue = lerp(roughnessValue, 0.35f, shore.wet * 0.7f);
+            roughnessValue = lerp(roughnessValue, 0.14f, shore.sheen * 0.85f);
+            roughnessValue = lerp(roughnessValue, 0.08f, shore.wash);
+            baseColor = lerp(baseColor, float3(0.82f, 0.85f, 0.86f), shore.foam);
+            roughnessValue = lerp(roughnessValue, 0.6f, shore.foam);
+            // 泡と水の膜は地面の細かい凹凸を覆う。
+            normal = normalize(lerp(normal, geometricNormal, saturate(shore.foam + shore.wash) * 0.7f));
         }
     }
 

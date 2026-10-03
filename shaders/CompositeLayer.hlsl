@@ -65,7 +65,7 @@ struct LayerConstants
     float4 pathUvParams2;
     float4 mountain0; // 有効、周波数、尾根、尖り
     float4 mountain1; // 方向（rad）、伸長、うねり、細部
-    uint4 mountain2; // シード、未使用
+    uint4 mountain2; // シード、水の場の UAV、未使用 x2
     // 水面（Liquid）の見た目。浅瀬の色 rgb, 色の変わる深さ（m。0 で深い所の色だけ）
     float4 liquid0;
     // 下地が透ける深さ（m。0 で透けない）, ハイト 0〜1 の全幅（m）, 未使用 x2
@@ -74,6 +74,9 @@ struct LayerConstants
 };
 
 ConstantBuffer<LayerConstants> g_layer : register(b1);
+
+// 水の場の「Liquid が書いていない」値（CompositeWater.hlsl / MeshPbr.hlsl と揃える）。
+static const float kWaterNone = -10000.0f;
 
 // コンピュートシェーダでは暗黙の LOD が使えないため、出力テクセル 1 つが張る
 // UV 幅からミップレベルを求めて SampleLevel する。
@@ -560,6 +563,9 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     float weight = 1.0f;
     // 水越しに下地の色が見える割合（Liquid だけ。色にだけ効き、法線・ラフネス・高さは水面のまま）。
     float bedVisibility = 0.0f;
+    // 水の場へ書く符号付きの水深（m。水の中が正、陸が負）。Liquid がマスクの中にだけ書く。
+    float signedDepthMeters = 0.0f;
+    bool writesWaterDepth = false;
     if (!isBaseLayer)
     {
         // パス UV のときは帯の外に乗らない（coverage が 0）。
@@ -590,6 +596,8 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
             // 水深（m）で色を決める。浅瀬の色から深い所の色（ベースカラー）へ指数で寄せ、
             // 浅い所では下地の色を残す（Beer–Lambert の減衰。深さの値は 1/e になる深さ）。
             const float depthMeters = max(depth, 0.0f) * g_layer.liquid1.y;
+            signedDepthMeters = clamp(depth * g_layer.liquid1.y, -9000.0f, 9000.0f);
+            writesWaterDepth = mask > 0.5f;
             if (g_layer.liquid0.w > 0.0f)
             {
                 layerBaseColor = lerp(layerBaseColor, g_layer.liquid0.rgb, exp(-depthMeters / g_layer.liquid0.w));
@@ -673,6 +681,20 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
             }
             heightTarget[texel] = result;
         }
+    }
+
+    // --- 水の場 -----------------------------------------------------------------
+    // x = 水際からの符号付き距離（CompositeWater.hlsl が後から書く）、y = 符号付きの水深（m）。
+    // 一番下のレイヤーが「水なし」で埋め、Liquid がマスクの中に水深を書く（陸の側も。寄せる波が
+    // 水位より少し高い所まで這い上がるのに使う）。
+    RWTexture2D<float2> waterTarget = ResourceDescriptorHeap[g_layer.mountain2.y];
+    if (isBaseLayer)
+    {
+        waterTarget[texel] = float2(kWaterNone, kWaterNone);
+    }
+    else if (writesWaterDepth)
+    {
+        waterTarget[texel] = float2(waterTarget[texel].x, signedDepthMeters);
     }
 }
 

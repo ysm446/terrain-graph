@@ -85,6 +85,8 @@ inline const compositor::MaterialLayer kDefaultLiquidLayer = [] {
     layer.liquid.colorDepthMeters = 8.0f;
     layer.liquid.clarityMeters = 2.0f;
     layer.liquid.waveStrength = 0.5f;
+    layer.liquid.shoreFoam = 0.6f;
+    layer.liquid.shoreRunupMeters = 0.4f;
     return layer;
 }();
 

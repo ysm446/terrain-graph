@@ -22,6 +22,9 @@ struct MaterialTextureSet {
     // R32_FLOAT。R16 だと 0〜1 の全幅が標高差なので、600 m の地形で 1 ULP が約 0.3 m。
     // ブラー / 堆積の後にここから作り直す法線が階段になるため 32bit にした。
     rhi::GpuTexture height;
+    // 水の場（R16G16_FLOAT）。x = 水際からの符号付き距離（m。水の中が正）、y = 符号付きの水深（m）。
+    // Liquid が書く。Liquid が無ければ全面が「水なし」（大きな負の値）。地形の描画が波打ち際に使う。
+    rhi::GpuTexture water;
 
     bool IsValid() const { return baseColor.IsValid(); }
 };
@@ -578,6 +581,9 @@ private:
         const MaterialStack& stack, uint32_t maskIndex);
     bool ApplyFluvialErosionMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
         ID3D12GraphicsCommandList* commandList, const MaskOp& op, rhi::GpuTexture& target, bool enabled);
+    // Liquid が水の場へ書いた水深から、水際からの距離を焼く（CompositeWater.hlsl）。
+    bool ApplyWaterDistance(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+        ID3D12GraphicsCommandList* commandList, const MaterialStack& stack);
     bool ApplyFlattenBorders(rhi::Device& device, rhi::PipelineCache& pipelineCache,
         ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
         const MaterialStack& stack, uint32_t maskIndex);
@@ -657,6 +663,8 @@ private:
     // 近傍を読むパスの作業用。マスク生成（合成パスがここを読む）と、
     // ブラーの水平パスが使う。Height と同じ形式。評価先と一緒に使うので 1 枚でよい。
     rhi::GpuTexture m_scratch;
+    // 水際からの距離のジャンプフラッディング用（R32G32_FLOAT、合成解像度以下）。Liquid があるときだけ作る。
+    rhi::GpuTexture m_waterWork[2];
     // ノード用のマスクサムネイル。評価先（裏側）と描画が読む表側を、
     // 合成結果と一緒に入れ替える（評価中に ImGui が読む側へ書かないため）。
     std::vector<MaskOpThumbnail> m_maskOpThumbnails;

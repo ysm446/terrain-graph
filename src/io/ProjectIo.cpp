@@ -1389,6 +1389,10 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
         liquid["waveScaleMeters"] = layer.liquid.waveScaleMeters;
         liquid["waveSpeed"] = layer.liquid.waveSpeed;
         liquid["waveDirectionDegrees"] = layer.liquid.waveDirectionDegrees;
+        liquid["shoreFoam"] = layer.liquid.shoreFoam;
+        liquid["shoreRunupMeters"] = layer.liquid.shoreRunupMeters;
+        liquid["shoreSpacingMeters"] = layer.liquid.shoreSpacingMeters;
+        liquid["shoreWidthMeters"] = layer.liquid.shoreWidthMeters;
         node["liquid"] = std::move(liquid);
     }
 
@@ -1493,6 +1497,13 @@ compositor::MaterialLayer ReadLayer(
         layer.liquid.waveSpeed = ReadFloat(*liquid, "waveSpeed", defaults.liquid.waveSpeed);
         layer.liquid.waveDirectionDegrees =
             ReadFloat(*liquid, "waveDirectionDegrees", defaults.liquid.waveDirectionDegrees);
+        layer.liquid.shoreFoam = ReadFloat(*liquid, "shoreFoam", defaults.liquid.shoreFoam);
+        layer.liquid.shoreRunupMeters =
+            ReadFloat(*liquid, "shoreRunupMeters", defaults.liquid.shoreRunupMeters);
+        layer.liquid.shoreSpacingMeters =
+            ReadFloat(*liquid, "shoreSpacingMeters", defaults.liquid.shoreSpacingMeters);
+        layer.liquid.shoreWidthMeters =
+            ReadFloat(*liquid, "shoreWidthMeters", defaults.liquid.shoreWidthMeters);
     }
 
     if (const json* value = FindMember(node, "meanderingRivers"); value != nullptr && value->is_object()) {

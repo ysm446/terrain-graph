@@ -600,6 +600,15 @@ struct MaterialLayer {
         float waveSpeed = 1.0f;
         // うねりの進む向き（度。0 で +X、90 で +Z へ進む）。
         float waveDirectionDegrees = 0.0f;
+        // 波打ち際。波と同じく合成には効かない。泡の量 0 かつ寄せる高さ 0 で無し（古いファイルと同じ）。
+        // 泡の量（0〜1）。岸へ向かって進む泡の筋と、寄せた波の先端の泡。
+        float shoreFoam = 0.0f;
+        // 寄せる波が水位より上へ這い上がる高さ（m）。浜の勾配が緩いほど、水平には遠くまで届く。
+        float shoreRunupMeters = 0.0f;
+        // 泡の筋どうしの間隔（m）。
+        float shoreSpacingMeters = 25.0f;
+        // 泡の筋が出る、水際からの幅（m）。
+        float shoreWidthMeters = 80.0f;
     } liquid;
 
     struct LakeSettings {

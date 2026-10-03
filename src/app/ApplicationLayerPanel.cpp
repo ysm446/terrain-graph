@@ -1103,7 +1103,26 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                                          "うねりの進む向き（度）。0 で +X、90 で +Z へ進む", "%.0f°");
             ui::EndPropertyTable();
         }
-        ui::HintText("波は地形の描画で動かす（合成結果や書き出すテクスチャには入らない）。"
+        // 波打ち際も描画で動かす。泡の筋は水際からの距離で進み、岸の形に沿って岸へ向かう。
+        ui::SectionHeader("波打ち際");
+        if (ui::BeginPropertyTable("layerLiquidShoreRows")) {
+            changed |= ui::PropertyFloat("泡の量", &layer.liquid.shoreFoam, 0.0f, 1.0f,
+                                         defaults.liquid.shoreFoam,
+                                         "岸へ向かって進む泡の筋と、寄せた波の先端の泡の濃さ。0 で泡なし", "%.2f");
+            changed |= ui::PropertyFloat("寄せる高さ", &layer.liquid.shoreRunupMeters, 0.0f, 3.0f,
+                                         defaults.liquid.shoreRunupMeters,
+                                         "寄せる波が水位より上へ這い上がる高さ（m）。浜が緩いほど遠くまで届く。"
+                                         "届く範囲は濡れた色になる。0 で寄せ返しなし",
+                                         "%.2f m");
+            changed |= ui::PropertyFloat("波の間隔", &layer.liquid.shoreSpacingMeters, 2.0f, 200.0f,
+                                         defaults.liquid.shoreSpacingMeters,
+                                         "泡の筋どうしの間隔（m）", "%.0f m");
+            changed |= ui::PropertyFloat("波の出る幅", &layer.liquid.shoreWidthMeters, 0.0f, 500.0f,
+                                         defaults.liquid.shoreWidthMeters,
+                                         "泡の筋が出る、水際からの幅（m）", "%.0f m");
+            ui::EndPropertyTable();
+        }
+        ui::HintText("波と波打ち際は地形の描画で動かす（合成結果や書き出すテクスチャには入らない）。"
                      "Liquid が複数あるときは、最初の有効な 1 つの設定を使う");
     } else if (layeredMaterial) {
         ui::SectionHeader("ハイト");

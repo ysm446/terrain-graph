@@ -295,6 +295,11 @@ public:
         float waveScaleMeters = 40.0f;
         float waveSpeed = 1.0f;
         float waveDirectionRadians = 0.0f;
+        // 波打ち際（泡の量、寄せる高さ m、泡の筋の間隔 m、泡の筋が出る幅 m）。
+        float shoreFoam = 0.0f;
+        float shoreRunupMeters = 0.0f;
+        float shoreSpacingMeters = 25.0f;
+        float shoreWidthMeters = 80.0f;
     };
     void SetWater(const WaterSettings& water) { m_water = water; }
     void Render(rhi::Device& device, rhi::PipelineCache& pipelineCache,
