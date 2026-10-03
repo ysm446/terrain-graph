@@ -9,6 +9,7 @@
 
 #include "app/ApplicationUiHelpers.h"
 #include "core/FileDialog.h"
+#include "graph/GraphLayout.h"
 #include "io/ProjectIo.h"
 #include "io/SceneComponents.h"
 #include "ui/UiStyle.h"
@@ -1177,6 +1178,65 @@ void Application::AlignSelectedGraphNodes(GraphAlign mode) {
     MarkDocumentChanged(false);
 }
 
+// 編集中のグラフ（地形 / 雲）のノードを、どの接続も左から右へ向くように並べ直す
+// （ノードと背景の右クリックの「グラフ全体を左から右へ並べ直す」）。計算は graph::ArrangeLeftToRight。
+// 選択には依らない（何も選んでいなくても、編集中のグラフの全ノードが対象）。
+//
+// 位置と大きさはエディタが持つ値を使う（実際に描かれた大きさ。種類で高さが違う）。メモの吹き出しを
+// 出している間は、その高さも箱に含める（縦にずらしたとき吹き出しが上のノードに重ならないように）。
+// アンドゥの扱いは AlignSelectedGraphNodes と同じ（「並べ直す前」を 1 段にする）。
+void Application::ArrangeGraphLeftToRight() {
+    // 接続の間に空ける幅と、縦にずらすときにほかのノードとの間に空ける幅（キャンバス座標）。
+    constexpr float kArrangeGap = 40.0f;
+    constexpr float kArrangeMargin = 16.0f;
+    const bool showNotes = m_settings.Display().showNodeNotes;
+    std::vector<graph::GraphId> ids;
+    std::vector<float> notes;
+    std::vector<graph::LayoutBox> boxes;
+    std::unordered_map<graph::GraphId, size_t> indexOf;
+    for (const graph::Node& node : m_graph.Nodes()) {
+        if (m_editComponent >= 0 && node.component != m_editComponent) continue;
+        const ImVec2 position = ed::GetNodePosition(ed::NodeId(node.id));
+        const ImVec2 size = ed::GetNodeSize(ed::NodeId(node.id));
+        // エディタがまだ知らないノード（このフレームに作ったもの）は対象にしない。
+        if (!IsValidNodePosition(position.x, position.y) || size.x <= 0.0f) continue;
+        float note = 0.0f;
+        if (showNotes && !node.note.empty()) {
+            const std::string excerpt = NoteExcerpt(node.note, size.x - kNotePaddingX * 2.0f, kNodeNoteLines);
+            note = ImGui::CalcTextSize(excerpt.c_str()).y + kNotePaddingY * 2.0f + kNoteGap;
+        }
+        indexOf[node.id] = boxes.size();
+        ids.push_back(node.id);
+        notes.push_back(note);
+        boxes.push_back({position.x, position.y - note, size.x, size.y + note});
+    }
+    std::vector<graph::LayoutEdge> edges;
+    for (const graph::Link& link : m_graph.Links()) {
+        const graph::Pin* start = m_graph.FindPin(link.startPin);
+        const graph::Pin* end = m_graph.FindPin(link.endPin);
+        if (start == nullptr || end == nullptr) continue;
+        const auto from = indexOf.find(start->nodeId);
+        const auto to = indexOf.find(end->nodeId);
+        if (from == indexOf.end() || to == indexOf.end()) continue;
+        edges.push_back({from->second, to->second});
+    }
+    const std::vector<graph::LayoutBox> before = boxes;
+    const size_t moved = graph::ArrangeLeftToRight(boxes, edges, kArrangeGap, kArrangeMargin);
+    if (moved == 0) {
+        m_toasts.Push("並べ直す所はありません", "どの接続も左から右へ向いています");
+        return;
+    }
+    if (!m_documentDirty) m_committed = CaptureDocument();
+    for (size_t i = 0; i < boxes.size(); ++i) {
+        if (boxes[i].x == before[i].x && boxes[i].y == before[i].y) continue;
+        ed::SetNodePosition(ed::NodeId(ids[i]), ImVec2(boxes[i].x, boxes[i].y + notes[i]));
+    }
+    MarkDocumentChanged(false);
+    char detail[96];
+    std::snprintf(detail, sizeof(detail), "%zu 個のノードを動かしました（Ctrl+Z で戻せます）", moved);
+    m_toasts.Push("左から右へ並べ直しました", detail);
+}
+
 // ノードのメモの先頭を、ノードの上端のすぐ上に吹き出しとして出す（グラフパネルの「メモを表示」）。
 // **ノードの外に描く。** 中に描くとメモの有無や表示の切り替えでノードの高さが変わり、配置が崩れる。
 // ed::Begin と ed::End の間で呼ぶ（キャンバス座標で描き、マウスもキャンバス座標で判定する）。
@@ -1384,6 +1444,11 @@ void Application::DrawGraphEditor() {
         ImGui::OpenPopup("addGraphNode");
         ed::Resume();
     }
+    // --- 全体の並べ直し（右クリックのメニューからの要求）。ノードを描いた後でないと大きさが取れない ---
+    if (m_pendingGraphArrange) {
+        m_pendingGraphArrange = false;
+        ArrangeGraphLeftToRight();
+    }
     // --- ノードの右クリックで整列 -------------------------------------------
     // 右クリックしたノードが選択に入っていなければ、そのノードだけを選び直す
     // （選択の外で開いたメニューが、別の所にある選択へ効かないように）。
@@ -1416,6 +1481,10 @@ void Application::DrawGraphEditor() {
         ImGui::Separator();
         alignItem("横に等間隔", nullptr, GraphAlign::DistributeX, 3);
         alignItem("縦に等間隔", nullptr, GraphAlign::DistributeY, 3);
+        // グラフ全体の並べ直し。**選択には依らない**（上の整列と違い、何も選んでいなくても効く）。
+        // ポップアップの中ではエディタを止めているので、要求だけ置いて次のフレームで実行する。
+        ImGui::Separator();
+        if (ImGui::MenuItem("グラフ全体を左から右へ並べ直す")) m_pendingGraphArrange = true;
         ImGui::EndPopup();
     }
     if (ImGui::BeginPopup("addGraphNode")) {
@@ -1554,6 +1623,9 @@ void Application::DrawGraphEditor() {
             graph::NodeKind::CloudNoise,
             graph::NodeKind::CloudOutput,
         });
+        // ノードを選んでいなくても並べ直せるよう、背景のメニューにも置く。
+        ImGui::Separator();
+        if (ImGui::MenuItem("グラフ全体を左から右へ並べ直す")) m_pendingGraphArrange = true;
         ImGui::EndPopup();
     }
     ed::Resume();

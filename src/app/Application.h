@@ -179,6 +179,12 @@ private:
     // 選んだノードを揃える。2 個未満（等間隔は 3 個未満）なら何もしない。アンドゥ 1 段になる。
     // ノードエディタを current にした状態で呼ぶ。
     void AlignSelectedGraphNodes(GraphAlign mode);
+    // 編集中のグラフのノードを、どの接続も左から右へ向くように並べ直す（graph::ArrangeLeftToRight）。
+    // ノードと背景の右クリックの「グラフ全体を左から右へ並べ直す」。選択には依らない。アンドゥ 1 段になる。
+    // ノードエディタを current にした状態で呼ぶ。
+    void ArrangeGraphLeftToRight();
+    // メニューはエディタを止めたポップアップの中にあるので、要求だけ置いて次のフレームで実行する。
+    bool m_pendingGraphArrange = false;
     // ビューポートに出すノードを決める。出力ノードや無効な ID は
     // 「出力ノードのチェーン」（0）に落とす。
     // outputPin は**どの出力を見るか**。0 なら最初の出力（レイヤーなら Result）。
