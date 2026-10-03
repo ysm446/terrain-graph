@@ -56,7 +56,7 @@ bool IsHeightMaskNodeKind(NodeKind kind) {
 }
 
 bool IsLayerMaskSourceKind(NodeKind kind) {
-    return kind == NodeKind::Sediment || kind == NodeKind::Crumbling ||
+    return kind == NodeKind::Sediment || kind == NodeKind::Crumbling || kind == NodeKind::Liquid ||
            kind == NodeKind::Snow || kind == NodeKind::SnowCover || kind == NodeKind::Lake || kind == NodeKind::MeanderingRivers || kind == NodeKind::River || kind == NodeKind::FluvialErosion || kind == NodeKind::Droplet ||
            kind == NodeKind::Scatter;
 }
@@ -1285,6 +1285,12 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
                 layerSettings->layer.sediment.maskThicknessMeters;
         } else if (maskNode.kind == NodeKind::MeanderingRivers) {
             layerOp.kind = compositor::MaskOpKind::MeanderingRivers;
+        } else if (maskNode.kind == NodeKind::Liquid) {
+            layerOp.kind = compositor::MaskOpKind::Liquid;
+            // 0 番目の Mask 出力が水面の範囲、1 番目が水深、2 番目が水際の帯。
+            layerOp.liquidMask.channel = static_cast<uint32_t>(std::min<size_t>(source.outputIndex, 2));
+            layerOp.liquidMask.depthMeters = layerSettings->layer.liquid.maskDepthMeters;
+            layerOp.liquidMask.shoreMeters = layerSettings->layer.liquid.maskShoreMeters;
         } else if (maskNode.kind == NodeKind::Lake) {
             layerOp.kind = compositor::MaskOpKind::Lake;
             layerOp.dropletMask.channel = static_cast<uint32_t>(std::min<size_t>(source.outputIndex, 2));

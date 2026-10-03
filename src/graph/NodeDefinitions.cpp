@@ -22,6 +22,17 @@ constexpr std::array<PinDefinition, 3> kLayerNodePins = {{
     {PinKind::Output, ValueType::Material, "Result"},
 }};
 
+// Liquid のピン。Result のほかに、水と陸を分ける Mask を出す（水の場から焼く）。
+// 古いファイルは出力 1 本で保存されているので、Mask は末尾に足す（欠けたぶんは採番し直される）。
+constexpr std::array<PinDefinition, 6> kLiquidPins = {{
+    {PinKind::Input, ValueType::Material, "Base"},
+    {PinKind::Input, ValueType::Mask, "Mask"},
+    {PinKind::Output, ValueType::Material, "Result"},
+    {PinKind::Output, ValueType::Mask, "Water"},
+    {PinKind::Output, ValueType::Mask, "Depth"},
+    {PinKind::Output, ValueType::Mask, "Shore"},
+}};
+
 // Surface のピン。**UV Path に Path を繋ぐと、パスに沿った帯の座標で素材を貼る**
 // （進行方向が V、幅方向が U。帯の外には乗らない）。繋がなければ地形の UV で並べる。
 // 古いファイルは入力 2 本で保存されているので、3 本目は末尾に足す（欠けたぶんは採番し直される）。
@@ -302,7 +313,7 @@ constexpr std::array<NodeDefinition, 56> kNodeDefinitions = {{
      "素材を高さで張り合わせる"},
     {NodeKind::Shape, "shape", "Shape", kLayerNodePins,
      "高さへ起伏を加算する"},
-    {NodeKind::Liquid, "liquid", "Liquid", kLayerNodePins,
+    {NodeKind::Liquid, "liquid", "Liquid", kLiquidPins,
      "水位より低い所に水を張る"},
     {NodeKind::Blur, "heightmapBlur", "Heightmap Blur", kBlurPins,
      "ハイトをぼかしてならす"},

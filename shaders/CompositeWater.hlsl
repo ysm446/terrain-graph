@@ -17,9 +17,9 @@
 
 struct WaterConstants
 {
-    uint4 indices;  // 水の場 UAV, 読む側の作業用 UAV, 書く側の作業用 UAV, 合成解像度
-    uint4 params;   // 作業用の解像度, ジャンプの間隔, 未使用 x2
-    float4 scale;   // 地形の一辺（m）, 距離の上限（m）, 未使用 x2
+    uint4 indices;  // 水の場 UAV, 読む側の作業用 UAV, 書く側の作業用 UAV（CsMask ではマスクの出力）, 合成解像度
+    uint4 params;   // 作業用（CsMask では出力）の解像度, ジャンプの間隔, CsMask のチャンネル, 未使用
+    float4 scale;   // 地形の一辺（m）, 距離の上限（m）, CsMask: Depth が 1 になる水深（m）, Shore の帯の幅（m）
 };
 ConstantBuffer<WaterConstants> g_water : register(b1);
 
@@ -156,4 +156,46 @@ void CsResolve(uint3 id : SV_DispatchThreadID)
     const float cellMeters = g_water.scale.x / float(work);
     const float distance = (nearest < 1e29f) ? min(sqrt(nearest) * cellMeters, limit) : limit;
     water[id.xy] = float4((depth > 0.0f) ? distance : -distance, depth, water[id.xy].zw);
+}
+
+// --- マスク ------------------------------------------------------------------------
+// Liquid の Mask 出力。水の場から焼く。
+//   Water : 水面の範囲。水の中が 1、陸が 0（水際を 5 cm の水深でぼかす）
+//   Depth : 水深。指定した深さで 1
+//   Shore : 水際の帯。水際で 1、陸側・水側とも指定した距離で 0
+// チャンネルが 3 のとき（出どころの Liquid が無効）は 0 を書く。
+[numthreads(8, 8, 1)]
+void CsMask(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id.xy >= g_water.params.xx))
+    {
+        return;
+    }
+    RWTexture2D<float4> water = ResourceDescriptorHeap[g_water.indices.x];
+    RWTexture2D<float> target = ResourceDescriptorHeap[g_water.indices.z];
+
+    const uint channel = g_water.params.z;
+    const uint full = g_water.indices.w;
+    // 出力のテクセルの中心にあたる合成テクセル。
+    const uint2 texel = min(uint2((float2(id.xy) + 0.5f) * float(full) / float(g_water.params.x)),
+                            uint2(full - 1u, full - 1u));
+    const float4 field = water[texel];
+    float value = 0.0f;
+    if (channel < 3u && field.y > kWaterNone * 0.5f)
+    {
+        if (channel == 0u)
+        {
+            value = smoothstep(0.0f, 0.05f, field.y);
+        }
+        else if (channel == 1u)
+        {
+            value = saturate(field.y / max(g_water.scale.z, 1e-3f));
+        }
+        else
+        {
+            const float t = saturate(1.0f - abs(field.x) / max(g_water.scale.w, 1e-3f));
+            value = t * t * (3.0f - 2.0f * t);
+        }
+    }
+    target[id.xy] = value;
 }

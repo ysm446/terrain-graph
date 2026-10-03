@@ -629,6 +629,11 @@ struct MaterialLayer {
         float shoreSpacingMeters = 25.0f;
         // 泡の筋が出る、水際からの幅（m）。
         float shoreWidthMeters = 80.0f;
+        // --- Mask 出力の目盛り（Liquid の Depth / Shore ピン） ---
+        // Depth が 1 になる水深（m）。
+        float maskDepthMeters = 5.0f;
+        // Shore の帯の幅（m）。水際で 1、陸側・水側ともこの距離で 0。
+        float maskShoreMeters = 10.0f;
     } liquid;
 
     struct LakeSettings {

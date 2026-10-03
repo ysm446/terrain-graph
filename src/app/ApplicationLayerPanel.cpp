@@ -1190,6 +1190,19 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
         }
         ui::HintText("波と波打ち際は地形の描画で動かす（合成結果や書き出すテクスチャには入らない）。"
                      "Liquid が複数あるときは、最初の有効な 1 つの設定を使う");
+        // Mask 出力（Water / Depth / Shore）の目盛り。
+        ui::SectionHeader("マスク出力");
+        if (ui::BeginPropertyTable("layerLiquidMaskRows")) {
+            changed |= ui::PropertyFloat("Depth の深さ", &layer.liquid.maskDepthMeters, 0.1f, 100.0f,
+                                         defaults.liquid.maskDepthMeters,
+                                         "Depth の出力が 1 になる水深（m）。浅瀬と沖を分けるのに使う", "%.1f m");
+            changed |= ui::PropertyFloat("Shore の幅", &layer.liquid.maskShoreMeters, 0.5f, 200.0f,
+                                         defaults.liquid.maskShoreMeters,
+                                         "Shore の帯の幅（m）。水際で 1、陸側・水側ともこの距離で 0", "%.1f m");
+            ui::EndPropertyTable();
+        }
+        ui::HintText("Water は水面の範囲（水の中が 1）、Depth は水深、Shore は水際の帯。"
+                     "この Liquid より後ろのノードで使う");
     } else if (layeredMaterial) {
         ui::SectionHeader("ハイト");
         if (ui::BeginPropertyTable("layerHeightRows")) {

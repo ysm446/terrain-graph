@@ -473,6 +473,8 @@ uint64_t HashMaskOpParams(uint64_t seed, const MaskOp& op) {
             return HashBytes(seed, &op.height, sizeof(op.height));
         case MaskOpKind::River:
             return HashBytes(seed, &op.riverMask, sizeof(op.riverMask));
+        case MaskOpKind::Liquid:
+            return HashBytes(seed, &op.liquidMask, sizeof(op.liquidMask));
         case MaskOpKind::MeanderingRivers:
         case MaskOpKind::Lake:
         case MaskOpKind::SnowCover:
@@ -1419,6 +1421,12 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
             static_cast<size_t>(op.heightSourceLayer) < stack.Layers().size() &&
             stack.Layers()[op.heightSourceLayer].enabled;
         return ApplyMeanderingRiversMask(device, pipelineCache, commandList, target, enabled);
+    }
+    if (op.kind == MaskOpKind::Liquid) {
+        const bool enabled = op.heightSourceLayer >= 0 &&
+            static_cast<size_t>(op.heightSourceLayer) < stack.Layers().size() &&
+            stack.Layers()[op.heightSourceLayer].enabled;
+        return ApplyLiquidMask(device, pipelineCache, commandList, op, target, enabled);
     }
     if (op.kind == MaskOpKind::Lake) {
         const bool enabled = op.heightSourceLayer >= 0 &&
@@ -3909,6 +3917,32 @@ bool MaterialEvaluator::ApplyLake(rhi::Device& device, rhi::PipelineCache& cache
     return ok;
 }
 
+// Liquid のマスク。**Liquid を合成し終えた直後にしか呼ばない**（水の場は後ろの水ノードが
+// 書き足すので、その Liquid までの状態を読むにはこの位置で焼く）。水の場は評価の間 UAV のまま。
+bool MaterialEvaluator::ApplyLiquidMask(rhi::Device& device, rhi::PipelineCache& cache,
+    ID3D12GraphicsCommandList* commandList, const MaskOp& op, rhi::GpuTexture& target, bool enabled) {
+    auto* pass = cache.GetCompute(L"CompositeWater.hlsl", L"CsMask");
+    if (!pass) return false;
+    struct Constants { uint32_t indices[4]; uint32_t params[4]; float scale[4]; };
+    // indices: 水の場 UAV, 未使用, 出力 UAV, 合成解像度 / params: 出力の解像度, 未使用, チャンネル（3 で 0 を書く）
+    // scale: 未使用 x2, Depth が 1 になる水深（m）, Shore の帯の幅（m）
+    Constants c{{m_textures.water.UavIndex(), 0u, target.UavIndex(), m_resolution},
+                {target.width, 0u, enabled ? op.liquidMask.channel : 3u, 0u},
+                {0.0f, 0.0f, std::max(op.liquidMask.depthMeters, 0.01f), std::max(op.liquidMask.shoreMeters, 0.01f)}};
+    const auto cb = AllocateConstants(device, sizeof(c));
+    if (!cb.IsValid()) return false;
+    std::memcpy(cb.cpu, &c, sizeof(c));
+    PIXBeginEvent(commandList, PIX_COLOR_DEFAULT, "LiquidMask");
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+    commandList->SetPipelineState(pass);
+    commandList->Dispatch(DispatchCount(target.width), DispatchCount(target.height), 1);
+    const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+    commandList->ResourceBarrier(1, &barrier);
+    PIXEndEvent(commandList);
+    return true;
+}
+
 bool MaterialEvaluator::ApplyLakeMask(rhi::Device& device, rhi::PipelineCache& cache,
     ID3D12GraphicsCommandList* commandList, const MaskOp& op, rhi::GpuTexture& target, bool enabled) {
     auto* pass = cache.GetCompute(L"CompositeLake.hlsl", L"CsMask");
@@ -5535,6 +5569,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 op.kind == MaskOpKind::Curvature || op.kind == MaskOpKind::Sediment ||
                 op.kind == MaskOpKind::Crumbling || op.kind == MaskOpKind::Snow ||
                 op.kind == MaskOpKind::Height || op.kind == MaskOpKind::River ||
+                op.kind == MaskOpKind::Liquid ||
                 op.kind == MaskOpKind::MeanderingRivers || op.kind == MaskOpKind::Lake || op.kind == MaskOpKind::SnowCover || op.kind == MaskOpKind::FluvialErosion || op.kind == MaskOpKind::Droplet || op.kind == MaskOpKind::Scatter) {
                 after = std::max(after, op.heightSourceLayer);
                 const size_t layerCount = std::min<size_t>(

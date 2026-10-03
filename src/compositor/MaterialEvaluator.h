@@ -564,6 +564,9 @@ private:
     bool ApplyLake(rhi::Device& device, rhi::PipelineCache& cache,
         ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
         const MaterialStack& stack, uint32_t maskIndex);
+    // Liquid が書いた水の場から、水面の範囲 / 水深 / 水際の帯をマスクとして焼く。
+    bool ApplyLiquidMask(rhi::Device& device, rhi::PipelineCache& cache,
+        ID3D12GraphicsCommandList* commandList, const MaskOp& op, rhi::GpuTexture& target, bool enabled);
     bool ApplyLakeMask(rhi::Device& device, rhi::PipelineCache& cache,
         ID3D12GraphicsCommandList* commandList, const MaskOp& op, rhi::GpuTexture& target, bool enabled);
     struct FlowlineResources {

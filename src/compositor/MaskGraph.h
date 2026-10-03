@@ -66,6 +66,8 @@ enum class MaskOpKind : uint32_t {
     // メッシュ（道路など）の足跡。三角形を地形平面へ投影し、内側（と余白）を 1 にする。
     // 三角形は評価器の外（アプリ）が MeshFootprintStore へ入れ、meshSource で引く。
     Mesh = 23,
+    // Liquid レイヤーの出力。出力ピンによって水面の範囲 / 水深 / 水際の帯になる。水の場から焼く。
+    Liquid = 24,
 };
 
 // 曲率マスクの向き。シェーダの TG_CURVATURE_* と一致させること。
@@ -205,6 +207,14 @@ struct RiverMaskParams {
 };
 
 // 水滴侵食の出力をマスクにするときの選択。**どの出力ピンから来たか**で決まる。
+// Liquid の出力をマスクにするときの選択と目盛り。**どの出力ピンから来たか**で決まる。
+struct LiquidMaskParams {
+    // 0: 水面の範囲（水の中が 1）、1: 水深（depthMeters で 1）、2: 水際の帯（水際で 1、shoreMeters で 0）
+    uint32_t channel = 0;
+    float depthMeters = 5.0f;
+    float shoreMeters = 10.0f;
+};
+
 struct DropletMaskParams {
     // 0: 流量（水の通った量。log で圧縮して最大で正規化）、1: 堆積量（最大で正規化）
     uint32_t channel = 0;
@@ -278,6 +288,7 @@ struct MaskOp {
     SnowMaskParams snowMask;
     RiverMaskParams riverMask;
     DropletMaskParams dropletMask;
+    LiquidMaskParams liquidMask;
     ScatterMaskParams scatterMask;
     PathMaskParams pathMask;
     AreaMaskParams areaMask;

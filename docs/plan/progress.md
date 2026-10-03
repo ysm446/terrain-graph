@@ -1,7 +1,18 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-10-04 15:10
+更新日時: 2026-10-04 16:30
+
+## Liquid の Mask 出力（2026-10-04 16:30）
+
+ユーザー依頼「liquid ノードに mask のアウトプットがあるといい。水と陸地を分けたマスク」。River（Water / Bank / Depth）と同じ並びで Water / Depth / Shore の 3 つにした。
+
+- ピン: `kLiquidPins`（Result の後ろに Mask を 3 つ）。古いファイルは出力 1 本で保存されているが、欠けたピンは採番し直される（Surface の UV Path と同じ仕組み）。
+- `MaskOpKind::Liquid`（24）と `LiquidMaskParams`（チャンネル、Depth の深さ、Shore の幅）。`IsLayerMaskSourceKind` に Liquid を足し、`EmitMaskOps` が出力ピンの番号からチャンネルを決める。評価器は「レイヤーの作業用テクスチャを読む op」の列に足した（足さないと、前回の評価の水の場を読み、設定を触っても焼き直されない）。
+- 焼くのは `CompositeWater.hlsl` の `CsMask`（`ApplyLiquidMask`）。Liquid の合成と水際からの距離（`ApplyWaterDistance`）が終わった直後の水の場から読む。Water = `smoothstep(0, 5 cm, 水深)`、Depth = 水深 / 基準、Shore = 1 − |距離| / 幅（smoothstep）。
+- 目盛りは `LiquidSettings::maskDepthMeters` / `maskShoreMeters`（保存は `layer.liquid`）。
+
+検証: Debug ビルド（警告 0）、CTest 6 件、起動時の DXC。浜の検証地形に Surface（赤、マスクに Shore）を繋いだシーン（`data/Test/sea/sea_mask.tgscene`）で、汀線に沿って赤い帯が出ることを確認（`data/screenshots/mask_01.png`）。出力 1 本で保存された Liquid のシーン（`river_sea.tgscene`）がエラーなく開けることも確認。**Water と Depth の出力は絵では確かめていない**（Shore と同じ経路で、チャンネルの分岐だけが違う）。プロパティの「マスク出力」節とノードのピンの見た目も未確認。
 
 ## 「チャンネル」パネル（2026-10-04 15:10）
 
