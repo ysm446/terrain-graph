@@ -195,6 +195,17 @@ constexpr std::array<PinDefinition, 2> kMaskMeshPins = {{
     {PinKind::Output, ValueType::Mask, "Mask"},
 }};
 
+// 道路の均しのピン。Base は地形、Mesh は Road Mesh か Shoulder の出力。
+// Mask は 路面の下（平らな幅まで）/ 切土の法面 / 盛土の法面。
+constexpr std::array<PinDefinition, 6> kRoadGradingPins = {{
+    {PinKind::Input, ValueType::Material, "Base"},
+    {PinKind::Input, ValueType::Mesh, "Mesh"},
+    {PinKind::Output, ValueType::Material, "Result"},
+    {PinKind::Output, ValueType::Mask, "Road"},
+    {PinKind::Output, ValueType::Mask, "Cut"},
+    {PinKind::Output, ValueType::Mask, "Fill"},
+}};
+
 constexpr std::array<PinDefinition, 1> kOutputNodePins = {{
     {PinKind::Input, ValueType::Material, "Material"},
 }};
@@ -304,7 +315,7 @@ constexpr std::array<PinDefinition, 1> kModelOutputPins = {{
 constexpr std::array<PinDefinition, 1> kSnowPlumePins = {{
     {PinKind::Input, ValueType::Mask, "Source"},
 }};
-constexpr std::array<NodeDefinition, 56> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 57> kNodeDefinitions = {{
     {NodeKind::Mountain, "mountain", "Mountain", kSourceNodePins,
      "画像なしで山並みと尾根を生成する"},
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins,
@@ -381,6 +392,8 @@ constexpr std::array<NodeDefinition, 56> kNodeDefinitions = {{
      "路面の端から外へ路肩の帯を張り出す"},
     {NodeKind::LaneMarking, "laneMarking", "Lane Marking", kLaneMarkingPins,
      "路面に中央線・外側線・車線境界線を引く"},
+    {NodeKind::RoadGrading, "roadGrading", "Road Grading", kRoadGradingPins,
+     "道路メッシュに合わせて地形を切土・盛土で均す"},
     {NodeKind::MaskMesh, "maskMesh", "Mask Mesh", kMaskMeshPins,
      "道路などのメッシュの足跡をマスクにする（植生の除外など）"},
     {NodeKind::Cloud, "cloud", "Cloud (Legacy)", kCloudPins,

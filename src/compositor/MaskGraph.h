@@ -68,6 +68,8 @@ enum class MaskOpKind : uint32_t {
     Mesh = 23,
     // Liquid レイヤーの出力。出力ピンによって水面の範囲 / 水深 / 水際の帯になる。水の場から焼く。
     Liquid = 24,
+    // 道路の均し（Road Grading）の出力。出力ピンによって路面の下 / 切土 / 盛土になる。
+    RoadGrading = 25,
 };
 
 // 曲率マスクの向き。シェーダの TG_CURVATURE_* と一致させること。

@@ -294,6 +294,10 @@ uint64_t HashHeightState(uint64_t seed, const MaterialLayer& layer) {
     hash = HashBytes(hash, &layer.meanderingRivers.basinEnabled, sizeof(layer.meanderingRivers.basinEnabled));
     hash = HashBytes(hash, &layer.meanderingRivers.flattenUphill, sizeof(layer.meanderingRivers.flattenUphill));
     hash = HashBytes(hash, layer.meanderPoints.data(), layer.meanderPoints.size() * sizeof(MaterialLayer::MeanderPoint));
+    if (layer.kind == LayerKind::RoadGrading) {
+        hash = HashBytes(hash, &layer.roadGrading, sizeof(layer.roadGrading));
+        hash = HashBytes(hash, &layer.meshSource, sizeof(layer.meshSource));
+    }
     hash = HashBytes(hash, &layer.lake.optimizationSteps, sizeof(layer.lake.optimizationSteps));
     hash = HashBytes(hash, &layer.lake.waterAmount, sizeof(layer.lake.waterAmount));
     hash = HashBytes(hash, &layer.lake.allowOutflow, sizeof(layer.lake.allowOutflow));
@@ -477,6 +481,7 @@ uint64_t HashMaskOpParams(uint64_t seed, const MaskOp& op) {
             return HashBytes(seed, &op.liquidMask, sizeof(op.liquidMask));
         case MaskOpKind::MeanderingRivers:
         case MaskOpKind::Lake:
+        case MaskOpKind::RoadGrading:
         case MaskOpKind::SnowCover:
         case MaskOpKind::FluvialErosion:
         case MaskOpKind::Droplet:
@@ -1282,6 +1287,12 @@ void MaterialEvaluator::ReleaseTextures(rhi::Device& device) {
     device.DeferRelease(m_scratch);
     device.DeferRelease(m_waterWork[0]);
     device.DeferRelease(m_waterWork[1]);
+    device.DeferRelease(m_roadGrading.roadHeight);
+    device.DeferRelease(m_roadGrading.seeds[0]);
+    device.DeferRelease(m_roadGrading.seeds[1]);
+    device.DeferRelease(m_roadGrading.masks);
+    device.DeferRelease(m_roadGrading.triangles);
+    m_roadGrading.allocation = 0;
 }
 
 bool MaterialEvaluator::Resize(rhi::Device& device, uint32_t resolution) {
@@ -1421,6 +1432,12 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
             static_cast<size_t>(op.heightSourceLayer) < stack.Layers().size() &&
             stack.Layers()[op.heightSourceLayer].enabled;
         return ApplyMeanderingRiversMask(device, pipelineCache, commandList, target, enabled);
+    }
+    if (op.kind == MaskOpKind::RoadGrading) {
+        const bool enabled = op.heightSourceLayer >= 0 &&
+            static_cast<size_t>(op.heightSourceLayer) < stack.Layers().size() &&
+            stack.Layers()[op.heightSourceLayer].enabled;
+        return ApplyRoadGradingMask(device, pipelineCache, commandList, op, target, enabled);
     }
     if (op.kind == MaskOpKind::Liquid) {
         const bool enabled = op.heightSourceLayer >= 0 &&
@@ -3435,6 +3452,164 @@ struct FluvialErosionConstants {
     float scale[4]{}, erosion[4]{}, motion[4]{}, detail[4]{}, force[4]{};
 };
 static_assert(sizeof(FluvialErosionConstants) == 144);
+}
+
+namespace {
+// GPU 側の RoadGradingConstants と一致させること。
+struct RoadGradingConstants {
+    uint32_t indices0[4];  // 合成の Height UAV, 路面の高さ UAV, 種の読む側 UAV, 種の書く側 UAV
+    uint32_t indices1[4];  // マスク UAV, 三角形バッファの SRV, 三角形数, 合成解像度
+    uint32_t indices2[4];  // ジャンプの間隔, マスクのチャンネル, マスクの出力 UAV, マスクの出力の解像度
+    float params0[4];      // 一辺（m）, 標高差（m）, 路面下の余裕（m）, 平らな幅（m）
+    float params1[4];      // 切土の勾配, 盛土の勾配, 法面の最大の長さ（m）, マスクのぼかし（m）
+};
+}  // namespace
+
+// 道路の均し。道路メッシュの三角形を合成解像度へ焼いて路面の高さを置き、ジャンプフラッディングで
+// 一番近い道路のテクセルを全テクセルへ伝え、距離と高さから法面を作って Height を書き換える。
+// どの作業用テクスチャも UAV のまま読み書きし、パスの間は UAV バリアで区切る。
+// 道路メッシュが繋がっていない / まだ届いていないときは何もしない（マスクは 0）。
+bool MaterialEvaluator::ApplyRoadGrading(rhi::Device& device, rhi::PipelineCache& cache,
+    ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer, const MaterialStack& stack) {
+    auto* rasterizePass = cache.GetCompute(L"CompositeRoadGrading.hlsl", L"CsRasterize");
+    auto* jumpPass = cache.GetCompute(L"CompositeRoadGrading.hlsl", L"CsJump");
+    auto* applyPass = cache.GetCompute(L"CompositeRoadGrading.hlsl", L"CsApply");
+    auto* normals = cache.GetCompute(L"CompositeBlur.hlsl", L"CsNormalFromHeight");
+    if (!rasterizePass || !jumpPass || !applyPass || !normals) return false;
+
+    auto& resources = m_roadGrading;
+    const uint32_t n = m_resolution;
+    if (resources.allocation != n) {
+        resources.allocation = 0;
+        for (auto* texture : {&resources.roadHeight, &resources.seeds[0], &resources.seeds[1], &resources.masks})
+            device.DeferRelease(*texture);
+        if (!CreateChannelTexture(device, n, DXGI_FORMAT_R32_FLOAT, L"RoadGradingHeight", resources.roadHeight) ||
+            !CreateChannelTexture(device, n, DXGI_FORMAT_R32_UINT, L"RoadGradingSeedsA", resources.seeds[0]) ||
+            !CreateChannelTexture(device, n, DXGI_FORMAT_R32_UINT, L"RoadGradingSeedsB", resources.seeds[1]) ||
+            !CreateChannelTexture(device, n, DXGI_FORMAT_R8G8B8A8_UNORM, L"RoadGradingMasks", resources.masks)) {
+            return false;
+        }
+        resources.allocation = n;
+    }
+
+    // 三角形列を GPU の形（float 12 個 / 枚）へ並べる（ApplyMeshMask と同じ並び）。
+    const MeshFootprint* footprint =
+        (m_meshFootprints != nullptr && layer.meshSource != 0) ? m_meshFootprints->Find(layer.meshSource) : nullptr;
+    std::vector<float> triangles;
+    uint32_t count = 0;
+    if (footprint != nullptr) {
+        const size_t triangleCount = footprint->TriangleCount();
+        triangles.reserve(std::max<size_t>(triangleCount, 1) * (kMeshTriangleStride / sizeof(float)));
+        for (size_t t = 0; t < triangleCount; ++t) {
+            const uint32_t ia = footprint->indices[t * 3 + 0];
+            const uint32_t ib = footprint->indices[t * 3 + 1];
+            const uint32_t ic = footprint->indices[t * 3 + 2];
+            if (ia >= footprint->vertices.size() || ib >= footprint->vertices.size() ||
+                ic >= footprint->vertices.size()) {
+                continue;
+            }
+            const MeshFootprintVertex& a = footprint->vertices[ia];
+            const MeshFootprintVertex& b = footprint->vertices[ib];
+            const MeshFootprintVertex& c = footprint->vertices[ic];
+            const float values[kMeshTriangleStride / sizeof(float)] = {
+                a.u, a.v, b.u, b.v, c.u, c.v, a.height, b.height, c.height, 0.0f, 0.0f, 0.0f};
+            triangles.insert(triangles.end(), std::begin(values), std::end(values));
+            ++count;
+        }
+    }
+    if (triangles.empty()) triangles.assign(kMeshTriangleStride / sizeof(float), 0.0f);
+    const uint32_t trianglesSrv =
+        UploadBytesTo(device, resources.triangles, triangles.data(),
+                      static_cast<uint64_t>(triangles.size()) * sizeof(float), 64 * kMeshTriangleStride,
+                      L"RoadGradingTriangles");
+    if (trianglesSrv == kInvalidTextureIndex) return false;
+
+    const auto& p = layer.roadGrading;
+    RoadGradingConstants base{};
+    base.indices0[0] = m_textures.height.UavIndex();
+    base.indices0[1] = resources.roadHeight.UavIndex();
+    base.indices1[0] = resources.masks.UavIndex();
+    base.indices1[1] = trianglesSrv;
+    base.indices1[2] = count;
+    base.indices1[3] = n;
+    base.params0[0] = std::max(stack.SizeMeters(), 0.001f);
+    base.params0[1] = std::max(stack.HeightMeters(), 0.001f);
+    base.params0[2] = std::max(p.clearanceMeters, 0.0f);
+    base.params0[3] = std::max(p.vergeMeters, 0.0f);
+    // 1 : n（高さ 1 に対して水平 n）を、水平 1 m あたりの高さへ。
+    base.params1[0] = 1.0f / std::max(p.cutRatio, 0.05f);
+    base.params1[1] = 1.0f / std::max(p.fillRatio, 0.05f);
+    base.params1[2] = std::max(p.maxRunMeters, 0.0f);
+    base.params1[3] = std::max(p.maskSoftMeters, 0.01f);
+
+    const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+    bool complete = true;
+    const auto dispatch = [&](ID3D12PipelineState* pass, uint32_t read, uint32_t write, uint32_t step) {
+        RoadGradingConstants c = base;
+        c.indices0[2] = read;
+        c.indices0[3] = write;
+        c.indices2[0] = step;
+        const auto cb = AllocateConstants(device, sizeof(c));
+        if (!cb.IsValid()) {
+            complete = false;
+            return;
+        }
+        std::memcpy(cb.cpu, &c, sizeof(c));
+        commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+        commandList->SetPipelineState(pass);
+        commandList->Dispatch(DispatchCount(n), DispatchCount(n), 1);
+        commandList->ResourceBarrier(1, &barrier);
+    };
+
+    PIXBeginEvent(commandList, PIX_COLOR(200, 180, 120), "RoadGrading");
+    for (auto* texture : {&resources.roadHeight, &resources.seeds[0], &resources.seeds[1], &resources.masks})
+        TransitionIfNeeded(commandList, *texture, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+    uint32_t read = 0;
+    dispatch(rasterizePass, 0, resources.seeds[read].UavIndex(), 0);
+    if (count > 0) {
+        for (uint32_t step = std::max(n / 2, 1u);; step /= 2) {
+            dispatch(jumpPass, resources.seeds[read].UavIndex(), resources.seeds[1 - read].UavIndex(), step);
+            read = 1 - read;
+            if (step <= 1) break;
+        }
+        // 歩幅 1 をもう 1 回（JFA+1。取りこぼしを拾う）。
+        dispatch(jumpPass, resources.seeds[read].UavIndex(), resources.seeds[1 - read].UavIndex(), 1);
+        read = 1 - read;
+    }
+    dispatch(applyPass, resources.seeds[read].UavIndex(), 0, 0);
+    // 形が変わったので、法線を作り直す。
+    if (complete && count > 0) RebuildNormalsFromHeight(device, normals, commandList, stack);
+    PIXEndEvent(commandList);
+    return complete;
+}
+
+// 直前の Road Grading が残したマスクを焼く。**その Road Grading を評価し終えた直後にしか呼ばない**
+// （作業用テクスチャは次の Road Grading で上書きされる）。
+bool MaterialEvaluator::ApplyRoadGradingMask(rhi::Device& device, rhi::PipelineCache& cache,
+    ID3D12GraphicsCommandList* commandList, const MaskOp& op, rhi::GpuTexture& target, bool enabled) {
+    auto* pass = cache.GetCompute(L"CompositeRoadGrading.hlsl", L"CsMask");
+    if (!pass) return false;
+    const bool ready = enabled && m_roadGrading.allocation != 0;
+    RoadGradingConstants c{};
+    c.indices1[0] = ready ? m_roadGrading.masks.UavIndex() : target.UavIndex();
+    c.indices1[3] = std::max(m_roadGrading.allocation, 1u);
+    c.indices2[1] = ready ? op.dropletMask.channel : 3u;
+    c.indices2[2] = target.UavIndex();
+    c.indices2[3] = target.width;
+    const auto cb = AllocateConstants(device, sizeof(c));
+    if (!cb.IsValid()) return false;
+    std::memcpy(cb.cpu, &c, sizeof(c));
+    PIXBeginEvent(commandList, PIX_COLOR_DEFAULT, "RoadGradingMask");
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+    commandList->SetPipelineState(pass);
+    commandList->Dispatch(DispatchCount(target.width), DispatchCount(target.height), 1);
+    const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+    commandList->ResourceBarrier(1, &barrier);
+    PIXEndEvent(commandList);
+    return true;
 }
 
 // River / Lake の水の色と水チャンネル。形（Height / Normal）を作り終えた直後に呼ぶ。
@@ -5489,6 +5664,12 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
             heightStateDone[layerCount] = 2;
             const MaterialLayer& layer = stack.Layers()[layerCount - 1];
             uint64_t hash = HashHeightState(heightStateUpTo(layerCount - 1), layer);
+            // 道路の均しは、道路メッシュの形が変われば結果が変わる（Mask Mesh の op と同じ）。
+            if (layer.kind == LayerKind::RoadGrading && m_meshFootprints != nullptr) {
+                const MeshFootprint* footprint = m_meshFootprints->Find(layer.meshSource);
+                const uint64_t footprintHash = (footprint != nullptr) ? footprint->hash : 0;
+                hash = HashBytes(hash, &footprintHash, sizeof(footprintHash));
+            }
             const auto& materialData = compiledMaterials[layerCount - 1];
             if (materialData.count) {
                 hash = HashBytes(hash, &materialData.count, sizeof(uint32_t));
@@ -5569,7 +5750,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 op.kind == MaskOpKind::Curvature || op.kind == MaskOpKind::Sediment ||
                 op.kind == MaskOpKind::Crumbling || op.kind == MaskOpKind::Snow ||
                 op.kind == MaskOpKind::Height || op.kind == MaskOpKind::River ||
-                op.kind == MaskOpKind::Liquid ||
+                op.kind == MaskOpKind::Liquid || op.kind == MaskOpKind::RoadGrading ||
                 op.kind == MaskOpKind::MeanderingRivers || op.kind == MaskOpKind::Lake || op.kind == MaskOpKind::SnowCover || op.kind == MaskOpKind::FluvialErosion || op.kind == MaskOpKind::Droplet || op.kind == MaskOpKind::Scatter) {
                 after = std::max(after, op.heightSourceLayer);
                 const size_t layerCount = std::min<size_t>(
@@ -5686,6 +5867,9 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 ++m_evaluatedLayerCount;
             } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::FlattenBorders) {
                 if (!ApplyFlattenBorders(device, pipelineCache, commandList, layer, stack, inputMaskIndex)) complete = false;
+                ++m_evaluatedLayerCount;
+            } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::RoadGrading) {
+                if (!ApplyRoadGrading(device, pipelineCache, commandList, layer, stack)) complete = false;
                 ++m_evaluatedLayerCount;
             } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::HeightLevels) {
                 if (!ApplyHeightLevels(device, pipelineCache, commandList, layer, stack, inputMaskIndex)) complete = false;

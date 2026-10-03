@@ -1,7 +1,7 @@
 # design-guide — UI の設計ガイド
 
 作成日時: 2026-08-31 14:36
-更新日時: 2026-10-04 17:00
+更新日時: 2026-10-04 19:30
 
 ## Mountain のプロパティ
 
@@ -40,7 +40,7 @@ Road Path を選んだときのプロパティは、Path と同じ「パス」�
 | 整形 | Heightmap Blur / Flatten Borders / Height Levels |
 | マスク | Mask Image / Noise / Flowline / Fluvial / Height / Slope / Curvature / Levels / Blur / Blend、Wind Field |
 | パス | Path / Mask Path / Mask Area |
-| 道路 | Road Path / Road Mesh / Shoulder / Lane Marking / Mask Mesh / Mesh Output |
+| 道路 | Road Path / Road Mesh / Shoulder / Lane Marking / Road Grading / Mask Mesh / Mesh Output |
 | 配置 | Scatter / Model Scatter / Model Merge / Model Output |
 | 雲 | Cloud Weather Layer ほか雲グラフ用の種類 |
 
@@ -63,6 +63,10 @@ Road Path を選んだときのプロパティは、Path と同じ「パス」�
 その下に「波」節（SectionHeader）。PropertyFloat の「強さ」（0〜1）「大きさ」（m、1〜500、`%.0f m`）「速さ」（0〜4）「向き」（度、-180〜180、`%.0f°`）。最後に「マスク出力」節（ユーザー指定 2026-10-04）。PropertyFloat の「Depth の深さ」（m、0.1〜100、`%.1f m`）「Shore の幅」（m、0.5〜200、`%.1f m`）と、HintText で 3 つの出力の意味。
 
 その下に「波打ち際」節。PropertyFloat の「泡の量」（0〜1）「寄せる高さ」（m、0〜3、`%.2f m`）「波の間隔」（m、2〜200、`%.0f m`）「波の出る幅」（m、0〜500、`%.0f m`）。最後に HintText で「波と波打ち際は地形の描画で動かす（合成結果や書き出すテクスチャには入らない）。Liquid が複数あるときは、最初の有効な 1 つの設定を使う」。
+
+## Road Grading のプロパティ
+
+「ノードを追加」では「道路」セクションの Lane Marking の次に置く（道路の色。ユーザー指定 2026-10-04）。プロパティは「基本」（名前）、「道路の下」（PropertyFloat の「路面下の余裕」〔m、0〜2、`%.2f m`〕「平らな幅」〔m、0〜20、`%.1f m`〕）、「法面」（「切土の勾配」「盛土の勾配」〔0.1〜5、書式は `1 : %.2f`。土木の言い方で、高さ 1 に対する水平の長さ〕「法面の長さの上限」〔m、0〜500、0 で無制限〕）、「マスク出力」（「ぼかし」〔m、0.01〜5〕）。最後に HintText で、繋ぎ方と 3 つの Mask の意味、Road Path の Base を手前に繋ぐ注意。
 
 ## 「チャンネル」パネル
 

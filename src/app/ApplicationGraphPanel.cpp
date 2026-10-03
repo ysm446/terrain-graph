@@ -174,6 +174,7 @@ ImVec4 NodeAccentColor(graph::NodeKind kind) {
         case graph::NodeKind::Shoulder:
         case graph::NodeKind::LaneMarking:
         case graph::NodeKind::MaskMesh:
+        case graph::NodeKind::RoadGrading:
             return ImVec4(0.84f, 0.80f, 0.60f, 1.0f);
         case graph::NodeKind::Output:
         default:
@@ -1533,6 +1534,7 @@ void Application::DrawGraphEditor() {
             graph::NodeKind::RoadMesh,
             graph::NodeKind::Shoulder,
             graph::NodeKind::LaneMarking,
+            graph::NodeKind::RoadGrading,
             graph::NodeKind::MaskMesh,
             graph::NodeKind::MeshOutput,
         });

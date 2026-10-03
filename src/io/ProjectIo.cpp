@@ -194,7 +194,7 @@ const char* const kCurvatureModeNames[] = {"ridges", "valleys", "absolute"};
 const char* const kMaskBlendModeNames[] = {"add", "multiply", "min", "max", "subtract"};
 const char* const kChannelNames[] = {"baseColor", "normal", "surface", "height"};
 const char* const kLayerKindNames[] = {"surface",   "shape", "liquid", "blur",    "sediment",
-                                       "crumbling", "snow",  "river",  "droplet", "scatter", "multiScaleErosion", "fluvialErosion", "flattenBorders", "snowCover", "lake", "meanderingRivers", "heightLevels"};
+                                       "crumbling", "snow",  "river",  "droplet", "scatter", "multiScaleErosion", "fluvialErosion", "flattenBorders", "snowCover", "lake", "meanderingRivers", "heightLevels", "roadGrading"};
 // 散布の形 / 向き。compositor::ScatterShape / ScatterOrientation の並びと一致させること。
 const char* const kScatterShapeNames[] = {"hemisphere", "cone"};
 const char* const kScatterOrientationNames[] = {"flat", "followGround", "slopeOriented"};
@@ -1305,6 +1305,18 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     flattenBorders["upperZ"] = layer.flattenBorders.upperZ;
     node["flattenBorders"] = std::move(flattenBorders);
 
+    // 道路の均しの設定も、その種類のレイヤーだけに書く。
+    if (layer.kind == compositor::LayerKind::RoadGrading) {
+        json roadGrading;
+        roadGrading["clearanceMeters"] = layer.roadGrading.clearanceMeters;
+        roadGrading["vergeMeters"] = layer.roadGrading.vergeMeters;
+        roadGrading["cutRatio"] = layer.roadGrading.cutRatio;
+        roadGrading["fillRatio"] = layer.roadGrading.fillRatio;
+        roadGrading["maxRunMeters"] = layer.roadGrading.maxRunMeters;
+        roadGrading["maskSoftMeters"] = layer.roadGrading.maskSoftMeters;
+        node["roadGrading"] = std::move(roadGrading);
+    }
+
     // Height Levels の設定は、その種類のレイヤーだけに書く（ほかのレイヤーの保存内容を変えない）。
     if (layer.kind == compositor::LayerKind::HeightLevels) {
         json heightLevels;
@@ -1690,6 +1702,15 @@ compositor::MaterialLayer ReadLayer(
         layer.flattenBorders.upperX = ReadBool(*value, "upperX", defaults.flattenBorders.upperX);
         layer.flattenBorders.lowerZ = ReadBool(*value, "lowerZ", defaults.flattenBorders.lowerZ);
         layer.flattenBorders.upperZ = ReadBool(*value, "upperZ", defaults.flattenBorders.upperZ);
+    }
+    if (const json* value = FindMember(node, "roadGrading"); value != nullptr && value->is_object()) {
+        const auto& d = defaults.roadGrading;
+        layer.roadGrading.clearanceMeters = ReadFloat(*value, "clearanceMeters", d.clearanceMeters);
+        layer.roadGrading.vergeMeters = ReadFloat(*value, "vergeMeters", d.vergeMeters);
+        layer.roadGrading.cutRatio = ReadFloat(*value, "cutRatio", d.cutRatio);
+        layer.roadGrading.fillRatio = ReadFloat(*value, "fillRatio", d.fillRatio);
+        layer.roadGrading.maxRunMeters = ReadFloat(*value, "maxRunMeters", d.maxRunMeters);
+        layer.roadGrading.maskSoftMeters = ReadFloat(*value, "maskSoftMeters", d.maskSoftMeters);
     }
     if (const json* value = FindMember(node, "heightLevels"); value != nullptr && value->is_object()) {
         const auto& d = defaults.heightLevels;

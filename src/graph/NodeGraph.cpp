@@ -33,7 +33,7 @@ bool IsLayerNodeKind(NodeKind kind) {
            kind == NodeKind::Snow || kind == NodeKind::SnowCover || kind == NodeKind::Lake || kind == NodeKind::MeanderingRivers || kind == NodeKind::River || kind == NodeKind::Droplet ||
            kind == NodeKind::Scatter || kind == NodeKind::MultiScaleErosion ||
            kind == NodeKind::FluvialErosion || kind == NodeKind::FlattenBorders ||
-           kind == NodeKind::HeightLevels;
+           kind == NodeKind::HeightLevels || kind == NodeKind::RoadGrading;
 }
 
 bool IsSourceNodeKind(NodeKind kind) {
@@ -57,6 +57,7 @@ bool IsHeightMaskNodeKind(NodeKind kind) {
 
 bool IsLayerMaskSourceKind(NodeKind kind) {
     return kind == NodeKind::Sediment || kind == NodeKind::Crumbling || kind == NodeKind::Liquid ||
+           kind == NodeKind::RoadGrading ||
            kind == NodeKind::Snow || kind == NodeKind::SnowCover || kind == NodeKind::Lake || kind == NodeKind::MeanderingRivers || kind == NodeKind::River || kind == NodeKind::FluvialErosion || kind == NodeKind::Droplet ||
            kind == NodeKind::Scatter;
 }
@@ -136,6 +137,8 @@ compositor::LayerKind LayerKindFor(NodeKind kind) {
             return compositor::LayerKind::FlattenBorders;
         case NodeKind::HeightLevels:
             return compositor::LayerKind::HeightLevels;
+        case NodeKind::RoadGrading:
+            return compositor::LayerKind::RoadGrading;
         case NodeKind::MultiScaleErosion:
             return compositor::LayerKind::MultiScaleErosion;
         // ハイトマップは合成規則としてはシェイプ（高さへの加算）。
@@ -503,8 +506,9 @@ std::vector<CompiledRoadMesh> NodeGraph::CompileRoadMeshes() const {
     // Mask Mesh を Mesh Output と同じメッシュに繋げば、描く鎖の足跡を読む。
     std::unordered_map<GraphId, size_t> visited;
     // 終端（Mesh Output か Mask Mesh）から Road Mesh まで遡って鎖を作る。作れなければ偽。
-    const auto compileChain = [&](const Node& terminal, CompiledRoadMesh& out) {
-        const Node* mesh = FindUpstreamNodeForPin(terminal.inputs[0].id);
+    // meshInput は、終端のどの入力にメッシュが繋がるか（Road Grading は Base の次）。
+    const auto compileChain = [&](const Node& terminal, CompiledRoadMesh& out, size_t meshInput = 0) {
+        const Node* mesh = FindUpstreamNodeForPin(terminal.inputs[meshInput].id);
         if (mesh == nullptr) return false;
         // 路肩と区画線を遡って Road Mesh まで。循環は繋ぐときに弾かれるが、念のため段数で打ち切る。
         std::vector<GraphId> shoulders, markings, chain;
@@ -540,17 +544,21 @@ std::vector<CompiledRoadMesh> NodeGraph::CompileRoadMeshes() const {
         visited[mesh->id] = result.size();
         result.push_back(std::move(compiled));
     }
-    // 次に Mask Mesh。描く鎖の同じメッシュに繋いであればその鎖へ加え、無ければ描かない鎖を作る。
+    // 次に Mask Mesh と Road Grading（どちらも鎖の足跡を読む）。描く鎖の同じメッシュに繋いであれば
+    // その鎖へ加え、無ければ描かない鎖を作る。Road Grading のメッシュは 2 番目の入力（Base の次）。
     for (const Node& maskNode : m_nodes) {
-        if (maskNode.kind != NodeKind::MaskMesh || maskNode.inputs.empty()) continue;
-        const Node* mesh = FindUpstreamNodeForPin(maskNode.inputs[0].id);
+        const bool grading = maskNode.kind == NodeKind::RoadGrading;
+        if (maskNode.kind != NodeKind::MaskMesh && !grading) continue;
+        const size_t meshInput = grading ? 1 : 0;
+        if (maskNode.inputs.size() <= meshInput) continue;
+        const Node* mesh = FindUpstreamNodeForPin(maskNode.inputs[meshInput].id);
         if (mesh == nullptr) continue;
         if (const auto found = visited.find(mesh->id); found != visited.end()) {
             result[found->second].maskNodes.push_back(maskNode.id);
             continue;
         }
         CompiledRoadMesh compiled;
-        if (!compileChain(maskNode, compiled)) continue;
+        if (!compileChain(maskNode, compiled, meshInput)) continue;
         compiled.drawn = false;
         compiled.maskNodes.push_back(maskNode.id);
         visited[mesh->id] = result.size();
@@ -1285,6 +1293,10 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
                 layerSettings->layer.sediment.maskThicknessMeters;
         } else if (maskNode.kind == NodeKind::MeanderingRivers) {
             layerOp.kind = compositor::MaskOpKind::MeanderingRivers;
+        } else if (maskNode.kind == NodeKind::RoadGrading) {
+            layerOp.kind = compositor::MaskOpKind::RoadGrading;
+            // 0 番目の Mask 出力が路面の下、1 番目が切土、2 番目が盛土。
+            layerOp.dropletMask.channel = static_cast<uint32_t>(std::min<size_t>(source.outputIndex, 2));
         } else if (maskNode.kind == NodeKind::Liquid) {
             layerOp.kind = compositor::MaskOpKind::Liquid;
             // 0 番目の Mask 出力が水面の範囲、1 番目が水深、2 番目が水際の帯。
@@ -1765,6 +1777,13 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace,
             if (variationSource.node != nullptr)
                 compiled.layers[i].variationMaskOp = EmitMaskOps(variationSource,
                     i > 0 ? static_cast<int>(i) - 1 : 0, layerNodes, compiled.maskOps, emitted, 0);
+        }
+        // 道路の均しは、繋いだ道路メッシュの足跡を自分の ID で置き場から引く（Mask Mesh と同じ流儀。
+        // アプリが CompileRoadMeshes の maskNodes を見て置く）。繋いでいなければ 0（何もしない）。
+        if (layerNodes[i]->kind == NodeKind::RoadGrading) {
+            compiled.layers[i].meshSource = (UpstreamOf(*layerNodes[i], ValueType::Mesh) != nullptr)
+                                                ? static_cast<uint32_t>(layerNodes[i]->id)
+                                                : 0u;
         }
         const MaskSourceRef maskSource = UpstreamMaskOf(*layerNodes[i]);
         if (maskSource.node == nullptr) {

@@ -597,6 +597,12 @@ private:
     // 水の場の水深から、水際からの距離を焼く（CompositeWater.hlsl）。
     bool ApplyWaterDistance(rhi::Device& device, rhi::PipelineCache& pipelineCache,
         ID3D12GraphicsCommandList* commandList, const MaterialStack& stack);
+    // 道路の均し（CompositeRoadGrading.hlsl）。道路メッシュは m_meshFootprints から layer.meshSource で引く。
+    bool ApplyRoadGrading(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+        ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer, const MaterialStack& stack);
+    // 直前の Road Grading が残した 路面の下 / 切土 / 盛土 をマスクとして焼く。
+    bool ApplyRoadGradingMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+        ID3D12GraphicsCommandList* commandList, const MaskOp& op, rhi::GpuTexture& target, bool enabled);
     bool ApplyFlattenBorders(rhi::Device& device, rhi::PipelineCache& pipelineCache,
         ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
         const MaterialStack& stack, uint32_t maskIndex);
@@ -678,6 +684,16 @@ private:
     rhi::GpuTexture m_scratch;
     // 水際からの距離のジャンプフラッディング用（R32G32_FLOAT、合成解像度以下）。Liquid があるときだけ作る。
     rhi::GpuTexture m_waterWork[2];
+    // 道路の均しの作業用（合成解像度。Road Grading があるときだけ作る）。
+    // 路面の高さ（R32F）、ジャンプフラッディングの種（R32_UINT × 2）、マスク（RGBA8。路面の下 / 切土 / 盛土）。
+    struct RoadGradingResources {
+        rhi::GpuTexture roadHeight;
+        rhi::GpuTexture seeds[2];
+        rhi::GpuTexture masks;
+        rhi::GpuBuffer triangles;
+        uint32_t allocation = 0;
+    };
+    RoadGradingResources m_roadGrading;
     // ノード用のマスクサムネイル。評価先（裏側）と描画が読む表側を、
     // 合成結果と一緒に入れ替える（評価中に ImGui が読む側へ書かないため）。
     std::vector<MaskOpThumbnail> m_maskOpThumbnails;

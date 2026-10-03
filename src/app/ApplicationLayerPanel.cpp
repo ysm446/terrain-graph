@@ -688,6 +688,54 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
         return changed;
     }
 
+    // 道路の均しは、道路メッシュに合わせて地形を切土・盛土の形へ変える加工。
+    if (layer.kind == compositor::LayerKind::RoadGrading) {
+        auto& params = layer.roadGrading;
+        const compositor::MaterialLayer::RoadGradingSettings d;
+        ui::SectionHeader("基本");
+        if (ui::BeginPropertyTable("roadGradingBasicRows")) {
+            char name[128] = {};
+            std::snprintf(name, sizeof(name), "%s", layer.name.c_str());
+            if (ui::PropertyTextInput("名前", name, sizeof(name))) { layer.name = name; changed = true; }
+            ui::EndPropertyTable();
+        }
+        ui::SectionHeader("道路の下");
+        if (ui::BeginPropertyTable("roadGradingRoadRows", "路面下の余裕")) {
+            changed |= ui::PropertyFloat("路面下の余裕", &params.clearanceMeters, 0.0f, 2.0f, d.clearanceMeters,
+                                         "路面の下の地形を、路面からどれだけ下げるか（m）。"
+                                         "地形が路面を突き抜けないための余裕",
+                                         "%.2f m");
+            changed |= ui::PropertyFloat("平らな幅", &params.vergeMeters, 0.0f, 20.0f, d.vergeMeters,
+                                         "道路の端から、法面が始まるまでの平らな幅（m）", "%.1f m");
+            ui::EndPropertyTable();
+        }
+        ui::SectionHeader("法面");
+        if (ui::BeginPropertyTable("roadGradingSlopeRows", "法面の長さの上限")) {
+            changed |= ui::PropertyFloat("切土の勾配", &params.cutRatio, 0.1f, 5.0f, d.cutRatio,
+                                         "地形が道路より高い側の法面。1 : n（高さ 1 に対して水平 n）。"
+                                         "小さいほど急（岩は 0.3〜0.5、土は 1.0〜1.5 が目安）",
+                                         "1 : %.2f");
+            changed |= ui::PropertyFloat("盛土の勾配", &params.fillRatio, 0.1f, 5.0f, d.fillRatio,
+                                         "地形が道路より低い側の法面。1 : n。切土より緩いのが普通（1.5〜2.0 が目安）",
+                                         "1 : %.2f");
+            changed |= ui::PropertyFloat("法面の長さの上限", &params.maxRunMeters, 0.0f, 500.0f, d.maxRunMeters,
+                                         "法面の水平の長さの上限（m）。これより遠くは元の地形のまま。0 で無制限",
+                                         "%.0f m");
+            ui::EndPropertyTable();
+        }
+        ui::SectionHeader("マスク出力");
+        if (ui::BeginPropertyTable("roadGradingMaskRows", "法面の長さの上限")) {
+            changed |= ui::PropertyFloat("ぼかし", &params.maskSoftMeters, 0.01f, 5.0f, d.maskSoftMeters,
+                                         "Cut / Fill のマスクが 1 になる、削った / 盛った量（m）", "%.2f m");
+            ui::EndPropertyTable();
+        }
+        ui::HintText("Mesh 入力に Road Mesh か Shoulder を繋ぐ。Road は路面の下（平らな幅まで）、"
+                     "Cut は切土の法面、Fill は盛土の法面。"
+                     "Road Path の Base は、この Road Grading より手前の地形に繋ぐこと"
+                     "（均した後の地形に繋ぐと、道路が自分で均した地形を読み直して循環する）");
+        return changed;
+    }
+
     if (layer.kind == compositor::LayerKind::HeightLevels) {
         auto& params = layer.heightLevels;
         const compositor::MaterialLayer::HeightLevelsSettings levelsDefaults;

@@ -68,6 +68,8 @@ enum class LayerKind : uint32_t {
     MeanderingRivers = 15,
     // ハイトの Levels。入力の範囲を出力の範囲へ写し直す（侵食で縮んだ高さの範囲を戻すなど）。
     HeightLevels = 16,
+    // 道路の均し。道路メッシュ（路面と路肩）に合わせて、地形を切土・盛土の形へ変える。
+    RoadGrading = 17,
 };
 
 // 散布する形。terrain-editor の ScatterShapeType と同じ。
@@ -99,7 +101,7 @@ inline bool IsHeightOperationKind(LayerKind kind) {
            kind == LayerKind::River || kind == LayerKind::Droplet ||
            kind == LayerKind::Scatter || kind == LayerKind::MultiScaleErosion ||
            kind == LayerKind::FluvialErosion || kind == LayerKind::FlattenBorders ||
-           kind == LayerKind::HeightLevels;
+           kind == LayerKind::HeightLevels || kind == LayerKind::RoadGrading;
 }
 
 // ハイトの基準面。ソースの値がこの値のとき、そのテクセルは「基準の高さ」ちょうどになる。
@@ -695,6 +697,30 @@ struct MaterialLayer {
         float gamma = 1.0f;
     };
     HeightLevelsSettings heightLevels;
+
+    // 道路の均し（kind == LayerKind::RoadGrading のときだけ意味を持つ）。
+    //
+    // 道路メッシュの下は路面の高さ（− 余裕）にし、道路の端から平らな幅だけ同じ高さで延ばし、
+    // その先を法面の勾配で元の地形へすり付ける。元の地形が高ければ切土、低ければ盛土。
+    // 勾配は土木の言い方（1 : n。高さ 1 に対して水平 n）で持つ。n が大きいほど緩い。
+    struct RoadGradingSettings {
+        // 路面の下を、路面からどれだけ下げるか（m）。地形が路面を突き抜けないための余裕。
+        float clearanceMeters = 0.15f;
+        // 道路の端から、法面が始まるまでの平らな幅（m）。
+        float vergeMeters = 1.0f;
+        // 切土の勾配 1 : n（地形が道路より高い側。岩なら急、土なら緩い）。
+        float cutRatio = 1.0f;
+        // 盛土の勾配 1 : n（地形が道路より低い側。切土より緩いのが普通）。
+        float fillRatio = 1.5f;
+        // 法面の水平の長さの上限（m）。これより遠くは元の地形のまま。0 で無制限。
+        float maxRunMeters = 0.0f;
+        // Cut / Fill のマスクが 1 になる、削った / 盛った量（m）。
+        float maskSoftMeters = 0.3f;
+    };
+    RoadGradingSettings roadGrading;
+    // 道路メッシュの置き場のキー（MeshFootprintStore。Road Grading ノードの ID）。コンパイル時だけ設定する。
+    // 0 なら Mesh が繋がっていない（何もしない）。
+    uint32_t meshSource = 0;
 
     int hardnessMaskOp = -1; // コンパイル時だけ設定する硬度マスク
     // 散布の Variation 入力（配置の点へ書く色むらの値）。コンパイル時だけ設定する。

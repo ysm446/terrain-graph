@@ -1,7 +1,25 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-10-04 17:00
+更新日時: 2026-10-04 19:30
+
+## Road Grading（道路の切土・盛土。2026-10-04 19:30）
+
+ユーザー依頼「道路メッシュを元に切土盛り土の形へ変形する Height 系ノードを作りたい。まず結果を見て修正を考えたい」。plan.md の段階 3 の最初の版。
+
+- **ノード**: `NodeKind::RoadGrading`（60）、`LayerKind::RoadGrading`（17）、保存名 `roadGrading`。ピンは Base / Mesh → Result / Road / Cut / Fill。レイヤーのノード（加工）で、Mask の出どころでもある（`MaskOpKind::RoadGrading` = 25）。定義表は固定長の配列なので要素数を 57 にした。
+- **道路メッシュの受け渡し**: Mask Mesh の仕組み（`MeshFootprintStore`）をそのまま使う。`CompileRoadMeshes` が Road Grading も足跡の読み手（`maskNodes`）として拾い（メッシュは 2 番目の入力なので `compileChain` に入力の番号を渡す）、アプリが Road Grading の ID をキーに足跡を置く。レイヤーは `MaterialLayer::meshSource`（コンパイル時に設定）で引く。
+- **評価**（`MaterialEvaluator::ApplyRoadGrading`、`shaders/CompositeRoadGrading.hlsl`）: ① `CsRasterize` が三角形の内側のテクセルへ路面の高さ（重心座標の補間。重なりは高いほう）と種を置く（三角形の間引きは Mask Mesh と同じ共有メモリの一覧）。② `CsJump` のジャンプフラッディング（合成解像度、R32_UINT に座標を詰める。最後に歩幅 1 をもう 1 回）。③ `CsApply` が `clamp(元の地形, 路面 − 余裕 − 勾配 × 距離, 路面 − 余裕 + 勾配 × 距離)`（距離は平らな幅を引いたもの）で Height を書き換え、マスク（RGBA8）を書く。④ 法線を作り直す。作業用は合成解像度で 4 枚（R32F + R32_UINT × 2 + RGBA8。4096² で約 256 MB）、Road Grading があるときだけ作る。
+- **焼き直し**: `HashHeightState` に設定と `meshSource` を混ぜ、評価器の `heightStateUpTo` で足跡のハッシュも混ぜる（道路の形が変わったら、後ろの高さ由来のマスクも焼き直す）。足跡が変わるとアプリがスタックを改版するのは Mask Mesh と同じ。
+- **循環に注意**: 道路の中心線は Road Path の Base までの地形を読む。Base を Road Grading の後ろに繋ぐと循環する（プロパティのヒントとリファレンスに書いた。検出はしていない）。
+
+検証: Debug ビルド（警告 0）、CTest 6 件、起動時の DXC。西伊豆の複製（`data/Test/grading/nishiizu_grading.tgscene`。Road Path の Base になっている Surface「Grass」の直後へ Road Grading を挿し、Mesh に Shoulder を繋いだ）を、元のシーンと同じ視点で撮り比べた（`data/screenshots/grading_before.png` / `grading_after.png`）。均す前は道路が地形に埋もれて途切れて見える区間（画面の上のほう）があり、均した後は全区間で路面が出て、道路の両側に法面ができている。起動時のログにエラー・警告なし。
+
+未確認・残り:
+- Road / Cut / Fill のマスクの中身（「チャンネル」パネルには出ない。繋いで使う確認もしていない）。
+- プロパティの見た目（`--screenshot-ui`）、ノードのピンとサムネイル。
+- つづら折りの段、法面の上の植生（均した後の傾斜でマスクが変わるので、周りの植生の並びが変わる）、評価時間の増え方。
+- 既存の西伊豆のシーン本体には入れていない（複製だけ）。
 
 ## Liquid の表示名を Sea にする（2026-10-04 17:00）
 

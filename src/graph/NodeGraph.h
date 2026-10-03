@@ -159,6 +159,9 @@ enum class NodeKind : uint32_t {
     // メッシュ（Road Mesh / Shoulder の出力）の足跡をマスクにする。三角形を地形平面へ投影し、
     // 内側（と余白）を 1 にする。形はアプリが組み立てたメッシュから取る（compositor::MeshFootprintStore）。
     MaskMesh = 59,
+    // 道路の均し。地形と道路メッシュ（Road Mesh か Shoulder）を受け、道路に合わせて地形を切土・盛土の
+    // 形へ変える。均した地形と、路面の下 / 切土 / 盛土の Mask を出す。
+    RoadGrading = 60,
 };
 
 struct PinDefinition {
@@ -472,7 +475,8 @@ struct CompiledRoadMesh {
     std::vector<GraphId> chain;
     // ビューポートへ描くか（Mesh Output に繋がっている）。Mask Mesh だけが読む鎖は形を作るが描かない。
     bool drawn = true;
-    // この鎖の形（路面と路肩）を足跡として読む Mask Mesh。鎖のどのメッシュに繋いでも鎖全体の足跡を読む。
+    // この鎖の形（路面と路肩）を足跡として読む Mask Mesh と Road Grading。
+    // 鎖のどのメッシュに繋いでも鎖全体の足跡を読む。
     std::vector<GraphId> maskNodes;
 };
 // 雪煙（Snow Plume ノード）。Source のマスクが強い所から、風下へ半透明の帯を伸ばす。
