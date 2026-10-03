@@ -19,10 +19,19 @@ constexpr float kPitchLimit = 1.55334306f;  // 89 度
 // になる。**基準より小さい被写体では倍率を 1 で止める**ので、
 // 球や 2m 平面の見え方は従来と 1 ピクセルも変わらない。
 // 地形（2km 角 = 半径 1448）では 1024 倍に広がり、全体を引きで見られる。
+//
+// ただし**距離の下限と近クリップは倍率どおりには広げない**。4km の地形で下限が 200m、近クリップが
+// 40m になり、パスの点に F で寄せても近くまでズームできなかった（ユーザー指摘 2026-10-03）。
+// 下限は倍率の 1/200（4km の地形で 1m）、近クリップは「いまの距離 × 5%」を上限（倍率どおりの値）と
+// 下限（基準の 0.02m）で挟む。遠くにいるときの見え方は変わらず、寄ったときだけ近クリップが縮む。
+// 近クリップを縮めると遠景の深度の刻みが粗くなる（D32、逆 Z ではない）が、寄っているときは
+// 遠景の前後関係が主役にならないので許容する。根本的には逆 Z にする余地がある。
 constexpr float kReferenceRadius = 1.41421356f;
 constexpr float kMinDistance = 0.1f;
+constexpr float kMinDistanceScaleDivisor = 200.0f;
 constexpr float kMaxDistance = 100.0f;
 constexpr float kNearZ = 0.02f;
+constexpr float kNearZDistanceRatio = 0.05f;
 constexpr float kFarZ = 200.0f;
 
 // 壊れた値を読み込んだときの歯止め。scene radius に依らない絶対の範囲。
@@ -125,7 +134,7 @@ float Camera::SceneScale() const {
 }
 
 float Camera::MinDistance() const {
-    return kMinDistance * SceneScale();
+    return kMinDistance * std::max(1.0f, SceneScale() / kMinDistanceScaleDivisor);
 }
 
 float Camera::MaxDistance() const {
@@ -133,7 +142,7 @@ float Camera::MaxDistance() const {
 }
 
 float Camera::AutoNearZ() const {
-    return kNearZ * SceneScale();
+    return std::clamp(m_distance * kNearZDistanceRatio, kNearZ, kNearZ * SceneScale());
 }
 
 float Camera::AutoFarZ() const {
