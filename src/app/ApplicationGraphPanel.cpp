@@ -2866,11 +2866,16 @@ void Application::DrawNodeProperties(graph::Node* selected) {
         }
     } else if (std::get_if<graph::RoadPathNodeSettings>(&selected->settings) != nullptr) {
         // 平面の点とエッジは Path と同じ欄、その下に縦断とバンク角。
-        bool changed = DrawPathSettings(*selected);
-        changed |= DrawRoadPathSettings(*selected);
-        if (changed) {
+        // **縦断・バンクの編集ではグラフの版を上げない。** 読むのは路面（PrepareRoadMeshes が毎フレーム
+        // ノードを直接読んでハッシュで作り直す）だけで、地形の評価には効かない。版を上げると Model Scatter
+        // の点の評価器と本体のスタックが毎フレーム組み直され、縦断ポイントのドラッグが重くなっていた。
+        const bool planarChanged = DrawPathSettings(*selected);
+        const bool profileChanged = DrawRoadPathSettings(*selected);
+        if (planarChanged) {
             m_graph.MarkDirty();
             MarkDocumentChanged();
+        } else if (profileChanged) {
+            MarkDocumentChanged(false);
         }
     } else {
         ui::HintText("出力ノード。「マテリアル」へ繋いだチェーンがプレビューになる");

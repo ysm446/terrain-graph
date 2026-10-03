@@ -1009,7 +1009,15 @@ void Application::DrawViewportPanel() {
             graph::Node* pathNode = CurrentPathNode();
             const bool pathEnabled = (pathNode != nullptr) && !brushEnabled && !lightDragging;
             if (pathEnabled && !io.KeyAlt) {
-                HandlePathInput(*pathNode, itemActive, itemHovered, imageOrigin, imageMax);
+                // Road Path の縦断ポイント（菱形）が先。掴んでいる / カーソルの下にある間はパスの編集に渡さない。
+                const bool profileTaken = pathNode->kind == graph::NodeKind::RoadPath &&
+                                          HandleRoadProfileInput(*pathNode, itemHovered, imageOrigin, imageMax);
+                if (profileTaken) {
+                    m_pathEdit.hoverPoint = 0;
+                    m_pathEdit.hoverEdge = 0;
+                } else {
+                    HandlePathInput(*pathNode, itemActive, itemHovered, imageOrigin, imageMax);
+                }
             } else if (!pathEnabled) {
                 m_pathEdit.dragging = false;
                 m_pathEdit.dragPoint = 0;

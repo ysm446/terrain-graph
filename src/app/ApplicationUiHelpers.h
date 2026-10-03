@@ -1024,6 +1024,24 @@ struct ProjectedPoint {
     bool visible = false;
 };
 
+// ビューポートのカーソル位置からワールドへ飛ばすレイ（原点は近クリップ面の上）。
+// 投影が逆行列を持たなければ偽。
+inline bool ViewportMouseRay(const DirectX::XMMATRIX& viewProjection, const ImVec2& mouse, const ImVec2& min,
+                             const ImVec2& size, DirectX::XMFLOAT3& outOrigin, DirectX::XMFLOAT3& outDirection) {
+    using namespace DirectX;
+    if (size.x <= 0.0f || size.y <= 0.0f) return false;
+    XMVECTOR determinant;
+    const XMMATRIX inverse = XMMatrixInverse(&determinant, viewProjection);
+    if (XMVectorGetX(determinant) == 0.0f) return false;
+    const float ndcX = ((mouse.x - min.x) / size.x) * 2.0f - 1.0f;
+    const float ndcY = 1.0f - ((mouse.y - min.y) / size.y) * 2.0f;
+    const XMVECTOR nearPoint = XMVector3TransformCoord(XMVectorSet(ndcX, ndcY, 0.0f, 1.0f), inverse);
+    const XMVECTOR farPoint = XMVector3TransformCoord(XMVectorSet(ndcX, ndcY, 1.0f, 1.0f), inverse);
+    XMStoreFloat3(&outOrigin, nearPoint);
+    XMStoreFloat3(&outDirection, XMVector3Normalize(XMVectorSubtract(farPoint, nearPoint)));
+    return true;
+}
+
 inline ProjectedPoint ProjectToViewport(const DirectX::XMMATRIX& viewProjection,
                                  const DirectX::XMFLOAT3& world, const ImVec2& min,
                                  const ImVec2& size) {

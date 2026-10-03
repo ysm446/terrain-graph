@@ -22,6 +22,7 @@
 #include <DirectXMath.h>
 
 #include <algorithm>
+#include <limits>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -612,6 +613,190 @@ bool Application::DrawRoadPathSettings(graph::Node& node) {
     return changed;
 }
 
+// 縦断ポイントの菱形をビューポートで掴む。
+//
+// 菱形は 3D の点なので、カーソルの動きを位置と高さに同時には割り当てない（縦断図と違い、意図と
+// 違う方へ動く）。**そのままドラッグで道なり**（カーソルに一番近い中心線上の位置へ u を置き直す。高さの
+// ずれは保つ）、**Shift を押して掴むと高さ**（ポイントを通る鉛直線の上で、カーソルのレイに一番近い
+// 高さにする）。どちらにするかは押したときに決め、離すまで変えない。掴んだ菱形とカーソルのずれは
+// 保って、押した瞬間に跳ばないようにする（縦断図と同じ）。
+// 追加は入れない（Ctrl + クリックはパスの「伸ばす」）。追加は縦断図のクリックかプロパティのボタン。
+// アンドゥはビューポートの画像がアクティブな間 1 段に畳まれる（パスの点のドラッグと同じ）。
+bool Application::HandleRoadProfileInput(graph::Node& node, bool itemHovered, const ImVec2& viewportMin,
+                                         const ImVec2& viewportMax) {
+    RoadProfileEditState& edit = m_roadProfileEdit;
+    auto* settings = std::get_if<graph::RoadPathNodeSettings>(&node.settings);
+    if (settings == nullptr) {
+        edit.viewportHover = edit.viewportDrag = 0;
+        return false;
+    }
+    graph::RoadPathSettings& road = settings->road;
+    if (edit.nodeId != node.id) {
+        const graph::RoadVerticalAutoParams params = edit.autoParams;
+        edit = RoadProfileEditState{};
+        edit.autoParams = params;
+        edit.nodeId = node.id;
+    }
+    // パスの点やギズモを動かしている間は横取りしない。
+    if (m_pathEdit.dragging || m_pathEdit.gizmoDragging) {
+        edit.viewportHover = edit.viewportDrag = 0;
+        return false;
+    }
+    graph::RoadProfileCurve base;
+    graph::RoadProfileCurve centerline;
+    if (!BuildRoadCenterline(node, base, centerline, nullptr) || centerline.points.size() < 2) {
+        edit.viewportHover = edit.viewportDrag = 0;
+        return false;
+    }
+    const ImVec2 size(viewportMax.x - viewportMin.x, viewportMax.y - viewportMin.y);
+    if (size.x <= 0.0f || size.y <= 0.0f) return false;
+    const float total = centerline.TotalLength();
+    const renderer::Camera& camera = m_renderer.GetCamera();
+    const XMMATRIX viewProjection = camera.ViewMatrix() * camera.ProjectionMatrix();
+    const auto project = [&](const XMFLOAT3& world) {
+        return ProjectToViewport(viewProjection, world, viewportMin, size);
+    };
+    const ImGuiIO& io = ImGui::GetIO();
+    const ImVec2 mouse = io.MousePos;
+
+    // カーソルに一番近い中心線上の道のり（画面上で測る。2 m ごとの標本を線分で結んで最寄りを取る）。
+    const auto nearestDistanceOnCenterline = [&]() {
+        const float step = std::max(2.0f, total / 4000.0f);
+        float best = std::numeric_limits<float>::max();
+        float bestDistance = 0.0f;
+        ProjectedPoint previous = project(centerline.At(0.0f));
+        float previousAt = 0.0f;
+        for (float d = step;; d += step) {
+            const float at = std::min(d, total);
+            const ProjectedPoint current = project(centerline.At(at));
+            if (previous.visible && current.visible) {
+                const float abx = current.screen.x - previous.screen.x;
+                const float aby = current.screen.y - previous.screen.y;
+                const float lengthSq = abx * abx + aby * aby;
+                float t = 0.0f;
+                if (lengthSq > 1e-6f) {
+                    t = std::clamp(((mouse.x - previous.screen.x) * abx + (mouse.y - previous.screen.y) * aby) /
+                                       lengthSq, 0.0f, 1.0f);
+                }
+                const float dx = mouse.x - (previous.screen.x + abx * t);
+                const float dy = mouse.y - (previous.screen.y + aby * t);
+                const float distance = dx * dx + dy * dy;
+                if (distance < best) {
+                    best = distance;
+                    bestDistance = previousAt + (at - previousAt) * t;
+                }
+            }
+            previous = current;
+            previousAt = at;
+            if (at >= total) break;
+        }
+        return bestDistance;
+    };
+    // ポイントの真上を通る鉛直線の上で、カーソルのレイに一番近い高さ。真上から見ているときは偽。
+    const auto heightUnderCursor = [&](const XMFLOAT3& at, float& outY) {
+        XMFLOAT3 origin, direction;
+        if (!ViewportMouseRay(viewProjection, mouse, viewportMin, size, origin, direction)) return false;
+        // 線 P + t·U（U = +Y）とレイ O + s·D の最近接。denom = 1 − (U·D)²。
+        const float b = direction.y;
+        const float denom = 1.0f - b * b;
+        if (denom < 1e-4f) return false;
+        const XMFLOAT3 w{at.x - origin.x, at.y - origin.y, at.z - origin.z};
+        const float d = w.y;                                                        // U·w
+        const float e = direction.x * w.x + direction.y * w.y + direction.z * w.z;  // D·w
+        const float t = (b * e - d) / denom;
+        outY = at.y + t;
+        return true;
+    };
+    const auto handleAt = [&](const graph::RoadVerticalPoint& point) {
+        return std::clamp(point.u, 0.0f, 1.0f) * total;
+    };
+
+    // --- ホバー ---------------------------------------------------------------
+    edit.viewportHover = 0;
+    if (itemHovered && edit.viewportDrag == 0) {
+        float bestDistance = ui::Scaled(10.0f);
+        for (const graph::RoadVerticalPoint& point : road.verticalPoints) {
+            const ProjectedPoint p = project(centerline.At(handleAt(point)));
+            if (!p.visible) continue;
+            const float distance = std::hypot(p.screen.x - mouse.x, p.screen.y - mouse.y);
+            if (distance <= bestDistance) {
+                bestDistance = distance;
+                edit.viewportHover = point.id;
+            }
+        }
+    }
+
+    // --- 押した: 選んで掴む。掴み方（道なり / 高さ）はこのときの Shift で決める ----
+    if (itemHovered && edit.viewportHover != 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        if (const graph::RoadVerticalPoint* point = graph::FindVerticalPoint(road, edit.viewportHover)) {
+            edit.selected = edit.viewportDrag = point->id;
+            edit.viewportDragHeight = io.KeyShift;
+            edit.viewportGrabDistance = handleAt(*point) - nearestDistanceOnCenterline();
+            float y = 0.0f;
+            const XMFLOAT3 handle = centerline.At(handleAt(*point));
+            edit.viewportGrabHeight = heightUnderCursor(handle, y) ? handle.y - y : 0.0f;
+        }
+    }
+
+    // --- ドラッグ -----------------------------------------------------------------
+    bool changed = false;
+    if (edit.viewportDrag != 0) {
+        graph::RoadVerticalPoint* point = graph::FindVerticalPoint(road, edit.viewportDrag);
+        if (point == nullptr || !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            edit.viewportDrag = 0;
+        } else if (edit.viewportDragHeight) {
+            const float distance = handleAt(*point);
+            float y = 0.0f;
+            if (heightUnderCursor(centerline.At(distance), y)) {
+                const float offset = (y + edit.viewportGrabHeight) - base.At(distance).y;
+                if (offset != point->offsetMeters) {
+                    point->offsetMeters = offset;
+                    changed = true;
+                }
+            }
+        } else {
+            const float distance =
+                std::clamp(nearestDistanceOnCenterline() + edit.viewportGrabDistance, 0.0f, total);
+            const float u = total > 0.0f ? distance / total : point->u;
+            if (u != point->u) {
+                point->u = u;
+                changed = true;
+            }
+        }
+    }
+
+    // --- キー（菱形の上にいるときだけ。パスの選択の Delete と取り合わない） ---------------
+    if (itemHovered && !io.WantTextInput && edit.viewportDrag == 0 && edit.viewportHover != 0) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) &&
+            graph::DeleteRoadProfilePoint(road, edit.viewportHover)) {
+            if (edit.selected == edit.viewportHover) edit.selected = 0;
+            edit.viewportHover = 0;
+            changed = true;
+        } else if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            edit.selected = 0;
+        }
+    }
+
+    // --- 案内 -------------------------------------------------------------------
+    const graph::PathElementId shown = edit.viewportDrag != 0 ? edit.viewportDrag : edit.viewportHover;
+    if (shown != 0) {
+        if (const graph::RoadVerticalPoint* point = graph::FindVerticalPoint(road, shown)) {
+            const float distance = handleAt(*point);
+            const float terrain = base.At(distance).y;
+            const float design = terrain + point->offsetMeters;
+            ImGui::SetTooltip("縦断ポイント\n%.0f m\n交点の高さ %.1f m\n地形との差 %+.1f m（%s）\n%s", distance,
+                              design, point->offsetMeters, point->offsetMeters >= 0.0f ? "盛土" : "切土",
+                              edit.viewportDrag != 0
+                                  ? (edit.viewportDragHeight ? "離すと高さを確定" : "離すと位置を確定")
+                                  : "ドラッグで道なりに動かす / Shift + ドラッグで高さ");
+        }
+        ImGui::SetMouseCursor(edit.viewportDrag != 0 ? ImGuiMouseCursor_ResizeAll : ImGuiMouseCursor_Hand);
+    }
+    // グラフの版は上げない（縦断は路面にしか効かない。プロパティ側と同じ理由）。
+    if (changed) MarkDocumentChanged(false);
+    return edit.viewportHover != 0 || edit.viewportDrag != 0;
+}
+
 void Application::DrawRoadPathOverlay(const graph::Node& node, const ImVec2& viewportMin,
                                       const ImVec2& viewportMax) {
     const auto* settings = std::get_if<graph::RoadPathNodeSettings>(&node.settings);
@@ -667,17 +852,25 @@ void Application::DrawRoadPathOverlay(const graph::Node& node, const ImVec2& vie
             drawList->AddLine(a.screen, b.screen, design.y > terrain.y ? fillColor : cutColor, ui::Scaled(1.5f));
         }
     }
-    // 縦断ポイント（菱形）。縦断図で選んでいるものは大きく描く。
+    // 縦断ポイント（菱形）。縦断図で選んでいるものと、カーソルの下 / 掴んでいるものは大きく描き、
+    // カーソルの下のものは縁取って掴めることを示す（HandleRoadProfileInput）。
     for (const graph::RoadVerticalPoint& point : road.verticalPoints) {
         const ProjectedPoint p = project(centerline.At(std::clamp(point.u, 0.0f, 1.0f) * total));
         if (!p.visible) continue;
-        const bool isSelected = m_roadProfileEdit.nodeId == node.id && m_roadProfileEdit.selected == point.id;
-        const float r = ui::Scaled(isSelected ? 9.0f : 6.0f);
+        const bool mine = m_roadProfileEdit.nodeId == node.id;
+        const bool isSelected = mine && m_roadProfileEdit.selected == point.id;
+        const bool isHot = mine && (m_roadProfileEdit.viewportHover == point.id ||
+                                    m_roadProfileEdit.viewportDrag == point.id);
+        const float r = ui::Scaled((isSelected || isHot) ? 9.0f : 6.0f);
         const ImVec2 c = p.screen;
         drawList->AddQuadFilled(ImVec2(c.x, c.y - r - 1), ImVec2(c.x + r + 1, c.y), ImVec2(c.x, c.y + r + 1),
                                 ImVec2(c.x - r - 1, c.y), shadow);
         drawList->AddQuadFilled(ImVec2(c.x, c.y - r), ImVec2(c.x + r, c.y), ImVec2(c.x, c.y + r),
                                 ImVec2(c.x - r, c.y), designColor);
+        if (isHot) {
+            drawList->AddQuad(ImVec2(c.x, c.y - r), ImVec2(c.x + r, c.y), ImVec2(c.x, c.y + r), ImVec2(c.x - r, c.y),
+                              IM_COL32(255, 255, 255, 230), ui::Scaled(1.5f));
+        }
     }
     // バンク。ポイントの位置（無ければ一定間隔）に、道路の幅ぶんの傾いた横棒を描く。
     if (road.bankEnabled) {

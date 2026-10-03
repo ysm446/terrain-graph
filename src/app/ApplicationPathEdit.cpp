@@ -1382,7 +1382,17 @@ void Application::DrawPathOverlay(const graph::Node& node, const ImVec2& viewpor
         const char* action;
     };
     std::vector<HintRow> rows;
-    if (io.KeyCtrl) {
+    const bool profileHot = node.kind == graph::NodeKind::RoadPath && m_roadProfileEdit.nodeId == node.id &&
+                            (m_roadProfileEdit.viewportHover != 0 || m_roadProfileEdit.viewportDrag != 0);
+    if (profileHot) {
+        if (m_roadProfileEdit.viewportDrag != 0) {
+            rows = {{"離す", m_roadProfileEdit.viewportDragHeight ? "高さを確定" : "位置を確定"}};
+        } else {
+            rows = {{"ドラッグ", "縦断ポイントを道なりに動かす"},
+                    {"Shift + ドラッグ", "高さを動かす"},
+                    {"Delete / Esc", "消す / 選択を外す"}};
+        }
+    } else if (io.KeyCtrl) {
         if (anchor != 0) {
             rows = {{"クリック", "点を置いて伸ばす"},
                     {"点をクリック", "繋ぐ"},

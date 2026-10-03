@@ -536,6 +536,10 @@ private:
     // 縦断曲線とバンク角のプロパティ（縦断図を含む）。変更があれば true。
     bool DrawRoadPathSettings(graph::Node& node);
     // 縦断を反映した中心線、切土・盛土の目安、縦断・バンクのポイントをビューポートへ重ねる。
+    // ビューポートで縦断ポイントの菱形を掴む（HandlePathInput より先に呼ぶ）。カーソルが菱形の上か
+    // 掴んでいる間は真を返し、その間はパスの編集にクリックを渡さない。
+    bool HandleRoadProfileInput(graph::Node& node, bool itemHovered, const ImVec2& viewportMin,
+                                const ImVec2& viewportMax);
     void DrawRoadPathOverlay(const graph::Node& node, const ImVec2& viewportMin,
                              const ImVec2& viewportMax);
 
@@ -856,6 +860,14 @@ private:
         // 図の縦の範囲（ワールドの高さ）。ドラッグ中は固定する（動かすたびに範囲が広がって点が逃げないように）。
         float plotLow = 0.0f;
         float plotHigh = 0.0f;
+        // ビューポートの菱形。カーソルの下のポイントと、掴んでいるポイント（縦断図のドラッグとは別に持つ。
+        // 図は自分の InvisibleButton が非アクティブなら dragging を 0 へ戻すため）。
+        // 掴み方は押したときに決める: そのままなら道なり（u）、Shift なら高さ（offsetMeters）。
+        graph::PathElementId viewportHover = 0;
+        graph::PathElementId viewportDrag = 0;
+        bool viewportDragHeight = false;
+        float viewportGrabDistance = 0.0f;  // 掴んだ点の道のり − カーソルの道のり（跳ばないように保つ）
+        float viewportGrabHeight = 0.0f;    // 掴んだ点の高さ − カーソルの高さ
         // 縦断ポイントの自動作成の設定（保存しない。ノードを替えても持ち越す）と、直前の結果の報告。
         graph::RoadVerticalAutoParams autoParams;
         std::string autoReport;
