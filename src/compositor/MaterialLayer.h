@@ -455,6 +455,16 @@ struct MaterialLayer {
         float shoreHeightMeters = 2.0f;
         // 縁のなだらかさ。広がりと比高それぞれに対する割合（0〜1）。
         float shoreFeather = 0.3f;
+        // --- 流れ（表示だけ。合成には焼かない） ---
+        // 水面に、下流へ流れる波の模様を重ねる。強さ 0 で無し（これらを持たない古いファイルと同じ）。
+        // 向きと速さは水面高の傾きから決まり、流れの場として焼く（MaterialTextureSet::flow）。
+        float flowWaveStrength = 0.0f;
+        // 波の大きさ（一番大きい模様の波長、m）。
+        float flowWaveScaleMeters = 6.0f;
+        // 流れの速さの倍率。1 で水面の傾きから求めた速さ。
+        float flowSpeed = 1.0f;
+        // 早瀬（水面の傾きが急な所）の白波の量（0〜1）。
+        float flowFoam = 0.0f;
     };
     RiverSettings river;
 

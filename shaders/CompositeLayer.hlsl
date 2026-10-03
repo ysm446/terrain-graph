@@ -65,7 +65,7 @@ struct LayerConstants
     float4 pathUvParams2;
     float4 mountain0; // 有効、周波数、尾根、尖り
     float4 mountain1; // 方向（rad）、伸長、うねり、細部
-    uint4 mountain2; // シード、水の場の UAV、未使用 x2
+    uint4 mountain2; // シード、水の場の UAV、流れの場の UAV、未使用
     // 水面（Liquid）の見た目。浅瀬の色 rgb, 色の変わる深さ（m。0 で深い所の色だけ）
     float4 liquid0;
     // 下地が透ける深さ（m。0 で透けない）, ハイト 0〜1 の全幅（m）, 未使用 x2
@@ -691,6 +691,9 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     if (isBaseLayer)
     {
         waterTarget[texel] = float2(kWaterNone, kWaterNone);
+        // 流れの場（River が書く）も「流れなし」で埋める。
+        RWTexture2D<float4> flowTarget = ResourceDescriptorHeap[g_layer.mountain2.z];
+        flowTarget[texel] = float4(0.0f, 0.0f, 0.0f, 0.0f);
     }
     else if (writesWaterDepth)
     {

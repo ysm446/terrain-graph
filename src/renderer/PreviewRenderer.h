@@ -300,6 +300,11 @@ public:
         float shoreRunupMeters = 0.0f;
         float shoreSpacingMeters = 25.0f;
         float shoreWidthMeters = 80.0f;
+        // 川の流れ（River ノード）。波の強さ、波の大きさ m、速さの倍率、早瀬の白波の量。
+        float riverWaveStrength = 0.0f;
+        float riverWaveScaleMeters = 6.0f;
+        float riverSpeed = 1.0f;
+        float riverFoam = 0.0f;
     };
     void SetWater(const WaterSettings& water) { m_water = water; }
     void Render(rhi::Device& device, rhi::PipelineCache& pipelineCache,

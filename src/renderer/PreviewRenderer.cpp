@@ -163,7 +163,13 @@ struct MeshConstants {
     float shoreSpacing;
 
     float shoreWidth;
-    float shorePad[3];
+    float riverFoam;
+    float shorePad[2];
+
+    uint32_t materialFlowIndex;  // 流れの場（速度、川の水面の被覆、早瀬）の SRV
+    float riverWaveStrength;
+    float riverWaveScale;
+    float riverSpeed;
 };
 
 // GPU 側の SkyboxConstants と一致させること。
@@ -872,6 +878,10 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     constants.shoreRunup = m_water.shoreRunupMeters;
     constants.shoreSpacing = m_water.shoreSpacingMeters;
     constants.shoreWidth = m_water.shoreWidthMeters;
+    constants.riverWaveStrength = m_water.riverWaveStrength;
+    constants.riverWaveScale = m_water.riverWaveScaleMeters;
+    constants.riverSpeed = m_water.riverSpeed;
+    constants.riverFoam = m_water.riverFoam;
     const auto light = EffectiveLight();
     const auto& environment = GetEnvironment();
     constants.lightDirection = light.Direction();
@@ -902,6 +912,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     constants.materialSurfaceIndex = materialTextures.surface.SrvIndex();
     constants.materialHeightIndex = materialTextures.height.SrvIndex();
     constants.materialWaterIndex = materialTextures.water.SrvIndex();
+    constants.materialFlowIndex = materialTextures.flow.SrvIndex();
     constants.debugView = static_cast<uint32_t>(m_debugView);
     constants.displacementScale = m_displacementScale;
     // 分割量はカメラから見た見え方で決める。本描画では viewProjection と同一で、

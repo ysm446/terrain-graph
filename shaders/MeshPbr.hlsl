@@ -96,7 +96,14 @@ struct MeshConstants
     float shoreSpacing;  // 泡の筋の間隔（m）
 
     float shoreWidth;    // 泡の筋が出る、水際からの幅（m）
-    float3 shorePad;
+    float riverFoam;     // 川の早瀬の白波の量（0〜1）
+    float2 shorePad;
+
+    // 流れの場（xy = 速度 m/s〔ワールドの +X / +Z〕、z = 川の水面の被覆、w = 早瀬の度合い）と、川の波の設定。
+    uint materialFlowIndex;
+    float riverWaveStrength;  // 流れる波の傾きの強さ。0 で無し
+    float riverWaveScale;     // 一番大きい模様の波長（m）
+    float riverSpeed;         // 流れの速さの倍率
 };
 
 // 「ハイト（ローカル）」で周りの平均を取る半径（合成テクセル）と、
@@ -211,6 +218,81 @@ float2 WaveSlope(float2 positionMeters, float footprint)
     return float2(WaveHeight(positionMeters + ex, footprint) - WaveHeight(positionMeters - ex, footprint),
                   WaveHeight(positionMeters + ez, footprint) - WaveHeight(positionMeters - ez, footprint)) /
            (2.0f * epsilon);
+}
+
+// --- 川の流れ --------------------------------------------------------------------
+// River の水面へ重ねる、下流へ流れる波。流れの場（速度）で模様を運ぶ。
+//
+// 場所ごとに速度が違う模様をそのまま流し続けると、時間とともに引き伸ばされて崩れる。そこで
+// **半周期ずらした 2 つの位相**を用意し、それぞれ「0 から 1 周期ぶんだけ流して最初へ戻す」を繰り返し、
+// 戻す瞬間の重みが 0 になるように三角波で混ぜる（フローマップの定番）。戻る瞬間が全体で揃うと
+// 脈打って見えるので、位相を場所でずらす。
+static const int kRiverOctaves = 3;
+// 模様を流しては戻す 1 周期（秒）。長いほど模様が長く続くが、速い流れで引き伸ばされる。
+static const float kRiverCycleSeconds = 3.0f;
+
+// 流れに乗る前の、止まった波の高さ（m）。
+float RiverWaveHeight(float2 positionMeters, float footprint)
+{
+    float wavelength = max(g_mesh.riverWaveScale, 0.05f);
+    float sum = 0.0f;
+    for (int i = 0; i < kRiverOctaves; ++i)
+    {
+        const float fade = WaveOctaveFade(wavelength, footprint);
+        if (fade > 0.0f)
+        {
+            sum += PerlinNoise(positionMeters / wavelength + float(i) * 23.1f, 4096.0f) * wavelength * fade;
+        }
+        wavelength *= 0.37f;
+    }
+    return sum;
+}
+
+float2 RiverWaveSlopeAt(float2 positionMeters, float footprint)
+{
+    const float epsilon = max(footprint * 0.5f, 0.01f);
+    const float2 ex = float2(epsilon, 0.0f);
+    const float2 ez = float2(0.0f, epsilon);
+    return float2(RiverWaveHeight(positionMeters + ex, footprint) - RiverWaveHeight(positionMeters - ex, footprint),
+                  RiverWaveHeight(positionMeters + ez, footprint) - RiverWaveHeight(positionMeters - ez, footprint)) /
+           (2.0f * epsilon);
+}
+
+struct RiverSample
+{
+    float2 slope;  // 波の傾き（d高さ/dx, d高さ/dz）
+    float foam;    // 早瀬の白波（0〜1）
+};
+
+// velocity はワールドの XZ の速度（m/s）、rapids は早瀬の度合い（0〜1）。
+RiverSample SampleRiverFlow(float2 worldXz, float2 velocity, float rapids, float footprint)
+{
+    RiverSample result;
+    const float2 flow = velocity * g_mesh.riverSpeed;
+    // 位相のずれ（戻る瞬間を場所でばらす）。
+    const float offset = PerlinNoise(worldXz / 37.0f, 4096.0f) * 0.5f;
+    const float phase0 = frac(g_mesh.waterTime / kRiverCycleSeconds + offset);
+    const float phase1 = frac(phase0 + 0.5f);
+    // 模様は流れと一緒に動く: 位置 − 速度 × 経過。2 つ目は別の模様に見えるよう大きくずらす。
+    const float2 p0 = worldXz - flow * (phase0 * kRiverCycleSeconds);
+    const float2 p1 = worldXz - flow * (phase1 * kRiverCycleSeconds) + float2(53.7f, 19.3f);
+    const float weight0 = 1.0f - abs(2.0f * phase0 - 1.0f);
+
+    result.slope = float2(0.0f, 0.0f);
+    if (g_mesh.riverWaveStrength > 0.0f)
+    {
+        result.slope = lerp(RiverWaveSlopeAt(p1, footprint), RiverWaveSlopeAt(p0, footprint), weight0);
+    }
+    result.foam = 0.0f;
+    if (g_mesh.riverFoam > 0.0f && rapids > 0.0f)
+    {
+        // 白波も流れに乗せる。早瀬の度合いが上がるほど、泡の切れ目が埋まる。
+        const float lace0 = PerlinNoise(p0 / 1.3f + 7.0f, 4096.0f);
+        const float lace1 = PerlinNoise(p1 / 1.3f + 7.0f, 4096.0f);
+        const float lace = lerp(lace1, lace0, weight0);
+        result.foam = saturate(lace * 1.3f + rapids * 0.7f - 0.15f) * rapids * g_mesh.riverFoam;
+    }
+    return result;
 }
 
 // --- 波打ち際 ------------------------------------------------------------------
@@ -662,6 +744,24 @@ PsOutput PsMain(VsOutput input)
             // 画素より細かい波は、ラフネスとして残す。
             const float filtered = 0.45f * g_mesh.waveStrength * sqrt(WaveFilteredFraction(footprint));
             roughnessValue = lerp(roughnessValue, max(roughnessValue, filtered), water);
+        }
+
+        // 川（River）の水面には、流れの場に沿って下流へ流れる波と、早瀬の白波を重ねる。
+        if (g_mesh.riverWaveStrength > 0.0f || g_mesh.riverFoam > 0.0f)
+        {
+            Texture2D<float4> flowMap = ResourceDescriptorHeap[g_mesh.materialFlowIndex];
+            const float4 flow = flowMap.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
+            if (flow.z > 0.001f)
+            {
+                const float2 worldXz = input.worldPosition.xz;
+                const float footprint = max(length(ddx(worldXz)), length(ddy(worldXz)));
+                const RiverSample river = SampleRiverFlow(worldXz, flow.xy, flow.w, footprint);
+                const float2 slope = river.slope * (g_mesh.riverWaveStrength * 0.3f * flow.z);
+                normal = normalize(normal + float3(-slope.x, 0.0f, -slope.y));
+                const float foam = river.foam * flow.z;
+                baseColor = lerp(baseColor, float3(0.82f, 0.85f, 0.86f), foam);
+                roughnessValue = lerp(roughnessValue, 0.6f, foam);
+            }
         }
 
         // 波打ち際。濡れた浜は暗くつややかに、寄せた波は薄い水の膜に、泡は白くざらつかせる。

@@ -25,6 +25,9 @@ struct MaterialTextureSet {
     // 水の場（R16G16_FLOAT）。x = 水際からの符号付き距離（m。水の中が正）、y = 符号付きの水深（m）。
     // Liquid が書く。Liquid が無ければ全面が「水なし」（大きな負の値）。地形の描画が波打ち際に使う。
     rhi::GpuTexture water;
+    // 流れの場（R16G16B16A16_FLOAT）。xy = 流れの速度（m/s。x が +U、y が +V の向き。ワールドでは
+    // +X / +Z）、z = 川の水面の被覆、w = 早瀬の度合い（0〜1）。River が書く。無ければ全面 0。
+    rhi::GpuTexture flow;
 
     bool IsValid() const { return baseColor.IsValid(); }
 };

@@ -828,6 +828,18 @@ void Application::PrepareWater() {
         water.shoreWidthMeters = std::max(liquid.shoreWidthMeters, 0.0f);
         break;
     }
+    // 川の流れ。Liquid と同じく、地形グラフの最初の有効な River の設定を使う。
+    for (const graph::Node& node : m_graph.Nodes()) {
+        if (node.kind != graph::NodeKind::River || node.component != 0 || graph::IsBypassed(node)) continue;
+        const auto* settings = std::get_if<graph::LayerNodeSettings>(&node.settings);
+        if (settings == nullptr) continue;
+        const auto& river = settings->layer.river;
+        water.riverWaveStrength = std::clamp(river.flowWaveStrength, 0.0f, 1.0f);
+        water.riverWaveScaleMeters = std::max(river.flowWaveScaleMeters, 0.1f);
+        water.riverSpeed = std::max(river.flowSpeed, 0.0f);
+        water.riverFoam = std::clamp(river.flowFoam, 0.0f, 1.0f);
+        break;
+    }
     m_renderer.SetWater(water);
 }
 

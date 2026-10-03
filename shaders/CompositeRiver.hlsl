@@ -556,6 +556,55 @@ void CsWaterNormal(uint3 dispatchThreadId : SV_DispatchThreadID)
     normalTarget[texel] = EncodeTangentNormal(blended);
 }
 
+// --- 流れの場 ----------------------------------------------------------------------
+//
+// 合成解像度で、流れの速度（m/s）・水面の被覆・早瀬の度合いを焼く。地形の描画（MeshPbr.hlsl）が、
+// 下流へ流れる波の模様に使う。合成結果には効かない。
+//
+// - 向きは水面高の下り勾配。水面高は下流へ単調に下がり、断面では水平なので、勾配は川筋に沿う。
+//   差分は解析グリッドの 1 セルぶん離して取る（合成テクセルの間隔だと差が小さすぎる）。
+// - 速さは √勾配 に比例させる（マニングの式の勾配の項。勾配 0.1% で約 0.6 m/s、1% で 2 m/s、
+//   上限 4 m/s）。湖や淵は最小勾配しか無いので、自然にゆっくりになる。
+// - 断面では中央が速く、岸際は遅い（水際からの距離 / 半幅）。
+// 水の無い所は書かない（ほかの River が書いた値を残す）。
+[numthreads(8, 8, 1)]
+void CsFlow(uint3 dispatchThreadId : SV_DispatchThreadID)
+{
+    const uint2 texel = dispatchThreadId.xy;
+    const uint resolution = FineResolution();
+    if (texel.x >= resolution || texel.y >= resolution) { return; }
+
+    Texture2D<float> waterLevel = ResourceDescriptorHeap[g_river.indices8.y];
+    Texture2D<float> distance = ResourceDescriptorHeap[g_river.indices8.z];
+    Texture2D<float> halfWidth = ResourceDescriptorHeap[g_river.indices9.y];
+    RWTexture2D<float> waterFine = ResourceDescriptorHeap[g_river.indices4.y];
+    RWTexture2D<float4> flowTarget = ResourceDescriptorHeap[g_river.indices5.y];
+
+    const float cover = waterFine[texel];
+    if (cover <= 0.0f) { return; }
+
+    const float2 uv = (float2(texel) + 0.5f) / float(resolution);
+    const float step = 1.0f / float(RiverResolution());
+    const float lx0 = waterLevel.SampleLevel(g_samplerLinearClamp, uv - float2(step, 0.0f), 0.0f);
+    const float lx1 = waterLevel.SampleLevel(g_samplerLinearClamp, uv + float2(step, 0.0f), 0.0f);
+    const float ly0 = waterLevel.SampleLevel(g_samplerLinearClamp, uv - float2(0.0f, step), 0.0f);
+    const float ly1 = waterLevel.SampleLevel(g_samplerLinearClamp, uv + float2(0.0f, step), 0.0f);
+    // 実寸の勾配（m / m）。正規化ハイト × 標高差 / (2 セル × セルの大きさ)。
+    const float2 gradient = float2(lx1 - lx0, ly1 - ly0) * g_river.params3.z / (2.0f * g_river.params3.y);
+    const float slope = length(gradient);
+    const float2 direction = (slope > 1e-7f) ? -gradient / slope : float2(0.0f, 0.0f);
+
+    float speed = min(20.0f * sqrt(slope), 4.0f);
+    // 断面の速さ。水際（距離 0）で 0.35 倍、中央（距離 = −半幅）で 1 倍。
+    const float dw = distance.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
+    const float half = max(halfWidth.SampleLevel(g_samplerLinearClamp, uv, 0.0f), 0.5f);
+    speed *= lerp(0.35f, 1.0f, sqrt(saturate(-dw / half)));
+
+    // 早瀬。水面の勾配が 3% を超える所から白波が立ち、20% で最大（山の沢はほとんどが数 % 以上ある）。
+    const float rapids = smoothstep(0.03f, 0.20f, slope);
+    flowTarget[texel] = float4(direction * speed, cover, rapids);
+}
+
 // --- マスク ------------------------------------------------------------------------
 //
 //   Water : 水面の被覆（合成解像度で焼いたもの）

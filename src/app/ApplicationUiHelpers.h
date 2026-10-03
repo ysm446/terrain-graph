@@ -161,6 +161,9 @@ inline const compositor::MaterialLayer kDefaultRiverLayer = [] {
     compositor::MaterialLayer layer;
     layer.kind = compositor::LayerKind::River;
     layer.name = "River";
+    // 新しく置く River は流れの波と早瀬の白波を出す（古いファイルは 0 で読む）。
+    layer.river.flowWaveStrength = 0.5f;
+    layer.river.flowFoam = 0.5f;
     return layer;
 }();
 

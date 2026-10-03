@@ -465,6 +465,28 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                 "河原の縁のなだらかさ。広がりと比高それぞれに対する割合", "%.2f");
             ui::EndPropertyTable();
         }
+        // 流れは合成に焼かず、地形の描画が水面へ下流へ流れる模様を重ねる。
+        ui::SectionHeader("流れ");
+        if (ui::BeginPropertyTable("layerRiverFlowRows")) {
+            changed |= ui::PropertyFloat(
+                "波の強さ", &layer.river.flowWaveStrength, 0.0f, 1.0f, riverDefaults.flowWaveStrength,
+                "下流へ流れる波の傾きの強さ。0 で流れの波なし", "%.2f");
+            changed |= ui::PropertyFloat(
+                "波の大きさ", &layer.river.flowWaveScaleMeters, 0.5f, 100.0f,
+                riverDefaults.flowWaveScaleMeters,
+                "一番大きい模様の波長（m）。細かいさざ波はここから段々に小さくして重ねる", "%.1f m",
+                ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat(
+                "流れの速さ", &layer.river.flowSpeed, 0.0f, 4.0f, riverDefaults.flowSpeed,
+                "速さの倍率。1 で水面の傾きから求めた速さ（急な所ほど速く、川の中央ほど速い）。0 で止める",
+                "%.2f");
+            changed |= ui::PropertyFloat(
+                "白波の量", &layer.river.flowFoam, 0.0f, 1.0f, riverDefaults.flowFoam,
+                "早瀬（水面の傾きが急な所）に立つ白波の濃さ。0 で白波なし", "%.2f");
+            ui::EndPropertyTable();
+        }
+        ui::HintText("流れの波は地形の描画で動かす（合成結果や書き出すテクスチャには入らない）。"
+                     "向きは水面の傾きから決まる。River が複数あるときは、最初の有効な 1 つの設定を使う");
         ui::HintText("川筋から河床を掘り、下流へ単調に下がる水面を張る。盆地は湖になる。"
                      "Water は水面の被覆、Bank は河原（岩・砂利を置く帯）、Depth は水深。"
                      "水の Surface はハイトを定数にすること（水面の形は River が決める）");

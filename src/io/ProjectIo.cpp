@@ -1262,6 +1262,10 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     river["shoreWidth"] = layer.river.shoreWidthMeters;
     river["shoreHeight"] = layer.river.shoreHeightMeters;
     river["shoreFeather"] = layer.river.shoreFeather;
+    river["flowWaveStrength"] = layer.river.flowWaveStrength;
+    river["flowWaveScale"] = layer.river.flowWaveScaleMeters;
+    river["flowSpeed"] = layer.river.flowSpeed;
+    river["flowFoam"] = layer.river.flowFoam;
     node["river"] = std::move(river);
 
     // 水滴侵食（水滴侵食レイヤーだけが使う）。
@@ -1618,6 +1622,12 @@ compositor::MaterialLayer ReadLayer(
         layer.river.shoreHeightMeters =
             ReadFloat(*river, "shoreHeight", defaults.river.shoreHeightMeters);
         layer.river.shoreFeather = ReadFloat(*river, "shoreFeather", defaults.river.shoreFeather);
+        layer.river.flowWaveStrength =
+            ReadFloat(*river, "flowWaveStrength", defaults.river.flowWaveStrength);
+        layer.river.flowWaveScaleMeters =
+            ReadFloat(*river, "flowWaveScale", defaults.river.flowWaveScaleMeters);
+        layer.river.flowSpeed = ReadFloat(*river, "flowSpeed", defaults.river.flowSpeed);
+        layer.river.flowFoam = ReadFloat(*river, "flowFoam", defaults.river.flowFoam);
     }
 
     if (const json* crumbling = FindMember(node, "crumbling");
