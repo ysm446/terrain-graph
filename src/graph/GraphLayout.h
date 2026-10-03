@@ -23,14 +23,15 @@ struct LayoutEdge {
 // どの接続も左から右へ向くように、箱を動かす。動かした箱の数を返す。
 //
 // 線は出力（箱の右端）から入力（箱の左端）へ引くので、「左へ戻らない」は
-// `to.x >= from.x + from.width` のこと。これを破っている接続だけを直し、直すときは
-// 間に gap を空ける。**なるべく元の配置を保つ**: 破っている接続ごとに「上流を左へ寄せる」か
+// `to.x >= from.x + from.width` のこと。さらに、繋がった箱の間は minGap 以上空ける
+// （ぴったり隣り合うと線が見えず、詰まって見える）。これを破っている接続だけを直し、
+// 直すときは間に gap（>= minGap）を空ける。**なるべく元の配置を保つ**: 破っている接続ごとに「上流を左へ寄せる」か
 // 「下流を右へ押す」かのうち、連鎖して動く箱が少ないほう（同じなら動く量が小さいほう）を選ぶ。
 // 繋がっていない箱どうしが同じ列に並ぶのはそのまま。
 //
 // 動かした箱がほかの箱と重なったら、元の高さに一番近い空きへ縦にずらす（間に margin を空ける）。
 // 接続が循環していると直しきれないので、回数の上限で打ち切る（その分は直らない）。
 size_t ArrangeLeftToRight(std::vector<LayoutBox>& boxes, const std::vector<LayoutEdge>& edges,
-                          float gap, float margin);
+                          float gap, float minGap, float margin);
 
 }  // namespace tg::graph

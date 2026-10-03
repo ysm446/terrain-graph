@@ -1186,9 +1186,11 @@ void Application::AlignSelectedGraphNodes(GraphAlign mode) {
 // 出している間は、その高さも箱に含める（縦にずらしたとき吹き出しが上のノードに重ならないように）。
 // アンドゥの扱いは AlignSelectedGraphNodes と同じ（「並べ直す前」を 1 段にする）。
 void Application::ArrangeGraphLeftToRight() {
-    // 接続の間に空ける幅と、縦にずらすときにほかのノードとの間に空ける幅（キャンバス座標）。
-    constexpr float kArrangeGap = 40.0f;
-    constexpr float kArrangeMargin = 16.0f;
+    // 直した接続の間に空ける幅、これより狭い接続も直す幅、縦にずらすときにほかのノードとの間に
+    // 空ける幅（キャンバス座標）。最初は 40 / 0 / 16 だったが、詰まって見えるので広げた（ユーザー指定）。
+    constexpr float kArrangeGap = 80.0f;
+    constexpr float kArrangeMinGap = 40.0f;
+    constexpr float kArrangeMargin = 32.0f;
     const bool showNotes = m_settings.Display().showNodeNotes;
     std::vector<graph::GraphId> ids;
     std::vector<float> notes;
@@ -1221,7 +1223,7 @@ void Application::ArrangeGraphLeftToRight() {
         edges.push_back({from->second, to->second});
     }
     const std::vector<graph::LayoutBox> before = boxes;
-    const size_t moved = graph::ArrangeLeftToRight(boxes, edges, kArrangeGap, kArrangeMargin);
+    const size_t moved = graph::ArrangeLeftToRight(boxes, edges, kArrangeGap, kArrangeMinGap, kArrangeMargin);
     if (moved == 0) {
         m_toasts.Push("並べ直す所はありません", "どの接続も左から右へ向いています");
         return;

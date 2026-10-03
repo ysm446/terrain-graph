@@ -14,7 +14,8 @@ struct Context {
     const std::vector<LayoutBox>& boxes;
     const std::vector<std::vector<size_t>>& upstream;    // 箱 → その入力に繋がる箱
     const std::vector<std::vector<size_t>>& downstream;  // 箱 → その出力が繋がる箱
-    float gap;
+    float gap;     // 直すときに空ける幅
+    float minGap;  // これより狭い接続を「直す対象」とみなす幅
 };
 
 float XOf(const Context& context, const Moves& moves, size_t index) {
@@ -28,7 +29,7 @@ void PlanPull(const Context& context, size_t index, float target, Moves& moves, 
     moves[index] = target;
     for (const size_t source : context.upstream[index]) {
         const float width = context.boxes[source].width;
-        if (XOf(context, moves, source) + width > target) {
+        if (XOf(context, moves, source) + width + context.minGap > target) {
             PlanPull(context, source, target - width - context.gap, moves, depth + 1);
         }
     }
@@ -40,7 +41,7 @@ void PlanPush(const Context& context, size_t index, float target, Moves& moves, 
     moves[index] = target;
     const float right = target + context.boxes[index].width;
     for (const size_t sink : context.downstream[index]) {
-        if (XOf(context, moves, sink) < right) {
+        if (XOf(context, moves, sink) < right + context.minGap) {
             PlanPush(context, sink, right + context.gap, moves, depth + 1);
         }
     }
@@ -60,7 +61,8 @@ bool Overlaps(const LayoutBox& a, const LayoutBox& b, float margin) {
 }  // namespace
 
 size_t ArrangeLeftToRight(std::vector<LayoutBox>& boxes, const std::vector<LayoutEdge>& edges,
-                          float gap, float margin) {
+                          float gap, float minGap, float margin) {
+    minGap = std::clamp(minGap, 0.0f, gap);
     const std::vector<LayoutBox> original = boxes;
     std::vector<std::vector<size_t>> upstream(boxes.size());
     std::vector<std::vector<size_t>> downstream(boxes.size());
@@ -71,7 +73,7 @@ size_t ArrangeLeftToRight(std::vector<LayoutBox>& boxes, const std::vector<Layou
         downstream[edge.from].push_back(edge.to);
         valid.push_back(edge);
     }
-    const Context context{boxes, upstream, downstream, gap};
+    const Context context{boxes, upstream, downstream, gap, minGap};
 
     // --- 横: 左へ戻る接続を、戻りの大きいものから 1 本ずつ直す ----------------------
     // 1 本直すと別の接続が直る / 破れるので、毎回選び直す。接続の数の数倍で必ず終わるはずだが、
@@ -81,7 +83,8 @@ size_t ArrangeLeftToRight(std::vector<LayoutBox>& boxes, const std::vector<Layou
         const LayoutEdge* worst = nullptr;
         float worstBack = 0.0f;
         for (const LayoutEdge& edge : valid) {
-            const float back = boxes[edge.from].x + boxes[edge.from].width - boxes[edge.to].x;
+            // 戻りの量。間が minGap より狭いぶんも戻りに数える。
+            const float back = boxes[edge.from].x + boxes[edge.from].width + minGap - boxes[edge.to].x;
             if (back > worstBack) {
                 worstBack = back;
                 worst = &edge;
