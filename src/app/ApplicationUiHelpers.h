@@ -70,12 +70,21 @@ inline const compositor::MaterialLayer kDefaultLiquidLayer = [] {
     compositor::MaterialLayer layer;
     layer.kind = compositor::LayerKind::Liquid;
     layer.name = "Liquid";
-    layer.baseColor = {0.01f, 0.03f, 0.035f};
     layer.roughness = 0.07f;
     layer.metallic = 0.0f;
     layer.heightSource = compositor::ValueSource::Constant;
     layer.heightBase = 0.35f;   // 水位
     layer.blendRange = 0.01f;   // 汀線のフェザー幅
+    // 海の見た目。沖は深い青（ベースカラー）、岸へ向かって明るい青になり、浅瀬では底が透ける。
+    // 既定は「澄んだ外洋」（ユーザー指定）。水は赤を強く吸収し青を一番よく通すので、澄んだ水ほど
+    // 深い紺になる（濁りやプランクトンが増えると緑へ寄る）。参考画像
+    // （docs/references/sea/blender-nation-hearder.jpg）の海もこの系統。
+    // 浅瀬の色は水そのものの色として控えめに置く（底の色は「透ける深さ」が見せる）。
+    layer.baseColor = {0.003f, 0.012f, 0.04f};
+    layer.liquid.shallowColor = {0.03f, 0.09f, 0.15f};
+    layer.liquid.colorDepthMeters = 8.0f;
+    layer.liquid.clarityMeters = 2.0f;
+    layer.liquid.waveStrength = 0.5f;
     return layer;
 }();
 

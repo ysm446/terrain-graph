@@ -288,6 +288,15 @@ public:
     std::function<void(ID3D12GraphicsCommandList*, const DirectX::XMFLOAT4X4&, bool)> drawMeshes;
     // 雪煙（Snow Plume ノード）。Application が毎フレーム積み直す。大気の合成の後に重ねる。
     void SetSnowPlumes(std::vector<SnowPlumeDraw> plumes) { m_snowPlumes = std::move(plumes); }
+    // 水面の波（Liquid ノード）。Application が毎フレーム写す。強さ 0 で波なし。
+    // 水面の範囲は合成結果（Surface のアルファ）が持つので、ここは模様の設定だけ。
+    struct WaterSettings {
+        float waveStrength = 0.0f;
+        float waveScaleMeters = 40.0f;
+        float waveSpeed = 1.0f;
+        float waveDirectionRadians = 0.0f;
+    };
+    void SetWater(const WaterSettings& water) { m_water = water; }
     void Render(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                 ID3D12GraphicsCommandList* commandList, const compositor::MaterialStack& stack,
                 const compositor::TextureLibrary& textures,
@@ -497,6 +506,7 @@ private:
     bool m_showHeightGuide = false;
     std::vector<GuideLine> m_guideLines;
     std::vector<SnowPlumeDraw> m_snowPlumes;
+    WaterSettings m_water;
     // 雪煙の時間の起点。ループ位置はここからの秒をノードのループ長で巻いて決める。
     std::chrono::steady_clock::time_point m_animationStart = std::chrono::steady_clock::now();
     DirectX::XMFLOAT3 m_guideLineColor{150.0f / 255.0f, 160.0f / 255.0f, 175.0f / 255.0f};

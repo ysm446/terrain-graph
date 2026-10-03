@@ -1070,8 +1070,41 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
             changed |= ui::PropertyFloat("フェザー", &layer.blendRange, 0.0f, 0.2f,
                                          defaults.blendRange,
                                          "汀線の柔らかさ。0 に近いほど硬い水際になる", "%.3f");
+            // 水深で色と透け方を決める。深い所の色は上の「ベースカラー」。
+            changed |= ui::PropertyColorLinear("浅瀬の色", &layer.liquid.shallowColor.x,
+                                               &defaults.liquid.shallowColor.x,
+                                               "水の浅い所の色。深くなるほど上のベースカラー（深い所の色）へ寄る");
+            changed |= ui::PropertyFloat("色の変わる深さ", &layer.liquid.colorDepthMeters, 0.0f, 100.0f,
+                                         defaults.liquid.colorDepthMeters,
+                                         "浅瀬の色から深い所の色へ変わる水深（m）。大きいほど沖まで浅瀬の色が続く。"
+                                         "0 で深い所の色だけ",
+                                         "%.1f m");
+            changed |= ui::PropertyFloat("透ける深さ", &layer.liquid.clarityMeters, 0.0f, 50.0f,
+                                         defaults.liquid.clarityMeters,
+                                         "水越しに底の色が見える水深（m）。大きいほど澄んだ水。0 で透けない",
+                                         "%.1f m");
             ui::EndPropertyTable();
         }
+        // 波は合成に焼かず、地形の描画が水面へ動く模様を重ねる。
+        ui::SectionHeader("波");
+        if (ui::BeginPropertyTable("layerLiquidWaveRows")) {
+            changed |= ui::PropertyFloat("強さ", &layer.liquid.waveStrength, 0.0f, 1.0f,
+                                         defaults.liquid.waveStrength,
+                                         "波の傾きの強さ。0 で平らな水面", "%.2f");
+            changed |= ui::PropertyFloat("大きさ", &layer.liquid.waveScaleMeters, 1.0f, 500.0f,
+                                         defaults.liquid.waveScaleMeters,
+                                         "一番大きなうねりの波長（m）。細かいさざ波はここから段々に小さくして重ねる",
+                                         "%.0f m");
+            changed |= ui::PropertyFloat("速さ", &layer.liquid.waveSpeed, 0.0f, 4.0f,
+                                         defaults.liquid.waveSpeed,
+                                         "進む速さの倍率。1 で波長に見合った実際の速さ。0 で止める", "%.2f");
+            changed |= ui::PropertyFloat("向き", &layer.liquid.waveDirectionDegrees, -180.0f, 180.0f,
+                                         defaults.liquid.waveDirectionDegrees,
+                                         "うねりの進む向き（度）。0 で +X、90 で +Z へ進む", "%.0f°");
+            ui::EndPropertyTable();
+        }
+        ui::HintText("波は地形の描画で動かす（合成結果や書き出すテクスチャには入らない）。"
+                     "Liquid が複数あるときは、最初の有効な 1 つの設定を使う");
     } else if (layeredMaterial) {
         ui::SectionHeader("ハイト");
         if (ui::BeginPropertyTable("layerHeightRows")) {

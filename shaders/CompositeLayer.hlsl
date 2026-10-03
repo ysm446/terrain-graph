@@ -66,6 +66,10 @@ struct LayerConstants
     float4 mountain0; // 有効、周波数、尾根、尖り
     float4 mountain1; // 方向（rad）、伸長、うねり、細部
     uint4 mountain2; // シード、未使用
+    // 水面（Liquid）の見た目。浅瀬の色 rgb, 色の変わる深さ（m。0 で深い所の色だけ）
+    float4 liquid0;
+    // 下地が透ける深さ（m。0 で透けない）, ハイト 0〜1 の全幅（m）, 未使用 x2
+    float4 liquid1;
     LayerMaterialData layerMaterial;
 };
 
@@ -554,6 +558,8 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     const bool isWrap = (g_layer.flags & TG_FLAG_WRAP) != 0u && !isBaseLayer;
 
     float weight = 1.0f;
+    // 水越しに下地の色が見える割合（Liquid だけ。色にだけ効き、法線・ラフネス・高さは水面のまま）。
+    float bedVisibility = 0.0f;
     if (!isBaseLayer)
     {
         // パス UV のときは帯の外に乗らない（coverage が 0）。
@@ -580,6 +586,18 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
             // 水面下では厳密に 1、水面上では厳密に 0 になる。
             const float depth = g_layer.surfaceParams.w - destinationHeight;
             weight = mask * smoothstep(0.0f, max(g_layer.blendParams.x, 1e-4f), depth);
+
+            // 水深（m）で色を決める。浅瀬の色から深い所の色（ベースカラー）へ指数で寄せ、
+            // 浅い所では下地の色を残す（Beer–Lambert の減衰。深さの値は 1/e になる深さ）。
+            const float depthMeters = max(depth, 0.0f) * g_layer.liquid1.y;
+            if (g_layer.liquid0.w > 0.0f)
+            {
+                layerBaseColor = lerp(layerBaseColor, g_layer.liquid0.rgb, exp(-depthMeters / g_layer.liquid0.w));
+            }
+            if (g_layer.liquid1.x > 0.0f)
+            {
+                bedVisibility = exp(-depthMeters / g_layer.liquid1.x);
+            }
         }
         else
         {
@@ -592,7 +610,7 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     if ((g_layer.channelMask & 0x1u) != 0u)
     {
         const float3 destination = isBaseLayer ? layerBaseColor : baseColorTarget[texel].rgb;
-        baseColorTarget[texel] = float4(lerp(destination, layerBaseColor, weight), 1.0f);
+        baseColorTarget[texel] = float4(lerp(destination, layerBaseColor, weight * (1.0f - bedVisibility)), 1.0f);
     }
 
     if ((g_layer.channelMask & 0x2u) != 0u)
@@ -625,8 +643,12 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     if ((g_layer.channelMask & 0x4u) != 0u)
     {
         const float3 layerSurface = float3(layerRoughness, layerMetallic, layerAo);
-        const float3 destination = isBaseLayer ? layerSurface : surfaceTarget[texel].rgb;
-        surfaceTarget[texel] = float4(lerp(destination, layerSurface, weight), 1.0f);
+        const float4 destinationSurface = surfaceTarget[texel];
+        const float3 destination = isBaseLayer ? layerSurface : destinationSurface.rgb;
+        // アルファは **1 − 水面の被覆**（地形の描画が波を重ねる範囲）。既定の 1 が「水なし」なので、
+        // アルファを 1 で書くほかのパスは水を消す側に倒れる。Liquid は 0 へ、上に重なるほかのレイヤーは 1 へ寄せる。
+        const float dry = isBaseLayer ? 1.0f : lerp(destinationSurface.a, isLiquid ? 0.0f : 1.0f, weight);
+        surfaceTarget[texel] = float4(lerp(destination, layerSurface, weight), dry);
     }
 
     if ((g_layer.channelMask & 0x8u) != 0u)

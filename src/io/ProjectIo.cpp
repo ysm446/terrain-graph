@@ -1379,6 +1379,19 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     blur["iterations"] = layer.blur.iterations;
     node["blur"] = std::move(blur);
 
+    // 水面の見た目（Liquid だけが使う）。
+    if (layer.kind == compositor::LayerKind::Liquid) {
+        json liquid;
+        liquid["shallowColor"] = WriteFloat3(layer.liquid.shallowColor);
+        liquid["colorDepthMeters"] = layer.liquid.colorDepthMeters;
+        liquid["clarityMeters"] = layer.liquid.clarityMeters;
+        liquid["waveStrength"] = layer.liquid.waveStrength;
+        liquid["waveScaleMeters"] = layer.liquid.waveScaleMeters;
+        liquid["waveSpeed"] = layer.liquid.waveSpeed;
+        liquid["waveDirectionDegrees"] = layer.liquid.waveDirectionDegrees;
+        node["liquid"] = std::move(liquid);
+    }
+
     node["mask"] = WriteMask(layer.mask, writeTexture, writePaint);
     node["blendRange"] = layer.blendRange;
     node["wrapToUnderlying"] = layer.wrapToUnderlying;
@@ -1467,6 +1480,19 @@ compositor::MaterialLayer ReadLayer(
             ReadFloat(*sediment, "maskContrast", defaults.sediment.maskContrast);
         layer.sediment.maskThicknessMeters = ReadFloat(*sediment, "maskThicknessMeters",
                                                        defaults.sediment.maskThicknessMeters);
+    }
+
+    // 無ければ構造体の既定（単色・不透明。これらを持たない頃のファイルと同じ見た目）。
+    if (const json* liquid = FindMember(node, "liquid"); liquid != nullptr && liquid->is_object()) {
+        layer.liquid.shallowColor = ReadFloat3(*liquid, "shallowColor", defaults.liquid.shallowColor);
+        layer.liquid.colorDepthMeters =
+            ReadFloat(*liquid, "colorDepthMeters", defaults.liquid.colorDepthMeters);
+        layer.liquid.clarityMeters = ReadFloat(*liquid, "clarityMeters", defaults.liquid.clarityMeters);
+        layer.liquid.waveStrength = ReadFloat(*liquid, "waveStrength", defaults.liquid.waveStrength);
+        layer.liquid.waveScaleMeters = ReadFloat(*liquid, "waveScaleMeters", defaults.liquid.waveScaleMeters);
+        layer.liquid.waveSpeed = ReadFloat(*liquid, "waveSpeed", defaults.liquid.waveSpeed);
+        layer.liquid.waveDirectionDegrees =
+            ReadFloat(*liquid, "waveDirectionDegrees", defaults.liquid.waveDirectionDegrees);
     }
 
     if (const json* value = FindMember(node, "meanderingRivers"); value != nullptr && value->is_object()) {

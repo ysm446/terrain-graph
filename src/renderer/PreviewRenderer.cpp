@@ -93,13 +93,13 @@ struct MeshConstants {
     XMFLOAT4X4 normalMatrix;
 
     XMFLOAT3 cameraPosition;
-    float pad0;
+    float waterTime;
 
     XMFLOAT3 lightDirection;
     float lightIlluminance;
 
     XMFLOAT3 lightColor;
-    float pad1;
+    float waveStrength;
 
     XMFLOAT3 baseColor;
     float roughness;
@@ -107,7 +107,7 @@ struct MeshConstants {
     float metallic;
     float iblIntensity;
     uint32_t prefilteredMipCount;
-    float pad2;
+    float waveScale;
 
     uint32_t irradianceIndex;
     uint32_t prefilteredIndex;
@@ -130,7 +130,7 @@ struct MeshConstants {
     uint32_t shadowIndex;  // 影を落とさないときは kNoShadowIndex
     float shadowTexelSize;
     float shadowBias;
-    float pad5;
+    float waveSpeed;
 
     XMFLOAT4X4 cascadeViewProjections[kShadowCascadeCount];
     uint32_t cascadeShadowIndices[kShadowCascadeCount];
@@ -150,7 +150,7 @@ struct MeshConstants {
     uint32_t maskPreviewHatch;
     float maskPreviewLow;
     float maskPreviewHigh;
-    float pad7;
+    float waveDirection;
     AtmosphereSettings atmosphere;
     uint32_t cloudNoiseIndex;
     uint32_t atmosphericMode;
@@ -853,6 +853,13 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     constants.cloudNoiseIndex = m_atmosphere.NoiseIndex();
     constants.atmosphericMode = m_atmosphericMode && m_atmosphere.IsReady() ? 1u : 0u;
     constants.cameraPosition = m_camera.Position();
+    // 水面の波（Liquid）。時刻は雪煙と同じ起点。1 時間で巻く（float の桁を保つ。巻く瞬間に模様が跳ぶ）。
+    constants.waterTime = static_cast<float>(std::fmod(
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - m_animationStart).count(), 3600.0));
+    constants.waveStrength = m_water.waveStrength;
+    constants.waveScale = m_water.waveScaleMeters;
+    constants.waveSpeed = m_water.waveSpeed;
+    constants.waveDirection = m_water.waveDirectionRadians;
     const auto light = EffectiveLight();
     const auto& environment = GetEnvironment();
     constants.lightDirection = light.Direction();

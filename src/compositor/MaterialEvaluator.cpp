@@ -88,6 +88,8 @@ struct LayerConstants {
     float mountain0[4]; // 有効、周波数、尾根、尖り
     float mountain1[4]; // 方向（rad）、伸長、うねり、細部
     uint32_t mountain2[4]; // シード、未使用
+    float liquid0[4];  // 浅瀬の色 rgb, 色の変わる深さ（m）
+    float liquid1[4];  // 下地が透ける深さ（m）, ハイト 0〜1 の全幅（m）, 未使用 x2
     LayerMaterialGpu layerMaterial;
 };
 
@@ -5708,6 +5710,13 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         constants.mountain1[2] = std::clamp(layer.mountain.warp, 0.0f, 1.5f);
         constants.mountain1[3] = std::clamp(layer.mountain.detail, 0.0f, 0.8f);
         constants.mountain2[0] = static_cast<uint32_t>(layer.mountain.seed);
+        // 水面の見た目（Liquid だけが読む）。深さは実寸（m）で比べるので、ハイトの全幅も渡す。
+        constants.liquid0[0] = layer.liquid.shallowColor.x;
+        constants.liquid0[1] = layer.liquid.shallowColor.y;
+        constants.liquid0[2] = layer.liquid.shallowColor.z;
+        constants.liquid0[3] = std::max(layer.liquid.colorDepthMeters, 0.0f);
+        constants.liquid1[0] = std::max(layer.liquid.clarityMeters, 0.0f);
+        constants.liquid1[1] = std::max(stack.HeightMeters(), 0.0f);
         constants.heightNoise[0] = layer.heightNoise.scale;
         // ハイトはノイズの amount ではなく heightGain を使う。
         constants.heightNoise[1] = layer.heightGain;

@@ -254,6 +254,8 @@ private:
     void DrawImpostorSection(renderer::ModelAsset& asset);
     // Snow Plume ノードを集め、Source のマスクを評価するスロットを揃える。フレームの外で呼ぶ。
     void PrepareSnowPlumes();
+    // Liquid の波の設定をレンダラへ写す（最初の有効な Liquid）。
+    void PrepareWater();
     // 評価済みのマスクと設定をレンダラへ渡す。描く直前に毎フレーム呼ぶ。
     void SubmitSnowPlumes();
     void DrawModelScatters(ID3D12GraphicsCommandList* commandList, const DirectX::XMFLOAT4X4& viewProjection, bool shadow);

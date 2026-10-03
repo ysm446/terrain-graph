@@ -578,6 +578,30 @@ struct MaterialLayer {
     MeanderingRiversSettings meanderingRivers;
     std::vector<MeanderPoint> meanderPoints;
 
+    // 水面の見た目（kind == LayerKind::Liquid のときだけ意味を持つ）。
+    //
+    // 水深（水位 − 下地の高さ、m）で色と透け方を決める。水面のベースカラー（baseColor）は
+    // **深い所の色**で、浅い所は shallowColor から始まり、深くなるほど baseColor へ寄る。
+    // 浅い所では水越しに下地の色が残る。
+    // 構造体の既定はどちらも 0（切り）。これらを持たない古いファイルを、今までと同じ
+    // 単色・不透明の水として読むため。新しく置く Liquid の既定は kDefaultLiquidLayer が決める。
+    struct LiquidSettings {
+        DirectX::XMFLOAT3 shallowColor = {0.03f, 0.09f, 0.15f};
+        // 色が浅瀬の色から深い所の色へ変わる深さ（m。この深さで約 63% まで寄る）。0 で深い所の色だけ。
+        float colorDepthMeters = 0.0f;
+        // 下地が透けて見える深さ（m。この深さで下地の見え方が約 37% に落ちる）。0 で透けない。
+        float clarityMeters = 0.0f;
+        // 波。**合成には効かない**（焼かない）。地形の描画が水面の法線へ動く模様を重ねる。
+        // 強さ 0 で波なし（古いファイルと同じ平らな水面）。
+        float waveStrength = 0.0f;
+        // 一番大きなうねりの波長（m）。細かいさざ波はここから段々に小さくしたものを重ねる。
+        float waveScaleMeters = 40.0f;
+        // 進む速さの倍率。1 で波長に見合った実際の速さ（深水波）。
+        float waveSpeed = 1.0f;
+        // うねりの進む向き（度。0 で +X、90 で +Z へ進む）。
+        float waveDirectionDegrees = 0.0f;
+    } liquid;
+
     struct LakeSettings {
         int optimizationSteps = 3;
         float waterAmount = 5.0f;

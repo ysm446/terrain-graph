@@ -430,6 +430,7 @@ int Application::Run() {
         if (!PrepareCloudMask(m_cloudMasks[0], compiledCloud.maskNode, compiledCloud.layer ? compiledCloud.maskPin : 0)) return 1;
         if (!PrepareCloudMask(m_cloudMasks[1], compiledCloud.typeMaskNode, compiledCloud.weather ? compiledCloud.typeMaskPin : 0)) return 1;
         PrepareSnowPlumes();
+        PrepareWater();
         renderer::AtmosphereSettings cloudSettings = m_renderer.AtmosphericSettings();
         if (compiledCloud.hasOutput) {
             const auto& cloud = compiledCloud.cloud;
@@ -806,6 +807,24 @@ bool Application::PrepareCloudMask(CloudMaskSlot& slot, graph::GraphId maskNode,
         slot.evaluator.SetMeshFootprints(&m_meshFootprints);
     }
     return true;
+}
+
+// 波は合成に焼かないので、Liquid の設定をそのままレンダラへ渡す。水面の範囲は合成結果が持つ。
+// Liquid が複数あっても模様は 1 つ（地形グラフの最初の有効な Liquid）。
+void Application::PrepareWater() {
+    renderer::PreviewRenderer::WaterSettings water;
+    for (const graph::Node& node : m_graph.Nodes()) {
+        if (node.kind != graph::NodeKind::Liquid || node.component != 0 || graph::IsBypassed(node)) continue;
+        const auto* settings = std::get_if<graph::LayerNodeSettings>(&node.settings);
+        if (settings == nullptr) continue;
+        const auto& liquid = settings->layer.liquid;
+        water.waveStrength = std::clamp(liquid.waveStrength, 0.0f, 1.0f);
+        water.waveScaleMeters = std::max(liquid.waveScaleMeters, 0.1f);
+        water.waveSpeed = std::max(liquid.waveSpeed, 0.0f);
+        water.waveDirectionRadians = liquid.waveDirectionDegrees * DirectX::XM_PI / 180.0f;
+        break;
+    }
+    m_renderer.SetWater(water);
 }
 
 void Application::PrepareSnowPlumes() {

@@ -18,13 +18,13 @@ struct MeshConstants
     float4x4 normalMatrix;
 
     float3 cameraPosition;
-    float pad0;
+    float waterTime;         // 波を動かす時刻（秒）
 
     float3 lightDirection;   // サーフェスから光源へ向かう方向
     float lightIlluminance;  // lux 相当
 
     float3 lightColor;
-    float pad1;
+    float waveStrength;      // 水面の波の傾きの強さ。0 で波なし
 
     float3 baseColor;
     float roughness;
@@ -32,7 +32,7 @@ struct MeshConstants
     float metallic;
     float iblIntensity;
     uint prefilteredMipCount;
-    float pad2;
+    float waveScale;         // 一番大きなうねりの波長（m）
 
     uint irradianceIndex;    // irradiance キューブの SRV
     uint prefilteredIndex;   // プリフィルタ済みキューブの SRV
@@ -58,7 +58,7 @@ struct MeshConstants
     uint shadowIndex;  // 0xFFFFFFFF なら影を落とさない
     float shadowTexelSize;
     float shadowBias;
-    float pad5;
+    float waveSpeed;         // 波の進む速さの倍率
 
     float4x4 cascadeViewProjections[4];
     uint4 cascadeShadowIndices;
@@ -82,7 +82,7 @@ struct MeshConstants
     uint maskPreviewHatch;
     float maskPreviewLow;
     float maskPreviewHigh;
-    float pad7;
+    float waveDirection;     // うねりの進む向き（ラジアン。XZ 平面で +X から +Z へ）
     AtmosphericParameters atmosphere;
     uint cloudNoiseIndex;
     uint atmosphericMode;
@@ -140,6 +140,48 @@ float SampleMaterialScalar(Texture2D<float> map, float2 uv)
 float SampleMaterialScalarLevel(Texture2D<float> map, float2 uv)
 {
     return map.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
+}
+
+// --- 水面の波 --------------------------------------------------------------------
+// Liquid の水面へ重ねる、動く波の高さ（m）。合成には焼かない（時刻で動くので）。
+// 波長を段々に小さくした勾配ノイズを、向きを少しずつ振りながら流して重ねる。大きい段がうねり、
+// 小さい段が太陽のきらめきを作るさざ波。速さは深水波の分散（√波長に比例）に合わせる。
+// footprint は 1 画素が水面で張る幅（m）。それより細かい段は消す（遠くでちらつかないように）。
+static const int kWaveOctaves = 4;
+
+float WaveHeight(float2 positionMeters, float footprint)
+{
+    const float time = g_mesh.waterTime * g_mesh.waveSpeed;
+    float wavelength = max(g_mesh.waveScale, 0.1f);
+    float angle = g_mesh.waveDirection;
+    float sum = 0.0f;
+    for (int i = 0; i < kWaveOctaves; ++i)
+    {
+        const float fade = saturate(wavelength / max(footprint, 1e-4f) * 0.5f - 1.0f);
+        if (fade > 0.0f)
+        {
+            const float2 direction = float2(cos(angle), sin(angle));
+            const float speed = 1.25f * sqrt(wavelength);
+            const float2 p = (positionMeters - direction * (speed * time)) / wavelength + float(i) * 17.3f;
+            // 高さを波長に比例させる（どの段も同じくらいの傾きになる）。
+            sum += PerlinNoise(p, 4096.0f) * wavelength * fade;
+        }
+        wavelength *= 0.37f;
+        // 段ごとに向きを左右へ振る（全部が同じ向きに流れると縞に見える）。
+        angle += (i % 2 == 0) ? 0.7f : -1.1f;
+    }
+    return sum;
+}
+
+// 波の傾き（d高さ/dx, d高さ/dz）。中心差分。
+float2 WaveSlope(float2 positionMeters, float footprint)
+{
+    const float epsilon = max(footprint * 0.5f, 0.02f);
+    const float2 ex = float2(epsilon, 0.0f);
+    const float2 ez = float2(0.0f, epsilon);
+    return float2(WaveHeight(positionMeters + ex, footprint) - WaveHeight(positionMeters - ex, footprint),
+                  WaveHeight(positionMeters + ez, footprint) - WaveHeight(positionMeters - ez, footprint)) /
+           (2.0f * epsilon);
 }
 
 struct VsInput
@@ -416,7 +458,8 @@ PsOutput PsMain(VsOutput input)
 
         baseColor = SampleMaterialColor(baseColorMap, uv).rgb;
 
-        const float3 surface = SampleMaterialColor(surfaceMap, uv).rgb;
+        // アルファは 1 − 水面の被覆（CompositeLayer.hlsl の Liquid が書く）。
+        const float4 surface = SampleMaterialColor(surfaceMap, uv);
         roughnessValue = surface.r;
         metallicValue = surface.g;
         ambientOcclusion = surface.b;
@@ -428,6 +471,17 @@ PsOutput PsMain(VsOutput input)
         const float3 bitangent = cross(geometricNormal, tangent) * input.tangentSign;
         normal = normalize(tangent * tangentNormal.x + bitangent * tangentNormal.y +
                            geometricNormal * tangentNormal.z);
+
+        // 水面には動く波の傾きを重ねる。水面は水平なので、ワールドの XZ の傾きをそのまま法線へ足す。
+        const float water = 1.0f - surface.a;
+        if (water > 0.001f && g_mesh.waveStrength > 0.0f)
+        {
+            const float2 worldXz = input.worldPosition.xz;
+            const float footprint = max(length(ddx(worldXz)), length(ddy(worldXz)));
+            // 勾配ノイズの傾きは 1 前後まで出る。強さ 1 で「荒れた海」程度（傾き 0.3 前後）に収める。
+            const float2 slope = WaveSlope(worldXz, footprint) * (g_mesh.waveStrength * 0.3f * water);
+            normal = normalize(normal + float3(-slope.x, 0.0f, -slope.y));
+        }
     }
 
     // --- マスクのプレビューで、飽和した所へ斜線を引く ----------------------
