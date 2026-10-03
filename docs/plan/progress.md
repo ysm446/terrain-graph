@@ -1,7 +1,31 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-10-04 11:00
+更新日時: 2026-10-04 13:30
+
+## 水チャンネル（2026-10-04 13:30）
+
+ユーザーとの相談で決めた。発端は「Liquid を繋いだら水面に川の流れが出る」「River の後に Lake や Liquid を繋いでもつながるようにしたい」。Flow の出力ピンを Surface に繋ぐ案は、後ろへ継承されないので採らなかった。呼び名は「水チャンネル（water チャンネル）」（ユーザー指定）。
+
+- **水チャンネル = 水の場 + 流れの場**（`MaterialTextureSet::water` / `flow`。どちらも RGBA16F）。水の場は x = 水際からの符号付き距離、y = 符号付きの水深、z = 波の強さ、w = 波打ち際の度合い（今は 1 固定）。流れの場は xy = 速度、**z = 水面の被覆（どの水でも）**、w = 早瀬。描画は被覆を流れの場の z から読む（Surface のアルファは書いているが、もう読まない）。
+- **引き継ぎの規則**: 後の水は、被覆 = max、水深 = max、流れ（xy と早瀬）×= `exp(−水深 / 1.5 m)`。陸のレイヤー（`CompositeLayer.hlsl` のシェイプ以外で、ベースカラーを書くもの）は被覆 ×= (1 − 重み)。加工ノードは触らない。
+- **Liquid**: `CompositeLayer.hlsl` で上の規則どおり書く。波の強さは `liquid1.z` で渡す。
+- **River / Lake**: 新しい `CompositeWaterPaint.hlsl` の `CsPaint`（`MaterialEvaluator::ApplyWaterPaint`）。River は色だけ（被覆と流れは `CsFlow`）。Lake は湖の出力（範囲・水深・延長した水位）から、色・被覆・水深（陸は延長した水位からの高さ）・波の強さを書き、前の流れを弱め、その後に `ApplyWaterDistance` を呼び直す（前の水と合わせた汀線で距離を取り直す）。
+- **設定**: `LiquidSettings`（色・波・波打ち際）を Lake / River でも使い、`paintWater`（Lake / River が水を描くか）を足した。深い所の色はレイヤーの `baseColor`。保存は `layer.liquid`（Liquid / Lake / River のとき書く）。構造体の既定は `paintWater = false`（古いファイルは今までどおり）、新規の既定は真（`kDefaultLakeLayer` / `kDefaultRiverLayer`）。
+- **シーンに 1 組の値**（`PrepareWater`）: 波の大きさ・速さ・向きと波打ち際は、最初の有効な Liquid、無ければ「水を描く」が入の最初の Lake から。`waveStrength` は有無（0 / 1）だけを渡し、強さは水の場の z。
+- **波打ち際の陸側を、水際からの距離で切る**（`max(6 m, 寄せる高さ × 60)`）。Lake の「延長した水位」は地形と無関係に遠くまで伸びるので、高さだけで決めると遠くの低い土地に泡と濡れが出た（検証の 1 枚目で、陸に四角い白い面が出て気づいた）。
+
+検証: Debug ビルド（警告 0）、CTest 6 件、起動時の DXC。検証シーン（どれも西伊豆のハイトマップから）:
+- `data/Test/sea/river_sea.tgscene`（Heightmap → Blur → River〔水を描く〕→ Liquid → Output）。川が River 自身の色で出ること、河口で川の白波が海の浅い所へ伸びて消えること、沖に沈んだ川の流れが出ないことを確認（`data/screenshots/rsea_01.png` / `rsea_02.png`）。
+- `data/Test/sea/river_lake.tgscene`（… → River → Lake〔水を描く〕→ Output）。2 本の川が合流して湖へ注ぎ、湖は穏やかな波で、縁が明るく透けること、陸に泡が出ないことを確認（`rlake_02.png`）。
+
+未確認・残り:
+- 動いている画面での見え方（河口や注ぎ口のつながり方）。静止画でしか見ていない。
+- 既存のシーン（Lake / River を Surface で色付けしているもの）が今までと同じ見た目で開くこと。作りとしては「水を描く」が切で読まれるが、実際に開いての確認はしていない。
+- プロパティの「水」の節の `--screenshot-ui`。
+- River → Lake → Liquid の 3 つ重ね、Liquid → Lake の順、マスクで範囲を絞った Liquid。
+- Lake の波打ち際は、シーンの値（Liquid があればそれ）で出る。湖だけ弱くする手段が無い（水の場の w を使えばできる）。
+- River は水の場を書かないので、川岸に波打ち際は出ない（意図どおり）。
 
 ## River の流れ（2026-10-04 11:00）
 

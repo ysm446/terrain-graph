@@ -1,8 +1,9 @@
 // 水際からの距離（Liquid）。
 //
-// 水の場（合成解像度、RG16F）は x = 水際からの符号付き距離（m。水の中が正、陸が負）、
-// y = 符号付きの水深（m。水位 − 下地の高さ。水の中が正、陸が負）。y は CompositeLayer.hlsl の
-// Liquid が書き、ここは y の符号が変わる所（汀線）からの距離を x へ書く。地形の描画が、岸へ向かって
+// 水の場（合成解像度、RGBA16F）は x = 水際からの符号付き距離（m。水の中が正、陸が負）、
+// y = 符号付きの水深（m。水位 − 下地の高さ。水の中が正、陸が負）、z / w は波の強さと波打ち際の度合い。
+// y は Liquid（CompositeLayer.hlsl）と Lake（CompositeWaterPaint.hlsl）が書き、
+// ここは y の符号が変わる所（汀線）からの距離を x へ書く（z / w はそのまま残す）。地形の描画が、岸へ向かって
 // 進む泡の筋の位相に使う（MeshPbr.hlsl）。
 //
 // 進め方はジャンプフラッディング。作業用の格子（合成解像度以下）に「一番近い汀線の位置」を伝播し、
@@ -26,7 +27,7 @@ ConstantBuffer<WaterConstants> g_water : register(b1);
 static const float kWaterNone = -10000.0f;
 static const float2 kNoSeed = float2(-1.0f, -1.0f);
 
-float DepthAtCell(RWTexture2D<float2> water, int2 cell)
+float DepthAtCell(RWTexture2D<float4> water, int2 cell)
 {
     const int work = int(g_water.params.x);
     const int full = int(g_water.indices.w);
@@ -43,7 +44,7 @@ void CsSeed(uint3 id : SV_DispatchThreadID)
     {
         return;
     }
-    RWTexture2D<float2> water = ResourceDescriptorHeap[g_water.indices.x];
+    RWTexture2D<float4> water = ResourceDescriptorHeap[g_water.indices.x];
     RWTexture2D<float2> target = ResourceDescriptorHeap[g_water.indices.z];
 
     const int2 cell = int2(id.xy);
@@ -120,7 +121,7 @@ void CsResolve(uint3 id : SV_DispatchThreadID)
     {
         return;
     }
-    RWTexture2D<float2> water = ResourceDescriptorHeap[g_water.indices.x];
+    RWTexture2D<float4> water = ResourceDescriptorHeap[g_water.indices.x];
     RWTexture2D<float2> source = ResourceDescriptorHeap[g_water.indices.y];
 
     const float depth = water[id.xy].y;
@@ -128,7 +129,7 @@ void CsResolve(uint3 id : SV_DispatchThreadID)
     if (depth <= kWaterNone * 0.5f)
     {
         // Liquid が書いていない所（マスクの外）。水際から遠い陸として扱う。
-        water[id.xy] = float2(-limit, depth);
+        water[id.xy] = float4(-limit, depth, water[id.xy].zw);
         return;
     }
 
@@ -154,5 +155,5 @@ void CsResolve(uint3 id : SV_DispatchThreadID)
     }
     const float cellMeters = g_water.scale.x / float(work);
     const float distance = (nearest < 1e29f) ? min(sqrt(nearest) * cellMeters, limit) : limit;
-    water[id.xy] = float2((depth > 0.0f) ? distance : -distance, depth);
+    water[id.xy] = float4((depth > 0.0f) ? distance : -distance, depth, water[id.xy].zw);
 }

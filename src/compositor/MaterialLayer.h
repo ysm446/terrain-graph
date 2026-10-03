@@ -588,7 +588,14 @@ struct MaterialLayer {
     MeanderingRiversSettings meanderingRivers;
     std::vector<MeanderPoint> meanderPoints;
 
-    // 水面の見た目（kind == LayerKind::Liquid のときだけ意味を持つ）。
+    // 水の見た目と水チャンネル（kind == Liquid / Lake / River が使う）。
+    //
+    // **水チャンネル**は合成のチャンネルの 1 つで、水の場（水際からの距離・水深・波の強さ）と
+    // 流れの場（流れの速度・水面の被覆・早瀬）の 2 枚。水を張るノードが書き、後ろへ引き継がれ、
+    // 上に陸のレイヤーが重なれば消える。後から重なる水は前の水を消さずに引き継ぐ
+    // （川が湖や海へつながる）。地形の描画がこれを読んで、波・波打ち際・流れを動かす。
+    // Liquid は常に書く。Lake / River は paintWater が真のときに水の色と水チャンネルを書く
+    // （偽なら今までどおり形だけを作り、色は後ろの Surface で付ける）。
     //
     // 水深（水位 − 下地の高さ、m）で色と透け方を決める。水面のベースカラー（baseColor）は
     // **深い所の色**で、浅い所は shallowColor から始まり、深くなるほど baseColor へ寄る。
@@ -596,6 +603,9 @@ struct MaterialLayer {
     // 構造体の既定はどちらも 0（切り）。これらを持たない古いファイルを、今までと同じ
     // 単色・不透明の水として読むため。新しく置く Liquid の既定は kDefaultLiquidLayer が決める。
     struct LiquidSettings {
+        // Lake / River が水の色と水チャンネルを書くか（Liquid は見ない。常に書く）。
+        // 構造体の既定は偽（これを持たない古いファイルの Lake / River は今までどおり）。
+        bool paintWater = false;
         DirectX::XMFLOAT3 shallowColor = {0.03f, 0.09f, 0.15f};
         // 色が浅瀬の色から深い所の色へ変わる深さ（m。この深さで約 63% まで寄る）。0 で深い所の色だけ。
         float colorDepthMeters = 0.0f;

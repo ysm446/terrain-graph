@@ -21,7 +21,7 @@ using rhi::DispatchCount;
 constexpr DXGI_FORMAT kBaseColorFormat = DXGI_FORMAT_R11G11B10_FLOAT;
 constexpr DXGI_FORMAT kNormalFormat = DXGI_FORMAT_R16G16_FLOAT;
 constexpr DXGI_FORMAT kSurfaceFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
-constexpr DXGI_FORMAT kWaterFormat = DXGI_FORMAT_R16G16_FLOAT;
+constexpr DXGI_FORMAT kWaterFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
 constexpr DXGI_FORMAT kFlowFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
 // 水際からの距離を求める作業用の格子の上限と、距離の上限（m。R16F に収め、波打ち際より十分広く）。
 constexpr uint32_t kWaterWorkResolution = 2048;
@@ -94,7 +94,7 @@ struct LayerConstants {
     float mountain1[4]; // 方向（rad）、伸長、うねり、細部
     uint32_t mountain2[4]; // シード、未使用
     float liquid0[4];  // 浅瀬の色 rgb, 色の変わる深さ（m）
-    float liquid1[4];  // 下地が透ける深さ（m）, ハイト 0〜1 の全幅（m）, 未使用 x2
+    float liquid1[4];  // 下地が透ける深さ（m）, ハイト 0〜1 の全幅（m）, 波の強さ, 未使用
     LayerMaterialGpu layerMaterial;
 };
 
@@ -3331,6 +3331,14 @@ bool MaterialEvaluator::ApplyRiver(rhi::Device& device, rhi::PipelineCache& pipe
         if (params.fillWater) {
             commandList->SetComputeRootConstantBufferView(1, flowConstants);
             run(flowPass, DispatchCount(m_resolution));
+            // 水の色も River が付ける（「水を描く」が入のとき）。水深は河床の深さで 1 に正規化してある。
+            if (layer.liquid.paintWater &&
+                !ApplyWaterPaint(device, pipelineCache, commandList, layer, stack, false,
+                                 m_river.waterFine.UavIndex(), m_river.depthFine.UavIndex(),
+                                 std::max(0.0f, params.bedDepthMeters))) {
+                PIXEndEvent(commandList);
+                return false;
+            }
         }
     }
 
@@ -3421,7 +3429,46 @@ struct FluvialErosionConstants {
 static_assert(sizeof(FluvialErosionConstants) == 144);
 }
 
-// 水際からの距離。Liquid が水の場の y（符号付きの水深）を書いた直後に呼ぶ。
+// River / Lake の水の色と水チャンネル。形（Height / Normal）を作り終えた直後に呼ぶ。
+// 書き先はどれも評価の間 UAV のまま。
+bool MaterialEvaluator::ApplyWaterPaint(rhi::Device& device, rhi::PipelineCache& cache,
+    ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer, const MaterialStack& stack,
+    bool lake, uint32_t coverageUav, uint32_t depthUav, float depthScaleMeters) {
+    auto* pass = cache.GetCompute(L"CompositeWaterPaint.hlsl", L"CsPaint");
+    if (!pass) return false;
+    struct Constants {
+        uint32_t targets[4];
+        uint32_t sources[4];
+        uint32_t mode[4];
+        float shallow[4];
+        float deep[4];
+        float params[4];
+    };
+    const auto& liquid = layer.liquid;
+    Constants c{{m_textures.baseColor.UavIndex(), m_textures.surface.UavIndex(), m_textures.flow.UavIndex(),
+                 m_textures.water.UavIndex()},
+                {coverageUav, depthUav, m_textures.height.UavIndex(), m_resolution},
+                {lake ? 1u : 0u, 1u, 0u, 0u},
+                {liquid.shallowColor.x, liquid.shallowColor.y, liquid.shallowColor.z,
+                 std::max(liquid.colorDepthMeters, 0.0f)},
+                {layer.baseColor.x, layer.baseColor.y, layer.baseColor.z, std::max(liquid.clarityMeters, 0.0f)},
+                {std::clamp(layer.roughness, 0.0f, 1.0f), depthScaleMeters,
+                 std::clamp(liquid.waveStrength, 0.0f, 1.0f), std::max(stack.HeightMeters(), 0.001f)}};
+    const auto cb = AllocateConstants(device, sizeof(c));
+    if (!cb.IsValid()) return false;
+    std::memcpy(cb.cpu, &c, sizeof(c));
+    PIXBeginEvent(commandList, PIX_COLOR_DEFAULT, "WaterPaint");
+    TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+    commandList->SetPipelineState(pass);
+    commandList->Dispatch(DispatchCount(m_resolution), DispatchCount(m_resolution), 1);
+    const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+    commandList->ResourceBarrier(1, &barrier);
+    PIXEndEvent(commandList);
+    return true;
+}
+
+// 水際からの距離。水の場の y（符号付きの水深）が書かれた直後に呼ぶ（Liquid / Lake）。
 // 作業用の格子（合成解像度以下）でジャンプフラッディングを回し、合成解像度で距離へ直して
 // 水の場の x へ書く。どのテクスチャも UAV のまま読み書きし、パスの間は UAV バリアで区切る。
 bool MaterialEvaluator::ApplyWaterDistance(rhi::Device& device, rhi::PipelineCache& cache,
@@ -3850,6 +3897,13 @@ bool MaterialEvaluator::ApplyLake(rhi::Device& device, rhi::PipelineCache& cache
     if (ok && !layer.maskOnly && constants.scale[1] > 0) {
         ok = run(7, n, finalAddress);
         if (ok) RebuildNormalsFromHeight(device, normals, commandList, stack);
+        // 「水を描く」が入なら、水の色と水チャンネル（被覆・水深・波の強さ）を書き、
+        // 水際からの距離を焼き直す（前の水と合わせた汀線で取り直す）。
+        if (ok && layer.liquid.paintWater) {
+            ok = ApplyWaterPaint(device, cache, commandList, layer, stack, true,
+                                 resources.output.UavIndex(), kInvalidTextureIndex, 1.0f) &&
+                 ApplyWaterDistance(device, cache, commandList, stack);
+        }
     }
     PIXEndEvent(commandList);
     return ok;
@@ -5805,6 +5859,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         constants.liquid0[3] = std::max(layer.liquid.colorDepthMeters, 0.0f);
         constants.liquid1[0] = std::max(layer.liquid.clarityMeters, 0.0f);
         constants.liquid1[1] = std::max(stack.HeightMeters(), 0.0f);
+        constants.liquid1[2] = std::clamp(layer.liquid.waveStrength, 0.0f, 1.0f);
         constants.heightNoise[0] = layer.heightNoise.scale;
         // ハイトはノイズの amount ではなく heightGain を使う。
         constants.heightNoise[1] = layer.heightGain;
@@ -5932,6 +5987,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 CD3DX12_RESOURCE_BARRIER::UAV(m_textures.surface.resource.Get()),
                 CD3DX12_RESOURCE_BARRIER::UAV(m_textures.height.resource.Get()),
                 CD3DX12_RESOURCE_BARRIER::UAV(m_textures.water.resource.Get()),
+                CD3DX12_RESOURCE_BARRIER::UAV(m_textures.flow.resource.Get()),
             };
             commandList->ResourceBarrier(_countof(barriers), barriers);
 

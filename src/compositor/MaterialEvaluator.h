@@ -22,11 +22,13 @@ struct MaterialTextureSet {
     // R32_FLOAT。R16 だと 0〜1 の全幅が標高差なので、600 m の地形で 1 ULP が約 0.3 m。
     // ブラー / 堆積の後にここから作り直す法線が階段になるため 32bit にした。
     rhi::GpuTexture height;
-    // 水の場（R16G16_FLOAT）。x = 水際からの符号付き距離（m。水の中が正）、y = 符号付きの水深（m）。
-    // Liquid が書く。Liquid が無ければ全面が「水なし」（大きな負の値）。地形の描画が波打ち際に使う。
+    // --- 水チャンネル（水の場と流れの場）。水を張るノード（Liquid / Lake / River）が書く ---
+    // 水の場（R16G16B16A16_FLOAT）。x = 水際からの符号付き距離（m。水の中が正）、
+    // y = 符号付きの水深（m）、z = 波の強さ（0〜1）、w = 波打ち際を出す度合い。
+    // 水が無ければ x / y は「水なし」（大きな負の値）。
     rhi::GpuTexture water;
     // 流れの場（R16G16B16A16_FLOAT）。xy = 流れの速度（m/s。x が +U、y が +V の向き。ワールドでは
-    // +X / +Z）、z = 川の水面の被覆、w = 早瀬の度合い（0〜1）。River が書く。無ければ全面 0。
+    // +X / +Z）、z = 水面の被覆（どの水でも）、w = 早瀬の度合い（0〜1）。無ければ全面 0。
     rhi::GpuTexture flow;
 
     bool IsValid() const { return baseColor.IsValid(); }
@@ -584,7 +586,12 @@ private:
         const MaterialStack& stack, uint32_t maskIndex);
     bool ApplyFluvialErosionMask(rhi::Device& device, rhi::PipelineCache& pipelineCache,
         ID3D12GraphicsCommandList* commandList, const MaskOp& op, rhi::GpuTexture& target, bool enabled);
-    // Liquid が水の場へ書いた水深から、水際からの距離を焼く（CompositeWater.hlsl）。
+    // River / Lake が水の色と水チャンネルを書く（CompositeWaterPaint.hlsl）。lake が真なら Lake。
+    // coverage は被覆（River）か湖の出力（Lake）の UAV、depth は水深の UAV（River だけ）。
+    bool ApplyWaterPaint(rhi::Device& device, rhi::PipelineCache& pipelineCache,
+        ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer, const MaterialStack& stack,
+        bool lake, uint32_t coverageUav, uint32_t depthUav, float depthScaleMeters);
+    // 水の場の水深から、水際からの距離を焼く（CompositeWater.hlsl）。
     bool ApplyWaterDistance(rhi::Device& device, rhi::PipelineCache& pipelineCache,
         ID3D12GraphicsCommandList* commandList, const MaterialStack& stack);
     bool ApplyFlattenBorders(rhi::Device& device, rhi::PipelineCache& pipelineCache,

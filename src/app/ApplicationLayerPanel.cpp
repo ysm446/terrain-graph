@@ -26,6 +26,45 @@ namespace tg {
 
 // レイヤー 1 枚ぶんのプロパティ行。グラフパネルの下段から使う。
 // 変更の記録（アンドゥ / グラフの再コンパイル）は呼び出し側で行う。
+namespace {
+
+// Lake / River の「水」の節。水の色と水チャンネルを書くかどうかと、色の行。
+// 深い所の色はレイヤーのベースカラーを使う（Liquid と同じ持ち方）。withWaves は波の強さの行を出すか
+// （River は流れの節に自分の波を持つので出さない）。
+bool DrawWaterAppearance(compositor::MaterialLayer& layer, const compositor::MaterialLayer& defaults,
+                         bool withWaves, const char* tableId) {
+    bool changed = false;
+    ui::SectionHeader("水");
+    if (ui::BeginPropertyTable(tableId)) {
+        changed |= ui::PropertyBool("水を描く", &layer.liquid.paintWater, defaults.liquid.paintWater,
+                                    "このノードが水の色を付け、水チャンネル（波・波打ち際・流れの範囲）を書く。"
+                                    "切ると形だけを作る（色は後ろの Surface で付ける今までの使い方）");
+        if (layer.liquid.paintWater) {
+            changed |= ui::PropertyColorLinear("深い所の色", &layer.baseColor.x, &defaults.baseColor.x,
+                                               "水の深い所の色");
+            changed |= ui::PropertyColorLinear("浅瀬の色", &layer.liquid.shallowColor.x,
+                                               &defaults.liquid.shallowColor.x,
+                                               "水の浅い所の色。深くなるほど深い所の色へ寄る");
+            changed |= ui::PropertyFloat("色の変わる深さ", &layer.liquid.colorDepthMeters, 0.0f, 100.0f,
+                                         defaults.liquid.colorDepthMeters,
+                                         "浅瀬の色から深い所の色へ変わる水深（m）。0 で深い所の色だけ", "%.1f m");
+            changed |= ui::PropertyFloat("透ける深さ", &layer.liquid.clarityMeters, 0.0f, 50.0f,
+                                         defaults.liquid.clarityMeters,
+                                         "水越しに底の色が見える水深（m）。大きいほど澄んだ水。0 で透けない",
+                                         "%.1f m");
+            if (withWaves) {
+                changed |= ui::PropertyFloat("波の強さ", &layer.liquid.waveStrength, 0.0f, 1.0f,
+                                             defaults.liquid.waveStrength,
+                                             "この水面の波の傾きの強さ。0 で平らな水面", "%.2f");
+            }
+        }
+        ui::EndPropertyTable();
+    }
+    return changed;
+}
+
+}  // namespace
+
 bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBase, bool isSource,
                                    bool maskFromNode, bool maskResolves, bool pathUv) {
     // **困っていることは一番上に出す。** 設定の行が多いレイヤーだと、
@@ -174,9 +213,11 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                 "水の移動を計算する格子の基準となる距離", "%.3f m");
             ui::EndPropertyTable();
         }
+        changed |= DrawWaterAppearance(layer, kDefaultLakeLayer, true, "lakeWaterRows");
         ui::HintText("窪みに水を溜めて水面の高さへ変形する。Lake は湖の範囲、Depth は水深（m）、"
                      "Water Level は周囲へ延長した水位（Height と同じ 0〜1 基準）。"
-                     "水の色や粗さは、Result の後に Surface を接続して Lake 出力で指定する");
+                     "「水を描く」が入なら、水の色・波・波打ち際はこのノードが付ける。"
+                     "波の大きさや波打ち際の細かい設定は Liquid のものを使う（Liquid が無ければ既定）");
         return changed;
     }
     // 積雪も合成レイヤーではなく「下地のハイトへ雪を積む加工」。
@@ -465,6 +506,7 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                 "河原の縁のなだらかさ。広がりと比高それぞれに対する割合", "%.2f");
             ui::EndPropertyTable();
         }
+        changed |= DrawWaterAppearance(layer, kDefaultRiverLayer, false, "riverWaterRows");
         // 流れは合成に焼かず、地形の描画が水面へ下流へ流れる模様を重ねる。
         ui::SectionHeader("流れ");
         if (ui::BeginPropertyTable("layerRiverFlowRows")) {
@@ -489,7 +531,9 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                      "向きは水面の傾きから決まる。River が複数あるときは、最初の有効な 1 つの設定を使う");
         ui::HintText("川筋から河床を掘り、下流へ単調に下がる水面を張る。盆地は湖になる。"
                      "Water は水面の被覆、Bank は河原（岩・砂利を置く帯）、Depth は水深。"
-                     "水の Surface はハイトを定数にすること（水面の形は River が決める）");
+                     "「水を描く」が切のときは、後ろの Surface で水の色を付ける"
+                     "（その Surface はハイトを定数にすること。水面の形は River が決める）。"
+                     "水の上に Surface を重ねると、そこは陸として扱い、流れは消える");
         return changed;
     }
 

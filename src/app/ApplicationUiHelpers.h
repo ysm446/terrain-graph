@@ -139,6 +139,20 @@ inline const compositor::MaterialLayer kDefaultLakeLayer = [] {
     compositor::MaterialLayer layer;
     layer.kind = compositor::LayerKind::Lake;
     layer.name = "Lake";
+    // 新しく置く Lake は水を描く（色は湖らしくやや緑に寄せた淡水、波は穏やか）。
+    // 波の大きさ・波打ち際は、Liquid が無いシーンではこの値がシーン全体に使われる。
+    layer.baseColor = {0.006f, 0.022f, 0.03f};
+    layer.roughness = 0.07f;
+    layer.liquid.paintWater = true;
+    layer.liquid.shallowColor = {0.04f, 0.12f, 0.12f};
+    layer.liquid.colorDepthMeters = 4.0f;
+    layer.liquid.clarityMeters = 1.5f;
+    layer.liquid.waveStrength = 0.2f;
+    layer.liquid.waveScaleMeters = 12.0f;
+    layer.liquid.shoreFoam = 0.25f;
+    layer.liquid.shoreRunupMeters = 0.08f;
+    layer.liquid.shoreSpacingMeters = 8.0f;
+    layer.liquid.shoreWidthMeters = 15.0f;
     return layer;
 }();
 // Snow Cover の既定値。
@@ -164,6 +178,13 @@ inline const compositor::MaterialLayer kDefaultRiverLayer = [] {
     // 新しく置く River は流れの波と早瀬の白波を出す（古いファイルは 0 で読む）。
     layer.river.flowWaveStrength = 0.5f;
     layer.river.flowFoam = 0.5f;
+    // 新しく置く River は水の色も自分で付ける（後ろに水の色の Surface を置かなくてよい）。
+    layer.baseColor = {0.006f, 0.022f, 0.03f};
+    layer.roughness = 0.07f;
+    layer.liquid.paintWater = true;
+    layer.liquid.shallowColor = {0.04f, 0.12f, 0.12f};
+    layer.liquid.colorDepthMeters = 3.0f;
+    layer.liquid.clarityMeters = 1.0f;
     return layer;
 }();
 

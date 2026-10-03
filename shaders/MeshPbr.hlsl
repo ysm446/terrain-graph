@@ -341,8 +341,8 @@ ShoreSample SampleShore(float2 uv, float2 worldXz)
     result.sheen = 0.0f;
     result.wet = 0.0f;
 
-    Texture2D<float2> waterMap = ResourceDescriptorHeap[g_mesh.materialWaterIndex];
-    const float2 field = waterMap.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
+    Texture2D<float4> waterMap = ResourceDescriptorHeap[g_mesh.materialWaterIndex];
+    const float4 field = waterMap.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
     const float distance = field.x;  // 水の中が正
     const float depth = field.y;     // 水の中が正。陸では −（水位からの高さ）
 
@@ -427,7 +427,16 @@ ShoreSample SampleShore(float2 uv, float2 worldXz)
     {
         // --- 陸の側: 寄せる波、引く波、濡れ -------------------------------------------
         const float above = -depth;  // 水位からの高さ（m）
-        result.wash = smoothstep(level, level - 0.03f, above);
+        // 水際から離れた陸には出さない。水位からの高さだけで決めると、遠くの低い土地（湖の水位を
+        // 周囲へ延長した値より低い所など）まで波が寄せたことになる。届く距離は、寄せる高さを
+        // 1/60 の勾配で割った長さまで（それより緩い浜はほぼ無い）。最低 6 m。
+        const float reachMeters = max(6.0f, g_mesh.shoreRunup * 60.0f);
+        const float nearShore = smoothstep(reachMeters, reachMeters * 0.7f, -distance);
+        if (nearShore <= 0.0f)
+        {
+            return result;
+        }
+        result.wash = smoothstep(level, level - 0.03f, above) * nearShore;
         // 先端の泡。這い上がる間は濃く、引く間は薄れる。
         const float edge = smoothstep(level - 0.12f, level - 0.02f, above) * result.wash;
         // 膜に乗った泡（引く間は沖へ流れて消えていく）。
@@ -438,7 +447,8 @@ ShoreSample SampleShore(float2 uv, float2 worldXz)
             ? smoothstep(crestLevel, crestLevel - 0.05f, above) * (1.0f - result.wash) * (1.0f - down)
             : 0.0f;
         // 波が届きうる範囲は濡れている（一番強い波が届く高さの少し上まで、ぼかして）。
-        result.wet = smoothstep(g_mesh.shoreRunup * 1.45f, g_mesh.shoreRunup * 1.1f, above);
+        result.wet = smoothstep(g_mesh.shoreRunup * 1.45f, g_mesh.shoreRunup * 1.1f, above) * nearShore;
+        result.sheen *= nearShore;
     }
     result.foam = saturate(result.foam);
     return result;
@@ -718,7 +728,6 @@ PsOutput PsMain(VsOutput input)
 
         baseColor = SampleMaterialColor(baseColorMap, uv).rgb;
 
-        // アルファは 1 − 水面の被覆（CompositeLayer.hlsl の Liquid が書く）。
         const float4 surface = SampleMaterialColor(surfaceMap, uv);
         roughnessValue = surface.r;
         metallicValue = surface.g;
@@ -732,33 +741,40 @@ PsOutput PsMain(VsOutput input)
         normal = normalize(tangent * tangentNormal.x + bitangent * tangentNormal.y +
                            geometricNormal * tangentNormal.z);
 
-        // 水面には動く波の傾きを重ねる。水面は水平なので、ワールドの XZ の傾きをそのまま法線へ足す。
-        const float water = 1.0f - surface.a;
-        if (water > 0.001f && g_mesh.waveStrength > 0.0f)
+        // --- 水チャンネル ---------------------------------------------------------
+        // 流れの場の z が水面の被覆（どの水でも）。水の場の z が、その場所の波の強さ。
+        Texture2D<float4> flowMap = ResourceDescriptorHeap[g_mesh.materialFlowIndex];
+        Texture2D<float4> waterFieldMap = ResourceDescriptorHeap[g_mesh.materialWaterIndex];
+        const float4 flow = flowMap.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
+        const float water = saturate(flow.z);
+        if (water > 0.001f)
         {
             const float2 worldXz = input.worldPosition.xz;
             const float footprint = max(length(ddx(worldXz)), length(ddy(worldXz)));
-            // 勾配ノイズの傾きは 1 前後まで出る。強さ 1 で「荒れた海」程度（傾き 0.3 前後）に収める。
-            const float2 slope = WaveSlope(worldXz, footprint) * (g_mesh.waveStrength * 0.3f * water);
-            normal = normalize(normal + float3(-slope.x, 0.0f, -slope.y));
-            // 画素より細かい波は、ラフネスとして残す。
-            const float filtered = 0.45f * g_mesh.waveStrength * sqrt(WaveFilteredFraction(footprint));
-            roughnessValue = lerp(roughnessValue, max(roughnessValue, filtered), water);
-        }
 
-        // 川（River）の水面には、流れの場に沿って下流へ流れる波と、早瀬の白波を重ねる。
-        if (g_mesh.riverWaveStrength > 0.0f || g_mesh.riverFoam > 0.0f)
-        {
-            Texture2D<float4> flowMap = ResourceDescriptorHeap[g_mesh.materialFlowIndex];
-            const float4 flow = flowMap.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
-            if (flow.z > 0.001f)
+            // 海や湖の波。水面は水平なので、ワールドの XZ の傾きをそのまま法線へ足す。
+            // 強さは水を張ったノードごとに違う（湖は穏やか、海は荒い）。
+            const float waveStrength =
+                g_mesh.waveStrength * saturate(waterFieldMap.SampleLevel(g_samplerLinearClamp, uv, 0.0f).z);
+            if (waveStrength > 0.0f)
             {
-                const float2 worldXz = input.worldPosition.xz;
-                const float footprint = max(length(ddx(worldXz)), length(ddy(worldXz)));
-                const RiverSample river = SampleRiverFlow(worldXz, flow.xy, flow.w, footprint);
-                const float2 slope = river.slope * (g_mesh.riverWaveStrength * 0.3f * flow.z);
+                // 勾配ノイズの傾きは 1 前後まで出る。強さ 1 で「荒れた海」程度（傾き 0.3 前後）に収める。
+                const float2 slope = WaveSlope(worldXz, footprint) * (waveStrength * 0.3f * water);
                 normal = normalize(normal + float3(-slope.x, 0.0f, -slope.y));
-                const float foam = river.foam * flow.z;
+                // 画素より細かい波は、ラフネスとして残す。
+                const float filtered = 0.45f * waveStrength * sqrt(WaveFilteredFraction(footprint));
+                roughnessValue = lerp(roughnessValue, max(roughnessValue, filtered), water);
+            }
+
+            // 流れのある所（川、河口、湖への注ぎ口）には、下流へ流れる波と早瀬の白波を重ねる。
+            // 上に深い水が乗ると速度が弱まるので、流れの波も一緒に消えていく。
+            const float flowing = saturate(length(flow.xy) / 0.25f);
+            if (flowing > 0.0f && (g_mesh.riverWaveStrength > 0.0f || g_mesh.riverFoam > 0.0f))
+            {
+                const RiverSample river = SampleRiverFlow(worldXz, flow.xy, flow.w, footprint);
+                const float2 slope = river.slope * (g_mesh.riverWaveStrength * 0.3f * water * flowing);
+                normal = normalize(normal + float3(-slope.x, 0.0f, -slope.y));
+                const float foam = river.foam * water;
                 baseColor = lerp(baseColor, float3(0.82f, 0.85f, 0.86f), foam);
                 roughnessValue = lerp(roughnessValue, 0.6f, foam);
             }

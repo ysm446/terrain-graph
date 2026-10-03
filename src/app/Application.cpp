@@ -813,12 +813,24 @@ bool Application::PrepareCloudMask(CloudMaskSlot& slot, graph::GraphId maskNode,
 // Liquid が複数あっても模様は 1 つ（地形グラフの最初の有効な Liquid）。
 void Application::PrepareWater() {
     renderer::PreviewRenderer::WaterSettings water;
+    // 波の大きさ・速さ・向きと波打ち際はシーンに 1 組。最初の有効な Liquid、無ければ「水を描く」が入の
+    // 最初の Lake から取る。**波の強さは場所ごと**（水の場が持つ）なので、ここでは有無（0 / 1）だけ渡す。
+    const graph::Node* source = nullptr;
     for (const graph::Node& node : m_graph.Nodes()) {
-        if (node.kind != graph::NodeKind::Liquid || node.component != 0 || graph::IsBypassed(node)) continue;
+        if (node.component != 0 || graph::IsBypassed(node)) continue;
         const auto* settings = std::get_if<graph::LayerNodeSettings>(&node.settings);
         if (settings == nullptr) continue;
-        const auto& liquid = settings->layer.liquid;
-        water.waveStrength = std::clamp(liquid.waveStrength, 0.0f, 1.0f);
+        if (node.kind == graph::NodeKind::Liquid) {
+            source = &node;
+            break;
+        }
+        if (node.kind == graph::NodeKind::Lake && settings->layer.liquid.paintWater && source == nullptr) {
+            source = &node;
+        }
+    }
+    if (source != nullptr) {
+        const auto& liquid = std::get_if<graph::LayerNodeSettings>(&source->settings)->layer.liquid;
+        water.waveStrength = 1.0f;
         water.waveScaleMeters = std::max(liquid.waveScaleMeters, 0.1f);
         water.waveSpeed = std::max(liquid.waveSpeed, 0.0f);
         water.waveDirectionRadians = liquid.waveDirectionDegrees * DirectX::XM_PI / 180.0f;
@@ -826,7 +838,6 @@ void Application::PrepareWater() {
         water.shoreRunupMeters = std::max(liquid.shoreRunupMeters, 0.0f);
         water.shoreSpacingMeters = std::max(liquid.shoreSpacingMeters, 1.0f);
         water.shoreWidthMeters = std::max(liquid.shoreWidthMeters, 0.0f);
-        break;
     }
     // 川の流れ。Liquid と同じく、地形グラフの最初の有効な River の設定を使う。
     for (const graph::Node& node : m_graph.Nodes()) {

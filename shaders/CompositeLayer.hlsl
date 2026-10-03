@@ -68,7 +68,7 @@ struct LayerConstants
     uint4 mountain2; // シード、水の場の UAV、流れの場の UAV、未使用
     // 水面（Liquid）の見た目。浅瀬の色 rgb, 色の変わる深さ（m。0 で深い所の色だけ）
     float4 liquid0;
-    // 下地が透ける深さ（m。0 で透けない）, ハイト 0〜1 の全幅（m）, 未使用 x2
+    // 下地が透ける深さ（m。0 で透けない）, ハイト 0〜1 の全幅（m）, 波の強さ, 未使用
     float4 liquid1;
     LayerMaterialData layerMaterial;
 };
@@ -683,21 +683,52 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
         }
     }
 
-    // --- 水の場 -----------------------------------------------------------------
-    // x = 水際からの符号付き距離（CompositeWater.hlsl が後から書く）、y = 符号付きの水深（m）。
-    // 一番下のレイヤーが「水なし」で埋め、Liquid がマスクの中に水深を書く（陸の側も。寄せる波が
-    // 水位より少し高い所まで這い上がるのに使う）。
-    RWTexture2D<float2> waterTarget = ResourceDescriptorHeap[g_layer.mountain2.y];
+    // --- 水チャンネル -------------------------------------------------------------
+    // 水の場: x = 水際からの符号付き距離（CompositeWater.hlsl が後から書く）、y = 符号付きの水深（m）、
+    //         z = 波の強さ、w = 波打ち際を出す度合い。
+    // 流れの場: xy = 流れの速度（m/s）、z = 水面の被覆、w = 早瀬の度合い。
+    // 一番下のレイヤーが「水なし」で埋める。Liquid は水として書き、前の水（川・湖）を引き継ぐ。
+    // ほかのレイヤー（シェイプ以外）は陸として重なり、重みのぶんだけ水面の被覆を消す。
+    // 式は CompositeWaterPaint.hlsl（River / Lake）と揃える。
+    RWTexture2D<float4> waterTarget = ResourceDescriptorHeap[g_layer.mountain2.y];
+    RWTexture2D<float4> flowTarget = ResourceDescriptorHeap[g_layer.mountain2.z];
     if (isBaseLayer)
     {
-        waterTarget[texel] = float2(kWaterNone, kWaterNone);
-        // 流れの場（River が書く）も「流れなし」で埋める。
-        RWTexture2D<float4> flowTarget = ResourceDescriptorHeap[g_layer.mountain2.z];
+        waterTarget[texel] = float4(kWaterNone, kWaterNone, 0.0f, 0.0f);
         flowTarget[texel] = float4(0.0f, 0.0f, 0.0f, 0.0f);
     }
-    else if (writesWaterDepth)
+    else if (isLiquid)
     {
-        waterTarget[texel] = float2(waterTarget[texel].x, signedDepthMeters);
+        float4 water = waterTarget[texel];
+        if (writesWaterDepth)
+        {
+            // 陸の側も書く（寄せる波が水位より少し高い所まで這い上がるのに使う）。
+            // 前の水（湖など）があれば、深いほう・水面に近いほうを取る。
+            water.y = max(water.y, signedDepthMeters);
+        }
+        water.z = lerp(water.z, g_layer.liquid1.z, weight);
+        water.w = lerp(water.w, 1.0f, weight);
+        waterTarget[texel] = water;
+
+        if (weight > 0.0f)
+        {
+            // 上に乗った水の深さで、前の流れを弱める（1.5 m で約 37%）。浅い河口では川の流れが残る。
+            float4 flow = flowTarget[texel];
+            const float keep = lerp(1.0f, exp(-max(signedDepthMeters, 0.0f) / 1.5f), weight);
+            flow.xy *= keep;
+            flow.w *= keep;
+            flow.z = max(flow.z, weight);
+            flowTarget[texel] = flow;
+        }
+    }
+    else if (!isShape && weight > 0.0f && (g_layer.channelMask & 0x1u) != 0u)
+    {
+        float4 flow = flowTarget[texel];
+        if (flow.z > 0.0f)
+        {
+            flow.z *= 1.0f - weight;
+            flowTarget[texel] = flow;
+        }
     }
 }
 
