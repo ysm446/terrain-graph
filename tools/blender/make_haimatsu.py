@@ -34,7 +34,7 @@ import numpy as np
 from mathutils import Vector
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from vegetation import (LEAVES, UP, CanopyField, Geometry, add_core, add_tube_lod,  # noqa: E402
+from vegetation import (CORE, LEAVES, UP, CanopyField, Geometry, add_core, add_tube_lod,  # noqa: E402
                         along_polyline, asset_ref, build_hull, export_fbx, finish_cutout, grow,
                         height_to_normal, make_core_material, make_material, make_object, parse_args,
                         perpendicular, source_ref, tiling_noise, to_bytes, transfer_field_normals,
