@@ -619,7 +619,13 @@ float SampleShadow(float3 worldPosition, float nDotL, uint shadowIndex, float te
     }
 
     // 斜めに当たっているほど自己遮蔽しやすいので、下駄を増やす。
-    const float slopeBias = bias * (1.0f + 3.0f * (1.0f - saturate(nDotL)));
+    // 面が光に対して寝ていると、シャドウマップの 1 テクセルぶんで深度が tan（法線と光のなす角）だけ
+    // 変わる。3x3 で隣のテクセルも引くので、要る下駄は 1.5 テクセル × √2 × tan。bias は 1.5 テクセル
+    // ぶんなので、tan に比例させる（1 - nDotL に比例させると、太陽が低いときに足りず、水平な水面に
+    // 縞や格子が出る）。上限は、光が面にほぼ沿うときに下駄が際限なく増えないように。
+    const float cosAngle = saturate(nDotL);
+    const float tanAngle = min(sqrt(1.0f - cosAngle * cosAngle) / max(cosAngle, 1e-3f), 8.0f);
+    const float slopeBias = bias * (1.0f + 1.5f * tanAngle);
 
     Texture2D<float> shadowMap = ResourceDescriptorHeap[NonUniformResourceIndex(shadowIndex)];
     float visibility = 0.0f;
@@ -820,6 +826,9 @@ PsOutput PsMain(VsOutput input)
     float metallicValue = g_mesh.metallic;
     float ambientOcclusion = 1.0f;
     float3 normal = geometricNormal;
+    // 影の下駄を決める向き。シャドウマップに描かれる形の向きなので、波の傾きは入れない
+    // （水面の形は水平。波の法線で決めると、太陽の側へ傾いた波の所で下駄が足りなくなる）。
+    float3 shadowNormal = geometricNormal;
     // 太陽のきらめきを掛ける割合（水面の被覆。泡の所は掛けない）。
     float glintCover = 0.0f;
 
@@ -839,6 +848,7 @@ PsOutput PsMain(VsOutput input)
             normalize(cross(ddx(input.worldPosition), ddy(input.worldPosition)));
         // 三角形の巻き方によって裏返るので、視線の側へ向ける。
         normal = (dot(faceNormal, viewDirection) < 0.0f) ? -faceNormal : faceNormal;
+        shadowNormal = normal;
     }
 
     if (useMaterialShading)
@@ -863,6 +873,7 @@ PsOutput PsMain(VsOutput input)
         const float3 bitangent = cross(geometricNormal, tangent) * input.tangentSign;
         normal = normalize(tangent * tangentNormal.x + bitangent * tangentNormal.y +
                            geometricNormal * tangentNormal.z);
+        shadowNormal = normal;
 
         // --- 水チャンネル ---------------------------------------------------------
         // 流れの場の z が水面の被覆（どの水でも）。水の場の z が、その場所の波の強さ。
@@ -1043,7 +1054,7 @@ PsOutput PsMain(VsOutput input)
 
     const float3 lightDirection = normalize(g_mesh.lightDirection);
     // 影は直接光にだけ掛ける。環境光（IBL）は別に扱う。
-    const float shadow = SampleCascadedShadow(input.worldPosition, dot(normal, lightDirection));
+    const float shadow = SampleCascadedShadow(input.worldPosition, dot(shadowNormal, lightDirection));
 
     // 水面の太陽のきらめき。画素の中の波面のうち、太陽を目へ返す向きのものを数える（SunGlint）。
     float specularScale = 1.0f;
