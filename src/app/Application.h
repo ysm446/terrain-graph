@@ -772,6 +772,12 @@ private:
     // サイズ変化のたびに前の表示領域を復元するので、ドックの確定前に寄せると
     // 上書きされて効かない。
     int m_graphNavigateCountdown = 0;
+    // グラフのタブ（0 = 地形、1 = 雲）ごとの、キャンバスの表示位置とズーム（エディタの設定 JSON の
+    // "view" だけ）。タブを切り替えるとエディタを作り直すので、戻ったときに同じ所を出すために持つ。
+    // 空なら全体を画面へ収める。グラフが丸ごと入れ替わったら捨てる。保存はしない。
+    std::array<std::string, 2> m_graphViewStates;
+    // タブバーが前のフレームに出していたタブ（外から編集対象が変わったときに選び直すため）。
+    int m_graphTabShown = -2;
     ImVec2 m_graphCanvasSize = ImVec2(0.0f, 0.0f);
     compositor::TextureLibrary m_textureLibrary;
     compositor::MaterialLibrary m_materialLibrary;

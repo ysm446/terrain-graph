@@ -361,6 +361,8 @@ void Application::RequestGraphNodePlacement(bool navigate) {
     // 視点を動かさない（そのたびに視点が飛ぶと編集にならない）。
     if (navigate) {
         m_graphNavigateCountdown = 3;
+        // グラフが丸ごと入れ替わった。タブごとに覚えていた表示位置は別のグラフのもの。
+        for (std::string& state : m_graphViewStates) state.clear();
     }
 }
 
@@ -1323,8 +1325,32 @@ void Application::DrawGraphEditor() {
         // 位置は Node が持ち、プロジェクトに保存する。エディタ側の設定ファイルは使わない。
         config.SettingsFile = nullptr;
         config.NavigateButtonIndex = 2;
+        // 表示位置とズームだけ、タブ（地形 / 雲）ごとにメモリへ覚える。ノードの位置と選択は
+        // アプリが持つので、エディタの設定からは "view" だけを残す。
+        config.UserPointer = this;
+        config.SaveSettings = [](const char* data, size_t size, ed::SaveReasonFlags, void* user) {
+            auto* self = static_cast<Application*>(user);
+            if (self->m_editComponent < 0 || self->m_editComponent > 1) return true;
+            const nlohmann::json parsed = nlohmann::json::parse(data, data + size, nullptr, false);
+            if (!parsed.is_object() || !parsed.contains("view")) return true;
+            nlohmann::json state;
+            state["view"] = parsed["view"];
+            self->m_graphViewStates[self->m_editComponent] = state.dump();
+            return true;
+        };
+        config.LoadSettings = [](char* data, void* user) -> size_t {
+            const auto* self = static_cast<const Application*>(user);
+            if (self->m_editComponent < 0 || self->m_editComponent > 1) return 0;
+            const std::string& state = self->m_graphViewStates[self->m_editComponent];
+            if (data != nullptr) std::memcpy(data, state.data(), state.size());
+            return state.size();
+        };
         m_nodeEditor = ed::CreateEditor(&config);
-        RequestGraphNodePlacement();
+        // 覚えた表示位置があればそれを出す。無ければ全体を画面へ収める。
+        const bool remembered = m_editComponent >= 0 && m_editComponent <= 1 &&
+                                !m_graphViewStates[m_editComponent].empty();
+        RequestGraphNodePlacement(false);
+        m_graphNavigateCountdown = remembered ? 0 : 3;
     }
 
     static ImVec2 addNodePosition(0.0f, 0.0f);
@@ -1680,6 +1706,12 @@ void Application::DrawGraphEditor() {
         // ノードを選んでいなくても並べ直せるよう、背景のメニューにも置く。
         ImGui::Separator();
         if (ImGui::MenuItem("グラフ全体を左から右へ並べ直す")) m_pendingGraphArrange = true;
+        // めったに触らない表示の切り替えなので、パネルに行を取らずここへ置く。
+        if (ImGui::MenuItem("ノードのメモを表示", nullptr, &m_settings.Display().showNodeNotes)) {
+            m_settings.Save();
+        }
+        ImGui::SetItemTooltip("ノードのメモの先頭をノードに表示する。切るとメモの印だけになり、"
+                              "印に載せると全文が出る");
         ImGui::EndPopup();
     }
     ed::Resume();
@@ -1790,6 +1822,9 @@ void Application::DrawGraphEditor() {
 
 void Application::OpenComponentEditor(int component) {
     if (m_editComponent == component && m_nodeEditor) return;
+    // **編集対象を変える前に壊す。** エディタは壊すときに表示位置を保存する（今のタブの分として）。
+    // 作り直しは DrawGraphEditor（覚えた表示位置があればそれを、無ければ全体を出す）。
+    if (m_nodeEditor) { ed::DestroyEditor(m_nodeEditor); m_nodeEditor = nullptr; }
     m_editComponent = component;
     m_graphClipboard.clear();
     // 開くコンポーネントのノードを選んでいれば、その選択は保つ（--select-node や
@@ -1800,8 +1835,6 @@ void Application::OpenComponentEditor(int component) {
     }
     m_previewGraphNode = 0; m_previewGraphPin = 0;
     m_presetEditorId = 0;
-    if (m_nodeEditor) { ed::DestroyEditor(m_nodeEditor); m_nodeEditor = nullptr; }
-    RequestGraphNodePlacement();
 }
 
 std::filesystem::path Application::SceneAssetDirectory() {
@@ -2104,10 +2137,29 @@ void Application::DrawGraphPanel() {
         if (ui::Button("破棄して戻る", ui::kWideButtonWidth)) m_pendingPreviewFinish = 2;
     }
     if (m_sceneComponents.is_array()) {
+        // 編集するグラフはタブで選ぶ（選ばれているタブが「いま編集中」の表示を兼ねる）。
+        // 中身はタブの中に描かず、下の区画が編集対象に合わせて切り替わる。
         ImGui::BeginDisabled(m_componentPreview >= 0);
-        if (ui::Button("地形グラフ", ui::kWideButtonWidth)) OpenComponentEditor(0);
-        ImGui::SameLine();
-        if (ui::Button("雲グラフ", ui::kWideButtonWidth)) OpenComponentEditor(1);
+        if (ImGui::BeginTabBar("graphComponentTabs")) {
+            static constexpr const char* kTabNames[2] = {"地形グラフ", "雲グラフ"};
+            // シーン階層などから編集対象が変わったときは、タブの側を選び直す。
+            const bool reselect = (m_graphTabShown != m_editComponent);
+            int shown = -1;
+            for (int component = 0; component < 2; ++component) {
+                const ImGuiTabItemFlags flags = (reselect && component == m_editComponent)
+                    ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
+                if (ImGui::BeginTabItem(kTabNames[component], nullptr, flags)) {
+                    shown = component;
+                    ImGui::EndTabItem();
+                }
+            }
+            if (shown == m_editComponent) {
+                m_graphTabShown = m_editComponent;
+            } else if (!reselect && shown >= 0) {
+                OpenComponentEditor(shown);  // タブをクリックした
+            }
+            ImGui::EndTabBar();
+        }
         ImGui::EndDisabled();
     }
     if (const size_t cycleCount = GraphCycleNodes().size(); cycleCount > 0) {
@@ -2115,14 +2167,6 @@ void Application::DrawGraphPanel() {
         ImGui::TextWrapped("接続が循環しています（%zu 個のノード）。赤枠のノードの間の接続を 1 本外してください",
                            cycleCount);
         ImGui::PopStyleColor();
-    }
-    if (ui::BeginPropertyTable("graphDisplayRows")) {
-        if (ui::PropertyBool("メモを表示", &m_settings.Display().showNodeNotes, true,
-                             "ノードのメモの先頭をノードに表示する。切るとメモの印だけになり、"
-                             "印に載せると全文が出る")) {
-            m_settings.Save();
-        }
-        ui::EndPropertyTable();
     }
 
     // 横に広い枠（下の帯など）へ置いたときは左右に割る（左がグラフ、右がプロパティ）。
