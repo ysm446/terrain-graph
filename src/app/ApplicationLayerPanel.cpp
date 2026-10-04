@@ -1224,6 +1224,10 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
             changed |= ui::PropertyFloat("向き", &layer.liquid.waveDirectionDegrees, -180.0f, 180.0f,
                                          defaults.liquid.waveDirectionDegrees,
                                          "うねりの進む向き（度）。0 で +X、90 で +Z へ進む", "%.0f°");
+            changed |= ui::PropertyFloat("向きの揃い", &layer.liquid.waveDirectional, 0.0f, 1.0f,
+                                         defaults.liquid.waveDirectional,
+                                         "波が「向き」へ揃って進む度合い。1 で全部の波が向きの前後へ進む（外洋のうねり）。"
+                                         "0 で決まった向きを持たない（湾や内海）", "%.2f");
             changed |= ui::PropertyFloat("波面の大きさ", &layer.liquid.waveFacetSizeMeters, 0.0f, 0.2f,
                                          defaults.liquid.waveFacetSizeMeters,
                                          "太陽のきらめきを作る、一番小さな波面の大きさ（m）。画素の中の波面を数え、"

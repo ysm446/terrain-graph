@@ -838,7 +838,8 @@ void Application::PrepareWater() {
         water.waveSpeed = std::max(liquid.waveSpeed, 0.0f);
         water.waveDirectionRadians = liquid.waveDirectionDegrees * DirectX::XM_PI / 180.0f;
         // 湖の波は決まった向きへ進めない（Lake には「向き」の設定も無い。揃えて流すと流れに見える）。
-        water.waveDirectional = (source->kind == graph::NodeKind::Lake) ? 0.0f : 1.0f;
+        water.waveDirectional = (source->kind == graph::NodeKind::Lake)
+            ? 0.0f : std::clamp(liquid.waveDirectional, 0.0f, 1.0f);
         water.waveFacetSizeMeters = std::max(liquid.waveFacetSizeMeters, 0.0f);
         water.shoreFoam = std::clamp(liquid.shoreFoam, 0.0f, 1.0f);
         water.shoreRunupMeters = std::max(liquid.shoreRunupMeters, 0.0f);
