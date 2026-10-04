@@ -98,7 +98,7 @@ struct MeshConstants
     float shoreWidth;    // 泡の筋が出る、水際からの幅（m）
     float riverFoam;     // 川の早瀬の白波の量（0〜1）
     float waveFacetSize; // 太陽のきらめきを作る、一番小さな波面の大きさ（m）。0 で粒なし
-    float shorePad;
+    float waveDirectional; // 波が「向き」へ揃って進む度合い（1 = 海のうねり、0 = 向きを持たない湖の波）
 
     // 流れの場（xy = 速度 m/s〔ワールドの +X / +Z〕、z = 川の水面の被覆、w = 早瀬の度合い）と、川の波の設定。
     uint materialFlowIndex;
@@ -190,22 +190,38 @@ float WaveHeight(float2 positionMeters, float footprint)
 {
     const float time = g_mesh.waterTime * g_mesh.waveSpeed;
     float wavelength = max(g_mesh.waveScale, 0.1f);
-    float angle = g_mesh.waveDirection;
+    // 向きの揃い方（1 = 全部の段が「向き」の前後 45° へ進む。海のうねり）。0 では、段ごとの向きを
+    // 一周へ散らし、さらに逆向きに進む模様を同じ重みで重ねる。風の弱い湖の波は決まった向きを
+    // 持たないので、模様全体が一方向へ運ばれて見えると流れのように見える。
+    const float directional = saturate(g_mesh.waveDirectional);
+    const float forwardWeight = 0.5f + 0.5f * directional;
+    const float backwardWeight = 1.0f - forwardWeight;
+    // 2 つの模様は独立なので、重ねた傾きの大きさが変わらないように二乗和で正規化する。
+    const float normalize2 = rsqrt(forwardWeight * forwardWeight + backwardWeight * backwardWeight);
+    float swing = 0.0f;
     float sum = 0.0f;
     for (int i = 0; i < kWaveOctaves; ++i)
     {
         const float fade = WaveOctaveFade(wavelength, footprint);
         if (fade > 0.0f)
         {
+            // 向きを持たないときは黄金角（約 137.5°）ずつ回す。
+            const float angle = g_mesh.waveDirection + lerp(float(i) * 2.39996f, swing, directional);
             const float2 direction = float2(cos(angle), sin(angle));
-            const float speed = 1.25f * sqrt(wavelength);
-            const float2 p = (positionMeters - direction * (speed * time)) / wavelength + float(i) * 17.3f;
+            const float2 travel = direction * (1.25f * sqrt(wavelength) * time);
+            const float2 p = (positionMeters - travel) / wavelength + float(i) * 17.3f;
+            float octave = PerlinNoise(p, 4096.0f) * forwardWeight;
+            if (backwardWeight > 0.0f)
+            {
+                const float2 q = (positionMeters + travel) / wavelength + float(i) * 17.3f + 71.9f;
+                octave += PerlinNoise(q, 4096.0f) * backwardWeight;
+            }
             // 高さを波長に比例させる（どの段も同じくらいの傾きになる）。
-            sum += PerlinNoise(p, 4096.0f) * wavelength * fade;
+            sum += octave * normalize2 * wavelength * fade;
         }
         wavelength *= 0.37f;
         // 段ごとに向きを左右へ振る（全部が同じ向きに流れると縞に見える）。
-        angle += (i % 2 == 0) ? 0.7f : -1.1f;
+        swing += (i % 2 == 0) ? 0.7f : -1.1f;
     }
     return sum;
 }
