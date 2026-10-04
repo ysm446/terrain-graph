@@ -1604,7 +1604,8 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace,
             if (layer.mountainSource) {
                 layer.mountain = settings->mountain;
                 layer.heightBase = compositor::kHeightPivot;
-                layer.uvScale = 1.0f;
+                layer.tileMeters = 0.0f;
+                layer.legacyUvScale = 0.0f;
             }
             compiled.layers.push_back(layer);
             layerNodes.push_back(*it);

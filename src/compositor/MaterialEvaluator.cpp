@@ -272,7 +272,8 @@ uint64_t HashHeightState(uint64_t seed, const MaterialLayer& layer) {
     hash = HashBytes(hash, &layer.heightTexture, sizeof(layer.heightTexture));
     hash = HashBytes(hash, &layer.blendRange, sizeof(layer.blendRange));
     hash = HashBytes(hash, &layer.wrapToUnderlying, sizeof(layer.wrapToUnderlying));
-    hash = HashBytes(hash, &layer.uvScale, sizeof(layer.uvScale));
+    hash = HashBytes(hash, &layer.tileMeters, sizeof(layer.tileMeters));
+    hash = HashBytes(hash, &layer.legacyUvScale, sizeof(layer.legacyUvScale));
     hash = HashBytes(hash, &layer.pathUv, sizeof(layer.pathUv));
     hash = HashBytes(hash, layer.pathUvSegments.data(),
                      layer.pathUvSegments.size() * sizeof(PathSegment));
@@ -6077,7 +6078,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         // 出力 UV 0〜1 が地形の一辺（m）なので、その比を渡す。
         constants.blendParams[1] =
             (stack.SizeMeters() > 0.0f) ? (stack.HeightMeters() / stack.SizeMeters()) : 0.0f;
-        constants.blendParams[2] = layer.uvScale;
+        constants.blendParams[2] = layer.UvScale(stack.SizeMeters());
         constants.blendParams[3] = static_cast<float>(layer.heightSource);
 
         constants.maskParams[0] = layer.mask.constant;

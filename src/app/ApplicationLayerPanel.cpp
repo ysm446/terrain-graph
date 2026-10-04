@@ -1099,9 +1099,14 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                                          defaults.ambientOcclusion, nullptr, "%.2f");
         }
         if (!isShape && !isLiquid && !pathUv) {
-            changed |= ui::PropertyFloat("UV スケール", &layer.uvScale, 0.25f, 32.0f,
-                                         defaults.uvScale,
-                                         "このレイヤーの模様を何回並べるか", "%.2f", 0, 0.25f);
+            changed |= ui::PropertyFloat("1 周の長さ", &layer.tileMeters, 0.0f, 50000.0f,
+                                         defaults.tileMeters,
+                                         "このレイヤーの模様が 1 周する長さ（m）。0 で地形の一辺と同じ"
+                                         "（地形全体に 1 枚）。地形の実寸を変えても模様の大きさは変わらない",
+                                         "%.0f m", ImGuiSliderFlags_Logarithmic);
+            if (layer.legacyUvScale > 0.0f) {
+                ui::PropertyValue("旧 UV スケール", "%.2f 倍（m へ換算できていない）", layer.legacyUvScale);
+            }
         }
         ui::EndPropertyTable();
     }

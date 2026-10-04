@@ -790,8 +790,18 @@ struct MaterialLayer {
     // 基準の高さは厚みのバイアスになる（0.5 で厚みなし）。
     bool wrapToUnderlying = false;
 
-    // このレイヤーの UV スケール。
-    float uvScale = 1.0f;
+    // このレイヤーの模様の 1 周の長さ（m）。0 で地形の一辺と同じ（地形全体に 1 枚）。
+    // 地形の実寸を変えても模様の大きさは変わらない（並ぶ枚数が変わる）。
+    float tileMeters = 0.0f;
+    // 古いファイルの「UV スケール」（地形の一辺に並べる回数）。読み込みで tileMeters へ換算する
+    // （ProjectIo の ReadGraph）。地形の実寸が分からず換算できなかったときだけ残り、そのまま書き戻す。
+    // 0 で無し。
+    float legacyUvScale = 0.0f;
+    // 合成へ渡す UV の倍率（地形の一辺に並ぶ回数）。
+    float UvScale(float terrainSizeMeters) const {
+        if (tileMeters > 0.0f && terrainSizeMeters > 0.0f) return terrainSizeMeters / tileMeters;
+        return legacyUvScale > 0.0f ? legacyUvScale : 1.0f;
+    }
 
     // パス UV（Surface の UV Path 入力に Path を繋いだときだけ意味を持つ）。
     //
@@ -825,7 +835,7 @@ struct MaterialLayer {
     };
     PathUvSettings pathUv;
     // UV Path に繋いだパスの線分列。**保存しない。** グラフの繋ぎ方からコンパイルのたびに決まる。
-    // 空なら通常の UV（uvScale）で貼る。
+    // 空なら通常の UV（tileMeters）で貼る。
     std::vector<PathSegment> pathUvSegments;
 };
 

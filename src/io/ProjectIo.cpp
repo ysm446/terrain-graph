@@ -1423,7 +1423,9 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     node["mask"] = WriteMask(layer.mask, writeTexture, writePaint);
     node["blendRange"] = layer.blendRange;
     node["wrapToUnderlying"] = layer.wrapToUnderlying;
-    node["uvScale"] = layer.uvScale;
+    node["tileMeters"] = layer.tileMeters;
+    // 換算できなかった古い値は、そのまま書き戻す（次に開いたときに換算をやり直せる）。
+    if (layer.legacyUvScale > 0.0f) node["uvScale"] = layer.legacyUvScale;
     // パス UV（Surface の UV Path）。線分列はグラフから決まるので書かない。
     json pathUv;
     pathUv["repeatMeters"] = layer.pathUv.repeatMeters;
@@ -1817,7 +1819,15 @@ compositor::MaterialLayer ReadLayer(
     }
     layer.blendRange = ReadFloat(node, "blendRange", defaults.blendRange);
     layer.wrapToUnderlying = ReadBool(node, "wrapToUnderlying", defaults.wrapToUnderlying);
-    layer.uvScale = ReadFloat(node, "uvScale", defaults.uvScale);
+    // 模様の 1 周の長さ（m）。古いファイルは「UV スケール」（地形の一辺に並べる回数）を持つ。
+    // 地形の実寸はここでは分からないので覚えておき、ReadGraph の最後で換算する。
+    // 1 倍は「地形全体に 1 枚」で、tileMeters = 0 と同じ意味。
+    if (FindMember(node, "tileMeters") != nullptr) {
+        layer.tileMeters = std::max(ReadFloat(node, "tileMeters", defaults.tileMeters), 0.0f);
+    } else {
+        const float legacy = ReadFloat(node, "uvScale", 1.0f);
+        layer.legacyUvScale = (legacy > 0.0f && std::abs(legacy - 1.0f) > 1.0e-6f) ? legacy : 0.0f;
+    }
     if (const json* pathUv = FindMember(node, "pathUv"); pathUv != nullptr && pathUv->is_object()) {
         layer.pathUv.repeatMeters = ReadFloat(*pathUv, "repeatMeters", defaults.pathUv.repeatMeters);
         layer.pathUv.widthRepeat = ReadFloat(*pathUv, "widthRepeat", defaults.pathUv.widthRepeat);
@@ -2774,6 +2784,17 @@ bool ReadGraph(const json& source, graph::NodeGraph& graphData, const TextureRea
     }
     // Replace が壊れたリンクの除去と次の採番の再構築を行う。
     graphData.Replace(std::move(nodes), std::move(links));
+    // 古い「UV スケール」を 1 周の長さ（m）へ換算する: 地形の一辺 ÷ UV スケール。
+    // 地形の実寸は、そのノードの鎖の根にあるソース（Heightmap / Mountain）が持つ。
+    for (graph::Node& created : graphData.MutableNodes()) {
+        auto* settings = std::get_if<graph::LayerNodeSettings>(&created.settings);
+        if (settings == nullptr || settings->layer.legacyUvScale <= 0.0f) continue;
+        const graph::TerrainScale* scale = graphData.FindChainScale(created.id);
+        const float sizeMeters = (scale != nullptr) ? scale->sizeMeters : scaleFallback.sizeMeters;
+        if (sizeMeters <= 0.0f) continue;
+        settings->layer.tileMeters = sizeMeters / settings->layer.legacyUvScale;
+        settings->layer.legacyUvScale = 0.0f;
+    }
     // ファイルの ID は前の文書の ID と重なりうる。別の文書として扱わせる。
     graphData.RenewIdentity();
     return true;
