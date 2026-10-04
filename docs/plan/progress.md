@@ -1,7 +1,44 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-10-05 07:00
+更新日時: 2026-10-05 07:19
+
+## 近景マテリアル 段階 2: 近景の描画（2026-10-05 07:19）
+
+ユーザー依頼「進めてください」。カメラの近くで、Surface のマテリアルを人間のスケールで貼り直す（仮仕様: 同じマテリアルを別の 1 周の長さで）。
+
+- Surface に「近景の 1 周の長さ」（`nearTileMeters`。0 で無し、新規は 2 m）。
+- 評価器が Surface の ID ごとの表（`NearLayerTable`）を作り、描画の定数（`MeshConstants::nearLayers`）へ渡す。Layered Material と UV Path の Surface は対象外。
+- `MeshPbr.hlsl` の `SampleNearMaterial`: 重みを自前で双線形にし、色は「合成結果 × 近景のテクスチャ ÷ 平均色」、法線は RNM で重ね、距離で入れ替える。水面の下には出さない。
+- プレビュー設定に「近景マテリアル」の節（入切、近景だけの距離 40 m、合成結果へ戻る距離 120 m。シーンに保存）。
+- 仕様は [design/near-material.md](../design/near-material.md) の 3.6。
+
+検証: Debug ビルド（警告 0）。確認用のシーン `data/Test/near-qa/`（ユリア峠の複製。全部の Surface に近景 2 m）を、近景の入と切で撮影（`n1_close.png` / `n1_close_off.png`、並べたものは `cmp_close.png`、足元の等倍は `cmp_close_crop.png`）。距離 25 m の視点で、切ではぼけた色面だった草地に草の葉の模様が出て、色むらと全体の色は切と同じに保たれることを確認。距離 120 m の視点（`cmp_mid.png`）では入と切がほぼ同じ（帯の外）。ログに警告・エラーなし。**岩・砂礫・雪の Surface の近景、切り替わる帯の見え方（40〜120 m の中間の距離）、カメラを動かしたときのちらつき、プロパティとプレビュー設定の行の見た目、保存と読み込み、Release ビルド、CTest は未確認。** `rock` の視点はカメラが地形に埋まり、使えなかった。
+
+残り・注意:
+
+- 既存のシーンの Surface は近景なし（0）のまま。使うには Surface ごとに値を入れる。
+- 「近景の 1 周の長さ」を変えると合成をやり直す（表を評価のときに作るため。重いシーンでスライダが重い）。
+- 1 画素あたり最大 6 つの Surface × 色 2 回 + 法線 1 回のテクスチャ読みが増える（近景の距離の中だけ）。負荷は測っていない。
+- テクスチャの繰り返しが目立つ対策は入れていない。
+
+## 近景マテリアル 段階 1: Surface ごとの重みを記録する（2026-10-05 07:09）
+
+ユーザー依頼「第一段階へ進んでください」。見た目は変えず、合成結果に「どの Surface がどれだけ塗ったか」を足した。
+
+- `MaterialTextureSet::layers`（R32_UINT）。上位 3 つの Surface の ID（6 ビット）と重み（7 ビット × 2、3 つ目は残り）。詰め方と重ね方は新しい `shaders/LayerWeights.hlsli`（`DecodeLayerWeights` / `EncodeLayerWeights` / `BlendLayerWeights`）。
+- `CompositeLayer.hlsl` の末尾で、一番下のレイヤーが埋め、色を塗る Surface が自分の重みを積む。UAV は `mountain2.w`、ID は `noiseTypes.z`（どちらも空いていた欄）。ID は Surface を下から数えた番号（`MaterialEvaluator` が数える。上限 63）。
+- テクスチャの生成・解放・状態遷移・レイヤー間の UAV バリアは、流れの場（`flow`）と同じ箇所に足した。
+- 「チャンネル」パネルに「Surface ごとの重み」を足した（`ChannelPreview.hlsl` の `TG_CHANNEL_LAYERS`）。
+- 仕様は [design/near-material.md](../design/near-material.md) の 3.1。
+
+検証: Debug ビルド（警告 0）。ユリア峠（`data/Test/julia-road-qa/west.tgscene`）を前後の Debug で撮り、平均差 0.03 / 255・差のある画素 0% で一致（`v5_west.png` / `v8_west.png`）。ログに警告・エラーなし。`--channel-preview 12` で「Surface ごとの重み」を撮影（`data/screenshots/ui_channel_layers.png`）。岩・草・砂礫などの範囲が色分けされ、川と道の線が出ることを確認。**カーソルの位置の読み取り（番号・名前・割合）、重みの数値が合成の重みと合っているかの検算、Release ビルド、CTest は未確認。**
+
+残り・注意:
+
+- メモリが増える（4096² で表と裏を合わせて約 128 MB）。
+- River / Lake の水の色（`CompositeWaterPaint.hlsl`）や、色を書く加工ノードは重みを触らない。水の下は、描画の段階で水面の被覆を見て近景を出さないようにする。
+- Surface の順番を入れ替えると ID が変わる（毎回積み直すので実害は無いが、段階 2 で ID ごとの表を作るときは同じ数え方にする）。
 
 ## Surface の UV スケールを「1 周の長さ（m）」へ（2026-10-05 07:00）
 

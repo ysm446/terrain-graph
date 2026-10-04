@@ -797,6 +797,10 @@ struct MaterialLayer {
     // （ProjectIo の ReadGraph）。地形の実寸が分からず換算できなかったときだけ残り、そのまま書き戻す。
     // 0 で無し。
     float legacyUvScale = 0.0f;
+    // 近景の 1 周の長さ（m）。カメラが近づくと、地形の描画が同じマテリアルをこの長さで貼り直す
+    // （合成には効かない。docs/design/near-material.md）。0 で貼り直さない（古いファイルと同じ）。
+    // 新しく置く Surface の既定は kDefaultSurfaceLayer が決める。
+    float nearTileMeters = 0.0f;
     // 合成へ渡す UV の倍率（地形の一辺に並ぶ回数）。
     float UvScale(float terrainSizeMeters) const {
         if (tileMeters > 0.0f && terrainSizeMeters > 0.0f) return terrainSizeMeters / tileMeters;

@@ -8,6 +8,7 @@
 #include "CompositeCommon.hlsli"
 #include "CompositePath.hlsli"
 #include "LayerMaterial.hlsli"
+#include "LayerWeights.hlsli"
 
 #define TG_SOURCE_CONSTANT 0
 #define TG_SOURCE_NOISE    1
@@ -49,7 +50,7 @@ struct LayerConstants
     uint4 textureIndices1;  // ao, height, mask, 中間結果由来マスクの SRV
 
     float4 maskCurve;   // contrast, 未使用 x3（derivedScale は CompositeMask 側で適用済み）
-    uint4 noiseTypes;   // height, mask, 未使用, 未使用
+    uint4 noiseTypes;   // height, mask, Surface の ID（1〜63。0 なら重みを記録しない）, 未使用
     uint4 paintParams;  // ペイントマスクの SRV, 未使用 x3
     // スカラーのマップのチャンネル指定。4bit ずつ TG_CHANNEL_SLOT_* の順で詰めてある。
     uint4 mapChannels;  // x にすべて入る。yzw は未使用
@@ -65,7 +66,7 @@ struct LayerConstants
     float4 pathUvParams2;
     float4 mountain0; // 有効、周波数、尾根、尖り
     float4 mountain1; // 方向（rad）、伸長、うねり、細部
-    uint4 mountain2; // シード、水の場の UAV、流れの場の UAV、未使用
+    uint4 mountain2; // シード、水の場の UAV、流れの場の UAV、Surface ごとの重みの UAV
     // 水面（Liquid）の見た目。浅瀬の色 rgb, 色の変わる深さ（m。0 で深い所の色だけ）
     float4 liquid0;
     // 下地が透ける深さ（m。0 で透けない）, ハイト 0〜1 の全幅（m）, 波の強さ, 未使用
@@ -728,6 +729,25 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
         {
             flow.z *= 1.0f - weight;
             flowTarget[texel] = flow;
+        }
+    }
+
+    // --- Surface ごとの重み（LayerWeights.hlsli）----------------------------------
+    // 色を塗る Surface が、自分の重みを積む。一番下のレイヤーが埋め、上に重なる Surface が
+    // それまでの重みを (1 − weight) 倍にして自分を足す。色を塗らないレイヤー（シェイプ、
+    // ベースカラーを書かない Surface）と水（Liquid）は触らない。
+    if (g_layer.mountain2.w != kInvalidTextureIndex)
+    {
+        RWTexture2D<uint> layerTarget = ResourceDescriptorHeap[g_layer.mountain2.w];
+        const uint layerId = g_layer.noiseTypes.z;
+        if (isBaseLayer)
+        {
+            layerTarget[texel] = SingleLayerWeights(layerId);
+        }
+        else if (!isShape && !isLiquid && layerId != 0u && weight > 0.0f &&
+                 (g_layer.channelMask & 0x1u) != 0u)
+        {
+            layerTarget[texel] = BlendLayerWeights(layerTarget[texel], layerId, weight);
         }
     }
 }

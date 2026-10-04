@@ -8,6 +8,7 @@
 // カーソルの位置の元の値（表示用に直す前）も、結果のバッファへ 1 つ書く。
 
 #include "Common.hlsli"
+#include "LayerWeights.hlsli"
 
 // C++ 側（ApplicationChannelPreview.cpp）の ChannelMode と揃える。
 #define TG_CHANNEL_BASECOLOR      0
@@ -22,6 +23,7 @@
 #define TG_CHANNEL_WATER_WAVE     9
 #define TG_CHANNEL_FLOW           10
 #define TG_CHANNEL_RAPIDS         11
+#define TG_CHANNEL_LAYERS         12
 
 struct ChannelPreviewConstants
 {
@@ -50,6 +52,26 @@ float3 HueToRgb(float hue)
 {
     const float3 k = float3(1.0f, 2.0f / 3.0f, 1.0f / 3.0f);
     return saturate(abs(frac(hue + k) * 6.0f - 3.0f) - 1.0f);
+}
+
+// Surface の ID ごとの色（黄金角で色相を回す。0 = Surface なしは暗い灰）。
+float3 LayerIdColor(uint id)
+{
+    if (id == 0u)
+    {
+        return float3(0.03f, 0.03f, 0.03f);
+    }
+    const float3 hue = HueToRgb(frac(float(id) * 0.61803399f));
+    // 隣り合う番号で明るさも変える（色相だけだと近い色が出る）。
+    return hue * ((id % 2u == 0u) ? 0.85f : 0.45f) + 0.04f;
+}
+
+// Surface ごとの重み（R32_UINT）を、ID の色を重みで混ぜた色にする。点で読む（ID は補間できない）。
+float3 LayerWeightsColor(uint packed)
+{
+    const LayerWeights layers = DecodeLayerWeights(packed);
+    return LayerIdColor(layers.ids.x) * layers.weights.x + LayerIdColor(layers.ids.y) * layers.weights.y +
+           LayerIdColor(layers.ids.z) * layers.weights.z;
 }
 
 // 表示色（リニア）。
@@ -125,7 +147,19 @@ void CsMain(uint3 id : SV_DispatchThreadID)
     const float2 t = (float2(id.xy) + 0.5f) / float2(g_constants.width, g_constants.height);
     const float2 uv = lerp(g_constants.uvRect.xy, g_constants.uvRect.zw, t);
     float3 color = float3(0.0f, 0.0f, 0.0f);
-    if (all(uv >= 0.0f) && all(uv <= 1.0f))
+    const bool layersMode = (g_constants.mode == TG_CHANNEL_LAYERS);
+    if (layersMode)
+    {
+        if (all(uv >= 0.0f) && all(uv <= 1.0f))
+        {
+            Texture2D<uint> layerSource = ResourceDescriptorHeap[g_constants.sourceIndex];
+            uint layerWidth, layerHeight;
+            layerSource.GetDimensions(layerWidth, layerHeight);
+            const int2 texel = min(int2(uv * float2(layerWidth, layerHeight)), int2(layerWidth, layerHeight) - 1);
+            color = LayerWeightsColor(layerSource.Load(int3(texel, 0)));
+        }
+    }
+    else if (all(uv >= 0.0f) && all(uv <= 1.0f))
     {
         // 流れと距離は補間すると色が濁る（向きが平均されて消える）ので、点で読む。
         const bool nearest = (g_constants.mode == TG_CHANNEL_FLOW) ||
@@ -142,7 +176,18 @@ void CsMain(uint3 id : SV_DispatchThreadID)
     {
         RWStructuredBuffer<float> result = ResourceDescriptorHeap[g_constants.resultIndex];
         float4 value = float4(0.0f, 0.0f, 0.0f, 0.0f);
-        if (g_constants.probeValid != 0u)
+        if (g_constants.probeValid != 0u && layersMode)
+        {
+            // 上位 2 つの ID と重みを返す（ID, 重み, ID, 重み）。
+            Texture2D<uint> layerSource = ResourceDescriptorHeap[g_constants.sourceIndex];
+            uint layerWidth, layerHeight;
+            layerSource.GetDimensions(layerWidth, layerHeight);
+            const int2 texel = min(int2(saturate(g_constants.probeUv) * float2(layerWidth, layerHeight)),
+                                   int2(layerWidth, layerHeight) - 1);
+            const LayerWeights layers = DecodeLayerWeights(layerSource.Load(int3(texel, 0)));
+            value = float4(float(layers.ids.x), layers.weights.x, float(layers.ids.y), layers.weights.y);
+        }
+        else if (g_constants.probeValid != 0u)
         {
             value = source.SampleLevel(g_samplerPointClamp, g_constants.probeUv, 0.0f);
         }

@@ -23,6 +23,8 @@ constexpr DXGI_FORMAT kNormalFormat = DXGI_FORMAT_R16G16_FLOAT;
 constexpr DXGI_FORMAT kSurfaceFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
 constexpr DXGI_FORMAT kWaterFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
 constexpr DXGI_FORMAT kFlowFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
+// Surface ごとの重み。R32_UINT は UAV で読み書きできることが保証されている形式。
+constexpr DXGI_FORMAT kLayersFormat = DXGI_FORMAT_R32_UINT;
 // 水際からの距離を求める作業用の格子の上限と、距離の上限（m。R16F に収め、波打ち際より十分広く）。
 constexpr uint32_t kWaterWorkResolution = 2048;
 constexpr float kWaterDistanceLimitMeters = 2000.0f;
@@ -274,6 +276,7 @@ uint64_t HashHeightState(uint64_t seed, const MaterialLayer& layer) {
     hash = HashBytes(hash, &layer.wrapToUnderlying, sizeof(layer.wrapToUnderlying));
     hash = HashBytes(hash, &layer.tileMeters, sizeof(layer.tileMeters));
     hash = HashBytes(hash, &layer.legacyUvScale, sizeof(layer.legacyUvScale));
+    hash = HashBytes(hash, &layer.nearTileMeters, sizeof(layer.nearTileMeters));
     hash = HashBytes(hash, &layer.pathUv, sizeof(layer.pathUv));
     hash = HashBytes(hash, layer.pathUvSegments.data(),
                      layer.pathUvSegments.size() * sizeof(PathSegment));
@@ -542,7 +545,8 @@ bool CreateTextureSet(rhi::Device& device, uint32_t resolution, MaterialTextureS
            CreateChannelTexture(device, resolution, kHeightFormat, L"MaterialHeight",
                                 set.height) &&
            CreateChannelTexture(device, resolution, kWaterFormat, L"MaterialWater", set.water) &&
-           CreateChannelTexture(device, resolution, kFlowFormat, L"MaterialFlow", set.flow);
+           CreateChannelTexture(device, resolution, kFlowFormat, L"MaterialFlow", set.flow) &&
+           CreateChannelTexture(device, resolution, kLayersFormat, L"MaterialLayers", set.layers);
 }
 
 void ReleaseTextureSet(rhi::Device& device, MaterialTextureSet& set) {
@@ -552,6 +556,7 @@ void ReleaseTextureSet(rhi::Device& device, MaterialTextureSet& set) {
     device.DeferRelease(set.height);
     device.DeferRelease(set.water);
     device.DeferRelease(set.flow);
+    device.DeferRelease(set.layers);
 }
 
 }  // namespace
@@ -1385,6 +1390,7 @@ void MaterialEvaluator::TransitionForDisplay(ID3D12GraphicsCommandList* commandL
     TransitionIfNeeded(commandList, set.height, kDisplayReadState);
     TransitionIfNeeded(commandList, set.water, kDisplayReadState);
     TransitionIfNeeded(commandList, set.flow, kDisplayReadState);
+    TransitionIfNeeded(commandList, set.layers, kDisplayReadState);
 }
 // マスクの op を 1 つ焼く。入力（他の op の結果）は既に SRV になっている。
 bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipelineCache,
@@ -5638,6 +5644,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
     TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     TransitionIfNeeded(commandList, m_textures.water, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     TransitionIfNeeded(commandList, m_textures.flow, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, m_textures.layers, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
     // --- マスクの段取り -----------------------------------------------------
     // マスクはノードグラフを落とした op の列（`MaskProgram`）で来る。
@@ -5842,6 +5849,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
 
     // レイヤー優先で回す。中間結果由来のマスクは近傍を参照するため、
     // タイル優先で回すと隣のタイルの未評価の値を読んでしまう。
+    m_nearLayers = NearLayerTable{};
     for (size_t layerIndex = 0; layerIndex < stack.Layers().size(); ++layerIndex) {
         const MaterialLayer& layer = stack.Layers()[layerIndex];
         const bool isBaseLayer = (layerIndex == baseIndex);
@@ -6099,6 +6107,25 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
         constants.mountain2[1] = m_textures.water.UavIndex();
         // 流れの場。一番下のレイヤーが 0 で埋め、River が書く。
         constants.mountain2[2] = m_textures.flow.UavIndex();
+        // Surface ごとの重み。ID は Surface を下から数えた番号（無効な Surface も数え、番号を動かさない）。
+        constants.mountain2[3] = m_textures.layers.UavIndex();
+        if (layer.kind == LayerKind::Surface) {
+            uint32_t surfaceId = 0;
+            for (size_t i = 0; i <= layerIndex && i < stack.Layers().size(); ++i) {
+                if (stack.Layers()[i].kind == LayerKind::Surface) ++surfaceId;
+            }
+            constants.noiseTypes[2] = std::min(surfaceId, kMaxSurfaceLayerId);
+            // 近景マテリアルの表。同じマテリアルのベースカラーと法線を、描画が貼り直す。
+            // Layered Material（中で複数の素材を重ねる）と UV Path（帯の座標で貼る）は対象外。
+            if (surfaceId < kNearLayerCount && layer.enabled && layer.nearTileMeters > 0.0f &&
+                material != nullptr && !material->layerMaterial && layer.pathUvSegments.empty()) {
+                NearLayer& nearLayer = m_nearLayers[surfaceId];
+                nearLayer.baseColorSrv = textures.SrvIndex(material->baseColor, true);
+                nearLayer.normalSrv = textures.SrvIndex(material->normal, false);
+                nearLayer.tileMeters = layer.nearTileMeters;
+                nearLayer.flags = material->flipNormalGreen ? 1u : 0u;
+            }
+        }
         // 水面の見た目（Liquid だけが読む）。深さは実寸（m）で比べるので、ハイトの全幅も渡す。
         constants.liquid0[0] = layer.liquid.shallowColor.x;
         constants.liquid0[1] = layer.liquid.shallowColor.y;
@@ -6235,6 +6262,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 CD3DX12_RESOURCE_BARRIER::UAV(m_textures.height.resource.Get()),
                 CD3DX12_RESOURCE_BARRIER::UAV(m_textures.water.resource.Get()),
                 CD3DX12_RESOURCE_BARRIER::UAV(m_textures.flow.resource.Get()),
+                CD3DX12_RESOURCE_BARRIER::UAV(m_textures.layers.resource.Get()),
             };
             commandList->ResourceBarrier(_countof(barriers), barriers);
 
@@ -6265,6 +6293,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
     TransitionIfNeeded(commandList, m_textures.height, kOutputReadState);
     TransitionIfNeeded(commandList, m_textures.water, kOutputReadState);
     TransitionIfNeeded(commandList, m_textures.flow, kOutputReadState);
+    TransitionIfNeeded(commandList, m_textures.layers, kOutputReadState);
 
     // ノード用のマスクサムネイル。焼けた op を全部落としてから NON_PIXEL へ。
     // 表側へ入れ替えたときに Update がグラフィックス側で PIXEL へ遷移させる。
@@ -6330,6 +6359,7 @@ void MaterialEvaluator::Update(rhi::Device& device, rhi::PipelineCache& pipeline
             // まだ描画中のフレームが古い表側を読んでいるかもしれないが、次の評価は
             // 投入時のフレームを GPU 側で待ってから走るので、書き込みが追い越すことはない。
             std::swap(m_textures, m_frontTextures);
+            std::swap(m_nearLayers, m_frontNearLayers);
             std::swap(m_maskOpThumbnails, m_frontMaskOpThumbnails);
             std::swap(m_layerThumbnails, m_frontLayerThumbnails);
             m_evaluatedRevision = m_asyncRevision;
@@ -6359,6 +6389,7 @@ void MaterialEvaluator::Update(rhi::Device& device, rhi::PipelineCache& pipeline
             m_evaluatedRevision = m_postprocessPending ? 0 : stack.Revision();
             if (m_frontTextures.IsValid()) {
                 std::swap(m_textures, m_frontTextures);
+                std::swap(m_nearLayers, m_frontNearLayers);
                 std::swap(m_maskOpThumbnails, m_frontMaskOpThumbnails);
                 std::swap(m_layerThumbnails, m_frontLayerThumbnails);
             }
@@ -6408,6 +6439,7 @@ void MaterialEvaluator::Update(rhi::Device& device, rhi::PipelineCache& pipeline
     TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     TransitionIfNeeded(commandList, m_textures.water, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     TransitionIfNeeded(commandList, m_textures.flow, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    TransitionIfNeeded(commandList, m_textures.layers, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     // ノード用のサムネイルも同じ（裏側は前回まで ImGui が読んでいた PIXEL の状態）。
     for (MaskOpThumbnail& thumbnail : m_maskOpThumbnails) {
         TransitionIfNeeded(commandList, thumbnail.texture, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);

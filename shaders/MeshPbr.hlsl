@@ -8,6 +8,7 @@
 
 #include "Brdf.hlsli"
 #include "CompositeCommon.hlsli"
+#include "LayerWeights.hlsli"
 
 struct MeshConstants
 {
@@ -105,7 +106,20 @@ struct MeshConstants
     float riverWaveStrength;  // 流れる波の傾きの強さ。0 で無し
     float riverWaveScale;     // 一番大きい模様の波長（m）
     float riverSpeed;         // 流れの速さの倍率
+
+    // 近景マテリアル（docs/design/near-material.md）。
+    uint materialLayersIndex;  // Surface ごとの重み（R32_UINT。LayerWeights.hlsli）の SRV
+    float nearFadeStart;       // ここまでは近景だけ（カメラからの距離 m）
+    float nearFadeEnd;         // ここから先は合成結果だけ（m）。0 なら近景なし
+    float terrainSizeMeters;   // 地形の一辺（m）
+    // Surface の ID ごと: x = ベースカラーの SRV（無ければ近景なし）、y = 法線の SRV、
+    // z = 近景の 1 周の長さ（m。float のビット）、w = フラグ（bit0: 法線の緑を反転）
+    uint4 nearLayers[32];
 };
+
+static const uint kNearLayerCount = 32u;
+// 1 画素で混ぜる Surface の数の上限（重みの 4 テクセル × 3 つから、重い順ではなく出てきた順に拾う）。
+static const int kNearUniqueLayers = 6;
 
 // 「ハイト（ローカル）」で周りの平均を取る半径（合成テクセル）と、
 // 引いた差を 0〜1 へ伸ばす倍率。素材の凹凸が見える強さとして選んである。
@@ -157,6 +171,120 @@ float SampleMaterialScalar(Texture2D<float> map, float2 uv)
 float SampleMaterialScalarLevel(Texture2D<float> map, float2 uv)
 {
     return map.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
+}
+
+// --- 近景マテリアル ----------------------------------------------------------------
+// 合成結果は地形全体を 1 枚に焼いたものなので、近くで見ると粗い。カメラの近くでは、その画素を
+// 塗った Surface のマテリアルを、人間のスケール（近景の 1 周の長さ）で貼り直す。
+//
+// - どの Surface がどれだけ塗ったかは、Surface ごとの重み（上位 3 つ）から読む。ID は補間できないので
+//   4 テクセルを点で読み、ID ごとに重みを足し合わせて自前で双線形にする（そのまま点で読むと、
+//   合成 1 テクセルの四角い境目が足元に見える）。
+// - **色は合成結果を基準にする。** 近景のテクスチャは「平均色に対する比」だけを使い、合成結果の色へ
+//   掛ける。色むら・ティント・雪の縁など、合成が作った大きな色の分布がそのまま残り、遠景と色がつながる。
+//   平均色は、テクスチャの一番小さいミップ。
+// - 法線は、近景の法線を重みで弱めて RNM で重ねる（lerp しない）。
+struct NearMaterialSample
+{
+    float3 colorScale;  // 合成結果のベースカラーへ掛ける倍率（近景なしで 1）
+    float3 normal;      // 合成結果の法線へ RNM で重ねるタンジェント空間法線（近景なしで +Z）
+};
+
+NearMaterialSample SampleNearMaterial(float2 uv, float2 uvDx, float2 uvDy, float amount)
+{
+    NearMaterialSample result;
+    result.colorScale = float3(1.0f, 1.0f, 1.0f);
+    result.normal = float3(0.0f, 0.0f, 1.0f);
+
+    Texture2D<uint> layerMap = ResourceDescriptorHeap[g_mesh.materialLayersIndex];
+    uint width, height;
+    layerMap.GetDimensions(width, height);
+    const float2 position = uv * float2(width, height) - 0.5f;
+    const int2 base = int2(floor(position));
+    const float2 fraction = position - floor(position);
+
+    uint ids[kNearUniqueLayers];
+    float weights[kNearUniqueLayers];
+    int count = 0;
+    for (int clear = 0; clear < kNearUniqueLayers; ++clear)
+    {
+        ids[clear] = 0u;
+        weights[clear] = 0.0f;
+    }
+    for (int tap = 0; tap < 4; ++tap)
+    {
+        const int2 offset = int2(tap & 1, tap >> 1);
+        const float tapWeight = ((offset.x != 0) ? fraction.x : 1.0f - fraction.x) *
+                                ((offset.y != 0) ? fraction.y : 1.0f - fraction.y);
+        const int2 texel = clamp(base + offset, int2(0, 0), int2(width, height) - 1);
+        const LayerWeights layers = DecodeLayerWeights(layerMap.Load(int3(texel, 0)));
+        for (int slot = 0; slot < 3; ++slot)
+        {
+            const float weight = layers.weights[slot] * tapWeight;
+            if (weight <= 0.0f)
+            {
+                continue;
+            }
+            const uint id = layers.ids[slot];
+            int found = -1;
+            for (int k = 0; k < count; ++k)
+            {
+                if (ids[k] == id)
+                {
+                    found = k;
+                }
+            }
+            if (found < 0 && count < kNearUniqueLayers)
+            {
+                found = count++;
+                ids[found] = id;
+            }
+            if (found >= 0)
+            {
+                weights[found] += weight;
+            }
+        }
+    }
+
+    float3 colorScale = float3(0.0f, 0.0f, 0.0f);
+    float covered = 0.0f;
+    for (int i = 0; i < count; ++i)
+    {
+        const uint id = ids[i];
+        const float weight = weights[i];
+        if (id == 0u || id >= kNearLayerCount || weight < 0.02f)
+        {
+            continue;
+        }
+        const uint4 entry = g_mesh.nearLayers[id];
+        const float tileMeters = asfloat(entry.z);
+        if (entry.x == kInvalidTextureIndex || tileMeters <= 0.0f)
+        {
+            continue;
+        }
+        const float repeat = g_mesh.terrainSizeMeters / tileMeters;
+        const float2 nearUv = uv * repeat;
+        Texture2D<float4> colorMap = ResourceDescriptorHeap[entry.x];
+        const float3 color = colorMap.SampleGrad(g_samplerAnisoWrap, nearUv, uvDx * repeat, uvDy * repeat).rgb;
+        // 一番小さいミップ = テクスチャ全体の平均色。
+        const float3 average = max(colorMap.SampleLevel(g_samplerLinearWrap, float2(0.5f, 0.5f), 16.0f).rgb, 1e-3f);
+        colorScale += clamp(color / average, 0.0f, 4.0f) * weight;
+        if (entry.y != kInvalidTextureIndex)
+        {
+            Texture2D<float4> normalMap = ResourceDescriptorHeap[entry.y];
+            float3 tangentNormal =
+                normalMap.SampleGrad(g_samplerAnisoWrap, nearUv, uvDx * repeat, uvDy * repeat).rgb * 2.0f - 1.0f;
+            if ((entry.w & 1u) != 0u)
+            {
+                tangentNormal.y = -tangentNormal.y;
+            }
+            result.normal = ReorientNormal(result.normal, FlattenNormal(normalize(tangentNormal), weight * amount));
+        }
+        covered += weight;
+    }
+    // 近景を持たない Surface が塗った分は、合成結果のまま（倍率 1）。
+    result.colorScale = lerp(float3(1.0f, 1.0f, 1.0f), colorScale + (1.0f - covered), amount);
+    return result;
 }
 
 // --- 水面の波 --------------------------------------------------------------------
@@ -882,8 +1010,26 @@ PsOutput PsMain(VsOutput input)
         metallicValue = surface.g;
         ambientOcclusion = surface.b;
 
+        float3 tangentNormal = DecodeTangentNormal(SampleMaterialNormal(normalMap, uv));
+
+        // 近景マテリアル。カメラの近くだけ、Surface のマテリアルを人間のスケールで貼り直す。
+        // 水面の下には出さない（Surface のアルファ = 1 − 水面の被覆）。
+        if (g_mesh.nearFadeEnd > 0.0f)
+        {
+            const float2 uvDx = ddx(uv);
+            const float2 uvDy = ddy(uv);
+            const float cameraDistance = length(g_mesh.cameraPosition - input.worldPosition);
+            const float nearAmount =
+                (1.0f - smoothstep(g_mesh.nearFadeStart, g_mesh.nearFadeEnd, cameraDistance)) * saturate(surface.a);
+            if (nearAmount > 0.0f)
+            {
+                const NearMaterialSample nearSample = SampleNearMaterial(uv, uvDx, uvDy, nearAmount);
+                baseColor *= nearSample.colorScale;
+                tangentNormal = ReorientNormal(tangentNormal, nearSample.normal);
+            }
+        }
+
         // タンジェント空間法線をワールド空間へ移す。
-        const float3 tangentNormal = DecodeTangentNormal(SampleMaterialNormal(normalMap, uv));
         const float3 tangent =
             normalize(input.worldTangent - geometricNormal * dot(geometricNormal, input.worldTangent));
         const float3 bitangent = cross(geometricNormal, tangent) * input.tangentSign;

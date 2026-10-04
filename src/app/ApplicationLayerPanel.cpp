@@ -1104,6 +1104,12 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                                          "このレイヤーの模様が 1 周する長さ（m）。0 で地形の一辺と同じ"
                                          "（地形全体に 1 枚）。地形の実寸を変えても模様の大きさは変わらない",
                                          "%.0f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat("近景の 1 周の長さ", &layer.nearTileMeters, 0.0f, 50.0f,
+                                         defaults.nearTileMeters,
+                                         "カメラが近づいたときに、同じマテリアルを貼り直す長さ（m）。人間のスケール（2 m 前後）に"
+                                         "する。合成結果と地形の形には効かない。0 で貼り直さない。切り替える距離は"
+                                         "プレビュー設定の「近景マテリアル」。Layered Material と UV Path の Surface には効かない",
+                                         "%.2f m", ImGuiSliderFlags_Logarithmic);
             if (layer.legacyUvScale > 0.0f) {
                 ui::PropertyValue("旧 UV スケール", "%.2f 倍（m へ換算できていない）", layer.legacyUvScale);
             }

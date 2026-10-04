@@ -1424,6 +1424,7 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     node["blendRange"] = layer.blendRange;
     node["wrapToUnderlying"] = layer.wrapToUnderlying;
     node["tileMeters"] = layer.tileMeters;
+    node["nearTileMeters"] = layer.nearTileMeters;
     // 換算できなかった古い値は、そのまま書き戻す（次に開いたときに換算をやり直せる）。
     if (layer.legacyUvScale > 0.0f) node["uvScale"] = layer.legacyUvScale;
     // パス UV（Surface の UV Path）。線分列はグラフから決まるので書かない。
@@ -1822,6 +1823,7 @@ compositor::MaterialLayer ReadLayer(
     // 模様の 1 周の長さ（m）。古いファイルは「UV スケール」（地形の一辺に並べる回数）を持つ。
     // 地形の実寸はここでは分からないので覚えておき、ReadGraph の最後で換算する。
     // 1 倍は「地形全体に 1 枚」で、tileMeters = 0 と同じ意味。
+    layer.nearTileMeters = std::max(ReadFloat(node, "nearTileMeters", defaults.nearTileMeters), 0.0f);
     if (FindMember(node, "tileMeters") != nullptr) {
         layer.tileMeters = std::max(ReadFloat(node, "tileMeters", defaults.tileMeters), 0.0f);
     } else {
@@ -2869,6 +2871,9 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     node["shadowCascadeCount"] = renderer.ShadowCascadeCount();
     node["shadowSplitLambda"] = renderer.ShadowSplitLambda();
     node["shadowResolution"] = renderer.ShadowResolution();
+    node["nearMaterial"] = renderer.NearMaterial();
+    node["nearFadeStart"] = renderer.NearFadeStart();
+    node["nearFadeEnd"] = renderer.NearFadeEnd();
     node["lightingMode"] = renderer.AtmosphericMode() ? "atmospheric" : "ibl";
     const auto& atmosphere = renderer.AtmosphericSettings();
     const auto& sun = renderer.AtmosphericLight();
@@ -3097,6 +3102,9 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
     renderer.ShadowCascadeCount() = std::clamp(ReadInt(node, "shadowCascadeCount", 4), 1, 4);
     renderer.ShadowSplitLambda() = std::clamp(ReadFloat(node, "shadowSplitLambda", renderer::kPreviewDefaults.shadowSplitLambda), 0.0f, 1.0f);
     renderer.ShadowResolution() = ReadInt(node, "shadowResolution", renderer::kPreviewDefaults.shadowResolution) == 4096 ? 4096 : 2048;
+    renderer.NearMaterial() = ReadBool(node, "nearMaterial", renderer::kPreviewDefaults.nearMaterial);
+    renderer.NearFadeStart() = std::max(ReadFloat(node, "nearFadeStart", renderer::kPreviewDefaults.nearFadeStart), 0.0f);
+    renderer.NearFadeEnd() = std::max(ReadFloat(node, "nearFadeEnd", renderer::kPreviewDefaults.nearFadeEnd), 1.0f);
 
     // 節が丸ごと欠けていても既定値で埋める。file-format.md の「欠けているキーは
     // 既定値で埋める」に合わせる（節ごと飛ばすと前のプロジェクトの値が残る）。

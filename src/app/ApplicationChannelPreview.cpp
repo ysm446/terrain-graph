@@ -42,12 +42,14 @@ enum ChannelMode : int {
     ChannelWaterWave,
     ChannelFlow,
     ChannelRapids,
+    ChannelLayers,
     ChannelModeCount,
 };
 
 const char* const kChannelPreviewLabels[ChannelModeCount] = {
     "ベースカラー", "法線", "ラフネス", "メタルネス", "AO", "ハイト",
     "水: 水面の被覆", "水: 水深", "水: 水際からの距離", "水: 波の強さ", "水: 流れ", "水: 早瀬",
+    "Surface ごとの重み",
 };
 
 // 水の場の「水なし」（CompositeLayer.hlsl と揃える）。
@@ -121,6 +123,7 @@ void Application::PrepareChannelPreview(ID3D12GraphicsCommandList* commandList) 
         case ChannelWaterDepth: source = &textures.water; rangeA = 20.0f; break;  // 一番濃くなる深さ（m）
         case ChannelWaterDistance: source = &textures.water; rangeA = state.contourMeters; break;  // 等値線の間隔（m）
         case ChannelWaterWave: source = &textures.water; break;
+        case ChannelLayers: source = &textures.layers; break;
         default: break;
     }
     if (!source->IsValid()) return;
@@ -188,7 +191,8 @@ void Application::DrawChannelPreviewPanel() {
     if (ui::BeginPropertyTable("channelPreviewRows")) {
         ui::PropertyCombo("チャンネル", &state.mode, kChannelPreviewLabels, ChannelModeCount, ChannelBaseColor,
                           "合成結果のどのチャンネルを見るか。「水」は水を張るノード（Sea / Lake / River）が"
-                          "書く水チャンネル");
+                          "書く水チャンネル。「Surface ごとの重み」は、どの Surface がどれだけ塗ったか"
+                          "（近景マテリアルの割り当てに使う）");
         ui::EndPropertyTable();
     }
     state.mode = std::clamp(state.mode, 0, ChannelModeCount - 1);
@@ -211,6 +215,8 @@ void Application::DrawChannelPreviewPanel() {
         std::snprintf(readout, sizeof(readout), "色相が流れの向き、明るさが速さ（4 m/s で最大）");
     } else if (state.mode == ChannelWaterDepth) {
         std::snprintf(readout, sizeof(readout), "青は水の中（濃いほど深い。20 m で最大）、灰は陸");
+    } else if (state.mode == ChannelLayers) {
+        std::snprintf(readout, sizeof(readout), "色は Surface ごと（下から数えた番号）。重なる所は重みで混ぜた色");
     }
     if (state.probeHovered && state.probeValueValid) {
         const float size = m_renderer.PlaneSize();
@@ -230,6 +236,24 @@ void Application::DrawChannelPreviewPanel() {
             case ChannelWaterCover: std::snprintf(value, sizeof(value), "水面の被覆 %.2f", v[2]); break;
             case ChannelRapids: std::snprintf(value, sizeof(value), "早瀬 %.2f", v[3]); break;
             case ChannelWaterWave: std::snprintf(value, sizeof(value), "波の強さ %.2f", v[2]); break;
+            case ChannelLayers: {
+                // ID は Surface を下から数えた番号（MaterialEvaluator と揃える）。名前を引いて添える。
+                const auto surfaceName = [&](int id) -> const char* {
+                    int count = 0;
+                    for (const compositor::MaterialLayer& layer : m_graphStack.Layers()) {
+                        if (layer.kind == compositor::LayerKind::Surface && ++count == id) return layer.name.c_str();
+                    }
+                    return "なし";
+                };
+                const int first = static_cast<int>(v[0] + 0.5f), second = static_cast<int>(v[2] + 0.5f);
+                if (v[3] > 0.004f) {
+                    std::snprintf(value, sizeof(value), "%d %s %.0f%% / %d %s %.0f%%", first, surfaceName(first),
+                                  v[1] * 100.0f, second, surfaceName(second), v[3] * 100.0f);
+                } else {
+                    std::snprintf(value, sizeof(value), "%d %s %.0f%%", first, surfaceName(first), v[1] * 100.0f);
+                }
+                break;
+            }
             case ChannelWaterDepth:
                 if (v[1] < kWaterNone * 0.5f) std::snprintf(value, sizeof(value), "水の場なし");
                 else if (v[1] > 0.0f) std::snprintf(value, sizeof(value), "水深 %.2f m", v[1]);

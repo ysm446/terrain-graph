@@ -6,6 +6,7 @@
 #include "compositor/PaintMask.h"
 #include "compositor/TextureLibrary.h"
 
+#include <array>
 #include <unordered_map>
 #include <vector>
 #include "rhi/ComputeQueue.h"
@@ -15,6 +16,22 @@
 namespace tg::compositor {
 
 // 合成結果のチャンネルセット。plan.md の定義に対応する。
+// Surface ごとの重みに記録できる ID の上限（6 ビット。0 は「なし」）。これを超えた Surface は上限の ID に重なる。
+inline constexpr uint32_t kMaxSurfaceLayerId = 63;
+
+// 近景マテリアルを貼れる Surface の ID の上限（地形の描画の定数に並べる数。これ以上の ID は近景なし）。
+inline constexpr uint32_t kNearLayerCount = 32;
+
+// 近景マテリアルの表の 1 行（Surface の ID ごと）。地形の描画が、Surface ごとの重み（layers）と
+// 合わせて、同じマテリアルを人間のスケールで貼り直すのに使う。
+struct NearLayer {
+    uint32_t baseColorSrv = kInvalidTextureIndex;  // 無ければ近景なし
+    uint32_t normalSrv = kInvalidTextureIndex;
+    float tileMeters = 0.0f;  // 近景の 1 周の長さ（m）
+    uint32_t flags = 0;       // bit0: 法線マップの緑を反転して読む
+};
+using NearLayerTable = std::array<NearLayer, kNearLayerCount>;
+
 struct MaterialTextureSet {
     rhi::GpuTexture baseColor;  // R11G11B10_FLOAT
     rhi::GpuTexture normal;     // R16G16_FLOAT（xy のみ、z は再構成）
@@ -30,6 +47,10 @@ struct MaterialTextureSet {
     // 流れの場（R16G16B16A16_FLOAT）。xy = 流れの速度（m/s。x が +U、y が +V の向き。ワールドでは
     // +X / +Z）、z = 水面の被覆（どの水でも）、w = 早瀬の度合い（0〜1）。無ければ全面 0。
     rhi::GpuTexture flow;
+    // Surface ごとの重み（R32_UINT。上位 3 つの Surface の ID と重み。shaders/LayerWeights.hlsli）。
+    // 色を塗る Surface が積む。地形の描画が近景マテリアルを貼り直すのに使う（design/near-material.md）。
+    // ID は地形グラフの Surface を下から数えた番号（1〜kMaxSurfaceLayerId）。
+    rhi::GpuTexture layers;
 
     bool IsValid() const { return baseColor.IsValid(); }
 };
@@ -309,6 +330,10 @@ public:
     // 描画が読む結果。非同期なら表側（評価済みで入れ替えたもの）、同期なら評価先そのもの。
     const MaterialTextureSet& Textures() const {
         return m_frontTextures.IsValid() ? m_frontTextures : m_textures;
+    }
+    // 近景マテリアルの表（Textures() と同じ評価の結果）。
+    const NearLayerTable& NearLayers() const {
+        return m_frontTextures.IsValid() ? m_frontNearLayers : m_nearLayers;
     }
     // 読み戻しのように、状態遷移を伴う操作から触るためのもの。
     // GpuTexture は自分の状態を持つので、遷移させる側は非 const 参照が要る。
@@ -679,6 +704,9 @@ private:
     MaterialTextureSet m_textures;
     // 描画が読む表側。同期（書き出し用）のときは持たない。
     MaterialTextureSet m_frontTextures;
+    // 近景マテリアルの表。評価のたびに作り、テクスチャと一緒に表側と入れ替える。
+    NearLayerTable m_nearLayers{};
+    NearLayerTable m_frontNearLayers{};
     // 近傍を読むパスの作業用。マスク生成（合成パスがここを読む）と、
     // ブラーの水平パスが使う。Height と同じ形式。評価先と一緒に使うので 1 枚でよい。
     rhi::GpuTexture m_scratch;

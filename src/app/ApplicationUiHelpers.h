@@ -57,6 +57,7 @@ inline const compositor::MaterialLayer kDefaultLayer;
 inline const compositor::MaterialLayer kDefaultSurfaceLayer = [] {
     compositor::MaterialLayer layer;
     layer.wrapToUnderlying = true;
+    layer.nearTileMeters = 2.0f;  // 近景は人間のスケール（草・土・砂礫の粒が見える大きさ）
     return layer;
 }();
 

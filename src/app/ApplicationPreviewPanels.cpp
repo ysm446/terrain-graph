@@ -422,6 +422,22 @@ void Application::DrawLightingPanel() {
             ImGui::EndDisabled();
             ui::EndPropertyTable();
         }
+        // 近景マテリアル。Surface の「近景の 1 周の長さ」で貼り直す範囲（カメラからの距離）。
+        ui::SectionHeader("近景マテリアル");
+        if (ui::BeginPropertyTable("nearMaterialRows")) {
+            ui::PropertyBool("近景マテリアル", &m_renderer.NearMaterial(), renderer::kPreviewDefaults.nearMaterial,
+                             "カメラの近くで、Surface のマテリアルを「近景の 1 周の長さ」で貼り直す。"
+                             "切ると合成結果だけを貼る");
+            ImGui::BeginDisabled(!m_renderer.NearMaterial());
+            ui::PropertyFloat("近景だけの距離", &m_renderer.NearFadeStart(), 0.0f, 500.0f,
+                              renderer::kPreviewDefaults.nearFadeStart,
+                              "カメラからこの距離（m）までは近景マテリアルだけを貼る", "%.0f m");
+            ui::PropertyFloat("合成結果へ戻る距離", &m_renderer.NearFadeEnd(), 1.0f, 2000.0f,
+                              renderer::kPreviewDefaults.nearFadeEnd,
+                              "カメラからこの距離（m）より先は合成結果だけを貼る。上の距離との間で入れ替える", "%.0f m");
+            ImGui::EndDisabled();
+            ui::EndPropertyTable();
+        }
 
         if (m_renderer.AtmosphericMode()) {
             auto& sky = m_renderer.AtmosphericSettings();

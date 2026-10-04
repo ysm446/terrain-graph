@@ -171,6 +171,15 @@ struct MeshConstants {
     float riverWaveStrength;
     float riverWaveScale;
     float riverSpeed;
+
+    // 近景マテリアル。Surface ごとの重み（R32_UINT）の SRV、合成結果へ入れ替わる距離の帯（m）、地形の一辺（m）。
+    // nearFadeEnd が 0 なら近景なし（地形以外の描画は 0 のまま）。
+    uint32_t materialLayersIndex;
+    float nearFadeStart;
+    float nearFadeEnd;
+    float terrainSizeMeters;
+    // Surface の ID ごと: ベースカラーの SRV、法線の SRV、近景の 1 周の長さ（m。float のビット）、フラグ。
+    uint32_t nearLayers[compositor::kNearLayerCount][4];
 };
 
 // GPU 側の SkyboxConstants と一致させること。
@@ -916,6 +925,20 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     constants.materialHeightIndex = materialTextures.height.SrvIndex();
     constants.materialWaterIndex = materialTextures.water.SrvIndex();
     constants.materialFlowIndex = materialTextures.flow.SrvIndex();
+    // 近景マテリアル。合成結果を貼っているときだけ（マスクのプレビューなどでは出さない）。
+    if (useMaterial && m_nearMaterial && materialTextures.layers.IsValid()) {
+        constants.materialLayersIndex = materialTextures.layers.SrvIndex();
+        constants.nearFadeEnd = std::max(m_nearFadeEnd, 1.0f);
+        constants.nearFadeStart = std::clamp(m_nearFadeStart, 0.0f, constants.nearFadeEnd - 0.5f);
+        constants.terrainSizeMeters = m_planeSize;
+        const compositor::NearLayerTable& nearLayers = m_evaluator.NearLayers();
+        for (uint32_t id = 0; id < compositor::kNearLayerCount; ++id) {
+            constants.nearLayers[id][0] = nearLayers[id].baseColorSrv;
+            constants.nearLayers[id][1] = nearLayers[id].normalSrv;
+            std::memcpy(&constants.nearLayers[id][2], &nearLayers[id].tileMeters, sizeof(float));
+            constants.nearLayers[id][3] = nearLayers[id].flags;
+        }
+    }
     constants.debugView = static_cast<uint32_t>(m_debugView);
     constants.displacementScale = m_displacementScale;
     // 分割量はカメラから見た見え方で決める。本描画では viewProjection と同一で、

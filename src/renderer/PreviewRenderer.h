@@ -196,6 +196,10 @@ struct PreviewDefaults {
     int shadowCascadeCount = 4;
     float shadowSplitLambda = kDefaultShadowSplitLambda;  // カスケードの分割の偏り
     int shadowResolution = 2048;                           // 影のテクスチャの一辺（2048 / 4096）
+    // 近景マテリアル（カメラの近くで、Surface のマテリアルを人間のスケールで貼り直す）。
+    bool nearMaterial = true;
+    float nearFadeStart = 40.0f;   // ここまでは近景だけ（m）
+    float nearFadeEnd = 120.0f;    // ここから先は合成結果だけ（m）
     bool showClouds = true;
     // マスクのプレビューで、0 か 1 に張り付いた所へ斜線を引くか。
     bool maskSaturationHatch = false;
@@ -362,6 +366,10 @@ public:
     float& ShadowSplitLambda() { return m_shadowSplitLambda; }
     // 影のテクスチャの一辺。変えるとフレームの外で作り直す（ProcessPendingWork）。
     int& ShadowResolution() { return m_shadowResolution; }
+    // 近景マテリアルの入切と、合成結果へ入れ替わる距離の帯（m）。
+    bool& NearMaterial() { return m_nearMaterial; }
+    float& NearFadeStart() { return m_nearFadeStart; }
+    float& NearFadeEnd() { return m_nearFadeEnd; }
     DofSettings& Dof() { return m_dof; }
     const DofSettings& Dof() const { return m_dof; }
     // 実際にピント面として使う距離。注視点に合わせる設定ならカメラの距離。
@@ -509,6 +517,9 @@ private:
     int m_shadowCascadeCount = kPreviewDefaults.shadowCascadeCount;
     float m_shadowSplitLambda = kPreviewDefaults.shadowSplitLambda;
     int m_shadowResolution = kPreviewDefaults.shadowResolution;
+    bool m_nearMaterial = kPreviewDefaults.nearMaterial;
+    float m_nearFadeStart = kPreviewDefaults.nearFadeStart;
+    float m_nearFadeEnd = kPreviewDefaults.nearFadeEnd;
     uint32_t m_shadowResolutionApplied = 0;  // 今の影のテクスチャの一辺（0 はまだ作っていない）
     DofSettings m_dof;
     SceneShadowData m_instanceShadows;
