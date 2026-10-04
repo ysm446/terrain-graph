@@ -646,6 +646,10 @@ struct MaterialLayer {
         float waterAmount = 5.0f;
         bool allowOutflow = false;
         float referenceDetailScale = 1.0f;
+        // 範囲を湖面にする: 水を溜めず、Water Mask の範囲をそのまま湖にする（湖面が平らな DEM 用）。
+        // 水位は範囲の中の地面の平均の高さ。湖底は水位から「マスク × 最大水深」だけ掘る。
+        bool areaMode = false;
+        float areaDepthMeters = 20.0f;
     } lake;
 
     struct FluvialErosionSettings {

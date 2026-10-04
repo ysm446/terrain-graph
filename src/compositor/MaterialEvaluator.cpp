@@ -302,6 +302,8 @@ uint64_t HashHeightState(uint64_t seed, const MaterialLayer& layer) {
     hash = HashBytes(hash, &layer.lake.waterAmount, sizeof(layer.lake.waterAmount));
     hash = HashBytes(hash, &layer.lake.allowOutflow, sizeof(layer.lake.allowOutflow));
     hash = HashBytes(hash, &layer.lake.referenceDetailScale, sizeof(layer.lake.referenceDetailScale));
+    hash = HashBytes(hash, &layer.lake.areaMode, sizeof(layer.lake.areaMode));
+    hash = HashBytes(hash, &layer.lake.areaDepthMeters, sizeof(layer.lake.areaDepthMeters));
     hash = HashBytes(hash, &layer.snowCover.erodeDusting, sizeof(layer.snowCover.erodeDusting));
     hash = HashBytes(hash, &layer.snowCover.advectionLength, sizeof(layer.snowCover.advectionLength));
     hash = HashBytes(hash, &layer.snowCover.advectionVolume, sizeof(layer.snowCover.advectionVolume));
@@ -3977,8 +3979,9 @@ bool MaterialEvaluator::ApplyLake(rhi::Device& device, rhi::PipelineCache& cache
         resources.allocation = n;
     }
     const wchar_t* entries[] = {L"CsInit", L"CsTransport", L"CsUpsample", L"CsFlatten",
-        L"CsLevelInit", L"CsExtendLevel", L"CsFinish", L"CsResolve"};
-    ID3D12PipelineState* passes[8]{};
+        L"CsLevelInit", L"CsExtendLevel", L"CsFinish", L"CsResolve",
+        L"CsAreaSum", L"CsAreaReduce", L"CsAreaApply"};
+    ID3D12PipelineState* passes[11]{};
     for (size_t i = 0; i < std::size(entries); ++i) {
         passes[i] = cache.GetCompute(L"CompositeLake.hlsl", entries[i]);
         if (!passes[i]) return false;
@@ -3996,6 +3999,11 @@ bool MaterialEvaluator::ApplyLake(rhi::Device& device, rhi::PipelineCache& cache
     constants.scale[0] = std::max(stack.HeightMeters(), 0.001f);
     constants.scale[1] = std::clamp(settings.waterAmount, 0.0f, 100.0f);
     constants.scale[2] = std::max(stack.SizeMeters(), 0.001f) / n;
+    // 範囲を湖面にする: 水を溜める計算（輸送と平坦化）をせず、Water Mask の範囲を湖にする。
+    const bool area = settings.areaMode;
+    const bool active = area || constants.scale[1] > 0;
+    constants.mode[3] = area ? 1u : 0u;
+    constants.scale[3] = std::clamp(settings.areaDepthMeters, 0.0f, 500.0f);
     // 縮小率: 0.5^floor(log2(reference / voxel)) * 0.5^optimizationSteps。
     // 元解像度以上への拡大は行わず、最小 1 セルに制限する。
     const float reference = std::clamp(settings.referenceDetailScale, 0.01f, 100.0f);
@@ -4046,19 +4054,38 @@ bool MaterialEvaluator::ApplyLake(rhi::Device& device, rhi::PipelineCache& cache
     for (auto* texture : {&resources.state[0], &resources.state[1], &resources.output})
         TransitionIfNeeded(commandList, *texture, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    select();
-    bool ok = run(0, coarse, upload());
-    current = 1 - current;
-    if (constants.scale[1] > 0) ok = ok && iterate(1, coarse, coarse * 2);
-    select();
-    ok = ok && run(2, n, upload());
-    current = 1 - current;
-    constants.grid[0] = n;
-    constants.grid[3] = stride;
-    if (constants.scale[1] > 0) {
-        ok = ok && iterate(3, n, coarse * 2);
-        constants.grid[3] = 1;
-        ok = ok && iterate(3, n, stride);
+    bool ok = true;
+    if (area) {
+        // 範囲の中の地面の高さの合計と画素数を、2×2 ずつ畳んで 1 画素（平均 = 水位）まで集める。
+        constants.grid[0] = n;
+        select();
+        ok = run(8, n, upload());
+        current = 1 - current;
+        for (uint32_t size = n / 2; size >= 1 && ok; size /= 2) {
+            constants.grid[3] = size;
+            select();
+            ok = run(9, size, upload());
+            current = 1 - current;
+        }
+        // 水位より下へ湖底を掘り、水面と水深を置く。
+        select();
+        ok = ok && run(10, n, upload());
+        current = 1 - current;
+    } else {
+        select();
+        ok = run(0, coarse, upload());
+        current = 1 - current;
+        if (constants.scale[1] > 0) ok = ok && iterate(1, coarse, coarse * 2);
+        select();
+        ok = ok && run(2, n, upload());
+        current = 1 - current;
+        constants.grid[0] = n;
+        constants.grid[3] = stride;
+        if (constants.scale[1] > 0) {
+            ok = ok && iterate(3, n, coarse * 2);
+            constants.grid[3] = 1;
+            ok = ok && iterate(3, n, stride);
+        }
     }
     select();
     ok = ok && run(4, n, upload());
@@ -4077,7 +4104,7 @@ bool MaterialEvaluator::ApplyLake(rhi::Device& device, rhi::PipelineCache& cache
     const auto finalAddress = upload();
     ok = ok && run(6, n, finalAddress);
     TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    if (ok && !layer.maskOnly && constants.scale[1] > 0) {
+    if (ok && !layer.maskOnly && active) {
         ok = run(7, n, finalAddress);
         if (ok) RebuildNormalsFromHeight(device, normals, commandList, stack);
         // 「水を描く」が入なら、水の色と水チャンネル（被覆・水深・波の強さ）を書き、

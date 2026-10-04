@@ -1186,7 +1186,9 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     node["lake"] = {{"optimizationSteps", layer.lake.optimizationSteps},
                     {"waterAmount", layer.lake.waterAmount},
                     {"allowOutflow", layer.lake.allowOutflow},
-                    {"referenceDetailScale", layer.lake.referenceDetailScale}};
+                    {"referenceDetailScale", layer.lake.referenceDetailScale},
+                    {"areaMode", layer.lake.areaMode},
+                    {"areaDepthMeters", layer.lake.areaDepthMeters}};
     json snowCover;
     snowCover["erodeDusting"] = layer.snowCover.erodeDusting;
     snowCover["advectionLength"] = layer.snowCover.advectionLength;
@@ -1554,6 +1556,8 @@ compositor::MaterialLayer ReadLayer(
         layer.lake.waterAmount = std::clamp(ReadFloat(*value, "waterAmount", defaults.lake.waterAmount), 0.0f, 100.0f);
         layer.lake.allowOutflow = ReadBool(*value, "allowOutflow", defaults.lake.allowOutflow);
         layer.lake.referenceDetailScale = std::clamp(ReadFloat(*value, "referenceDetailScale", defaults.lake.referenceDetailScale), 0.01f, 100.0f);
+        layer.lake.areaMode = ReadBool(*value, "areaMode", defaults.lake.areaMode);
+        layer.lake.areaDepthMeters = std::clamp(ReadFloat(*value, "areaDepthMeters", defaults.lake.areaDepthMeters), 0.0f, 500.0f);
     }
     if (const json* value = FindMember(node, "snowCover"); value != nullptr && value->is_object()) {
         layer.snowCover.erodeDusting = ReadBool(*value, "erodeDusting", defaults.snowCover.erodeDusting);

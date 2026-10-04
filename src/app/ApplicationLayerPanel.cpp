@@ -203,14 +203,23 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
             char name[128]{};
             std::snprintf(name, sizeof(name), "%s", layer.name.c_str());
             if (ui::PropertyTextInput("名前", name, sizeof(name))) { layer.name = name; changed = true; }
-            changed |= ui::PropertyFloat("水量", &p.waterAmount, 0.0f, 100.0f, d.waterAmount,
-                "全面に供給する水の厚さ。Water Mask 入力で供給場所を絞る", "%.3f m");
-            changed |= ui::PropertyInt("最適化段数", &p.optimizationSteps, 0, 10, d.optimizationSteps,
-                "大きいほど粗い格子で水を移動する。小さな窪みの結果も変化する");
-            changed |= ui::PropertyBool("境界から流出", &p.allowOutflow, d.allowOutflow,
-                "地形の端から外へ水を流す");
-            changed |= ui::PropertyFloat("基準スケール", &p.referenceDetailScale, 0.01f, 100.0f, d.referenceDetailScale,
-                "水の移動を計算する格子の基準となる距離", "%.3f m");
+            changed |= ui::PropertyBool("範囲を湖面にする", &p.areaMode, d.areaMode,
+                "水を溜めず、Water Mask の範囲をそのまま湖にする。湖面が平らなハイトマップ（窪みが無い）用。"
+                "水位は範囲の中の地面の平均の高さ");
+            if (p.areaMode) {
+                changed |= ui::PropertyFloat("最大水深", &p.areaDepthMeters, 0.0f, 500.0f, d.areaDepthMeters,
+                    "Water Mask が 1 の所の水深。湖底は水位から「マスク × 最大水深」だけ掘る"
+                    "（岸で 0、沖で 1 のマスクにすると岸から深くなる）", "%.1f m");
+            } else {
+                changed |= ui::PropertyFloat("水量", &p.waterAmount, 0.0f, 100.0f, d.waterAmount,
+                    "全面に供給する水の厚さ。Water Mask 入力で供給場所を絞る", "%.3f m");
+                changed |= ui::PropertyInt("最適化段数", &p.optimizationSteps, 0, 10, d.optimizationSteps,
+                    "大きいほど粗い格子で水を移動する。小さな窪みの結果も変化する");
+                changed |= ui::PropertyBool("境界から流出", &p.allowOutflow, d.allowOutflow,
+                    "地形の端から外へ水を流す");
+                changed |= ui::PropertyFloat("基準スケール", &p.referenceDetailScale, 0.01f, 100.0f, d.referenceDetailScale,
+                    "水の移動を計算する格子の基準となる距離", "%.3f m");
+            }
             ui::EndPropertyTable();
         }
         changed |= DrawWaterAppearance(layer, kDefaultLakeLayer, true, "lakeWaterRows");

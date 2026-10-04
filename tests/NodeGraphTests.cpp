@@ -1425,10 +1425,13 @@ void RunNodeGraphTests() {
         auto* settings = std::get_if<tg::graph::LayerNodeSettings>(&graph.FindMutableNode(lakeId)->settings);
         settings->layer.lake.allowOutflow = true;
         settings->layer.lake.waterAmount = 3.5f;
+        settings->layer.lake.areaMode = true;
+        settings->layer.lake.areaDepthMeters = 40.0f;
         graph.MarkDirty();
         const auto result = graph.CompileLayersTo(lakeId);
         Check(result.layers.size() == 2 && result.layers.back().kind == tg::compositor::LayerKind::Lake &&
               result.layers.back().lake.allowOutflow && result.layers.back().lake.waterAmount == 3.5f &&
+              result.layers.back().lake.areaMode && result.layers.back().lake.areaDepthMeters == 40.0f &&
               result.layers.back().mask.maskOp >= 0, "専用設定と給水マスクを保持する");
         for (size_t i = 1; i < 4; ++i) {
             const auto preview = graph.CompileLayersTo(lakeId, lake->outputs[i].id);
