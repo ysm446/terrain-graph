@@ -41,6 +41,13 @@ bool AssetThumbnailCache::Failed(const fs::path& path) const {
     const auto found = m_entries.find(path);
     return found != m_entries.end() && found->second.failed;
 }
+bool AssetThumbnailCache::Stale(const fs::path& path) const {
+    const auto found = m_entries.find(path);
+    return found != m_entries.end() && found->second.stale;
+}
+void AssetThumbnailCache::Refresh(const fs::path& path) {
+    if (Stale(path)) m_refresh.insert(path);
+}
 bool AssetThumbnailCache::HasPendingWork() const {
     if (!m_pendingModel.empty()) return true;
     return std::any_of(m_requests.begin(), m_requests.end(), [&](const auto& path) { return !m_entries.contains(path); });
@@ -56,7 +63,7 @@ void AssetThumbnailCache::ClearScratch(rhi::Device& device) {
 void AssetThumbnailCache::Destroy(rhi::Device& device) {
     ClearScratch(device);
     for (auto& [path, entry] : m_entries) device.DeferRelease(entry.texture);
-    m_entries.clear(); m_requests.clear(); m_root.clear(); m_directory.clear(); m_invalidate = false;
+    m_entries.clear(); m_requests.clear(); m_refresh.clear(); m_root.clear(); m_directory.clear(); m_invalidate = false;
 }
 void AssetThumbnailCache::Store(rhi::Device& device, const fs::path& path, rhi::GpuTexture texture, bool persist) {
     if (m_entries.size() >= MaxEntries) {
@@ -241,6 +248,13 @@ void AssetThumbnailCache::Process(rhi::Device& device, rhi::PipelineCache& pipel
         Destroy(device); m_root = workspace.Root();
     }
     m_directory = directory;
+    // 作り直しを頼まれた古いサムネイルは、項目を捨てて下の要求の列に乗せ直す。
+    for (const auto& path : m_refresh) {
+        if (const auto found = m_entries.find(path); found != m_entries.end() && found->second.stale) {
+            device.DeferRelease(found->second.texture);
+            m_entries.erase(found);
+        }
+    }
     if (!m_pendingModel.empty()) {
         if (m_modelRendered) {
             Store(device, m_pendingModel, m_modelPreview.TakeOutput());
@@ -270,9 +284,16 @@ void AssetThumbnailCache::Process(rhi::Device& device, rhi::PipelineCache& pipel
         return;
     }
     m_diskRecord = io::AssetThumbnailRecord(workspace, path);
-    if (io::ThumbnailIsCurrent(m_diskRecord)) {
+    // 保存済みのサムネイルがあればそれを出す。**古くても出す**（アセットやその参照先が変わっていても）。
+    // 作り直しはアセットを丸ごと読み込むので 1 つ数秒かかり、フォルダを開くたびに画面が止まるため。
+    // 作り直すのは、保存済みのものが無いときと、頼まれたとき（Refresh。アセットのクリック）だけ。
+    const bool current = io::ThumbnailIsCurrent(m_diskRecord);
+    const bool refresh = m_refresh.erase(path) > 0;
+    std::error_code imageError;
+    if (current || (!refresh && fs::is_regular_file(m_diskRecord.image, imageError))) {
         if (BuildImage(device, m_diskRecord.image, thumbnail)) {
             Store(device, path, std::move(thumbnail), false);
+            m_entries[path].stale = !current;
             return;
         }
         device.DeferRelease(thumbnail);

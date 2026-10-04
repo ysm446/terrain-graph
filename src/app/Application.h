@@ -314,6 +314,7 @@ private:
     void RevertAsset(const std::filesystem::path& path);
     bool IsAssetLoaded(const std::filesystem::path& path) const;
     // 一覧のサムネイルを受け取るドロップ先。フォルダ階層と一覧のフォルダに置く。
+    void SyncLoadedMaterialThumbnails();
     void AssetFolderDropTarget(const std::filesystem::path& directory);
     // 同じ種類のアセットを選ぶピッカー。削除確認の「代わり」と、シーンの天球の差し替えで使う。
     void DrawAssetPicker();
@@ -967,6 +968,9 @@ private:
     // 選ばれたパスをここへ積んでおき、次のフレームの頭で処理する。
     io::ProjectWorkspace m_workspace;
     AssetThumbnailCache m_assetThumbnails;
+    // 保存済みのサムネイルを書き直す候補（読み込み済みのマテリアル）。保存・移動・削除のあとに積み、
+    // 1 フレームに 1 つずつ確かめる（SyncLoadedMaterialThumbnails）。
+    std::vector<compositor::MaterialAssetId> m_materialThumbnailSync;
     std::filesystem::path m_assetDirectory;
     std::filesystem::path m_pendingAssetReveal, m_assetRevealTarget;
     std::vector<std::filesystem::directory_entry> m_assetEntries;

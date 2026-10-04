@@ -1,3 +1,4 @@
+#include "rhi/TextureReadback.h"
 #include "app/Application.h"
 #include "app/ApplicationUiHelpers.h"
 #include "core/FileDialog.h"
@@ -876,7 +877,34 @@ void Application::ProcessAssetWork() {
     }
 
     if (m_assetRefresh) RefreshAssetBrowser();
+    SyncLoadedMaterialThumbnails();
     m_assetThumbnails.Process(m_device, m_pipelineCache, m_workspace, m_assetDirectory, m_renderer);
+}
+
+// 読み込み済みのマテリアルは、ライブラリが描いたサムネイルを既に持っている。保存などでアセットが
+// 変わったら、それを保存済みのサムネイルとして書いておく（追加の読み込みなしで最新に保つ）。
+// こうしておかないと、保存のたびに保存済みのサムネイルが古くなり、次にシーンの外から見たとき
+// （別のシーンを開いているとき）に古い絵のままになる。1 フレームに 1 つずつ書く。
+void Application::SyncLoadedMaterialThumbnails() {
+    if (m_assetThumbnails.Invalidated()) {
+        m_materialThumbnailSync.clear();
+        for (const compositor::MaterialAsset& asset : m_materialLibrary.Entries()) {
+            if (!asset.assetPath.empty()) m_materialThumbnailSync.push_back(asset.id);
+        }
+    }
+    if (m_materialThumbnailSync.empty()) return;
+    const compositor::MaterialAssetId id = m_materialThumbnailSync.back();
+    compositor::MaterialAsset* asset = m_materialLibrary.FindMutable(id);
+    // 描き直しが済んでいないものは次のフレームへ回す（列には残す）。
+    if (asset != nullptr && asset->thumbnail.IsValid() && asset->thumbnailDirty) return;
+    m_materialThumbnailSync.pop_back();
+    // 未保存の変更があるものは書かない（絵がファイルの中身と合わない）。
+    if (asset == nullptr || !asset->thumbnail.IsValid() || IsAssetDirty(asset->assetPath)) return;
+    const io::ThumbnailRecord record = io::AssetThumbnailRecord(m_workspace, asset->assetPath);
+    if (record.image.empty() || io::ThumbnailIsCurrent(record)) return;
+    std::error_code error;
+    fs::create_directories(record.image.parent_path(), error);
+    if (!error && rhi::SaveTextureToPng(m_device, asset->thumbnail, record.image, 128)) io::CommitThumbnail(record);
 }
 
 void Application::AssetFolderDropTarget(const fs::path& directory) {
@@ -1101,6 +1129,8 @@ void Application::DrawAssetBrowser() {
                     m_assetRenameArmed = path; m_assetRenameArmedTime = ImGui::GetTime();
                 }
                 SelectAsset(path, io.KeyCtrl, io.KeyShift);
+                // 古いサムネイルは、クリックしたものだけ作り直す（フォルダを開いただけでは作らない）。
+                m_assetThumbnails.Refresh(path);
             }
             // どの種類もダブルクリックで開く（モデルも同じ。シングルクリックは選ぶだけ）。
             if (thumb.doubleClicked) {
@@ -1139,7 +1169,8 @@ void Application::DrawAssetBrowser() {
             if (folder) AssetFolderDropTarget(path);
             // ドラッグ中は移動先を示すツールチップの邪魔になるので出さない。
             if (thumb.hovered && ImGui::GetDragDropPayload() == nullptr)
-                ImGui::SetTooltip("%s\n%s\nダブルクリックで開く\n選択中の名前をクリックで名前を変更\nCtrl / Shift + クリックで複数選択", ToUtf8Display(path).c_str(), IsAssetDirty(path) ? "未保存の変更あり（選択して Ctrl+S で保存）" : "選択して Ctrl+S で保存");
+                ImGui::SetTooltip("%s\n%s\nダブルクリックで開く\n選択中の名前をクリックで名前を変更\nCtrl / Shift + クリックで複数選択%s", ToUtf8Display(path).c_str(), IsAssetDirty(path) ? "未保存の変更あり（選択して Ctrl+S で保存）" : "選択して Ctrl+S で保存",
+                                  m_assetThumbnails.Stale(path) ? "\nサムネイルは前に作ったもの（中身が変わっている。クリックで作り直す）" : "");
             if (ImGui::BeginPopupContextItem("assetMenu")) {
                 if (!IsAssetSelected(path)) SelectAsset(path, false, false);
                 if (ImGui::MenuItem("開く")) {
