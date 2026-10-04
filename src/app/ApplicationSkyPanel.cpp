@@ -27,7 +27,7 @@ namespace tg {
 // 作業用IBL表示中だけ、その環境を球へ描く。
 void Application::DrawSkyPreviewWindow() {
     m_skyPreviewVisible = false;
-    if (!m_showSkyPreview) {
+    if (!m_showSkyPreview || HiddenWithAssetBand("作業用IBL")) {
         return;
     }
 

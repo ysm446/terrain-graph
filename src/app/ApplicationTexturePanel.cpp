@@ -491,7 +491,7 @@ void Application::RequestTextureRemove(compositor::TextureId id) {
 // **映すのは一覧で選んでいるテクスチャ。** マテリアルの窓と同じ作法で、
 // 窓の側に別の選択を持たせない。
 void Application::DrawTexturePreviewWindow() {
-    if (!m_showTexturePreview) {
+    if (!m_showTexturePreview || HiddenWithAssetBand("テクスチャプレビュー")) {
         return;
     }
 

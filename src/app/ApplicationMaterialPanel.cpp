@@ -445,7 +445,7 @@ void Application::DrawMaterialSphereLightGizmo(const ImVec2& previewMin, const I
 // 一覧で選んだものと窓の中身が食い違う。
 void Application::DrawMaterialSphereWindow() {
     m_materialSphereVisible = false;
-    if (!m_showMaterialSphere) {
+    if (!m_showMaterialSphere || HiddenWithAssetBand("マテリアルプレビュー")) {
         return;
     }
 

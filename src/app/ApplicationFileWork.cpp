@@ -166,7 +166,7 @@ void Application::HandleShortcuts() {
     if (ImGui::IsKeyPressed(ImGuiKey_N, false)) {
         m_pendingProjectNew = true;
     } else if (ImGui::IsKeyPressed(ImGuiKey_B, false) && !io.WantTextInput) {
-        // アセットの帯を畳む / 戻す（ウィンドウメニューと同じ）。
+        // 下のパネルを畳む / 戻す（ウィンドウメニューと同じ）。
         m_settings.Display().showAssetBand = !m_settings.Display().showAssetBand;
         m_settings.Save();
     } else if (ImGui::IsKeyPressed(ImGuiKey_O, false)) {

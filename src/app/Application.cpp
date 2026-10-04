@@ -965,11 +965,12 @@ void Application::DrawUi() {
                 m_rebuildLayout = true;
             }
             ImGui::Separator();
-            // アセットの帯。畳むと帯のドックノードが空になり、ビューポートが縦に広がる。
-            // 設定に覚えさせる（区画の大きさと同じ扱い）。
-            if (ImGui::MenuItem("アセットの帯", "Ctrl+B", &m_settings.Display().showAssetBand)) {
+            // 下のパネル（「アセット」が入っている枠）。畳むと枠のドックノードが空になり、
+            // ビューポートが縦に広がる。設定に覚えさせる（区画の大きさと同じ扱い）。
+            if (ImGui::MenuItem("下のパネル", "Ctrl+B", &m_settings.Display().showAssetBand)) {
                 m_settings.Save();
             }
+            ImGui::SetItemTooltip("アセットが入っている枠を、同じ枠のタブ（グラフなど）ごと畳む");
             ImGui::Separator();
             ImGui::MenuItem("マテリアルプレビュー", nullptr, &m_showMaterialSphere);
             ImGui::MenuItem("モデルプレビュー", nullptr, &m_showModelPreview);
@@ -1009,20 +1010,22 @@ void Application::DrawUi() {
     ImGui::DockSpaceOverViewport(dockspaceId, ImGui::GetMainViewport());
 
     DrawViewportPanel();
+    // 下のパネルを畳んでいる間は、「アセット」と同じ枠にタブで入っているパネルも出さない
+    // （HiddenWithAssetBand）。枠のタブが 1 つでも残ると、帯の高さがビューポートへ戻らない。
     // ビューポートの後に描く（同じ枠のタブで、前面はビューポートのまま）。
-    DrawChannelPreviewPanel();
+    if (!HiddenWithAssetBand("チャンネル")) DrawChannelPreviewPanel();
     // タブが重なる枠では、**最初に submit したパネルが前面のタブになり、
     // タブは submit した順に並ぶ**（ini に配置が無いとき）。
     // 作業の起点はグラフなので、右カラムの他のパネルより先に描く。
-    DrawSceneHierarchy();
-    DrawGraphPanel();
-    // アセットの帯は畳める。出さなければドックノードが空になり、中央（ビューポート）が
+    if (!HiddenWithAssetBand("シーン階層")) DrawSceneHierarchy();
+    if (!HiddenWithAssetBand("グラフ")) DrawGraphPanel();
+    // 下のパネルは畳める。出さなければドックノードが空になり、中央（ビューポート）が
     // その高さをもらう。ウィンドウはドック先を覚えているので、戻せば同じ所へ入る。
     if (m_settings.Display().showAssetBand) {
         DrawAssetBrowser();
     }
-    DrawMaterialPanel();
-    DrawLightingPanel();
+    if (!HiddenWithAssetBand("プレビュー設定")) DrawMaterialPanel();
+    if (!HiddenWithAssetBand("ライティング")) DrawLightingPanel();
 
     DrawMaterialSphereWindow();
     DrawModelPreviewWindow();
@@ -1031,7 +1034,7 @@ void Application::DrawUi() {
     DrawSkyPreviewWindow();
     DrawSceneSwitchDialog();
     DrawAssetDeleteDialog();
-    DrawReferenceViewer();
+    if (!HiddenWithAssetBand("参照ビューア")) DrawReferenceViewer();
     DrawAssetRevertDialog();
     DrawSceneDuplicateDialog();
     // 削除確認の「代わり」は確認モーダルの中で重ねる。天球の差し替えはここで出す。
@@ -1098,6 +1101,22 @@ void Application::DrawUi() {
 //   +---------------+----------------+------------------+
 //
 // 比率で組むので、ウィンドウの大きさが変わってもパネルははみ出さない。
+// 下のパネル（ウィンドウ > 下のパネル、Ctrl+B）を畳んでいる間、この名前のウィンドウも隠すか。
+// 「アセット」と同じドックノードにタブで入っているものが対象（利用者がグラフなどを帯へ移した配置）。
+// まだ一度も出していないウィンドウは、ini に残っているドック先で判定する。
+bool Application::HiddenWithAssetBand(const char* windowName) {
+    if (m_settings.Display().showAssetBand) return false;
+    const auto dockOf = [](const char* name) -> ImGuiID {
+        if (const ImGuiWindow* window = ImGui::FindWindowByName(name)) return window->DockId;
+        if (const ImGuiWindowSettings* saved = ImGui::FindWindowSettingsByID(ImHashStr(name))) {
+            return saved->DockId;
+        }
+        return 0;
+    };
+    const ImGuiID band = dockOf("アセット");
+    return band != 0 && dockOf(windowName) == band;
+}
+
 void Application::BuildDefaultLayout(ImGuiID dockspaceId) {
     ImGui::DockBuilderRemoveNode(dockspaceId);
     ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);

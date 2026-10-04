@@ -400,7 +400,7 @@ void Application::DrawModelLibraryPanel() {
 }
 void Application::DrawModelPreviewWindow() {
     m_modelPreviewVisible = false;
-    if (!m_showModelPreview) return;
+    if (!m_showModelPreview || HiddenWithAssetBand("モデルプレビュー")) return;
     ImGui::SetNextWindowSize(ImVec2(ui::Scaled(440), ui::Scaled(740)), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("モデルプレビュー", &m_showModelPreview,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {

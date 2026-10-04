@@ -121,6 +121,8 @@ private:
     void DrawUi();
     // 既定のドックレイアウトを組む。ini に配置が無いときと、明示的な要求で呼ぶ。
     void BuildDefaultLayout(ImGuiID dockspaceId);
+    // 下のパネルを畳んでいる間、この名前のウィンドウも隠すか（「アセット」と同じ枠のタブ）。
+    bool HiddenWithAssetBand(const char* windowName);
     void DrawViewportPanel();
     void DrawMaterialPanel();
     void DrawLightingPanel();

@@ -44,7 +44,8 @@ struct DisplaySettings {
     bool showStats = false;
     // ハイトの範囲（height 0 / 0.5 / 1 の位置を示す枠）をビューポートに重ねるか。
     bool showHeightGuide = false;
-    // アセットの帯（テクスチャ / マテリアル / 天球）を出すか。畳むとビューポートが縦に広がる。
+    // 下のパネル（「アセット」が入っている枠と、同じ枠のタブ）を出すか。畳むとビューポートが縦に広がる。
+    // 保存名は以前の呼び名（アセットの帯）のまま（既存の設定を引き継ぐため）。
     bool showAssetBand = true;
     // ノードのメモの先頭をノードビューのノードに表示するか（切るとメモの印とツールチップだけ）。
     bool showNodeNotes = true;

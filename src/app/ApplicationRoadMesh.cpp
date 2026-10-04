@@ -669,7 +669,7 @@ void Application::OpenBoundaryPreview(const std::filesystem::path& file) {
 // 境界マテリアルの窓。上にマスクとハイトの画像、下に設定（路肩のプロパティと同じ行）。
 // 開くのはアセットブラウザのダブルクリックか、路肩のプロパティのボタン。
 void Application::DrawBoundaryPreviewWindow() {
-    if (!m_showBoundaryPreview) return;
+    if (!m_showBoundaryPreview || HiddenWithAssetBand("境界マテリアル")) return;
     ImGui::SetNextWindowSize(ImVec2(ui::Scaled(460.0f), ui::Scaled(640.0f)), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("境界マテリアル", &m_showBoundaryPreview,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
