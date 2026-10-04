@@ -51,6 +51,15 @@ inline float WrapAngle(float radians) {
 // 既定値マーカーが参照する値。数値リテラルではなく設定構造体の初期値を使う。
 inline const compositor::MaterialLayer kDefaultLayer;
 
+// Surface ノードの既定値。地形へ素材を塗るのが主な使い方なので、「下地に沿わせる」を入れておく
+// （切のままだと、勝った所の高さが基準の高さ 0.5 の平面へ引かれて地形が潰れる）。
+// 構造体の既定は切のままにして、この値を持たない古いファイルの読み方を変えない。
+inline const compositor::MaterialLayer kDefaultSurfaceLayer = [] {
+    compositor::MaterialLayer layer;
+    layer.wrapToUnderlying = true;
+    return layer;
+}();
+
 // シェイプレイヤーの既定値。追加時の初期値と既定値マーカーの参照先を兼ねる。
 // 地形スケールの起伏が役割なので、ノイズは低周波にする。
 inline const compositor::MaterialLayer kDefaultShapeLayer = [] {
@@ -245,6 +254,8 @@ inline const compositor::MaterialLayer kDefaultRoadGradingLayer = [] {
 
 inline const compositor::MaterialLayer& DefaultLayerFor(compositor::LayerKind kind) {
     switch (kind) {
+        case compositor::LayerKind::Surface:
+            return kDefaultSurfaceLayer;
         case compositor::LayerKind::RoadGrading:
             return kDefaultRoadGradingLayer;
         case compositor::LayerKind::Shape:
