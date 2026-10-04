@@ -2109,13 +2109,6 @@ void Application::DrawGraphPanel() {
         ImGui::SameLine();
         if (ui::Button("雲グラフ", ui::kWideButtonWidth)) OpenComponentEditor(1);
         ImGui::EndDisabled();
-        ImGui::TextUnformatted(m_editComponent == 1 ? "編集中：雲" : "編集中：地形");
-    }
-    if (const graph::Node* selected = m_graph.FindNode(m_selectedGraphNode);
-        selected != nullptr && graph::IsLayerNodeKind(selected->kind)) {
-        ui::HintText("選択したノードまでを表示中（選択を外すと出力まで）");
-    } else {
-        ui::HintText("出力ノードへ繋いだチェーンがプレビューになる");
     }
     if (const size_t cycleCount = GraphCycleNodes().size(); cycleCount > 0) {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::ErrorColor());
@@ -2132,17 +2125,43 @@ void Application::DrawGraphPanel() {
         ui::EndPropertyTable();
     }
 
-    float editorHeight = ui::Scaled(m_graphEditorHeight);
-    const float paneWidth = ImGui::GetContentRegionAvail().x;
-    const float maxHeight =
-        std::max(ui::Scaled(160.0f), ImGui::GetContentRegionAvail().y - ui::Scaled(120.0f));
-    ImGui::BeginChild("graphEditorPane", ImVec2(0.0f, editorHeight));
-    DrawGraphEditor();
-    ImGui::EndChild();
+    // 横に広い枠（下の帯など）へ置いたときは左右に割る（左がグラフ、右がプロパティ）。
+    // 縦長の枠（右カラム）では上下のまま。プロパティは幅を取るので、狭い枠を左右に割ると成立しない。
+    const ImVec2 available = ImGui::GetContentRegionAvail();
+    const float minEditorWidth = ui::Scaled(320.0f);
+    const float minPropertyWidth = ui::Scaled(280.0f);
+    const float margin = ui::Scaled(ui::kSplitterMargin);
+    const float usableWidth = available.x - margin * 2.0f - ui::Scaled(ui::kSplitterGrabWidth);
+    const bool sideBySide =
+        usableWidth >= minEditorWidth + minPropertyWidth && available.x > available.y * 1.2f;
+    if (sideBySide) {
+        const float propertyWidth = std::clamp(ui::Scaled(m_settings.Ui().graphPropertyWidth),
+                                               minPropertyWidth, usableWidth - minEditorWidth);
+        float editorWidth = usableWidth - propertyWidth;
+        ImGui::BeginChild("graphEditorPane", ImVec2(editorWidth, available.y));
+        DrawGraphEditor();
+        ImGui::EndChild();
 
-    ui::HorizontalSplitter("graphSplitter", &editorHeight, ui::Scaled(160.0f), maxHeight,
-                           paneWidth);
-    m_graphEditorHeight = editorHeight / std::max(ui::Scaled(1.0f), 0.01f);
+        ImGui::SameLine(0.0f, margin);
+        const float previousWidth = editorWidth;
+        const bool released = ui::VerticalSplitter("graphSplitterSide", &editorWidth, minEditorWidth,
+                                                   usableWidth - minPropertyWidth, available.y);
+        if (editorWidth != previousWidth) {
+            m_settings.Ui().graphPropertyWidth = (usableWidth - editorWidth) / ui::Scaled(1.0f);
+        }
+        if (released) m_settings.Save();
+        ImGui::SameLine(0.0f, margin);
+    } else {
+        float editorHeight = ui::Scaled(m_graphEditorHeight);
+        const float maxHeight = std::max(ui::Scaled(160.0f), available.y - ui::Scaled(120.0f));
+        ImGui::BeginChild("graphEditorPane", ImVec2(0.0f, editorHeight));
+        DrawGraphEditor();
+        ImGui::EndChild();
+
+        ui::HorizontalSplitter("graphSplitter", &editorHeight, ui::Scaled(160.0f), maxHeight,
+                               available.x);
+        m_graphEditorHeight = editorHeight / std::max(ui::Scaled(1.0f), 0.01f);
+    }
 
     ImGui::BeginChild("graphPropertyPane", ImVec2(0.0f, 0.0f));
 

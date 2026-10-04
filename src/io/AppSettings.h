@@ -29,6 +29,8 @@ struct UiSettings {
     float layerListHeight = 260.0f;
     // アセットのフォルダ階層の幅。拡大率を掛ける前の値。
     float assetFolderWidth = 190.0f;
+    // グラフのパネルを左右に割ったときの、プロパティ側の幅。拡大率を掛ける前の値。
+    float graphPropertyWidth = 420.0f;
 };
 
 // 表示に関する設定（設定ウィンドウの「表示」節）。
