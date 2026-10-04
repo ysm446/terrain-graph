@@ -34,8 +34,8 @@ namespace {
 
 // ノードに出すメモの行数の上限。長いメモは末尾を「…」にし、全文はツールチップで見せる。
 constexpr int kNodeNoteLines = 3;
-// メモの吹き出しの内側の余白と、ノード上端との隙間（キャンバス座標）。
-// 整列でノードを縦に詰めるときも、この高さぶん上を空ける。
+// メモの吹き出しの内側の余白と、ノード下端との隙間（キャンバス座標）。
+// 整列でノードを縦に詰めるときも、この高さぶん下を空ける。
 constexpr float kNotePaddingX = 6.0f;
 constexpr float kNotePaddingY = 3.0f;
 constexpr float kNoteGap = 4.0f;
@@ -1053,10 +1053,10 @@ void Application::AlignSelectedGraphNodes(GraphAlign mode) {
         ed::NodeId id;
         ImVec2 pos;
         ImVec2 size;
-        // 上に出すメモの吹き出しの高さ（隙間を含む）。縦に詰めるときはこのぶん上を空ける。
+        // 下に出すメモの吹き出しの高さ（隙間を含む）。縦に詰めるときはこのぶん下を空ける。
         float note = 0.0f;
-        float Top() const { return pos.y - note; }
-        float Bottom() const { return pos.y + size.y; }
+        float Top() const { return pos.y; }
+        float Bottom() const { return pos.y + size.y + note; }
         float Right() const { return pos.x + size.x; }
     };
     std::vector<ed::NodeId> selected(static_cast<size_t>(std::max(ed::GetSelectedObjectCount(), 0)));
@@ -1126,7 +1126,7 @@ void Application::AlignSelectedGraphNodes(GraphAlign mode) {
             float cursor = vertical ? lane.front()->Top() : lane.front()->pos.x;
             for (Item* item : lane) {
                 if (vertical) {
-                    item->pos = ImVec2(edge, cursor + item->note);
+                    item->pos = ImVec2(edge, cursor);
                     cursor = item->Bottom() + kStackGapY;
                 } else {
                     item->pos = ImVec2(cursor, edge);
@@ -1147,7 +1147,7 @@ void Application::AlignSelectedGraphNodes(GraphAlign mode) {
         float cursor = vertical ? items.front().Top() : left;
         for (Item& item : items) {
             if (vertical) {
-                item.pos.y = cursor + item.note;
+                item.pos.y = cursor;
                 cursor = item.Bottom() + gap;
             } else {
                 item.pos.x = cursor;
@@ -1183,7 +1183,7 @@ void Application::AlignSelectedGraphNodes(GraphAlign mode) {
 // 選択には依らない（何も選んでいなくても、編集中のグラフの全ノードが対象）。
 //
 // 位置と大きさはエディタが持つ値を使う（実際に描かれた大きさ。種類で高さが違う）。メモの吹き出しを
-// 出している間は、その高さも箱に含める（縦にずらしたとき吹き出しが上のノードに重ならないように）。
+// 出している間は、その高さも箱に含める（縦にずらしたとき吹き出しが下のノードに重ならないように）。
 // アンドゥの扱いは AlignSelectedGraphNodes と同じ（「並べ直す前」を 1 段にする）。
 void Application::ArrangeGraphLeftToRight() {
     // 直した接続の間に空ける幅、これより狭い接続も直す幅、縦にずらすときにほかのノードとの間に
@@ -1210,7 +1210,7 @@ void Application::ArrangeGraphLeftToRight() {
         indexOf[node.id] = boxes.size();
         ids.push_back(node.id);
         notes.push_back(note);
-        boxes.push_back({position.x, position.y - note, size.x, size.y + note});
+        boxes.push_back({position.x, position.y, size.x, size.y + note});
     }
     std::vector<graph::LayoutEdge> edges;
     for (const graph::Link& link : m_graph.Links()) {
@@ -1231,7 +1231,7 @@ void Application::ArrangeGraphLeftToRight() {
     if (!m_documentDirty) m_committed = CaptureDocument();
     for (size_t i = 0; i < boxes.size(); ++i) {
         if (boxes[i].x == before[i].x && boxes[i].y == before[i].y) continue;
-        ed::SetNodePosition(ed::NodeId(ids[i]), ImVec2(boxes[i].x, boxes[i].y + notes[i]));
+        ed::SetNodePosition(ed::NodeId(ids[i]), ImVec2(boxes[i].x, boxes[i].y));
     }
     MarkDocumentChanged(false);
     char detail[96];
@@ -1239,7 +1239,8 @@ void Application::ArrangeGraphLeftToRight() {
     m_toasts.Push("左から右へ並べ直しました", detail);
 }
 
-// ノードのメモの先頭を、ノードの上端のすぐ上に吹き出しとして出す（グラフパネルの「メモを表示」）。
+// ノードのメモの先頭を、ノードの下端のすぐ下に吹き出しとして出す（グラフパネルの「メモを表示」）。
+// 最初は上に出していたが、ユーザー指定で下へ移した（上は、引いたときの名前の表示に使う）。
 // **ノードの外に描く。** 中に描くとメモの有無や表示の切り替えでノードの高さが変わり、配置が崩れる。
 // ed::Begin と ed::End の間で呼ぶ（キャンバス座標で描き、マウスもキャンバス座標で判定する）。
 void Application::DrawGraphNodeNotes() {
@@ -1257,12 +1258,62 @@ void Application::DrawGraphNodeNotes() {
         if (!IsValidNodePosition(position.x, position.y) || size.x <= 0.0f) continue;
         const std::string excerpt = NoteExcerpt(node.note, size.x - padding.x * 2.0f, kNodeNoteLines);
         const ImVec2 textSize = ImGui::CalcTextSize(excerpt.c_str());
-        const ImVec2 boxMax(position.x + size.x, position.y - kNoteGap);
-        const ImVec2 boxMin(position.x, boxMax.y - textSize.y - padding.y * 2.0f);
+        const ImVec2 boxMin(position.x, position.y + size.y + kNoteGap);
+        const ImVec2 boxMax(position.x + size.x, boxMin.y + textSize.y + padding.y * 2.0f);
         drawList->AddRectFilled(boxMin, boxMax, background, 4.0f);
         drawList->AddRect(boxMin, boxMax, border, 4.0f);
         drawList->AddText(ImVec2(boxMin.x + padding.x, boxMin.y + padding.y), text, excerpt.c_str());
         if (excerpt != node.note && ImGui::IsMouseHoveringRect(boxMin, boxMax)) m_graphNoteHover = node.id;
+    }
+}
+
+// グラフを引いて見たとき、ノードの名前をノードの上に大きく出す（画面上で文字の大きさを保つ）。
+// 引くとノードの中の名前は潰れて読めなくなるので、どこに何があるかを名前で追えるようにする。
+// メモの吹き出しはノードの下に出るので、上は名前だけになる。ed::Begin と ed::End の間で呼ぶ。
+void Application::DrawGraphNodeTitles() {
+    // 画面上の 1 キャンバス単位の大きさ（1 が等倍）。これより引いたら出し始め、少し引く間に濃くする。
+    constexpr float kTitleShowScale = 0.75f;
+    constexpr float kTitleFadeRange = 0.15f;
+    const float scale = std::abs(ed::CanvasToScreen(ImVec2(1.0f, 0.0f)).x - ed::CanvasToScreen(ImVec2(0.0f, 0.0f)).x);
+    if (scale <= 0.0f || scale >= kTitleShowScale) return;
+    const float alpha = std::clamp((kTitleShowScale - scale) / kTitleFadeRange, 0.0f, 1.0f);
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    ImFont* font = ImGui::GetFont();
+    // キャンバス座標で描くので、画面上で等倍の文字になる大きさへ戻す。余白と角の丸みも同じ。
+    const float fontSize = ImGui::GetFontSize() / scale;
+    const ImVec2 padding(kNotePaddingX / scale, kNotePaddingY / scale);
+    const ImU32 background = ImGui::GetColorU32(ImGuiCol_PopupBg, 0.85f * alpha);
+    const ImU32 text = ImGui::GetColorU32(ImGuiCol_Text, alpha);
+    const ImU32 textDisabled = ImGui::GetColorU32(ImGuiCol_TextDisabled, alpha);
+    // 引くほど名前どうしが重なるので、先に置いた名前と重なるものは出さない。選んでいるノード、
+    // 本流のレイヤーのノード（Surface・加工・水など）、そのほか（マスクなど）の順に場所を取る。
+    struct Box { ImVec2 min, max; };
+    std::vector<Box> placed;
+    const auto draw = [&](const graph::Node& node) {
+        const ImVec2 position = ed::GetNodePosition(ed::NodeId(node.id));
+        const ImVec2 size = ed::GetNodeSize(ed::NodeId(node.id));
+        if (!IsValidNodePosition(position.x, position.y) || size.x <= 0.0f) return;
+        const float top = position.y - kNoteGap;
+        const char* name = NodeDisplayName(node);
+        const ImVec2 textSize = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, name);
+        const float centerX = position.x + size.x * 0.5f;
+        const Box box{ImVec2(centerX - textSize.x * 0.5f - padding.x, top - textSize.y - padding.y * 2.0f),
+                      ImVec2(centerX + textSize.x * 0.5f + padding.x, top)};
+        for (const Box& other : placed) {
+            if (box.min.x < other.max.x && box.max.x > other.min.x && box.min.y < other.max.y && box.max.y > other.min.y) return;
+        }
+        placed.push_back(box);
+        drawList->AddRectFilled(box.min, box.max, background, 4.0f / scale);
+        drawList->AddText(font, fontSize, ImVec2(box.min.x + padding.x, box.min.y + padding.y),
+                          graph::IsBypassed(node) ? textDisabled : text, name);
+    };
+    for (int pass = 0; pass < 3; ++pass) {
+        for (const graph::Node& node : m_graph.Nodes()) {
+            if (m_editComponent >= 0 && node.component != m_editComponent) continue;
+            const bool selected = ed::IsNodeSelected(ed::NodeId(node.id));
+            const bool layer = std::holds_alternative<graph::LayerNodeSettings>(node.settings);
+            if ((selected ? 0 : layer ? 1 : 2) == pass) draw(node);
+        }
     }
 }
 
@@ -1321,6 +1372,7 @@ void Application::DrawGraphEditor() {
         DrawGraphNode(node);
     }
     DrawGraphNodeNotes();
+    DrawGraphNodeTitles();
 
     // A でグラフ全体を画面に収める（ビューポートの A と同じ作法）。
     // 内容の矩形は live なノードから計算されるため、描画の後に呼ぶ。

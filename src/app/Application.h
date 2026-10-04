@@ -144,6 +144,8 @@ private:
     // グラフのエディタ部（imgui-node-editor）。パネルの中で呼ぶ。
     void DrawGraphEditor();
     void DrawGraphNodeNotes();
+    // 引いて見たときに、ノードの名前をノードの上へ画面上で一定の大きさで出す。
+    void DrawGraphNodeTitles();
     // グラフのノード 1 枚。カード・ピン・リンクの当たり判定を描く。
     void DrawGraphNode(const graph::Node& node);
     // ノードに出すマスクのサムネイル（そのノードの outputIndex 番目の Mask 出力）。
