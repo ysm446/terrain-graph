@@ -164,7 +164,8 @@ struct MeshConstants {
 
     float shoreWidth;
     float riverFoam;
-    float shorePad[2];
+    float waveFacetSize;
+    float shorePad;
 
     uint32_t materialFlowIndex;  // 流れの場（速度、川の水面の被覆、早瀬）の SRV
     float riverWaveStrength;
@@ -874,6 +875,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     constants.waveScale = m_water.waveScaleMeters;
     constants.waveSpeed = m_water.waveSpeed;
     constants.waveDirection = m_water.waveDirectionRadians;
+    constants.waveFacetSize = m_water.waveFacetSizeMeters;
     constants.shoreFoam = m_water.shoreFoam;
     constants.shoreRunup = m_water.shoreRunupMeters;
     constants.shoreSpacing = m_water.shoreSpacingMeters;

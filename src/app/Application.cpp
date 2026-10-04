@@ -837,6 +837,7 @@ void Application::PrepareWater() {
         water.waveScaleMeters = std::max(liquid.waveScaleMeters, 0.1f);
         water.waveSpeed = std::max(liquid.waveSpeed, 0.0f);
         water.waveDirectionRadians = liquid.waveDirectionDegrees * DirectX::XM_PI / 180.0f;
+        water.waveFacetSizeMeters = std::max(liquid.waveFacetSizeMeters, 0.0f);
         water.shoreFoam = std::clamp(liquid.shoreFoam, 0.0f, 1.0f);
         water.shoreRunupMeters = std::max(liquid.shoreRunupMeters, 0.0f);
         water.shoreSpacingMeters = std::max(liquid.shoreSpacingMeters, 1.0f);

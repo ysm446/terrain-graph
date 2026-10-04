@@ -1407,6 +1407,7 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
         liquid["waveScaleMeters"] = layer.liquid.waveScaleMeters;
         liquid["waveSpeed"] = layer.liquid.waveSpeed;
         liquid["waveDirectionDegrees"] = layer.liquid.waveDirectionDegrees;
+        liquid["waveFacetSizeMeters"] = layer.liquid.waveFacetSizeMeters;
         liquid["shoreFoam"] = layer.liquid.shoreFoam;
         liquid["shoreRunupMeters"] = layer.liquid.shoreRunupMeters;
         liquid["shoreSpacingMeters"] = layer.liquid.shoreSpacingMeters;
@@ -1518,6 +1519,8 @@ compositor::MaterialLayer ReadLayer(
         layer.liquid.waveSpeed = ReadFloat(*liquid, "waveSpeed", defaults.liquid.waveSpeed);
         layer.liquid.waveDirectionDegrees =
             ReadFloat(*liquid, "waveDirectionDegrees", defaults.liquid.waveDirectionDegrees);
+        layer.liquid.waveFacetSizeMeters =
+            ReadFloat(*liquid, "waveFacetSizeMeters", defaults.liquid.waveFacetSizeMeters);
         layer.liquid.shoreFoam = ReadFloat(*liquid, "shoreFoam", defaults.liquid.shoreFoam);
         layer.liquid.shoreRunupMeters =
             ReadFloat(*liquid, "shoreRunupMeters", defaults.liquid.shoreRunupMeters);

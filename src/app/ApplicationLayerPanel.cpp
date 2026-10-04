@@ -1215,6 +1215,12 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
             changed |= ui::PropertyFloat("向き", &layer.liquid.waveDirectionDegrees, -180.0f, 180.0f,
                                          defaults.liquid.waveDirectionDegrees,
                                          "うねりの進む向き（度）。0 で +X、90 で +Z へ進む", "%.0f°");
+            changed |= ui::PropertyFloat("波面の大きさ", &layer.liquid.waveFacetSizeMeters, 0.0f, 0.2f,
+                                         defaults.liquid.waveFacetSizeMeters,
+                                         "太陽のきらめきを作る、一番小さな波面の大きさ（m）。画素の中の波面を数え、"
+                                         "太陽を目へ返す向きのものだけを光らせる。小さいほど粒が細かく、"
+                                         "大きいほど粗く明るい。全体の明るさは変わらない。0 で粒なし",
+                                         "%.3f m");
             ui::EndPropertyTable();
         }
         // 波打ち際も描画で動かす。泡の筋は水際からの距離で進み、岸の形に沿って岸へ向かう。

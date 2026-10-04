@@ -97,7 +97,8 @@ struct MeshConstants
 
     float shoreWidth;    // 泡の筋が出る、水際からの幅（m）
     float riverFoam;     // 川の早瀬の白波の量（0〜1）
-    float2 shorePad;
+    float waveFacetSize; // 太陽のきらめきを作る、一番小さな波面の大きさ（m）。0 で粒なし
+    float shorePad;
 
     // 流れの場（xy = 速度 m/s〔ワールドの +X / +Z〕、z = 川の水面の被覆、w = 早瀬の度合い）と、川の波の設定。
     uint materialFlowIndex;
@@ -218,6 +219,126 @@ float2 WaveSlope(float2 positionMeters, float footprint)
     return float2(WaveHeight(positionMeters + ex, footprint) - WaveHeight(positionMeters - ex, footprint),
                   WaveHeight(positionMeters + ez, footprint) - WaveHeight(positionMeters - ez, footprint)) /
            (2.0f * epsilon);
+}
+
+// --- 太陽のきらめき ----------------------------------------------------------------
+// 画素より細かい波はラフネスへ畳んでいる（平均の反射）。実際の水面では、画素の中にある波面のうち
+// 太陽を目へ返す向きのものだけが光るので、反射は滑らかな帯ではなく粒になる。その「光っている
+// 波面の数」を数えて、太陽の鏡面項に掛ける。
+//   波面の数 N       = 画素が水面で覆う面積 / 波面 1 つの面積（waveFacetSize²）
+//   1 つが光る確率 p = D(h) × (n·h) × 太陽の立体角 / (4 v·h)
+//   光っている数 k   = 二項分布 (N, p)
+// 返すのは k / (N p)。平均は 1 なので、帯の位置・広がり・全体の明るさは変わらない。N が小さい
+// 近くでは粒になり、N が大きい遠くでは 1 へ収束する（距離での切り替えは持たない）。
+// 演出用の強さは無い。粒の密度と明るさは、波面の大きさ・ラフネス・画素の面積から決まる。
+
+// 太陽の立体角（sr）。視半径 0.267°。
+static const float kSunSolidAngle = 6.8e-5f;
+// 画素が水面で細長く伸びるとき（浅い角度）、長いほうへ並べて数える点の数の上限。
+static const int kGlintTaps = 6;
+
+uint GlintHashUint(uint x)
+{
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return x;
+}
+
+// セルごとの一様乱数（0〜1。両端を含まない）。
+// セルの番号は 100 万を超えるので、float のハッシュ（Hash21）は桁が足りない。
+float GlintRandom(int2 cell, uint salt)
+{
+    const uint h = GlintHashUint(uint(cell.x) + GlintHashUint(uint(cell.y) + GlintHashUint(salt)));
+    return (float(h >> 8) + 0.5f) / 16777216.0f;
+}
+
+// 二項分布 (count, probability) を一様乱数 u から引く。
+// 平均が小さいときはポアソン分布の逆関数法、大きいときは正規分布で近似する。
+float GlintSampleBinomial(float count, float probability, float u)
+{
+    const float mean = count * probability;
+    if (mean < 8.0f)
+    {
+        float term = exp(-mean);
+        float cdf = term;
+        float k = 0.0f;
+        for (int i = 0; i < 24 && u > cdf; ++i)
+        {
+            k += 1.0f;
+            term *= mean / k;
+            cdf += term;
+        }
+        return min(k, ceil(count));
+    }
+    // 標準正規分布の逆関数（Winitzki の erf の逆関数の近似）。
+    const float x = clamp(2.0f * u - 1.0f, -0.99999f, 0.99999f);
+    const float logTerm = log(1.0f - x * x);
+    const float a = 2.0f / (kPi * 0.147f) + 0.5f * logTerm;
+    const float z = sign(x) * sqrt(2.0f * (sqrt(a * a - logTerm / 0.147f) - a));
+    return clamp(mean + sqrt(mean * (1.0f - probability)) * z, 0.0f, count);
+}
+
+// positionMeters は水面の位置（ワールドの XZ）、dpdx / dpdy はその画面微分、
+// probability は波面 1 つが太陽を目へ返す確率。
+float SunGlint(float2 positionMeters, float2 dpdx, float2 dpdy, float probability)
+{
+    const float facet = g_mesh.waveFacetSize;
+    const float area = abs(dpdx.x * dpdy.y - dpdx.y * dpdy.x);
+    const float count = area / max(facet * facet, 1e-8f);
+    const float mean = count * probability;
+    // 画素に波面が 1 つも入らない近さでは、波は法線として見えている。ほぼ光らない向き
+    // （平均 1e-5 未満）と、数が多くて揺らぎが見えない遠さ（平均 400 超）は、平均のまま。
+    if (facet <= 0.0f || count <= 1.0f || mean < 1e-5f || mean > 400.0f)
+    {
+        return 1.0f;
+    }
+
+    // 画素が水面で張る範囲は、浅い角度では視線の向きへ細長い。セルは短いほうの幅に合わせ、
+    // 長いほうへは点を並べて数える（セルを長いほうに合わせると、粒が横に伸びた線になる）。
+    const float lengthX = length(dpdx);
+    const float lengthY = length(dpdy);
+    const float2 major = (lengthX > lengthY) ? dpdx : dpdy;
+    const float majorLength = max(lengthX, lengthY);
+    const float minorLength = area / majorLength;
+    const int taps = int(clamp(ceil(majorLength / minorLength), 1.0f, float(kGlintTaps)));
+    const float tapCount = count / float(taps);
+
+    // セルの大きさは 2 の累乗で、隣り合う 2 段を混ぜる（寄り引きで粒が一斉に入れ替わらないように）。
+    const float levelExact = log2(minorLength);
+    const float level = floor(levelExact);
+    const float levelBlend = levelExact - level;
+
+    // 明滅の周期は、波面の 4 倍の波長の波の周期（深水波。2 cm の波面で約 0.23 秒）。
+    const float time = g_mesh.waterTime * g_mesh.waveSpeed / (1.6f * sqrt(facet));
+
+    float lit = 0.0f;
+    for (int tap = 0; tap < taps; ++tap)
+    {
+        const float2 p = positionMeters + major * ((float(tap) + 0.5f) / float(taps) - 0.5f);
+        for (int step = 0; step < 2; ++step)
+        {
+            const float cellSize = exp2(level + float(step));
+            const int2 cell = int2(floor(p / cellSize));
+            const uint levelSalt = uint(int(level) + step + 64) << 16;
+            // セルごとに切り替わる時刻をずらし、前後の数を滑らかに入れ替える。
+            const float cellTime = time + GlintRandom(cell, levelSalt | 0xFFFFu);
+            const uint tick = uint(floor(cellTime)) & 0x7FFFu;
+            const float k0 =
+                GlintSampleBinomial(tapCount, probability, GlintRandom(cell, levelSalt | tick));
+            const float k1 =
+                GlintSampleBinomial(tapCount, probability, GlintRandom(cell, levelSalt | (tick + 1u)));
+            const float k = lerp(k0, k1, smoothstep(0.25f, 0.75f, frac(cellTime)));
+            lit += k * ((step == 0) ? (1.0f - levelBlend) : levelBlend);
+        }
+    }
+
+    const float glint = lit / mean;
+    // 両端は平均（1）へ滑らかにつなぐ。
+    const float weight = smoothstep(1.0f, 8.0f, count) * (1.0f - smoothstep(100.0f, 400.0f, mean));
+    return lerp(1.0f, glint, weight);
 }
 
 // --- 川の流れ --------------------------------------------------------------------
@@ -699,6 +820,8 @@ PsOutput PsMain(VsOutput input)
     float metallicValue = g_mesh.metallic;
     float ambientOcclusion = 1.0f;
     float3 normal = geometricNormal;
+    // 太陽のきらめきを掛ける割合（水面の被覆。泡の所は掛けない）。
+    float glintCover = 0.0f;
 
     // **クレイ表示**は、形（変位）はそのままで陰影だけをテクスチャ抜きにする。
     // 合成の色 / 法線 / サーフェスを読まず、単色マテリアルと面の向きで塗る。
@@ -749,6 +872,7 @@ PsOutput PsMain(VsOutput input)
         const float water = saturate(flow.z);
         if (water > 0.001f)
         {
+            glintCover = water;
             const float2 worldXz = input.worldPosition.xz;
             const float footprint = max(length(ddx(worldXz)), length(ddy(worldXz)));
 
@@ -777,6 +901,7 @@ PsOutput PsMain(VsOutput input)
                 const float foam = river.foam * water;
                 baseColor = lerp(baseColor, float3(0.82f, 0.85f, 0.86f), foam);
                 roughnessValue = lerp(roughnessValue, 0.6f, foam);
+                glintCover *= 1.0f - saturate(foam);
             }
         }
 
@@ -790,6 +915,7 @@ PsOutput PsMain(VsOutput input)
             roughnessValue = lerp(roughnessValue, 0.08f, shore.wash);
             baseColor = lerp(baseColor, float3(0.82f, 0.85f, 0.86f), shore.foam);
             roughnessValue = lerp(roughnessValue, 0.6f, shore.foam);
+            glintCover *= 1.0f - saturate(shore.foam);
             // 泡と水の膜は地面の細かい凹凸を覆う。
             normal = normalize(lerp(normal, geometricNormal, saturate(shore.foam + shore.wash) * 0.7f));
         }
@@ -919,9 +1045,22 @@ PsOutput PsMain(VsOutput input)
     // 影は直接光にだけ掛ける。環境光（IBL）は別に扱う。
     const float shadow = SampleCascadedShadow(input.worldPosition, dot(normal, lightDirection));
 
-    float3 radiance = ShadeDirectionalLight(normal, viewDirection, lightDirection,
-                                            g_mesh.lightColor, g_mesh.lightIlluminance,
-                                            diffuseColor, f0, roughness) *
+    // 水面の太陽のきらめき。画素の中の波面のうち、太陽を目へ返す向きのものを数える（SunGlint）。
+    float specularScale = 1.0f;
+    if (glintCover > 0.0f && g_mesh.waveFacetSize > 0.0f)
+    {
+        const float3 halfVector = normalize(viewDirection + lightDirection);
+        const float nDotH = saturate(dot(normal, halfVector));
+        const float vDotH = max(dot(viewDirection, halfVector), 1e-3f);
+        const float probability =
+            saturate(DistributionGGX(nDotH, roughness) * nDotH * kSunSolidAngle / (4.0f * vDotH));
+        const float2 worldXz = input.worldPosition.xz;
+        specularScale = lerp(1.0f, SunGlint(worldXz, ddx(worldXz), ddy(worldXz), probability), glintCover);
+    }
+
+    float3 radiance = ShadeDirectionalLightScaled(normal, viewDirection, lightDirection,
+                                                  g_mesh.lightColor, g_mesh.lightIlluminance,
+                                                  diffuseColor, f0, roughness, specularScale) *
                       shadow * (g_mesh.atmosphericMode != 0 ?
                           CloudShadow(input.worldPosition, g_mesh.atmosphere, g_mesh.cloudNoiseIndex) : 1.0);
 

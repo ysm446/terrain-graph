@@ -57,10 +57,11 @@ void SplitBaseColor(float3 baseColor, float metallic, out float3 diffuseColor, o
 }
 
 // 1 灯ぶんの直接光。lightDirection は「サーフェスから光源へ向かう」正規化ベクトル。
-// illuminance は光源の照度（lux 相当）。
-float3 ShadeDirectionalLight(float3 normal, float3 viewDirection, float3 lightDirection,
-                             float3 lightColor, float illuminance, float3 diffuseColor,
-                             float3 f0, float roughness)
+// illuminance は光源の照度（lux 相当）。specularScale は鏡面項にだけ掛ける倍率
+// （水面のきらめき。MeshPbr.hlsl の SunGlint を参照）。
+float3 ShadeDirectionalLightScaled(float3 normal, float3 viewDirection, float3 lightDirection,
+                                   float3 lightColor, float illuminance, float3 diffuseColor,
+                                   float3 f0, float roughness, float specularScale)
 {
     const float nDotL = saturate(dot(normal, lightDirection));
     if (nDotL <= 0.0f)
@@ -79,10 +80,18 @@ float3 ShadeDirectionalLight(float3 normal, float3 viewDirection, float3 lightDi
     const float vis = VisibilitySmithGgxCorrelated(nDotV, nDotL, roughness);
     const float3 f = FresnelSchlick(f0, vDotH);
 
-    const float3 specular = d * vis * f;
+    const float3 specular = d * vis * f * specularScale;
     const float3 diffuse = diffuseColor * DiffuseLambert() * (1.0f - f);
 
     return (diffuse + specular) * lightColor * illuminance * nDotL;
+}
+
+float3 ShadeDirectionalLight(float3 normal, float3 viewDirection, float3 lightDirection,
+                             float3 lightColor, float illuminance, float3 diffuseColor,
+                             float3 f0, float roughness)
+{
+    return ShadeDirectionalLightScaled(normal, viewDirection, lightDirection, lightColor, illuminance,
+                                       diffuseColor, f0, roughness, 1.0f);
 }
 
 // --- IBL 用 --------------------------------------------------------------

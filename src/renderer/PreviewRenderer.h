@@ -295,6 +295,8 @@ public:
         float waveScaleMeters = 40.0f;
         float waveSpeed = 1.0f;
         float waveDirectionRadians = 0.0f;
+        // 太陽のきらめきを作る、一番小さな波面の大きさ（m）。0 で粒なし。
+        float waveFacetSizeMeters = 0.0f;
         // 波打ち際（泡の量、寄せる高さ m、泡の筋の間隔 m、泡の筋が出る幅 m）。
         float shoreFoam = 0.0f;
         float shoreRunupMeters = 0.0f;

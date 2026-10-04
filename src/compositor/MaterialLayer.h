@@ -622,6 +622,9 @@ struct MaterialLayer {
         float waveSpeed = 1.0f;
         // うねりの進む向き（度。0 で +X、90 で +Z へ進む）。
         float waveDirectionDegrees = 0.0f;
+        // 太陽のきらめきを作る、一番小さな波面の大きさ（m）。画素の中の波面を数えて、太陽を目へ返す
+        // 向きのものだけを光らせる（MeshPbr.hlsl の SunGlint）。0 で粒なし（古いファイルと同じ滑らかな反射）。
+        float waveFacetSizeMeters = 0.0f;
         // 波打ち際。波と同じく合成には効かない。泡の量 0 かつ寄せる高さ 0 で無し（古いファイルと同じ）。
         // 泡の量（0〜1）。岸へ向かって進む泡の筋と、寄せた波の先端の泡。
         float shoreFoam = 0.0f;
