@@ -1,7 +1,21 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-10-05 16:37
+更新日時: 2026-10-05 19:35
+
+## 木曽駒ヶ岳に千畳敷駅を配置（2026-10-05 19:35）
+
+ユーザー依頼で、千畳敷駅と一体のホテル外観を Blender で作り、既存シーンへ配置した。公開資料からの推定寸法で進める了承あり。
+
+- OpenStreetMap の建物外周を m へ換算し、屋根・窓・テラス・庇などは写真から近似。`data/Models/Senjojiki/` に blend / FBX / tgmodel / tgmat、2 段階の LOD。
+- `tools/blender/make_senjojiki.py` と `tools/scene/place_senjojiki.py` で再生成可能。既存の Scatter と Mask Area で 1 棟だけ置き、敷地を局所的に均して植生を除く。
+- **標高の制約**: 公称 2,612 m と、同じ緯度経度の加工後の地形約 2,636 m に差がある。床はシーンに合わせて 2,637 m。実測通りの再現ではない。
+- Release で正面・背面・遠景を確認（`data/Test/senjojiki-qa/v5_*.png`、ログの警告・エラー 0）。Debug 評価レポートはエラー 0・駅 1 棟。設定範囲の警告 10 件は作業前と同一。
+- Debug 保存と Release 再読込も完了（`final_front.png`、ログの警告・エラー 0）。雲の部品は保存時に ID が再採番されたが設定は同一。空・カメラは維持。
+- 元の地形ノード 147 個の設定と UID を維持。作業前のバックアップは `data/Test/kiso-komagatake-before-station-20261005.zip`。
+
+出典・推定寸法・配置の仕組み・未再現部分は [千畳敷駅モデル](../reference/senjojiki-model.md)。
+
 
 ## ビューポートのホイールを、カーソルの下の点へのズームに（2026-10-05 16:37）
 
