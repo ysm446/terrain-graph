@@ -57,12 +57,13 @@ struct ScatterConstants
     float4 params1;
     // x: 届く範囲（散布セル）、y: シード、z: テクセルの大きさ（m）、w: 標高差（m）
     float4 params2;
-    // x: なめらかさ（0 で max のまま）、yzw: 未使用
+    // x: なめらかさ（0 で max のまま）、y: 群生の子の数、z: 群生の半径（散布セル）、w: 子の大きさの下限
     float4 params3;
     // x: Points UAV、y: 行数、z: セルの一辺の数、w: 先頭セル（符号付き）
     uint4 points;
     // x: 点の属性の UAV（RGBA16F、1 行 1 点）、y: 色むらのマスクの SRV（無ければ中立の 0.5）、
-    // z: 大きさのマスクの SRV（無ければ等倍の 1）、w: 未使用
+    // z: 倍率のマスクの SRV（無ければ等倍の 1）、w: 未使用
+    // 属性の中身: x = 色むら、z = Scale マスクの値、w = 群生の子の大きさ（親は 1）
     uint4 attributes;
 };
 
@@ -351,26 +352,48 @@ void CsMask(uint3 dispatchThreadId : SV_DispatchThreadID)
 void CsPoints(uint3 id : SV_DispatchThreadID)
 {
     const uint side = g_scatter.points.z;
-    if (id.x >= side * side) return;
+    // 点の番号は「マス × （親 1 + 子の数）」。slot 0 が親、1 以降が群生の子。
+    const uint slots = 1u + uint(g_scatter.params3.y);
+    const uint cell = id.x / slots;
+    const uint slot = id.x % slots;
+    if (cell >= side * side) return;
     RWTexture2D<float4> points = ResourceDescriptorHeap[g_scatter.points.x];
     const uint2 address = uint2(id.x % 1024, id.x / 1024);
     const uint2 normalAddress = address + uint2(0, g_scatter.points.y);
     points[address] = 0;
     points[normalAddress] = float4(0, 1, 0, 0);
-    // 点の属性。x = 色むら（0.5 が中立）、z = 大きさ（1 が等倍）。置かない点も中立で埋めておく。
+    // 点の属性。x = 色むら（0.5 が中立）、z = 倍率のマスク（1 が等倍）、w = 群生の子の大きさ（親は 1）。
+    // 置かない点も中立で埋めておく。
     RWTexture2D<float4> attributes = ResourceDescriptorHeap[g_scatter.attributes.x];
-    attributes[address] = float4(0.5, 0, 1, 0);
-    const int gx = int(id.x % side) + asint(g_scatter.points.w);
-    const int gz = int(id.x / side) + asint(g_scatter.points.w);
+    attributes[address] = float4(0.5, 0, 1, 1);
+    const int gx = int(cell % side) + asint(g_scatter.points.w);
+    const int gz = int(cell / side) + asint(g_scatter.points.w);
     const int seed = int(g_scatter.params2.y);
-    const float2 center = float2(gx, gz) + 0.5 +
+    // 親の位置と、置くかどうか（形のパスと同じ乱数）。親が置かれないマスには子も置かない。
+    const float2 parent = float2(gx, gz) + 0.5 +
         float2(ScatterHash01(gx, gz, seed), ScatterHash01(gx, gz, seed + 73)) * 0.9 - 0.45;
     const float density = g_scatter.params0.x;
     const float sizeMeters = g_scatter.params2.z * ScatterResolution();
+    const float probability = g_scatter.params0.y * SamplePlacementMask(parent.x, parent.y);
+    if (probability <= 0 || ScatterHash01(gx, gz, seed + 17) > probability) return;
+    float2 center = parent;
+    float childScale = 1.0f;
+    // 子ごとに乱数を変える種。
+    const int slotSeed = seed * 31 + int(slot) * 7919;
+    if (slot > 0u)
+    {
+        // 子は 4 つに 1 つ欠ける（株ごとに本数が違って見えるように）。
+        if (ScatterHash01(gx, gz, slotSeed + 311) > 0.75f) return;
+        const float angle = ScatterHash01(gx, gz, slotSeed + 101) * 6.28318530718f;
+        // 親に重ならないよう、半径の 3 割より外へ置く。面積で均すので平方根を取る。
+        const float distance = g_scatter.params3.z * lerp(0.3f, 1.0f, sqrt(ScatterHash01(gx, gz, slotSeed + 211)));
+        center = parent + float2(cos(angle), sin(angle)) * distance;
+        // 子の場所が分布の外（道や水面など）なら置かない。
+        if (SamplePlacementMask(center.x, center.y) <= 0.05f) return;
+        childScale = lerp(g_scatter.params3.w, 1.0f, ScatterHash01(gx, gz, slotSeed + 401));
+    }
     const float2 horizontal = center * density;
     if (any(horizontal < -sizeMeters * 0.5) || any(horizontal >= sizeMeters * 0.5)) return;
-    const float probability = g_scatter.params0.y * SamplePlacementMask(center.x, center.y);
-    if (probability <= 0 || ScatterHash01(gx, gz, seed + 17) > probability) return;
     Texture2D<float> heightIn = ResourceDescriptorHeap[g_scatter.indices0.x];
     // 描画と同じテクセル中心の線形補間で地表へ接地する。
     const float2 samplePosition = (horizontal + sizeMeters * 0.5) / g_scatter.params2.z - 0.5;
@@ -384,14 +407,15 @@ void CsPoints(uint3 id : SV_DispatchThreadID)
              heightIn.Load(int3(clamp(lower + 1, 0, last), 0)), f.x), f.y);
     const float2 gradient = SampleGroundGradient(ScatterCellToTexel(center));
     const float3 normal = normalize(float3(-gradient.x, 1, -gradient.y));
-    const float diameter = density * lerp(g_scatter.params0.z, g_scatter.params0.w,
-        ScatterHash01(gx, gz, seed * 1583 + 22441));
-    const float yaw = (ScatterHash01(gx, gz, seed * 4519 + 91173) - 0.5) *
+    // 親は形のパスと同じ乱数（slot 0 では足す値が 0）。子は別の乱数で、親より小さい。
+    const float diameter = density * childScale * lerp(g_scatter.params0.z, g_scatter.params0.w,
+        ScatterHash01(gx, gz, seed * 1583 + 22441 + int(slot) * 7919));
+    const float yaw = (ScatterHash01(gx, gz, seed * 4519 + 91173 + int(slot) * 7919) - 0.5) *
         6.28318530718 * g_scatter.params1.z;
     points[address] = float4(horizontal.x, (h - 0.5) * g_scatter.params2.w, horizontal.y, diameter);
     points[normalAddress] = float4(normal, yaw);
     // 色むらと大きさは株の中心の 1 点で引く（個体の中で色が割れないように）。
-    float4 attribute = float4(0.5, 0, 1, 0);
+    float4 attribute = float4(0.5, 0, 1, childScale);
     if (g_scatter.attributes.y != kInvalidTextureIndex)
     {
         Texture2D<float> variation = ResourceDescriptorHeap[g_scatter.attributes.y];

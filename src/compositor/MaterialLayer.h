@@ -762,6 +762,14 @@ struct MaterialLayer {
         // 上げるほど soft max へ寄って metaball のように溶け合う。
         // **既定は 0**（terrain-editor と同じ見え方）。
         float smoothness = 0.0f;
+        // 群生。格子の 1 マスに 1 つ置く点（親）の周りに、子の点を置く。数本が寄り添う株立ちや、
+        // 小さな木立ちを作る。**効くのは Points 出力だけ**（地面に作る形と Mask 出力は親の点だけ）。
+        // clusterCount: 親 1 つにつく子の数の上限（0 で群生なし。子は 1 つずつ確率で欠ける）。
+        // clusterRadiusMeters: 親から子までの距離の上限。
+        // clusterScale: 子の大きさの下限（親に対する比）。子はこの値〜1 の間で決まる。
+        int clusterCount = 0;
+        float clusterRadiusMeters = 3.0f;
+        float clusterScale = 0.6f;
     };
     ScatterSettings scatter;
 

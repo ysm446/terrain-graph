@@ -45,9 +45,12 @@ void CsCull(uint3 id : SV_DispatchThreadID) {
     // usePointSize が 2 なら点の w が倍率そのもの（Model Place。ModelPreview.hlsl の LoadInstance と揃える）。
     if (g_cull.usePointSize == 2) scale = placement.w;
     else if (g_cull.usePointSize != 0) scale *= placement.w/g_cull.modelSize;
-    if (g_cull.sizeShrink > 0 && g_cull.attributes != 0xffffffffu) {
+    if (g_cull.attributes != 0xffffffffu) {
         Texture2D<float4> attributes = ResourceDescriptorHeap[g_cull.attributes];
-        scale *= 1 - g_cull.sizeShrink*(1 - saturate(attributes.Load(int3(id.x%1024,id.x/1024,0)).z));
+        const float4 attribute = attributes.Load(int3(id.x%1024,id.x/1024,0));
+        // w: 群生の子の大きさ（親は 1。0 は書かれていない点なので等倍に扱う）。
+        if (attribute.w > 0) scale *= attribute.w;
+        if (g_cull.sizeShrink > 0) scale *= 1 - g_cull.sizeShrink*(1 - saturate(attribute.z));
     }
     // 回転・法線追従後も含む、底面ピボット中心の保守的な包囲球。
     float radius = g_cull.radius*abs(scale)+abs(g_cull.offset);

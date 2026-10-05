@@ -1388,6 +1388,9 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     scatter["rotationVariation"] = layer.scatter.rotationVariation;
     scatter["aspectVariation"] = layer.scatter.aspectVariation;
     scatter["smoothness"] = layer.scatter.smoothness;
+    scatter["clusterCount"] = layer.scatter.clusterCount;
+    scatter["clusterRadius"] = layer.scatter.clusterRadiusMeters;
+    scatter["clusterScale"] = layer.scatter.clusterScale;
     node["scatter"] = std::move(scatter);
 
     // ぼかし（ブラーレイヤーだけが使う）。
@@ -1807,6 +1810,11 @@ compositor::MaterialLayer ReadLayer(
             ReadFloat(*scatter, "aspectVariation", defaults.scatter.aspectVariation);
         layer.scatter.smoothness =
             ReadFloat(*scatter, "smoothness", defaults.scatter.smoothness);
+        layer.scatter.clusterCount = std::clamp(ReadInt(*scatter, "clusterCount", defaults.scatter.clusterCount), 0, 8);
+        layer.scatter.clusterRadiusMeters =
+            std::clamp(ReadFloat(*scatter, "clusterRadius", defaults.scatter.clusterRadiusMeters), 0.0f, 200.0f);
+        layer.scatter.clusterScale =
+            std::clamp(ReadFloat(*scatter, "clusterScale", defaults.scatter.clusterScale), 0.05f, 1.0f);
     }
 
     if (const json* blur = FindMember(node, "blur"); blur != nullptr && blur->is_object()) {

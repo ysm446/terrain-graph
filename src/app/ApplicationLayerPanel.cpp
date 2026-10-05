@@ -652,6 +652,30 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                 "重なった所の溶け方。0 で折り目が立ち、上げるほど溶け合う", "%.2f");
             ui::EndPropertyTable();
         }
+
+        // 群生。親の点（格子の 1 マスに 1 つ）の周りに子の点を置く。Points 出力だけに効く。
+        ui::SectionHeader("群生");
+        if (ui::BeginPropertyTable("scatterClusterRows", "子の大きさの下限")) {
+            changed |= ui::PropertyInt("子の数", &layer.scatter.clusterCount, 0, 8, scatterDefaults.clusterCount,
+                                       "点 1 つ（親）の周りに置く子の点の数の上限。0 で群生なし。"
+                                       "子は 4 つに 1 つ欠けるので、株ごとに本数が変わる。"
+                                       "数本が寄り添う株立ちや、小さな木立ちになる。点が増えるぶん、間隔を広げて使う");
+            if (layer.scatter.clusterCount > 0) {
+                changed |= ui::PropertyFloat("広がり", &layer.scatter.clusterRadiusMeters, 0.1f, 200.0f,
+                                             scatterDefaults.clusterRadiusMeters,
+                                             "親から子までの距離の上限（m）。子はこの 3 割〜10 割の距離に置かれる。"
+                                             "間隔より小さくすると塊と隙間がはっきりする",
+                                             "%.1f m", ImGuiSliderFlags_Logarithmic);
+                changed |= ui::PropertyFloat("子の大きさの下限", &layer.scatter.clusterScale, 0.05f, 1.0f,
+                                             scatterDefaults.clusterScale,
+                                             "子の大きさ（親に対する比）の下限。子はこの値〜1 の間で決まる。"
+                                             "Model Scatter のモデルの倍率と、点の直径の両方に掛かる",
+                                             "%.2f");
+            }
+            ui::EndPropertyTable();
+        }
+        if (layer.scatter.clusterCount > 0)
+            ui::HintText("群生は Points 出力だけに効く。地面に作る形と Mask 出力は親の点だけ");
         ui::HintText("Mask 入力で散布する範囲を絞れる（明るい所ほど置かれる）");
         ui::HintText("Mask 出力は分布、Unique は個体ごとの乱数。"
                      "高さ 0 のまま Mask だけを使ってもよい");

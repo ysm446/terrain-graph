@@ -118,7 +118,7 @@ struct ScatterConstants {
     float params0[4];      // 散布の間隔（m）, 置く確率, 最小サイズ, 最大サイズ（散布セル）
     float params1[4];      // 高さ（正規化）, 高さのばらつき, 向きのばらつき, 細長さのばらつき
     float params2[4];      // 届く範囲（散布セル）, シード, テクセル（m）, 標高差（m）
-    float params3[4];      // なめらかさ, 未使用 x3
+    float params3[4];      // なめらかさ, 群生の子の数, 群生の半径（散布セル）, 子の大きさの下限
     uint32_t points[4];   // Points UAV, 行数, セル一辺の数, 先頭セル
     uint32_t attributes[4];  // 点の属性の UAV, 色むらのマスク SRV, 大きさのマスク SRV, 未使用
 };
@@ -5343,6 +5343,11 @@ bool MaterialEvaluator::ApplyScatter(rhi::Device& device, rhi::PipelineCache& pi
     constants.params2[2] = texelMeters;
     constants.params2[3] = heightMeters;
     constants.params3[0] = std::clamp(params.smoothness, 0.0f, 1.0f);
+    // 群生（点だけに効く）。半径は散布セルの単位で渡す。
+    const uint32_t clusterCount = static_cast<uint32_t>(std::clamp(params.clusterCount, 0, 8));
+    constants.params3[1] = static_cast<float>(clusterCount);
+    constants.params3[2] = std::clamp(params.clusterRadiusMeters, 0.0f, 200.0f) / density;
+    constants.params3[3] = std::clamp(params.clusterScale, 0.05f, 1.0f);
 
     // 点はセルごとに 1 つ。形（Height の差分と Mask の元）を誰も読まない枝では、
     // 点だけを作って形のラスタライズを省く（pointsOnly）。
@@ -5359,7 +5364,14 @@ bool MaterialEvaluator::ApplyScatter(rhi::Device& device, rhi::PipelineCache& pi
             return false;
         }
         const uint32_t side = static_cast<uint32_t>(halfCells) * 2;
-        const uint32_t count = side * side;
+        // 点の番号は「マス × （親 1 + 子の数）」。親が先頭で、子が続く。
+        const uint64_t slots = 1 + clusterCount;
+        if (uint64_t(side) * side * slots > 8000000ull) {
+            TG_LOG_ERROR("Scatter Points: 点が多すぎます（マス %u × %u、群生 %u）。間隔を広げるか、群生の数を減らしてください。",
+                         side, side, clusterCount);
+            return false;
+        }
+        const uint32_t count = static_cast<uint32_t>(uint64_t(side) * side * slots);
         if (params.coverage <= 0 || count == 0) {
             points.countReady = true;
         } else {

@@ -163,9 +163,12 @@ InstancePlacement LoadInstance(uint instance) {
                          : lerp(g_model.scaleMin,g_model.scaleMax,InstanceRandom(instance ^ g_model.seed ^ 0x3187u)) *
                            (g_model.usePointSize != 0 ? placement.w/g_model.modelSize : 1);
     // 点の「大きさ」の属性で縮める（InstanceCulling.hlsl の CsCull と揃える）。
-    if (g_model.variationLow.w > 0 && g_model.pointAttributes != kInvalidTextureIndex) {
+    if (g_model.pointAttributes != kInvalidTextureIndex) {
         Texture2D<float4> attributes = ResourceDescriptorHeap[g_model.pointAttributes];
-        result.scale *= 1 - g_model.variationLow.w*(1 - saturate(attributes.Load(int3(address,0)).z));
+        const float4 attribute = attributes.Load(int3(address,0));
+        // w: 群生の子の大きさ（親は 1。0 は書かれていない点なので等倍に扱う）。
+        if (attribute.w > 0) result.scale *= attribute.w;
+        if (g_model.variationLow.w > 0) result.scale *= 1 - g_model.variationLow.w*(1 - saturate(attribute.z));
     }
     result.origin = placement.xyz;
     result.fade = asfloat(entry.y);
