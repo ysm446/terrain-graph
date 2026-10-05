@@ -193,6 +193,21 @@ private:
     // グループ（枠）。選んだノードを囲む枠を作る（G キー、右クリックのメニュー）。選択が無ければ at に空の枠。
     void CreateGraphGroup(const ImVec2& at);
     void DrawGraphGroups();
+    // 畳んだグループ。中のノードは描かず（m_graphHiddenNodes）、外と繋がるピンだけを持つノードを 1 個描く。
+    void UpdateGraphHiddenNodes();
+    void DrawCollapsedGraphGroup(graph::NodeGroup& group);
+    void ToggleGraphGroupCollapsed(int groupId);
+    // 畳んだグループを動かす。中のノードと、中にある枠も同じだけ動かす。
+    void MoveCollapsedGraphGroup(graph::NodeGroup& group, const ImVec2& position);
+    // 枠の中にあるノード（モデルの位置で判定する。隠れているノードはエディタに位置を聞けないため）。
+    std::vector<graph::GraphId> GraphGroupMembers(const graph::NodeGroup& group) const;
+    std::unordered_map<graph::GraphId, int> m_graphHiddenNodes;    // 隠しているノード → 畳んだグループの ID
+    std::unordered_set<int> m_graphHiddenGroups;                    // 畳んだグループの中にあって隠している枠
+    std::unordered_map<graph::GraphId, ImVec2> m_graphNodeSizes;   // 最後に描いたときのノードの大きさ
+    std::unordered_map<int, std::array<float, 2>> m_graphCollapsedSynced;  // エディタへ伝えた畳んだノードの位置
+    // 整列や並べ直しでノードを動かす直前に呼ぶ。枠の中にあるノードが動くなら、動いた後のノードを
+    // 囲むように枠を合わせ直す（moved はノードの ID → 動かした後の位置）。中身が動かない枠はそのまま。
+    void RefitGraphGroups(const std::unordered_map<graph::GraphId, ImVec2>& moved);
     // エディタへ伝えてある枠の位置と大きさ（グループの ID → x, y, 幅, 高さ）。モデルの値がこれと違えば、
     // アンドゥや読み込みで変わったとみなしてエディタへ流し込む。
     std::unordered_map<int, std::array<float, 4>> m_graphGroupSynced;

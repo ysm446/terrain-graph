@@ -177,6 +177,9 @@ struct NodeGroup {
     // 枠の左上（見出しを含む）と、内側（ノードを置く領域）の大きさ。キャンバス座標。
     float x = 0.0f, y = 0.0f;
     float width = 400.0f, height = 300.0f;
+    // 畳んでいるか。畳むと中のノードを描かず、外と繋がるピンだけを持つ 1 個の小さなノードとして出す。
+    // 中身は開いていたときの枠の中にあったノードのまま（ノードの位置は持ち続ける）。
+    bool collapsed = false;
 };
 
 struct PinDefinition {

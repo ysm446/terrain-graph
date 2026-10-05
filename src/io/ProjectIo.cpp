@@ -2132,8 +2132,10 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
     if (!graphData.Groups().empty()) {
         json groups = json::array();
         for (const graph::NodeGroup& group : graphData.Groups()) {
-            groups.push_back({{"id", group.id}, {"component", group.component}, {"name", group.name},
-                              {"position", {group.x, group.y}}, {"size", {group.width, group.height}}});
+            json item = {{"id", group.id}, {"component", group.component}, {"name", group.name},
+                         {"position", {group.x, group.y}}, {"size", {group.width, group.height}}};
+            if (group.collapsed) item["collapsed"] = true;
+            groups.push_back(std::move(item));
         }
         out["groups"] = std::move(groups);
     }
@@ -2859,6 +2861,7 @@ bool ReadGraph(const json& source, graph::NodeGraph& graphData, const TextureRea
             graph::NodeGroup group;
             group.component = ReadInt(item, "component", 0) == 1 ? 1 : 0;
             group.name = ReadString(item, "name", group.name);
+            group.collapsed = ReadBool(item, "collapsed", false);
             const auto pair = [&](const char* key, float& a, float& b) {
                 const json* value = FindMember(item, key);
                 if (value == nullptr || !value->is_array() || value->size() < 2 || !(*value)[0].is_number() ||

@@ -335,7 +335,12 @@ int ToGraphId(uintptr_t id) {
 
 // グループ（枠）をエディタへ渡すときの ID。ノード・ピン・リンクの ID（1 から採番）と重ならない所に置く。
 constexpr int kGroupEditorIdBase = 0x40000000;
+// 畳んだグループは別の ID で渡す（同じ ID のまま枠と普通のノードを行き来させない）。
+constexpr int kCollapsedEditorIdBase = 0x50000000;
 bool IsGroupEditorId(int id) { return id >= kGroupEditorIdBase; }
+int GroupIdFromEditorId(int id) {
+    return id >= kCollapsedEditorIdBase ? id - kCollapsedEditorIdBase : id - kGroupEditorIdBase;
+}
 // 枠の内側の余白（囲むノードとの隙間）と、作れる枠の最小の大きさ。キャンバス座標。
 constexpr float kGroupPadding = 28.0f;
 constexpr float kGroupMinSize = 80.0f;
@@ -1183,6 +1188,10 @@ void Application::AlignSelectedGraphNodes(GraphAlign mode) {
     }
 
     if (!m_documentDirty) m_committed = CaptureDocument();
+    // 枠（グループ）は、動かした後の中身に合わせ直す。
+    std::unordered_map<graph::GraphId, ImVec2> movedNodes;
+    for (const Item& item : items) movedNodes[ToGraphId(item.id.Get())] = item.pos;
+    RefitGraphGroups(movedNodes);
     for (const Item& item : items) ed::SetNodePosition(item.id, item.pos);
     MarkDocumentChanged(false);
 }
@@ -1196,10 +1205,180 @@ void Application::AlignSelectedGraphNodes(GraphAlign mode) {
 // アンドゥの扱いは AlignSelectedGraphNodes と同じ（「並べ直す前」を 1 段にする）。
 // グループ（枠）を描く。imgui-node-editor のグループノードを使うので、枠の見出しを掴むと中のノードも動き、
 // 縁を掴むと大きさが変わる。位置と大きさはエディタが持つ値を毎フレーム読み戻す。
+std::vector<graph::GraphId> Application::GraphGroupMembers(const graph::NodeGroup& group) const {
+    const float title = ImGui::GetTextLineHeightWithSpacing();
+    std::vector<graph::GraphId> members;
+    for (const graph::Node& node : m_graph.Nodes()) {
+        if (node.component != group.component || !node.positionValid) continue;
+        // 中心で判定する。大きさは最後に描いたときのもの（一度も描いていなければ左上で判定）。
+        ImVec2 point(node.posX, node.posY);
+        if (const auto size = m_graphNodeSizes.find(node.id); size != m_graphNodeSizes.end()) {
+            point.x += size->second.x * 0.5f;
+            point.y += size->second.y * 0.5f;
+        }
+        if (point.x >= group.x && point.x <= group.x + group.width && point.y >= group.y &&
+            point.y <= group.y + title + group.height) members.push_back(node.id);
+    }
+    return members;
+}
+
+void Application::UpdateGraphHiddenNodes() {
+    m_graphHiddenNodes.clear();
+    m_graphHiddenGroups.clear();
+    const float title = ImGui::GetTextLineHeightWithSpacing();
+    for (const graph::NodeGroup& group : m_graph.Groups()) {
+        if (!group.collapsed || (m_editComponent >= 0 && group.component != m_editComponent)) continue;
+        for (const graph::GraphId id : GraphGroupMembers(group)) m_graphHiddenNodes.emplace(id, group.id);
+        // 畳んだ枠の中にある小さい枠も隠す。
+        for (const graph::NodeGroup& other : m_graph.Groups()) {
+            if (other.id == group.id || other.component != group.component) continue;
+            if (other.x >= group.x && other.x <= group.x + group.width && other.y >= group.y &&
+                other.y <= group.y + title + group.height && other.width * other.height < group.width * group.height)
+                m_graphHiddenGroups.insert(other.id);
+        }
+    }
+}
+
+void Application::MoveCollapsedGraphGroup(graph::NodeGroup& group, const ImVec2& position) {
+    const float dx = position.x - group.x, dy = position.y - group.y;
+    if (dx == 0.0f && dy == 0.0f) return;
+    const float title = ImGui::GetTextLineHeightWithSpacing();
+    for (const graph::GraphId id : GraphGroupMembers(group)) {
+        if (graph::Node* node = m_graph.FindMutableNode(id)) { node->posX += dx; node->posY += dy; }
+    }
+    for (graph::NodeGroup& other : m_graph.MutableGroups()) {
+        if (other.id == group.id || other.component != group.component) continue;
+        if (other.x >= group.x && other.x <= group.x + group.width && other.y >= group.y &&
+            other.y <= group.y + title + group.height && other.width * other.height < group.width * group.height) {
+            other.x += dx; other.y += dy;
+        }
+    }
+    group.x = position.x;
+    group.y = position.y;
+}
+
+void Application::ToggleGraphGroupCollapsed(int groupId) {
+    for (graph::NodeGroup& group : m_graph.MutableGroups()) {
+        if (group.id != groupId) continue;
+        if (!m_documentDirty) m_committed = CaptureDocument();
+        if (group.collapsed) {
+            // 開く。隠していたノードの位置を、エディタへ流し込み直す（畳んだまま動かしたぶんを反映する）。
+            for (const graph::GraphId id : GraphGroupMembers(group)) m_graphNodesToPlace.push_back(id);
+        }
+        group.collapsed = !group.collapsed;
+        m_graphCollapsedSynced.erase(group.id);
+        m_graphGroupSynced.erase(group.id);
+        MarkDocumentChanged(false);
+        return;
+    }
+}
+
+// 畳んだグループ。外と繋がっているピンだけを、本物のピンの ID のまま並べる（線はそのままここへ繋がり、
+// 出力ピンのクリックでのプレビューや、線の繋ぎ替えもそのまま効く）。
+void Application::DrawCollapsedGraphGroup(graph::NodeGroup& group) {
+    const ed::NodeId editorId(static_cast<uintptr_t>(kCollapsedEditorIdBase + group.id));
+    const std::array<float, 2> model{group.x, group.y};
+    if (const auto synced = m_graphCollapsedSynced.find(group.id);
+        synced == m_graphCollapsedSynced.end() || synced->second != model) {
+        ed::SetNodePosition(editorId, ImVec2(group.x, group.y));
+        m_graphCollapsedSynced[group.id] = model;
+    }
+    // 中のノードのピンのうち、外のノードと繋がっているもの。
+    struct Row { const graph::Pin* pin; std::string label; };
+    std::vector<Row> inputs, outputs;
+    size_t memberCount = 0;
+    for (const auto& [nodeId, groupId] : m_graphHiddenNodes) memberCount += groupId == group.id ? 1 : 0;
+    const auto inside = [&](const graph::Pin* pin) {
+        const auto found = pin ? m_graphHiddenNodes.find(pin->nodeId) : m_graphHiddenNodes.end();
+        return found != m_graphHiddenNodes.end() && found->second == group.id;
+    };
+    const auto add = [&](std::vector<Row>& rows, const graph::Pin* pin) {
+        if (std::any_of(rows.begin(), rows.end(), [&](const Row& row) { return row.pin == pin; })) return;
+        const graph::Node* owner = m_graph.FindNode(pin->nodeId);
+        rows.push_back({pin, std::string(owner ? NodeDisplayName(*owner) : "?") + " · " + pin->label});
+    };
+    for (const graph::Link& link : m_graph.Links()) {
+        const graph::Pin* start = m_graph.FindPin(link.startPin);
+        const graph::Pin* end = m_graph.FindPin(link.endPin);
+        if (start == nullptr || end == nullptr) continue;
+        if (inside(start) && !inside(end)) add(outputs, start);
+        if (inside(end) && !inside(start)) add(inputs, end);
+    }
+    float inputWidth = 0.0f, outputWidth = 0.0f;
+    for (const Row& row : inputs) inputWidth = std::max(inputWidth, ImGui::CalcTextSize(row.label.c_str()).x);
+    for (const Row& row : outputs) outputWidth = std::max(outputWidth, ImGui::CalcTextSize(row.label.c_str()).x);
+    char title[192];
+    std::snprintf(title, sizeof(title), "%s（%zu ノード）", group.name.empty() ? "グループ" : group.name.c_str(), memberCount);
+    const float width = std::max({180.0f, inputWidth + outputWidth + 72.0f, ImGui::CalcTextSize(title).x + 8.0f});
+
+    ed::PushStyleColor(ed::StyleColor_NodeBg, ImVec4(0.20f, 0.26f, 0.32f, 0.96f));
+    ed::PushStyleColor(ed::StyleColor_NodeBorder, ImVec4(0.70f, 0.82f, 0.94f, 0.85f));
+    ed::BeginNode(editorId);
+    ImGui::PushID(kCollapsedEditorIdBase + group.id);
+    ImGui::TextUnformatted(title);
+    ImGui::Dummy(ImVec2(width, 4.0f));
+    const float rowStartX = ImGui::GetCursorPosX();
+    const float rowY = ImGui::GetCursorPosY();
+    const ImVec4 labelColor(0.72f, 0.75f, 0.74f, 1.0f);
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    const auto circle = [&](const graph::Pin& pin) {
+        ImGui::Dummy(ImVec2(14.0f, 20.0f));
+        const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+        const ImVec2 center((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
+        ed::PinPivotRect(center, center);
+        const ImU32 color = ColorToU32(PinTypeColor(pin.valueType));
+        // 見ている出力は塗りつぶす（普通のノードと同じ）。
+        if (pin.id == m_previewGraphPin) drawList->AddCircleFilled(center, 5.1f, color, 16);
+        else drawList->AddCircle(center, 4.3f, color, 16, 1.6f);
+        return std::pair<ImVec2, ImVec2>(min, max);
+    };
+    for (size_t i = 0; i < inputs.size(); ++i) {
+        ImGui::SetCursorPos(ImVec2(rowStartX, rowY + static_cast<float>(i) * 24.0f));
+        ed::BeginPin(ed::PinId(inputs[i].pin->id), ed::PinKind::Input);
+        const auto rect = circle(*inputs[i].pin);
+        ImGui::SameLine();
+        ImGui::SetCursorPosY(rowY + static_cast<float>(i) * 24.0f + 2.0f);
+        ImGui::TextColored(labelColor, "%s", inputs[i].label.c_str());
+        ed::PinRect(rect.first, ImVec2(ImGui::GetItemRectMax().x, rect.second.y));
+        ed::EndPin();
+    }
+    for (size_t i = 0; i < outputs.size(); ++i) {
+        const float labelWidth = ImGui::CalcTextSize(outputs[i].label.c_str()).x;
+        ImGui::SetCursorPos(ImVec2(rowStartX + width - labelWidth - 22.0f, rowY + static_cast<float>(i) * 24.0f + 2.0f));
+        ed::BeginPin(ed::PinId(outputs[i].pin->id), ed::PinKind::Output);
+        ImGui::TextColored(labelColor, "%s", outputs[i].label.c_str());
+        const ImVec2 labelMin = ImGui::GetItemRectMin();
+        ImGui::SameLine();
+        ImGui::SetCursorPosY(rowY + static_cast<float>(i) * 24.0f);
+        const auto rect = circle(*outputs[i].pin);
+        ed::PinRect(ImVec2(labelMin.x, rect.first.y), rect.second);
+        ed::EndPin();
+    }
+    const size_t rows = std::max(inputs.size(), outputs.size());
+    ImGui::SetCursorPos(ImVec2(rowStartX, rowY + static_cast<float>(rows) * 24.0f));
+    ImGui::Dummy(ImVec2(width, 4.0f));
+    ImGui::PopID();
+    ed::EndNode();
+    ed::PopStyleColor(2);
+    // ドラッグで動かしたら、中のノードも同じだけ動かす。
+    const ImVec2 position = ed::GetNodePosition(editorId);
+    if (IsValidNodePosition(position.x, position.y) && (position.x != group.x || position.y != group.y)) {
+        MoveCollapsedGraphGroup(group, position);
+        m_graphCollapsedSynced[group.id] = {group.x, group.y};
+        m_graphGroupMoved = true;
+    }
+}
+
 void Application::DrawGraphGroups() {
+    UpdateGraphHiddenNodes();
     std::vector<int> alive;
     for (graph::NodeGroup& group : m_graph.MutableGroups()) {
         if (m_editComponent >= 0 && group.component != m_editComponent) continue;
+        if (m_graphHiddenGroups.contains(group.id)) continue;
+        if (group.collapsed) {
+            DrawCollapsedGraphGroup(group);
+            continue;
+        }
         alive.push_back(group.id);
         const ed::NodeId editorId(static_cast<uintptr_t>(kGroupEditorIdBase + group.id));
         const std::array<float, 4> model{group.x, group.y, group.width, group.height};
@@ -1238,6 +1417,39 @@ void Application::DrawGraphGroups() {
     if (m_graphGroupMoved && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
         m_graphGroupMoved = false;
         MarkDocumentChanged(false);
+    }
+}
+
+void Application::RefitGraphGroups(const std::unordered_map<graph::GraphId, ImVec2>& moved) {
+    const float title = ImGui::GetTextLineHeightWithSpacing();
+    for (graph::NodeGroup& group : m_graph.MutableGroups()) {
+        if (m_editComponent >= 0 && group.component != m_editComponent) continue;
+        if (group.collapsed || m_graphHiddenGroups.contains(group.id)) continue;
+        bool any = false, changed = false;
+        ImVec2 lo(FLT_MAX, FLT_MAX), hi(-FLT_MAX, -FLT_MAX);
+        for (const graph::Node& node : m_graph.Nodes()) {
+            if (m_editComponent >= 0 && node.component != m_editComponent) continue;
+            if (m_graphHiddenNodes.contains(node.id)) continue;
+            const ImVec2 position = ed::GetNodePosition(ed::NodeId(node.id));
+            const ImVec2 size = ed::GetNodeSize(ed::NodeId(node.id));
+            if (!IsValidNodePosition(position.x, position.y) || size.x <= 0.0f) continue;
+            // 中身は「いま枠の中に中心があるノード」。
+            const ImVec2 center(position.x + size.x * 0.5f, position.y + size.y * 0.5f);
+            if (center.x < group.x || center.x > group.x + group.width || center.y < group.y ||
+                center.y > group.y + title + group.height) continue;
+            const auto found = moved.find(node.id);
+            const ImVec2 target = found != moved.end() ? found->second : position;
+            changed |= target.x != position.x || target.y != position.y;
+            lo = ImVec2(std::min(lo.x, target.x), std::min(lo.y, target.y));
+            hi = ImVec2(std::max(hi.x, target.x + size.x), std::max(hi.y, target.y + size.y));
+            any = true;
+        }
+        if (!any || !changed) continue;
+        // CreateGraphGroup と同じ余白（下はメモの吹き出しのぶん広め）。エディタへは DrawGraphGroups が流し込む。
+        group.x = lo.x - kGroupPadding;
+        group.y = lo.y - kGroupPadding - title;
+        group.width = std::max(hi.x - lo.x + kGroupPadding * 2.0f, kGroupMinSize);
+        group.height = std::max(hi.y - lo.y + kGroupPadding * 3.0f, kGroupMinSize);
     }
 }
 
@@ -1286,8 +1498,23 @@ void Application::ArrangeGraphLeftToRight(bool overlapsOnly) {
     std::vector<float> notes;
     std::vector<graph::LayoutBox> boxes;
     std::unordered_map<graph::GraphId, size_t> indexOf;
+    // 畳んだグループは 1 個の箱として扱う（ID は負のグループ ID）。中のノードへの接続は、その箱への接続になる。
+    for (const graph::NodeGroup& group : m_graph.Groups()) {
+        if (!group.collapsed || (m_editComponent >= 0 && group.component != m_editComponent)) continue;
+        if (m_graphHiddenGroups.contains(group.id)) continue;
+        const ed::NodeId editorId(static_cast<uintptr_t>(kCollapsedEditorIdBase + group.id));
+        const ImVec2 position = ed::GetNodePosition(editorId);
+        const ImVec2 size = ed::GetNodeSize(editorId);
+        if (!IsValidNodePosition(position.x, position.y) || size.x <= 0.0f) continue;
+        for (const auto& [nodeId, groupId] : m_graphHiddenNodes)
+            if (groupId == group.id) indexOf[nodeId] = boxes.size();
+        ids.push_back(-group.id);
+        notes.push_back(0.0f);
+        boxes.push_back({position.x, position.y, size.x, size.y});
+    }
     for (const graph::Node& node : m_graph.Nodes()) {
         if (m_editComponent >= 0 && node.component != m_editComponent) continue;
+        if (m_graphHiddenNodes.contains(node.id)) continue;
         const ImVec2 position = ed::GetNodePosition(ed::NodeId(node.id));
         const ImVec2 size = ed::GetNodeSize(ed::NodeId(node.id));
         // エディタがまだ知らないノード（このフレームに作ったもの）は対象にしない。
@@ -1336,8 +1563,18 @@ void Application::ArrangeGraphLeftToRight(bool overlapsOnly) {
         }
     }
     if (!m_documentDirty) m_committed = CaptureDocument();
+    // 枠（グループ）は、動かした後の中身に合わせ直す。
+    std::unordered_map<graph::GraphId, ImVec2> movedNodes;
+    for (size_t i = 0; i < boxes.size(); ++i) movedNodes[ids[i]] = ImVec2(boxes[i].x, boxes[i].y);
+    RefitGraphGroups(movedNodes);
     for (size_t i = 0; i < boxes.size(); ++i) {
         if (boxes[i].x == before[i].x && boxes[i].y == before[i].y) continue;
+        if (ids[i] < 0) {
+            // 畳んだグループ。中のノードごと動かす（エディタへは DrawCollapsedGraphGroup が流し込む）。
+            for (graph::NodeGroup& group : m_graph.MutableGroups())
+                if (group.id == -ids[i]) MoveCollapsedGraphGroup(group, ImVec2(boxes[i].x, boxes[i].y));
+            continue;
+        }
         ed::SetNodePosition(ed::NodeId(ids[i]), ImVec2(boxes[i].x, boxes[i].y));
     }
     MarkDocumentChanged(false);
@@ -1359,6 +1596,7 @@ void Application::DrawGraphNodeNotes() {
     const ImU32 text = ImGui::GetColorU32(ImGuiCol_TextDisabled);
     for (const graph::Node& node : m_graph.Nodes()) {
         if (node.note.empty() || (m_editComponent >= 0 && node.component != m_editComponent)) continue;
+        if (m_graphHiddenNodes.contains(node.id)) continue;
         const ImVec2 position = ed::GetNodePosition(ed::NodeId(node.id));
         const ImVec2 size = ed::GetNodeSize(ed::NodeId(node.id));
         // エディタがまだ知らないノード（このフレームに作ったもの）は飛ばす。
@@ -1417,6 +1655,7 @@ void Application::DrawGraphNodeTitles() {
     for (int pass = 0; pass < 3; ++pass) {
         for (const graph::Node& node : m_graph.Nodes()) {
             if (m_editComponent >= 0 && node.component != m_editComponent) continue;
+            if (m_graphHiddenNodes.contains(node.id)) continue;
             const bool selected = ed::IsNodeSelected(ed::NodeId(node.id));
             const bool layer = std::holds_alternative<graph::LayerNodeSettings>(node.settings);
             if ((selected ? 0 : layer ? 1 : 2) == pass) draw(node);
@@ -1501,6 +1740,7 @@ void Application::DrawGraphEditor() {
     DrawGraphGroups();
     for (const graph::Node& node : m_graph.Nodes()) {
         if (m_editComponent >= 0 && node.component != m_editComponent) continue;
+        if (m_graphHiddenNodes.contains(node.id)) continue;  // 畳んだグループの中
         DrawGraphNode(node);
     }
     DrawGraphNodeNotes();
@@ -1554,6 +1794,11 @@ void Application::DrawGraphEditor() {
         const auto* pin = m_graph.FindPin(link.startPin);
         const auto* owner = pin ? m_graph.FindNode(pin->nodeId) : nullptr;
         if (m_editComponent >= 0 && (!owner || owner->component != m_editComponent)) continue;
+        // 畳んだグループの中で閉じている線は描かない（両端のピンがどこにも出ていない）。
+        if (const auto* endPin = m_graph.FindPin(link.endPin); owner != nullptr && endPin != nullptr) {
+            const auto a = m_graphHiddenNodes.find(owner->id), b = m_graphHiddenNodes.find(endPin->nodeId);
+            if (a != m_graphHiddenNodes.end() && b != m_graphHiddenNodes.end() && a->second == b->second) continue;
+        }
         ImVec4 color(0.52f, 0.60f, 0.55f, 1.0f);
         if (const graph::Pin* startPin = m_graph.FindPin(link.startPin)) {
             color = PinTypeColor(startPin->valueType);
@@ -1610,8 +1855,12 @@ void Application::DrawGraphEditor() {
                 const int nodeId = ToGraphId(deletedNodeId.Get());
                 // 枠だけを消す（中のノードは残る）。
                 if (IsGroupEditorId(nodeId)) {
-                    if (m_graph.RemoveGroup(nodeId - kGroupEditorIdBase)) {
-                        if (m_selectedGraphGroup == nodeId - kGroupEditorIdBase) m_selectedGraphGroup = 0;
+                    const int groupId = GroupIdFromEditorId(nodeId);
+                    // 畳んだまま消すときは、先に開いて中のノードを戻す。
+                    for (const graph::NodeGroup& group : m_graph.Groups())
+                        if (group.id == groupId && group.collapsed) ToggleGraphGroupCollapsed(groupId);
+                    if (m_graph.RemoveGroup(groupId)) {
+                        if (m_selectedGraphGroup == groupId) m_selectedGraphGroup = 0;
                         MarkDocumentChanged(false);
                     }
                     continue;
@@ -1898,9 +2147,11 @@ void Application::DrawGraphEditor() {
             m_graphPressedPin = 0;
         }
         // ノードのダブルクリックでも切り替える（ピンが小さいときの逃げ道）。
-        if (const ed::NodeId doubleClicked = ed::GetDoubleClickedNode();
-            doubleClicked && !IsGroupEditorId(ToGraphId(doubleClicked.Get()))) {
-            SetPreviewGraphNode(ToGraphId(doubleClicked.Get()));
+        if (const ed::NodeId doubleClicked = ed::GetDoubleClickedNode()) {
+            // グループは、ダブルクリックで畳む / 開く。
+            const int id = ToGraphId(doubleClicked.Get());
+            if (IsGroupEditorId(id)) ToggleGraphGroupCollapsed(GroupIdFromEditorId(id));
+            else SetPreviewGraphNode(id);
         }
         // 背景のダブルクリックで出力ノードのチェーンへ戻す。
         if (ed::IsBackgroundDoubleClicked()) {
@@ -1942,7 +2193,7 @@ void Application::DrawGraphEditor() {
         int selectedGroup = 0, groupCount = 0;
         for (int i = 0; i < selectedCount; ++i) {
             const int id = ToGraphId(selectedNodes[i].Get());
-            if (IsGroupEditorId(id)) { selectedGroup = id - kGroupEditorIdBase; ++groupCount; }
+            if (IsGroupEditorId(id)) { selectedGroup = GroupIdFromEditorId(id); ++groupCount; }
             else m_selectedGraphNodes.push_back(id);
         }
         m_selectedGraphNode = m_selectedGraphNodes.empty() ? 0 : m_selectedGraphNodes.front();
@@ -2007,10 +2258,13 @@ void Application::DrawGraphEditor() {
     // ノードが無限遠へ飛び、キャンバスが操作不能になる（実際に踏んだ）。
     for (graph::Node& node : m_graph.MutableNodes()) {
         if (m_editComponent >= 0 && node.component != m_editComponent) continue;
+        // 畳んだグループの中のノードは、エディタの位置が古い（畳んだまま動かすとモデルだけが動く）。
+        if (m_graphHiddenNodes.contains(node.id)) continue;
         const ImVec2 position = ed::GetNodePosition(ed::NodeId(node.id));
         if (!IsValidNodePosition(position.x, position.y)) {
             continue;
         }
+        if (const ImVec2 size = ed::GetNodeSize(ed::NodeId(node.id)); size.x > 0.0f) m_graphNodeSizes[node.id] = size;
         node.posX = position.x;
         node.posY = position.y;
         node.positionValid = true;
@@ -2467,9 +2721,16 @@ void Application::DrawGraphPanel() {
                     group.name = name;
                     MarkDocumentChanged(false);
                 }
+                bool collapsed = group.collapsed;
+                if (ui::PropertyBool("畳む", &collapsed, false,
+                                     "中のノードを隠し、外と繋がるピンだけを持つ 1 個のノードにする。"
+                                     "枠のダブルクリックでも切り替わる")) {
+                    ToggleGraphGroupCollapsed(group.id);
+                }
                 ui::EndPropertyTable();
             }
-            ui::HintText("枠の中にあるノードがこのグループの中身。見出しを掴むと中のノードごと動き、縁を掴むと大きさが変わる。"
+            ui::HintText("ダブルクリックで畳む / 開く。"
+                         "枠の中にあるノードがこのグループの中身。見出しを掴むと中のノードごと動き、縁を掴むと大きさが変わる。"
                          "Delete で枠だけを消す（中のノードは残る）。評価には影響しない");
         }
     }
