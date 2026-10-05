@@ -352,12 +352,18 @@ void RunNodeGraphTests() {
                 break;
             }
         }
-        Check(graph.FindNode(scatter)->inputs.size() == 3 &&
-                  graph.FindNode(scatter)->inputs[2].label == "Variation",
-              "Scatter の入力の末尾に Variation を持つ");
+        Check(graph.FindNode(scatter)->inputs.size() == 4 &&
+                  graph.FindNode(scatter)->inputs[2].label == "Variation" &&
+                  graph.FindNode(scatter)->inputs[3].label == "Size",
+              "Scatter の入力の末尾に Variation と Size を持つ");
         graph.CreateLink(pin(levels, true, 0), pin(scatter, false, 2));
         const auto withVariation = graph.CompileLayersWithPoints();
         Check(withVariation.layers.size() == 3, "色むらだけを繋いでも点だけのレイヤーを 1 枚差し込む");
+        graph.CreateLink(pin(levels, true, 0), pin(scatter, false, 3));
+        const auto withSize = graph.CompileLayersWithPoints();
+        bool sizeOp = false;
+        for (const auto& layer : withSize.layers) sizeOp |= layer.kind == tg::compositor::LayerKind::Scatter && layer.sizeMaskOp >= 0;
+        Check(withSize.layers.size() == 3 && sizeOp, "Size を繋ぐと点のレイヤーが大きさのマスクを読む");
         if (withVariation.layers.size() == 3) {
             const auto& layer = withVariation.layers[2];
             Check(layer.pointsOnly && layer.pointsId == static_cast<uint32_t>(scatter),

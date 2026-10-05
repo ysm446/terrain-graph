@@ -3024,6 +3024,9 @@ void Application::DrawNodeProperties(graph::Node* selected) {
                                          0.8f,kScaleTooltip,"%.2f",ImGuiSliderFlags_Logarithmic);
             changed |= ui::PropertyFloat("最大スケール",&scatter->scaleMax,graph::kModelScatterScaleMin,graph::kModelScatterScaleMax,
                                          1.2f,kScaleTooltip,"%.2f",ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat("Size が 0 の倍率",&scatter->sizeAtZero,0.05f,1.0f,1.0f,
+                "Scatter の Size 入力（マスク）が 0 の所の倍率。1 の所は等倍で、間はなめらかに変わる。"
+                "森林限界へ向かって木を低くする、などに使う。1 なら Size を使わない","%.2f");
             changed |= ui::PropertyFloat("地表に沿う",&scatter->alignToNormal,0,1,1);
             changed |= ui::PropertyFloat("接地オフセット",&scatter->offset,-10000,10000,0,"負の値で地面へ埋め込みます","%.3f m");
             changed |= ui::PropertyBool("LOD 自動",&scatter->autoLod,true,

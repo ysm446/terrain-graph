@@ -17,7 +17,10 @@ struct CullConstants {
     // 区画ごとの先頭の描画引数。区画の件数はここに数える。
     uint4 segmentFirst[2];
     // statCounters: 区画ごとの件数を 1 フレームぶん足し込む先。statOffset は本描画 0、影 8。
-    uint segmentCount, statCounters, statOffset, padding;
+    // sizeShrink: 点の「大きさ」の属性が 0 の所で倍率から引く割合（0 で使わない）。
+    uint segmentCount, statCounters, statOffset; float sizeShrink;
+    // attributes: 点の属性（z = 大きさ）。無効なら使わない。
+    uint attributes; uint3 padding;
 };
 ConstantBuffer<CullConstants> g_cull : register(b1);
 struct DrawArguments { uint indexCount, instanceCount, startIndex; int baseVertex; uint startInstance; };
@@ -42,6 +45,10 @@ void CsCull(uint3 id : SV_DispatchThreadID) {
     // usePointSize が 2 なら点の w が倍率そのもの（Model Place。ModelPreview.hlsl の LoadInstance と揃える）。
     if (g_cull.usePointSize == 2) scale = placement.w;
     else if (g_cull.usePointSize != 0) scale *= placement.w/g_cull.modelSize;
+    if (g_cull.sizeShrink > 0 && g_cull.attributes != 0xffffffffu) {
+        Texture2D<float4> attributes = ResourceDescriptorHeap[g_cull.attributes];
+        scale *= 1 - g_cull.sizeShrink*(1 - saturate(attributes.Load(int3(id.x%1024,id.x/1024,0)).z));
+    }
     // 回転・法線追従後も含む、底面ピボット中心の保守的な包囲球。
     float radius = g_cull.radius*abs(scale)+abs(g_cull.offset);
     for (uint i=0;i<6;++i)

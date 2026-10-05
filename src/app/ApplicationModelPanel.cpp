@@ -316,6 +316,7 @@ void Application::DrawModelScatters(ID3D12GraphicsCommandList* commandList,
             draw.weightStart=cumulative/total; cumulative+=choice.weight; draw.weightEnd=cumulative/total;
             draw.scaleMin=scatter.settings.scaleMin; draw.scaleMax=std::max(draw.scaleMin,scatter.settings.scaleMax);
             draw.align=scatter.settings.alignToNormal; draw.offset=scatter.settings.offset;
+            draw.sizeShrink=1.0f-std::clamp(scatter.settings.sizeAtZero,0.0f,1.0f);
             draw.maxDistance=scatter.settings.maxDistance;
             draw.lodBias=scatter.settings.lodBias;
             draw.usePointSize=scatter.settings.usePointSize; draw.shadow=shadow;

@@ -1740,10 +1740,13 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace,
             // 散布の Variation（点へ書く色むら）も揃う位置で作る。チェーンに居ないレイヤーに
             // 依るときは待てないので縛らない（色むらが中立へ落ちるだけで、点は作る）。
             if (sourceNode->kind == NodeKind::Scatter) {
-                const MaskSourceRef variation = UpstreamMaskOf(*sourceNode, 1);
-                const int dependency =
-                    variation.node ? LastMaskDependency(*variation.node, layerNodes, 0) : -1;
-                maskDependency = std::max(maskDependency, dependency);
+                // Size（点へ書く大きさ）も同じ扱い。
+                for (const size_t input : {size_t{1}, size_t{2}}) {
+                    const MaskSourceRef attribute = UpstreamMaskOf(*sourceNode, input);
+                    const int dependency =
+                        attribute.node ? LastMaskDependency(*attribute.node, layerNodes, 0) : -1;
+                    maskDependency = std::max(maskDependency, dependency);
+                }
             }
             // チェーンに居て、マスクの依存がその手前に揃っていれば、その場で点も作らせる。
             // 崩落は形を作らないと点が出ないので、揃っていなければ別の評価器に任せる。
@@ -1818,6 +1821,10 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace,
             const MaskSourceRef variationSource = UpstreamMaskOf(*layerNodes[i], 1);
             if (variationSource.node != nullptr)
                 compiled.layers[i].variationMaskOp = EmitMaskOps(variationSource,
+                    i > 0 ? static_cast<int>(i) - 1 : 0, layerNodes, compiled.maskOps, emitted, 0);
+            const MaskSourceRef sizeSource = UpstreamMaskOf(*layerNodes[i], 2);
+            if (sizeSource.node != nullptr)
+                compiled.layers[i].sizeMaskOp = EmitMaskOps(sizeSource,
                     i > 0 ? static_cast<int>(i) - 1 : 0, layerNodes, compiled.maskOps, emitted, 0);
         }
         // 道路の均しは、繋いだ道路メッシュの足跡を自分の ID で置き場から引く（Mask Mesh と同じ流儀。

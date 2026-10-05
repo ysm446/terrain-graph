@@ -21,6 +21,8 @@ struct ModelInstanceDraw {
     uint32_t attributes = 0xffffffffu;
     float weightStart = 0, weightEnd = 1;
     float scaleMin = 1, scaleMax = 1, align = 1, offset = 0;
+    // 点の「大きさ」の属性（attributes の z）が 0 の所で倍率から引く割合。0 なら属性を使わない。
+    float sizeShrink = 0;
     bool usePointSize = true, shadow = false;
     // 点の向きと倍率をそのまま使う（Model Place）。株ごとの乱数の回転と倍率を足さず、点の w を倍率に読む。
     bool exactPlacement = false;

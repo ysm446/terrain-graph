@@ -46,6 +46,7 @@ struct ModelConstants
     uint impostorFrames, impostorFullSphere, impostorShadow, impostorVariation;
     // 色むら（MaterialLibrary.h の ColorVariation）。pointAttributes は点の属性（x = 色むら）で、
     // 無効なら中立の 0.5。variationLow / High は値 0 / 1 の端の調整（色相ラジアン, 彩度, 明度, 未使用）。
+    // variationLow.w だけは別用途: 点の「大きさ」の属性（z）が 0 の所で倍率から引く割合（0 で使わない）。
     // opacityIndex: 不透明度のマップ（切り抜き用）。無効ならベースカラーのアルファを使う。
     uint pointAttributes; float variationJitter; uint opacityIndex, opacityChannel;
     float4 variationLow, variationHigh;
@@ -161,6 +162,11 @@ InstancePlacement LoadInstance(uint instance) {
     result.scale = exact ? placement.w
                          : lerp(g_model.scaleMin,g_model.scaleMax,InstanceRandom(instance ^ g_model.seed ^ 0x3187u)) *
                            (g_model.usePointSize != 0 ? placement.w/g_model.modelSize : 1);
+    // 点の「大きさ」の属性で縮める（InstanceCulling.hlsl の CsCull と揃える）。
+    if (g_model.variationLow.w > 0 && g_model.pointAttributes != kInvalidTextureIndex) {
+        Texture2D<float4> attributes = ResourceDescriptorHeap[g_model.pointAttributes];
+        result.scale *= 1 - g_model.variationLow.w*(1 - saturate(attributes.Load(int3(address,0)).z));
+    }
     result.origin = placement.xyz;
     result.fade = asfloat(entry.y);
     result.variation = InstanceVariation(instance);

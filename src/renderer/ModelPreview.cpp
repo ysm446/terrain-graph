@@ -47,7 +47,8 @@ struct ModelConstants {
     float variationJitter;
     // 不透明度のマップ（切り抜き用）と読むチャンネル。無ければベースカラーのアルファを使う。
     uint32_t opacityIndex, opacityChannel;
-    float variationLow[4], variationHigh[4];  // 色相（ラジアン）, 彩度, 明度, 未使用
+    // 色相（ラジアン）, 彩度, 明度, 未使用。variationLow[3] だけは点の「大きさ」の属性で縮める割合。
+    float variationLow[4], variationHigh[4];
 };
 static_assert(sizeof(ModelConstants) == 1120);
 
@@ -244,9 +245,11 @@ bool ModelPreview::CullInstances(rhi::Device& device, rhi::PipelineCache& cache,
         float offset; uint32_t usePointSize; uint32_t lodCount; float fadeBand;
         float lodStart[kMaxInstanceLods];
         uint32_t segmentFirst[kMaxInstanceLods * 2];
-        uint32_t segmentCount, statCounters, statOffset; uint32_t padding{};
+        uint32_t segmentCount, statCounters, statOffset; float sizeShrink;
+        uint32_t attributes; uint32_t padding[3]{};
     } constants{};
-    static_assert(sizeof(CullConstants)==240);
+    static_assert(sizeof(CullConstants)==256);
+    constants.sizeShrink = draw.sizeShrink; constants.attributes = draw.attributes;
     constants.planes = InstanceFrustumPlanes(draw.viewProjection);
     constants.points = draw.points; constants.visible = m_visibleInstances.uav.index;
     constants.arguments = m_indirectArguments.uav.index; constants.count = draw.count;
@@ -505,6 +508,7 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
         // インポスターは 1 枚に全パーツを焼くので、色むらの応え方は 1 つ（焼いたときに
         // 色むらを持っていたマテリアルの先頭）。受ける画素は重みのアトラスで絞る。
         FillColorVariation(constants, ImpostorColorVariation(model, materials), draw.attributes);
+        constants.variationLow[3] = draw.sizeShrink;
         std::memcpy(cb.cpu, &constants, sizeof(constants));
         commandList->SetGraphicsRootConstantBufferView(1, cb.gpuAddress);
         commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -576,6 +580,7 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
             constants.pivot[2] = (lo.z+hi.z)*0.5f;
             constants.visibleOffset = static_cast<uint32_t>(segment * draw.count);
             FillColorVariation(constants, asset.colorVariation, draw.attributes);
+            constants.variationLow[3] = draw.sizeShrink;
             if (draw.lodView) {
                 const size_t lod = std::min<size_t>(m_firstLod + m_parts[i].lod, std::size(kLodDebugColors) - 1);
                 constants.lodView = 1;

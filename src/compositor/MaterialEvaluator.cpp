@@ -120,7 +120,7 @@ struct ScatterConstants {
     float params2[4];      // 届く範囲（散布セル）, シード, テクセル（m）, 標高差（m）
     float params3[4];      // なめらかさ, 未使用 x3
     uint32_t points[4];   // Points UAV, 行数, セル一辺の数, 先頭セル
-    uint32_t attributes[4];  // 点の属性の UAV, 色むらのマスク SRV, 未使用 x2
+    uint32_t attributes[4];  // 点の属性の UAV, 色むらのマスク SRV, 大きさのマスク SRV, 未使用
 };
 
 struct SedimentConstants {
@@ -5285,7 +5285,7 @@ bool MaterialEvaluator::ApplyCrumblingMask(rhi::Device& device,
 bool MaterialEvaluator::ApplyScatter(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                                      ID3D12GraphicsCommandList* commandList,
                                      const MaterialLayer& layer, const MaterialStack& stack,
-                                     uint32_t placementIndex, uint32_t variationIndex) {
+                                     uint32_t placementIndex, uint32_t variationIndex, uint32_t sizeIndex) {
     if (!EnsureScatterResources(device, m_resolution)) {
         return false;
     }
@@ -5385,6 +5385,7 @@ bool MaterialEvaluator::ApplyScatter(rhi::Device& device, rhi::PipelineCache& pi
             pointConstants.points[3] = static_cast<uint32_t>(-static_cast<int32_t>(halfCells));
             pointConstants.attributes[0] = points.attributes.UavIndex();
             pointConstants.attributes[1] = variationIndex;
+            pointConstants.attributes[2] = sizeIndex;
             const auto pointsCb = AllocateConstants(device, sizeof(pointConstants));
             if (!pointsCb.IsValid()) return false;
             std::memcpy(pointsCb.cpu, &pointConstants, sizeof(pointConstants));
@@ -5730,7 +5731,7 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 const uint64_t inputHash = maskOpHashOf(static_cast<size_t>(layer.mask.maskOp));
                 hash = HashBytes(hash, &inputHash, sizeof(inputHash));
             }
-            for (const int op : {layer.hardnessMaskOp, layer.variationMaskOp}) {
+            for (const int op : {layer.hardnessMaskOp, layer.variationMaskOp, layer.sizeMaskOp}) {
                 if (op >= 0 && static_cast<size_t>(op) < maskOps.size() &&
                     maskOpHashDone[static_cast<size_t>(op)] != 2) {
                     const uint64_t inputHash = maskOpHashOf(static_cast<size_t>(op));
@@ -5877,14 +5878,14 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 ++m_evaluatedLayerCount;
             } else if (layer.enabled && hasUnderlying && layer.kind == LayerKind::Scatter) {
                 // 色むらは点を作るときだけ読む。焼けていなければ中立（点は作る）。
-                const int variationOp = layer.variationMaskOp;
-                const uint32_t variationIndex =
-                    variationOp >= 0 && static_cast<size_t>(variationOp) < maskOpDone.size() &&
-                            maskOpDone[static_cast<size_t>(variationOp)]
-                        ? m_maskOpTextures[static_cast<size_t>(variationOp)].SrvIndex()
-                        : kInvalidTextureIndex;
-                if (!ApplyScatter(device, pipelineCache, commandList, layer, stack,
-                                  inputMaskIndex, variationIndex)) {
+                // 大きさ（Size）も同じ。焼けていなければ等倍。
+                const auto attributeIndex = [&](int op) {
+                    return op >= 0 && static_cast<size_t>(op) < maskOpDone.size() && maskOpDone[static_cast<size_t>(op)]
+                               ? m_maskOpTextures[static_cast<size_t>(op)].SrvIndex()
+                               : kInvalidTextureIndex;
+                };
+                if (!ApplyScatter(device, pipelineCache, commandList, layer, stack, inputMaskIndex,
+                                  attributeIndex(layer.variationMaskOp), attributeIndex(layer.sizeMaskOp))) {
                     complete = false;
                 }
                 ++m_evaluatedLayerCount;

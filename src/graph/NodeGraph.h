@@ -448,6 +448,9 @@ struct ModelScatterSettings {
     std::vector<ModelChoice> models;
     int seed = 1;
     float scaleMin = 0.8f, scaleMax = 1.2f;
+    // 点の「大きさ」の属性（Scatter の Size 入力）が 0 の所の倍率。1 なら属性を使わない。
+    // 属性が 1 の所は等倍で、間は線形。Size を繋いでいない点は 1 として扱う。
+    float sizeAtZero = 1.0f;
     float alignToNormal = 1.0f;
     float offset = 0.0f;
     bool usePointSize = true;

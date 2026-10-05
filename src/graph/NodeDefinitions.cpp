@@ -120,10 +120,12 @@ constexpr std::array<PinDefinition, 5> kDropletPins = {{
 // **分布**と**個体ごとの乱数**を出す。崩落と同じ形。
 // Variation（省略可）は配置の点へ書く色むらの値。Model Scatter の株が、
 // マテリアルの「色むら」の設定でこの値に応じて色を寄せる（未接続は中立の 0.5）。
-constexpr std::array<PinDefinition, 7> kScatterPins = {{
+constexpr std::array<PinDefinition, 8> kScatterPins = {{
     {PinKind::Input, ValueType::Material, "Base"},
     {PinKind::Input, ValueType::Mask, "Mask"},
     {PinKind::Input, ValueType::Mask, "Variation"},
+    // 点へ書く「大きさ」（0〜1）。Model Scatter が株の倍率に掛ける（森林限界へ向かって低くする、など）。
+    {PinKind::Input, ValueType::Mask, "Size"},
     {PinKind::Output, ValueType::Material, "Result"},
     {PinKind::Output, ValueType::Mask, "Mask"},
     {PinKind::Output, ValueType::Mask, "Unique"},

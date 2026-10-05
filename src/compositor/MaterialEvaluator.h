@@ -522,7 +522,7 @@ private:
     bool ApplyScatter(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                       ID3D12GraphicsCommandList* commandList, const MaterialLayer& layer,
                       const MaterialStack& stack, uint32_t placementIndex,
-                      uint32_t variationIndex);
+                      uint32_t variationIndex, uint32_t sizeIndex);
     bool EnsureScatterResources(rhi::Device& device, uint32_t resolution);
     void ReleaseScatterResources(rhi::Device& device);
     // 直前の散布レイヤーが置いた形 / 乱数を、マスクとして焼く。

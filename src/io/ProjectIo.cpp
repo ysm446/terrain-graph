@@ -1967,6 +1967,7 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
         } else if (const auto* scatter = std::get_if<graph::ModelScatterSettings>(&node.settings)) {
             auto& values = item["modelScatter"];
             values = {{"maxDistance",scatter->maxDistance},{"seed",scatter->seed},{"scaleMin",scatter->scaleMin},{"scaleMax",scatter->scaleMax},
+                      {"sizeAtZero",scatter->sizeAtZero},
                       {"alignToNormal",scatter->alignToNormal},{"offset",scatter->offset},
                       {"usePointSize",scatter->usePointSize},{"lod",scatter->lod},
                       {"autoLod",scatter->autoLod},{"lodBias",scatter->lodBias}};
@@ -2305,6 +2306,7 @@ bool ReadGraph(const json& source, graph::NodeGraph& graphData, const TextureRea
                     settings.scaleMin = std::clamp(ReadFloat(*values,"scaleMin",0.8f),graph::kModelScatterScaleMin,graph::kModelScatterScaleMax);
                     settings.scaleMax = std::clamp(ReadFloat(*values,"scaleMax",1.2f),settings.scaleMin,graph::kModelScatterScaleMax);
                     settings.maxDistance = std::clamp(ReadFloat(*values,"maxDistance",0),0.0f,100000.0f);
+                    settings.sizeAtZero = std::clamp(ReadFloat(*values,"sizeAtZero",1),0.05f,1.0f);
                     settings.alignToNormal = std::clamp(ReadFloat(*values,"alignToNormal",1),0.0f,1.0f);
                     settings.offset = std::clamp(ReadFloat(*values,"offset",0),-10000.0f,10000.0f);
                     settings.usePointSize = ReadBool(*values,"usePointSize",true);
