@@ -1780,6 +1780,7 @@ void Application::DrawGraphEditor() {
             m_selectedGraphNode = m_pendingSelectGraphNode;
         }
     }
+    const graph::GraphId previousSelected = m_selectedGraphNode;
     if (selectedCount > 0) {
         m_selectedGraphNodes.clear();
         for (int i = 0; i < selectedCount; ++i) {
@@ -1789,6 +1790,13 @@ void Application::DrawGraphEditor() {
     } else if (m_graphNodesToPlace.empty() && m_pendingSelectGraphNode == 0) {
         m_selectedGraphNodes.clear();
         m_selectedGraphNode = 0;
+    }
+    // Output は出力ピンを持たないので、選んだときにプレビューを出力へ戻す（ほかのノードは出力ピンの
+    // クリックで切り替える）。選び替えた瞬間だけ。選んだまま別のピンを押したプレビューは奪わない。
+    // 枠でまとめて選んだときは切り替えない。
+    if (m_selectedGraphNode != previousSelected && m_selectedGraphNodes.size() == 1) {
+        const graph::Node* node = m_graph.FindNode(m_selectedGraphNode);
+        if (node != nullptr && node->kind == graph::NodeKind::Output) SetPreviewGraphNode(0);
     }
 
     ed::End();
@@ -2234,7 +2242,7 @@ void Application::DrawGraphPanel() {
             }
         }
         ui::HintText("出力ピンをクリック（またはノードをダブルクリック）で、"
-                     "ビューポートに出す出力を切り替える。"
+                     "ビューポートに出す出力を切り替える。Output ノードは選ぶだけで出力へ戻る。"
                      "Mask の出力を選ぶと、そのマスクが白黒で貼られる");
         ImGui::Spacing();
     }

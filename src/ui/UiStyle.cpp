@@ -987,13 +987,26 @@ bool PropertyTextInput(const char* label, char* buffer, size_t bufferSize, const
 
 bool PropertyTextMultiline(const char* label, std::string& text, int lines, const char* tooltip) {
     PropertyLabel(label, tooltip);
+    const ImGuiStyle& style = ImGui::GetStyle();
     const float width = ImGui::GetContentRegionAvail().x;
-    const float height = ImGui::GetTextLineHeight() * static_cast<float>(std::max(lines, 1)) +
-                         ImGui::GetStyle().FramePadding.y * 2.0f;
+    const float lineHeight = ImGui::GetTextLineHeight();
+    // 欄の高さは中の文字に合わせる（スクロールさせない）。折り返した後の行数で決め、lines 行より低くはしない。
+    // 入力中の文字列は ImGui が内部で持つので、描いた後に測った高さを覚えておき、次のフレームで使う。
+    const ImGuiID heightKey = ImGui::GetID("##valueHeight");
+    const auto measure = [&](const std::string& value) {
+        // 折り返す幅は欄の内側。測り方の差で 1 行足りずにスクロールバーが出ないよう、少し狭く見積もる。
+        const float wrapWidth = std::max(width - style.FramePadding.x * 2.0f - lineHeight * 0.5f, lineHeight);
+        float textHeight = value.empty() ? 0.0f : ImGui::CalcTextSize(value.c_str(), nullptr, false, wrapWidth).y;
+        // 末尾の改行の次の行（これから打つ行）も数える。
+        if (!value.empty() && value.back() == '\n') textHeight += lineHeight;
+        return std::max(textHeight, lineHeight * static_cast<float>(std::max(lines, 1))) + style.FramePadding.y * 2.0f;
+    };
+    const float height = ImGui::GetStateStorage()->GetFloat(heightKey, measure(text));
     // 入力中は ImGui が内部バッファで持ち、終えたときに text へ書き戻す。
     std::string edited = text;
     ImGui::InputTextMultiline("##value", &edited, ImVec2(width, height), ImGuiInputTextFlags_WordWrap);
     const bool committed = ImGui::IsItemDeactivatedAfterEdit();
+    ImGui::GetStateStorage()->SetFloat(heightKey, measure(edited));
     if (committed) text = edited;
     PropertyEnd();
     return committed;
