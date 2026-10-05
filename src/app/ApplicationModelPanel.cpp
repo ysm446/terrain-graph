@@ -542,16 +542,21 @@ void Application::RenderModelPreviews(ID3D12GraphicsCommandList* commandList) {
     for (const auto& asset : m_models) {
         const auto found = m_modelPreviews.find(asset.id);
         if (found == m_modelPreviews.end()) continue;
-        if (!(m_modelPreviewVisible && asset.id == m_selectedModel) &&
-            m_renderedModelThumbnails.contains(asset.id))
-            continue;
-        const auto* impostor =
-            asset.id == m_selectedModel && m_modelShowImpostor ? m_impostors.Find(asset.id) : nullptr;
+        // サムネイルは決まった向きで 1 回だけ描く（中身が変わったら描き直す）。プレビューで回しても変わらない。
+        if (!m_renderedModelThumbnails.contains(asset.id)) {
+            found->second->Render(m_device, m_pipelineCache, commandList, asset, m_materialLibrary,
+                                  m_textureLibrary, m_renderer.GetEnvironment(),
+                                  m_renderer.EnvironmentIntensity(), m_renderer.EffectiveLight(),
+                                  m_renderer.Exposure().Exposure(), m_renderer.Tonemap(), nullptr, nullptr, true);
+            if (found->second->HasThumbnail()) m_renderedModelThumbnails.insert(asset.id);
+        }
+        // プレビューのウィンドウに出している間だけ、操作中の視点で毎フレーム描く。
+        if (!(m_modelPreviewVisible && asset.id == m_selectedModel)) continue;
+        const auto* impostor = m_modelShowImpostor ? m_impostors.Find(asset.id) : nullptr;
         found->second->Render(m_device, m_pipelineCache, commandList, asset, m_materialLibrary,
                               m_textureLibrary, m_renderer.GetEnvironment(),
                               m_renderer.EnvironmentIntensity(), m_renderer.EffectiveLight(),
                               m_renderer.Exposure().Exposure(), m_renderer.Tonemap(), nullptr, impostor);
-        if (found->second->HasOutput()) m_renderedModelThumbnails.insert(asset.id);
     }
 }
 void Application::DrawModelLibraryPanel() {
@@ -575,8 +580,8 @@ void Application::DrawModelLibraryPanel() {
             ImGui::PushID(static_cast<int>(asset.id));
             ImGui::BeginGroup();
             const auto preview = m_modelPreviews.find(asset.id);
-            const auto handle = preview != m_modelPreviews.end() && preview->second->HasOutput()
-                                    ? preview->second->OutputHandle().ptr
+            const auto handle = preview != m_modelPreviews.end() && preview->second->HasThumbnail()
+                                    ? preview->second->ThumbnailHandle().ptr
                                     : 0;
             const auto thumb = ui::ThumbnailButton("##model", static_cast<ImTextureID>(handle),
                                                    size, m_selectedModel == asset.id);

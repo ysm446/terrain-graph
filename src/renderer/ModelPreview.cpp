@@ -89,6 +89,7 @@ void ModelPreview::Destroy(rhi::Device& device) {
     m_lodFirstPart.clear();
     m_segmentFirstArgument.clear();
     device.DeferRelease(m_output);
+    device.DeferRelease(m_thumbnail);
     device.DeferRelease(m_depth);
     device.DeferRelease(m_visibleInstances);
     device.DeferRelease(m_indirectArguments);
@@ -357,8 +358,24 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
                           const compositor::TextureLibrary& textures,
                           const Environment& environment, float iblIntensity,
                           const LightSettings& light, float exposure, TonemapMode tonemap, const ModelInstanceDraw* instances,
-                          const ImpostorTextures* impostor) {
+                          const ImpostorTextures* impostor, bool thumbnail) {
     if (!m_geometry || !m_ready) return 0;
+    // 描く先と視点。サムネイルは決まった向き（全体が入る既定の視点）で別の画像へ描き、
+    // プレビューで回した視点には引きずられない。
+    rhi::GpuTexture& output = thumbnail ? m_thumbnail : m_output;
+    Camera thumbnailCamera;
+    if (thumbnail) {
+        using namespace DirectX;
+        const XMVECTOR lo = XMLoadFloat3(&m_geometry->minimum), hi = XMLoadFloat3(&m_geometry->maximum);
+        XMFLOAT3 center;
+        XMStoreFloat3(&center, XMVectorScale(XMVectorAdd(lo, hi), 0.5f));
+        const float radius = std::max(0.0001f, XMVectorGetX(XMVector3Length(XMVectorSubtract(hi, lo))) * 0.5f);
+        thumbnailCamera.Reset();
+        thumbnailCamera.SetViewportSize(kOutputSize, kOutputSize);
+        thumbnailCamera.SetSceneRadius(radius);
+        thumbnailCamera.Frame(center, radius);
+    }
+    const Camera& camera = thumbnail ? thumbnailCamera : m_camera;
     // パーツのマテリアルごとに PSO を選ぶ。アルファ抜きは早期深度テストが効きにくいので、
     // 使うパーツだけ clip 付きの PS にする。影は不透明なら PS なしの深度だけで描く。
     const auto pipelineFor = [&](bool cutout, bool twoSided, bool fade) {
@@ -380,7 +397,7 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
     };
     if (!pipelineFor(false, false, false)) return 0;
     if (!instances) {
-    if (!m_output.IsValid()) {
+    if (!output.IsValid()) {
         rhi::TextureDesc target;
         target.width = kOutputSize;
         target.height = kOutputSize;
@@ -389,8 +406,8 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
         // 色は暗いままにしておく（縮小で縁の画素に混ざるので、明るいと縁が白く浮く）。
         target.clearColor[0] = target.clearColor[1] = target.clearColor[2] = 0.025f;
         target.clearColor[3] = 0.0f;
-        target.debugName = L"ModelPreview";
-        if (!device.Allocator().CreateTexture2D(target, m_output)) return 0;
+        target.debugName = thumbnail ? L"ModelThumbnail" : L"ModelPreview";
+        if (!device.Allocator().CreateTexture2D(target, output)) return 0;
     }
     if (!m_depth.IsValid()) {
         rhi::TextureDesc depth;
@@ -403,12 +420,12 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
         if (!device.Allocator().CreateTexture2D(depth, m_depth)) return 0;
     }
     PIXBeginEvent(commandList, PIX_COLOR(120, 200, 200), "ModelPreview");
-    rhi::TransitionIfNeeded(commandList, m_output, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    rhi::TransitionIfNeeded(commandList, output, D3D12_RESOURCE_STATE_RENDER_TARGET);
     rhi::TransitionIfNeeded(commandList, m_depth, D3D12_RESOURCE_STATE_DEPTH_WRITE);
     const float clear[4] = {0.025f, 0.025f, 0.025f, 0};
-    commandList->ClearRenderTargetView(m_output.rtv.cpu, clear, 0, nullptr);
+    commandList->ClearRenderTargetView(output.rtv.cpu, clear, 0, nullptr);
     commandList->ClearDepthStencilView(m_depth.dsv.cpu, D3D12_CLEAR_FLAG_DEPTH, 1, 0, 0, nullptr);
-    commandList->OMSetRenderTargets(1, &m_output.rtv.cpu, FALSE, &m_depth.dsv.cpu);
+    commandList->OMSetRenderTargets(1, &output.rtv.cpu, FALSE, &m_depth.dsv.cpu);
     const D3D12_VIEWPORT viewport = {0, 0, float(kOutputSize), float(kOutputSize), 0, 1};
     const D3D12_RECT scissor = {0, 0, kOutputSize, kOutputSize};
     commandList->RSSetViewports(1, &viewport);
@@ -422,11 +439,11 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
     uint32_t drawCalls = 0;
     // カメラ・ライト・環境。メッシュとインポスターで共通。
     const auto fillScene = [&](ModelConstants& constants) {
-        const auto position = m_camera.Position();
+        const auto position = camera.Position();
         std::memcpy(constants.cameraPosition, &position, sizeof(position));
         DirectX::XMStoreFloat4x4(
             &constants.viewProjection,
-            DirectX::XMMatrixTranspose(m_camera.ViewMatrix() * m_camera.ProjectionMatrix()));
+            DirectX::XMMatrixTranspose(camera.ViewMatrix() * camera.ProjectionMatrix()));
         const DirectX::XMFLOAT3 lightDirection = light.Direction();
         constants.lightDirection[0] = lightDirection.x;
         constants.lightDirection[1] = lightDirection.y;
@@ -655,7 +672,7 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
                          m_segmentFirstArgument[segment] + (part - m_lodFirstPart[level]));
         }
     }
-    if (!instances) rhi::TransitionIfNeeded(commandList, m_output, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    if (!instances) rhi::TransitionIfNeeded(commandList, output, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     PIXEndEvent(commandList);
     return drawCalls;
 }

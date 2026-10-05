@@ -65,10 +65,14 @@ class ModelPreview {
                 const compositor::TextureLibrary& textures, const Environment& environment,
                 float iblIntensity, const LightSettings& light, float exposure,
                 TonemapMode tonemap, const ModelInstanceDraw* instances = nullptr,
-                const ImpostorTextures* impostor = nullptr);
+                const ImpostorTextures* impostor = nullptr, bool thumbnail = false);
     Camera& GetCamera() { return m_camera; }
     bool HasOutput() const { return m_output.IsValid(); }
     D3D12_GPU_DESCRIPTOR_HANDLE OutputHandle() const { return m_output.srv.gpu; }
+    // 一覧に出すサムネイル。Render に thumbnail = true を渡すと、決まった向きでここへ描く
+    // （プレビューで回した視点は映らない）。インスタンス描画では使わない。
+    bool HasThumbnail() const { return m_thumbnail.IsValid(); }
+    D3D12_GPU_DESCRIPTOR_HANDLE ThumbnailHandle() const { return m_thumbnail.srv.gpu; }
     rhi::GpuTexture TakeOutput() { return std::exchange(m_output, {}); }
     void ResetView();
     void FocusView();
@@ -110,7 +114,7 @@ class ModelPreview {
     uint64_t m_statFrame = 0;                   // 足し込み中のフレームのフェンス値
     uint64_t m_statCollected = 0;
     InstanceStats m_instanceStats;
-    rhi::GpuTexture m_output, m_depth;
+    rhi::GpuTexture m_output, m_thumbnail, m_depth;
     Camera m_camera;
 };
 }  // namespace tg::renderer

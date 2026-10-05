@@ -102,8 +102,8 @@ ImTextureID Application::AssetThumbnailHandle(const fs::path& path) {
     for (const auto& a : m_models)
         if (a.assetPath == path || a.path == path) {
             const auto found = m_modelPreviews.find(a.id);
-            return found != m_modelPreviews.end() && found->second->HasOutput()
-                       ? static_cast<ImTextureID>(found->second->OutputHandle().ptr) : ImTextureID{};
+            return found != m_modelPreviews.end() && found->second->HasThumbnail()
+                       ? static_cast<ImTextureID>(found->second->ThumbnailHandle().ptr) : ImTextureID{};
         }
     return static_cast<ImTextureID>(m_assetThumbnails.Request(path).ptr);
 }
@@ -1095,8 +1095,8 @@ void Application::DrawAssetBrowser() {
             loaded[key(a.assetPath)] = {static_cast<ImTextureID>(a.thumbnail.srv.gpu.ptr), 0, 0};
         for (const auto& a : m_models) {
             const auto found = m_modelPreviews.find(a.id);
-            const ImTextureID handle = found != m_modelPreviews.end() && found->second->HasOutput()
-                                           ? static_cast<ImTextureID>(found->second->OutputHandle().ptr) : ImTextureID{};
+            const ImTextureID handle = found != m_modelPreviews.end() && found->second->HasThumbnail()
+                                           ? static_cast<ImTextureID>(found->second->ThumbnailHandle().ptr) : ImTextureID{};
             if (!a.assetPath.empty()) loaded[key(a.assetPath)] = {handle, 0, 0};
             if (!a.path.empty()) loaded[key(a.path)] = {handle, 0, 0};
         }
