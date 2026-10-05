@@ -167,6 +167,18 @@ enum class NodeKind : uint32_t {
     ModelPlace = 61,
 };
 
+// ノードをまとめて見せる枠（グループ）。**表示だけ**で、評価には関わらない。
+// 中身は「枠の中にあるノード」で決まり、所属の一覧は持たない（枠を動かすと中のノードも動く）。
+// ID はノード・ピン・リンクとは別の番号（保存の ID の振り直しやスクリプトに巻き込まれないように）。
+struct NodeGroup {
+    int id = 0;
+    int component = 0;  // 0: 地形グラフ、1: 雲グラフ
+    std::string name = "グループ";
+    // 枠の左上（見出しを含む）と、内側（ノードを置く領域）の大きさ。キャンバス座標。
+    float x = 0.0f, y = 0.0f;
+    float width = 400.0f, height = 300.0f;
+};
+
 struct PinDefinition {
     PinKind kind = PinKind::Input;
     ValueType valueType = ValueType::Material;
@@ -611,6 +623,12 @@ public:
     const std::vector<Node>& Nodes() const { return m_nodes; }
     std::vector<Node>& MutableNodes() { return m_nodes; }
     const std::vector<Link>& Links() const { return m_links; }
+    // グループ（枠）。Replace では消えない（読み込みと部品の差し替えは、呼び出し側が入れ替える）。
+    const std::vector<NodeGroup>& Groups() const { return m_groups; }
+    std::vector<NodeGroup>& MutableGroups() { return m_groups; }
+    // 新しいグループを足して ID を返す。
+    int AddGroup(NodeGroup group);
+    bool RemoveGroup(int id);
 
     const Pin* FindPin(GraphId pinId) const;
     const Node* FindNode(GraphId nodeId) const;
@@ -788,6 +806,7 @@ private:
     mutable std::unordered_map<GraphId,CloudShapeGenerateCache> m_cloudShapeGenerateCache;
     std::vector<Node> m_nodes;
     std::vector<Link> m_links;
+    std::vector<NodeGroup> m_groups;
     GraphId m_nextGraphId = 1;
     uint64_t m_revision = 1;
     uint64_t m_terrainRevision = 1;

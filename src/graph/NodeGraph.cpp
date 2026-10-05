@@ -500,6 +500,18 @@ std::vector<CompiledModelScatter> NodeGraph::CompileModelScatters() const {
     return result;
 }
 
+int NodeGraph::AddGroup(NodeGroup group) {
+    int next = 1;
+    for (const NodeGroup& existing : m_groups) next = std::max(next, existing.id + 1);
+    group.id = next;
+    m_groups.push_back(std::move(group));
+    return next;
+}
+
+bool NodeGraph::RemoveGroup(int id) {
+    return std::erase_if(m_groups, [&](const NodeGroup& group) { return group.id == id; }) > 0;
+}
+
 std::vector<CompiledModelPlace> NodeGraph::CompileModelPlaces() const {
     std::vector<CompiledModelPlace> result;
     std::unordered_map<GraphId, size_t> placed;

@@ -333,6 +333,13 @@ int ToGraphId(uintptr_t id) {
     return static_cast<int>(id);
 }
 
+// グループ（枠）をエディタへ渡すときの ID。ノード・ピン・リンクの ID（1 から採番）と重ならない所に置く。
+constexpr int kGroupEditorIdBase = 0x40000000;
+bool IsGroupEditorId(int id) { return id >= kGroupEditorIdBase; }
+// 枠の内側の余白（囲むノードとの隙間）と、作れる枠の最小の大きさ。キャンバス座標。
+constexpr float kGroupPadding = 28.0f;
+constexpr float kGroupMinSize = 80.0f;
+
 // エディタへ渡してよい座標か。エディタは**知らないノードの位置を FLT_MAX で返す**ので、
 // それを信じて書き戻す・流し込むとノードが無限遠へ飛び、キャンバスの座標計算が
 // 壊れて操作できなくなる。読み込んだファイルの値の検証にも使う。
@@ -1187,6 +1194,87 @@ void Application::AlignSelectedGraphNodes(GraphAlign mode) {
 // 位置と大きさはエディタが持つ値を使う（実際に描かれた大きさ。種類で高さが違う）。メモの吹き出しを
 // 出している間は、その高さも箱に含める（縦にずらしたとき吹き出しが下のノードに重ならないように）。
 // アンドゥの扱いは AlignSelectedGraphNodes と同じ（「並べ直す前」を 1 段にする）。
+// グループ（枠）を描く。imgui-node-editor のグループノードを使うので、枠の見出しを掴むと中のノードも動き、
+// 縁を掴むと大きさが変わる。位置と大きさはエディタが持つ値を毎フレーム読み戻す。
+void Application::DrawGraphGroups() {
+    std::vector<int> alive;
+    for (graph::NodeGroup& group : m_graph.MutableGroups()) {
+        if (m_editComponent >= 0 && group.component != m_editComponent) continue;
+        alive.push_back(group.id);
+        const ed::NodeId editorId(static_cast<uintptr_t>(kGroupEditorIdBase + group.id));
+        const std::array<float, 4> model{group.x, group.y, group.width, group.height};
+        const auto synced = m_graphGroupSynced.find(group.id);
+        // 初めて描く枠と、アンドゥなどでモデルの値が変わった枠は、エディタへ流し込む。
+        if (synced == m_graphGroupSynced.end() || synced->second != model) {
+            ed::SetNodePosition(editorId, ImVec2(group.x, group.y));
+            ed::SetGroupSize(editorId, ImVec2(group.width, group.height));
+            m_graphGroupSynced[group.id] = model;
+        }
+        // 最初は 0.16 / 0.55 だったが、暗くて見分けにくいので明るくした（ユーザー指定）。
+        ed::PushStyleColor(ed::StyleColor_NodeBg, ImVec4(0.58f, 0.70f, 0.82f, 0.26f));
+        ed::PushStyleColor(ed::StyleColor_NodeBorder, ImVec4(0.70f, 0.82f, 0.94f, 0.85f));
+        ed::BeginNode(editorId);
+        ImGui::PushID(kGroupEditorIdBase + group.id);
+        ImGui::TextUnformatted(group.name.empty() ? "グループ" : group.name.c_str());
+        ed::Group(ImVec2(group.width, group.height));
+        const ImVec2 inner = ImGui::GetItemRectSize();
+        ImGui::PopID();
+        ed::EndNode();
+        ed::PopStyleColor(2);
+        // エディタの値を読み戻す（ドラッグと縁の伸縮）。知らないノードの位置は FLT_MAX で返るので捨てる。
+        const ImVec2 position = ed::GetNodePosition(editorId);
+        if (!IsValidNodePosition(position.x, position.y) || inner.x <= 0.0f || inner.y <= 0.0f) continue;
+        const std::array<float, 4> current{position.x, position.y, inner.x, inner.y};
+        if (current != m_graphGroupSynced[group.id]) {
+            group.x = current[0]; group.y = current[1]; group.width = current[2]; group.height = current[3];
+            m_graphGroupSynced[group.id] = current;
+            m_graphGroupMoved = true;
+        }
+    }
+    std::erase_if(m_graphGroupSynced, [&](const auto& entry) {
+        return std::find(alive.begin(), alive.end(), entry.first) == alive.end();
+    });
+    // 動かし終えたら未保存にする（ドラッグ中の毎フレームは積まない）。
+    if (m_graphGroupMoved && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        m_graphGroupMoved = false;
+        MarkDocumentChanged(false);
+    }
+}
+
+// 選んだノードを囲む枠を作る。何も選んでいなければ、at（キャンバス座標）に空の枠を置く。
+void Application::CreateGraphGroup(const ImVec2& at) {
+    const float title = ImGui::GetTextLineHeightWithSpacing();
+    bool any = false;
+    ImVec2 lo(FLT_MAX, FLT_MAX), hi(-FLT_MAX, -FLT_MAX);
+    for (const graph::GraphId id : m_selectedGraphNodes) {
+        const graph::Node* node = m_graph.FindNode(id);
+        if (node == nullptr || (m_editComponent >= 0 && node->component != m_editComponent)) continue;
+        const ImVec2 position = ed::GetNodePosition(ed::NodeId(id));
+        const ImVec2 size = ed::GetNodeSize(ed::NodeId(id));
+        if (!IsValidNodePosition(position.x, position.y) || size.x <= 0.0f) continue;
+        lo = ImVec2(std::min(lo.x, position.x), std::min(lo.y, position.y));
+        hi = ImVec2(std::max(hi.x, position.x + size.x), std::max(hi.y, position.y + size.y));
+        any = true;
+    }
+    graph::NodeGroup group;
+    group.component = m_editComponent == 1 ? 1 : 0;
+    if (any) {
+        // メモの吹き出しがノードの下に出るので、下は広めに空ける。
+        group.x = lo.x - kGroupPadding;
+        group.y = lo.y - kGroupPadding - title;
+        group.width = std::max(hi.x - lo.x + kGroupPadding * 2.0f, kGroupMinSize);
+        group.height = std::max(hi.y - lo.y + kGroupPadding * 3.0f, kGroupMinSize);
+    } else {
+        group.x = at.x - group.width * 0.5f;
+        group.y = at.y - group.height * 0.5f;
+    }
+    if (!m_documentDirty) m_committed = CaptureDocument();
+    m_selectedGraphGroup = m_graph.AddGroup(std::move(group));
+    MarkDocumentChanged(false);
+    m_toasts.Push("グループを作りました", any ? "プロパティで名前を付けられます。枠の見出しを掴むと中のノードごと動きます"
+                                              : "空の枠を置きました。ノードを中へ入れるか、縁を掴んで大きさを変えます");
+}
+
 void Application::ArrangeGraphLeftToRight(bool overlapsOnly) {
     // 直した接続の間に空ける幅、これより狭い接続も直す幅、縦にずらすときにほかのノードとの間に
     // 空ける幅（キャンバス座標）。最初は 40 / 0 / 16 だったが、詰まって見えるので広げた（ユーザー指定）。
@@ -1410,6 +1498,7 @@ void Application::DrawGraphEditor() {
         m_graphNodesToPlace.clear();
     }
 
+    DrawGraphGroups();
     for (const graph::Node& node : m_graph.Nodes()) {
         if (m_editComponent >= 0 && node.component != m_editComponent) continue;
         DrawGraphNode(node);
@@ -1423,6 +1512,17 @@ void Application::DrawGraphEditor() {
     if (canvasHovered && !io.WantTextInput && !io.KeyCtrl &&
         ImGui::IsKeyPressed(ImGuiKey_A, false)) {
         ed::NavigateToContent();
+    }
+    // G で、選んだノードを囲むグループ（枠）を作る。選択が無ければカーソルの所に空の枠。
+    // エディタのフレーム内では io.MousePos がキャンバス座標になっている。
+    if (canvasHovered && !io.WantTextInput && !io.KeyCtrl && !io.KeyShift && !io.KeyAlt &&
+        ImGui::IsKeyPressed(ImGuiKey_G, false)) {
+        CreateGraphGroup(io.MousePos);
+    }
+    if (m_pendingGraphGroup) {
+        m_pendingGraphGroup = false;
+        // メニューを開いた位置は画面座標で控えてあるので、キャンバス座標へ直す。
+        CreateGraphGroup(ed::ScreenToCanvas(m_pendingGraphGroupAt));
     }
 
     // Ctrl+C / Ctrl+V でノードをコピーする。**キャンバスの上にいるときだけ**
@@ -1508,6 +1608,14 @@ void Application::DrawGraphEditor() {
         while (ed::QueryDeletedNode(&deletedNodeId)) {
             if (ed::AcceptDeletedItem()) {
                 const int nodeId = ToGraphId(deletedNodeId.Get());
+                // 枠だけを消す（中のノードは残る）。
+                if (IsGroupEditorId(nodeId)) {
+                    if (m_graph.RemoveGroup(nodeId - kGroupEditorIdBase)) {
+                        if (m_selectedGraphGroup == nodeId - kGroupEditorIdBase) m_selectedGraphGroup = 0;
+                        MarkDocumentChanged(false);
+                    }
+                    continue;
+                }
                 if (m_graph.DeleteNode(nodeId)) {
                     MarkDocumentChanged();
                     if (m_previewGraphNode == nodeId) {
@@ -1590,6 +1698,12 @@ void Application::DrawGraphEditor() {
             m_pendingGraphSpread = true;
         ImGui::SetItemTooltip("重なっているノードを縦にずらして離す（横には動かさない）。\n"
                               "2 個以上を選んでいればその中だけ、そうでなければグラフ全体");
+        if (ImGui::MenuItem(m_selectedGraphNodes.empty() ? "空のグループを作る" : "選択したノードをグループにまとめる", "G")) {
+            m_pendingGraphGroup = true;
+            m_pendingGraphGroupAt = ImGui::GetMousePosOnOpeningCurrentPopup();
+        }
+        ImGui::SetItemTooltip("ノードを囲む枠を作る（表示だけ。評価には影響しない）。\n"
+                              "枠の見出しを掴むと中のノードごと動く");
         ImGui::EndPopup();
     }
     if (ImGui::BeginPopup("addGraphNode")) {
@@ -1736,6 +1850,12 @@ void Application::DrawGraphEditor() {
             m_pendingGraphSpread = true;
         ImGui::SetItemTooltip("重なっているノードを縦にずらして離す（横には動かさない）。\n"
                               "2 個以上を選んでいればその中だけ、そうでなければグラフ全体");
+        if (ImGui::MenuItem(m_selectedGraphNodes.empty() ? "空のグループを作る" : "選択したノードをグループにまとめる", "G")) {
+            m_pendingGraphGroup = true;
+            m_pendingGraphGroupAt = ImGui::GetMousePosOnOpeningCurrentPopup();
+        }
+        ImGui::SetItemTooltip("ノードを囲む枠を作る（表示だけ。評価には影響しない）。\n"
+                              "枠の見出しを掴むと中のノードごと動く");
         // めったに触らない表示の切り替えなので、パネルに行を取らずここへ置く。
         if (ImGui::MenuItem("ノードのメモを表示", nullptr, &m_settings.Display().showNodeNotes)) {
             m_settings.Save();
@@ -1778,7 +1898,8 @@ void Application::DrawGraphEditor() {
             m_graphPressedPin = 0;
         }
         // ノードのダブルクリックでも切り替える（ピンが小さいときの逃げ道）。
-        if (const ed::NodeId doubleClicked = ed::GetDoubleClickedNode()) {
+        if (const ed::NodeId doubleClicked = ed::GetDoubleClickedNode();
+            doubleClicked && !IsGroupEditorId(ToGraphId(doubleClicked.Get()))) {
             SetPreviewGraphNode(ToGraphId(doubleClicked.Get()));
         }
         // 背景のダブルクリックで出力ノードのチェーンへ戻す。
@@ -1817,13 +1938,19 @@ void Application::DrawGraphEditor() {
     const graph::GraphId previousSelected = m_selectedGraphNode;
     if (selectedCount > 0) {
         m_selectedGraphNodes.clear();
+        // 枠（グループ）はノードの選択に混ぜない。枠 1 つだけを選んでいるときは、その枠をプロパティに出す。
+        int selectedGroup = 0, groupCount = 0;
         for (int i = 0; i < selectedCount; ++i) {
-            m_selectedGraphNodes.push_back(ToGraphId(selectedNodes[i].Get()));
+            const int id = ToGraphId(selectedNodes[i].Get());
+            if (IsGroupEditorId(id)) { selectedGroup = id - kGroupEditorIdBase; ++groupCount; }
+            else m_selectedGraphNodes.push_back(id);
         }
-        m_selectedGraphNode = m_selectedGraphNodes.front();
+        m_selectedGraphNode = m_selectedGraphNodes.empty() ? 0 : m_selectedGraphNodes.front();
+        m_selectedGraphGroup = (groupCount == 1 && m_selectedGraphNodes.empty()) ? selectedGroup : 0;
     } else if (m_graphNodesToPlace.empty() && m_pendingSelectGraphNode == 0) {
         m_selectedGraphNodes.clear();
         m_selectedGraphNode = 0;
+        m_selectedGraphGroup = 0;
     }
     // Output は出力ピンを持たないので、選んだときにプレビューを出力へ戻す（ほかのノードは出力ピンの
     // クリックで切り替える）。選び替えた瞬間だけ。選んだまま別のピンを押したプレビューは奪わない。
@@ -2326,6 +2453,25 @@ void Application::DrawGraphPanel() {
                      "ビューポートに出す出力を切り替える。Output ノードは選ぶだけで出力へ戻る。"
                      "Mask の出力を選ぶと、そのマスクが白黒で貼られる");
         ImGui::Spacing();
+    }
+
+    // 枠（グループ）を 1 つだけ選んでいるときは、その名前を出す。
+    if (m_selectedGraphNode == 0 && m_selectedGraphGroup != 0) {
+        for (graph::NodeGroup& group : m_graph.MutableGroups()) {
+            if (group.id != m_selectedGraphGroup) continue;
+            ui::SectionHeader("グループ");
+            if (ui::BeginPropertyTable("graphGroupRows")) {
+                char name[128] = {};
+                std::snprintf(name, sizeof(name), "%s", group.name.c_str());
+                if (ui::PropertyTextInput("名前", name, sizeof(name), "枠の見出しに出す名前")) {
+                    group.name = name;
+                    MarkDocumentChanged(false);
+                }
+                ui::EndPropertyTable();
+            }
+            ui::HintText("枠の中にあるノードがこのグループの中身。見出しを掴むと中のノードごと動き、縁を掴むと大きさが変わる。"
+                         "Delete で枠だけを消す（中のノードは残る）。評価には影響しない");
+        }
     }
 
     graph::Node* selected = m_graph.FindMutableNode(m_selectedGraphNode);

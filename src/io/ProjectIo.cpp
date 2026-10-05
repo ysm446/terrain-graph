@@ -2128,6 +2128,15 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
         links.push_back(std::move(item));
     }
     out["links"] = std::move(links);
+    // グループ（枠）。無ければキーごと書かない（古いファイルと同じ形のまま）。
+    if (!graphData.Groups().empty()) {
+        json groups = json::array();
+        for (const graph::NodeGroup& group : graphData.Groups()) {
+            groups.push_back({{"id", group.id}, {"component", group.component}, {"name", group.name},
+                              {"position", {group.x, group.y}}, {"size", {group.width, group.height}}});
+        }
+        out["groups"] = std::move(groups);
+    }
     return out;
 }
 
@@ -2842,6 +2851,28 @@ bool ReadGraph(const json& source, graph::NodeGraph& graphData, const TextureRea
     }
     // Replace が壊れたリンクの除去と次の採番の再構築を行う。
     graphData.Replace(std::move(nodes), std::move(links));
+    // グループ（枠）。壊れた項目は捨てる。
+    graphData.MutableGroups().clear();
+    if (const json* items = FindMember(node, "groups"); items != nullptr && items->is_array()) {
+        for (const json& item : *items) {
+            if (!item.is_object()) continue;
+            graph::NodeGroup group;
+            group.component = ReadInt(item, "component", 0) == 1 ? 1 : 0;
+            group.name = ReadString(item, "name", group.name);
+            const auto pair = [&](const char* key, float& a, float& b) {
+                const json* value = FindMember(item, key);
+                if (value == nullptr || !value->is_array() || value->size() < 2 || !(*value)[0].is_number() ||
+                    !(*value)[1].is_number()) return false;
+                a = (*value)[0].get<float>();
+                b = (*value)[1].get<float>();
+                return std::isfinite(a) && std::isfinite(b) && std::abs(a) <= 1.0e6f && std::abs(b) <= 1.0e6f;
+            };
+            if (!pair("position", group.x, group.y) || !pair("size", group.width, group.height)) continue;
+            group.width = std::max(group.width, 40.0f);
+            group.height = std::max(group.height, 40.0f);
+            graphData.AddGroup(std::move(group));
+        }
+    }
     // 古い「UV スケール」を 1 周の長さ（m）へ換算する: 地形の一辺 ÷ UV スケール。
     // 地形の実寸は、そのノードの鎖の根にあるソース（Heightmap / Mountain）が持つ。
     for (graph::Node& created : graphData.MutableNodes()) {
@@ -4441,6 +4472,12 @@ bool LoadSharedAsset(ProjectWorkspace& workspace, const fs::path& path,
         }
         for (auto link : imported.Links()) { link.id = remap(link.id); link.startPin = remap(link.startPin); link.endPin = remap(link.endPin); links.push_back(link); }
         refs.graph.Replace(std::move(nodes), std::move(links));
+        // グループも、差し替える部品のぶんだけ入れ替える。
+        std::erase_if(refs.graph.MutableGroups(), [&](const auto& group) { return group.component == graphComponent; });
+        for (graph::NodeGroup group : imported.Groups()) {
+            group.component = graphComponent;
+            refs.graph.AddGroup(std::move(group));
+        }
         if (refs.components) {
             if (!refs.components->is_array()) *refs.components = json::array();
             auto& entries = refs.components->get_ref<json::array_t&>();
@@ -4576,6 +4613,10 @@ SceneFingerprint FingerprintScene(const ProjectRefs& refs) {
         }
         for (const auto& link : graph["links"])
             parts[pins[1].contains(link["start"].get<int>()) ? 1 : 0]["links"].push_back(link);
+        // グループは自分の component で分ける（枠を動かしただけでも、その部品が未保存になる）。
+        if (graph.contains("groups"))
+            for (const auto& group : graph["groups"])
+                parts[group.value("component", 0) == 1 ? 1 : 0]["groups"].push_back(group);
     } else {
         parts[0] = graph;
     }

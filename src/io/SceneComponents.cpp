@@ -244,6 +244,12 @@ bool SaveSceneComponents(ProjectWorkspace& workspace, const fs::path& scene, jso
         }
         for (const auto& link : graph["links"]) if (pins.contains(link["start"].get<int>()))
             part["links"].push_back(link);
+        // グループ（枠）は自分の component で振り分ける。部品のファイルには component を書かない。
+        if (graph.contains("groups") && graph["groups"].is_array())
+            for (auto group : graph["groups"]) if (group.is_object() && group.value("component", 0) == component) {
+                group.erase("component");
+                part["groups"].push_back(std::move(group));
+            }
         // 空の雲も保持する。後でノードを追加できる編集対象になる。
         json body = {{"name", ToUtf8Display(scene.stem()) + (component ? " 雲" : " 地形")}, {"graph", part}};
         for (const auto* key : Tables) body[key] = document.value(key, json::array());
@@ -426,6 +432,12 @@ bool ExpandSceneComponents(ProjectWorkspace& workspace, json& document) {
             for (const auto* key : {"id", "start", "end"}) remap(link[key]);
             result["graph"]["links"].push_back(link);
         }
+        // グループ（枠）は ID の付け替えに関わらない（別の番号）。どの部品のものかだけ書き足す。
+        if (graph.contains("groups") && graph["groups"].is_array())
+            for (auto group : graph["groups"]) if (group.is_object()) {
+                group["component"] = component;
+                result["graph"]["groups"].push_back(std::move(group));
+            }
         result["paintResolution"] = body.value("paintResolution", 1024);
         if (!component && body.contains("geometry") && body["geometry"].is_object())
             for (const auto& [key, value] : body["geometry"].items()) result["preview"][key] = value;

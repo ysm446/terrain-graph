@@ -190,6 +190,16 @@ private:
     // 重なったノードを縦にずらして離す（graph::ResolveOverlaps）。2 個以上を選んでいればその中だけ、
     // そうでなければ編集中のグラフ全体。アンドゥ 1 段。
     bool m_pendingGraphSpread = false;
+    // グループ（枠）。選んだノードを囲む枠を作る（G キー、右クリックのメニュー）。選択が無ければ at に空の枠。
+    void CreateGraphGroup(const ImVec2& at);
+    void DrawGraphGroups();
+    // エディタへ伝えてある枠の位置と大きさ（グループの ID → x, y, 幅, 高さ）。モデルの値がこれと違えば、
+    // アンドゥや読み込みで変わったとみなしてエディタへ流し込む。
+    std::unordered_map<int, std::array<float, 4>> m_graphGroupSynced;
+    int m_selectedGraphGroup = 0;        // プロパティに出している枠（0 なら無し）
+    bool m_graphGroupMoved = false;      // 枠を動かした / 大きさを変えた（マウスを離したら未保存にする）
+    bool m_pendingGraphGroup = false;    // 右クリックのメニューからの「グループにまとめる」
+    ImVec2 m_pendingGraphGroupAt{};
     // メニューはエディタを止めたポップアップの中にあるので、要求だけ置いて次のフレームで実行する。
     bool m_pendingGraphArrange = false;
     // ビューポートに出すノードを決める。出力ノードや無効な ID は
