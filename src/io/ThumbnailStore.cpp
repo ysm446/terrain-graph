@@ -72,6 +72,8 @@ ThumbnailRecord AssetThumbnailRecord(ProjectWorkspace& workspace, const fs::path
     // 形式・描画条件の変更時に版を上げて古いキャッシュを無効化する。
     uint64_t stamp = Hash(path.extension() == L".tglayer"      ? "thumbnail-layer-quarter-v3"
                           : path.extension() == L".tgboundary" ? "thumbnail-boundary-v2"
+                          // モデルは背景を透明にした（v2）。前の版の画像は「古いもの」として出る。
+                          : path.extension() == L".tgmodel" || path.extension() == L".fbx" ? "thumbnail-model-v2"
                                                                : "thumbnail-v1");
     std::unordered_set<std::string> visited;
     std::function<void(const fs::path&)> visit;

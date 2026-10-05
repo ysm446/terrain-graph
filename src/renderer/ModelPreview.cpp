@@ -385,7 +385,10 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
         target.width = kOutputSize;
         target.height = kOutputSize;
         target.allowRenderTarget = true;
+        // 背景は透明（アルファ 0）。サムネイルでは一覧の地の色が透け、モデルだけが見える。
+        // 色は暗いままにしておく（縮小で縁の画素に混ざるので、明るいと縁が白く浮く）。
         target.clearColor[0] = target.clearColor[1] = target.clearColor[2] = 0.025f;
+        target.clearColor[3] = 0.0f;
         target.debugName = L"ModelPreview";
         if (!device.Allocator().CreateTexture2D(target, m_output)) return 0;
     }
@@ -402,7 +405,7 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
     PIXBeginEvent(commandList, PIX_COLOR(120, 200, 200), "ModelPreview");
     rhi::TransitionIfNeeded(commandList, m_output, D3D12_RESOURCE_STATE_RENDER_TARGET);
     rhi::TransitionIfNeeded(commandList, m_depth, D3D12_RESOURCE_STATE_DEPTH_WRITE);
-    const float clear[4] = {0.025f, 0.025f, 0.025f, 1};
+    const float clear[4] = {0.025f, 0.025f, 0.025f, 0};
     commandList->ClearRenderTargetView(m_output.rtv.cpu, clear, 0, nullptr);
     commandList->ClearDepthStencilView(m_depth.dsv.cpu, D3D12_CLEAR_FLAG_DEPTH, 1, 0, 0, nullptr);
     commandList->OMSetRenderTargets(1, &m_output.rtv.cpu, FALSE, &m_depth.dsv.cpu);

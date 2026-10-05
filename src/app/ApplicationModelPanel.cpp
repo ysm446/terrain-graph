@@ -659,6 +659,9 @@ void Application::DrawModelPreviewWindow() {
                 else if (ImGui::IsKeyPressed(ImGuiKey_A, false)) preview->FrameView();
             }
         }
+        // 画像の背景は透明なので、プレビューでは下に枠の地を敷く（サムネイルは一覧の地がそのまま透ける）。
+        ImGui::GetWindowDrawList()->AddRectFilled(pos, ImVec2(pos.x + side, pos.y + side),
+                                                  ImGui::GetColorU32(ImGuiCol_FrameBg));
         if (preview->HasOutput())
             ImGui::GetWindowDrawList()->AddImage(
                 static_cast<ImTextureID>(preview->OutputHandle().ptr), pos,
