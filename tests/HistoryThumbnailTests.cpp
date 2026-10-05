@@ -187,6 +187,62 @@ int main() {
     const auto upperImage = tg::io::RenameAsset(moving, lowerFolder / "ground.png", "Ground.png");
     check(upperImage == lowerFolder / "Ground.png" && spelledOnDisk(upperImage) == L"Ground.png" &&
           spelledOnDisk(fs::path(upperImage.wstring() + L".meta")) == L"Ground.png.meta", "case-only file rename keeps metadata");
+    // フォルダの移動。中身ごと動き、IDの参照も、IDを持たない素のパスの参照も切れない。
+    {
+        tg::io::ProjectWorkspace folders;
+        const auto folderRoot = directory / "folder-root";
+        check(folders.Open(folderRoot), "folder root");
+        const auto pack = folderRoot / "Pack";
+        fs::create_directories(pack / "Textures", error);
+        fs::create_directories(folderRoot / "Library" / "Sub", error);
+        std::ofstream(pack / "Textures" / "rock.png").put('r');
+        std::ofstream(folderRoot / "outside.png").put('o');
+        const auto rockRef = folders.Reference(pack / "Textures" / "rock.png");
+        // 中の文書: 中への相対パス（変わらない）と、外への相対パス（変わる）を持つ。
+        check(tg::io::ProjectWorkspace::WriteJson(pack / "inner.mmmat",
+              {{"inside", "Textures/rock.png"}, {"outside", "../outside.png"}, {"byId", rockRef}}), "inner document");
+        // 外の文書: 参照元からの相対、ルートからの相対、IDが空の参照で中を指す。
+        check(tg::io::ProjectWorkspace::WriteJson(folderRoot / "Library" / "outer.mmmat",
+              {{"relative", "../Pack/Textures/rock.png"}, {"rooted", "Pack/Textures/rock.png"},
+               {"noId", {{"uid", ""}, {"path", "Pack/Textures/rock.png"}}}, {"label", "Pack"}}), "outer document");
+        // 保存済みのサムネイルは移動先へ引き継ぐ。
+        const auto thumbnailBefore = tg::io::AssetThumbnailRecord(folders, pack / "Textures" / "rock.png");
+        fs::create_directories(thumbnailBefore.image.parent_path(), error);
+        std::ofstream(thumbnailBefore.image).put('i');
+        check(tg::io::CommitThumbnail(thumbnailBefore), "thumbnail before folder move");
+
+        check(tg::io::MoveAssetFolder(folders, pack, pack).empty(), "folder cannot move into itself");
+        check(tg::io::MoveAssetFolder(folders, pack, pack / "Textures").empty() && fs::exists(pack), "folder cannot move into its child");
+        check(tg::io::MoveAssetFolder(folders, pack, folderRoot) == pack, "same parent is a no-op");
+        check(tg::io::MoveAssetFolder(folders, folderRoot, folderRoot / "Library").empty(), "root cannot move");
+        check(tg::io::MoveAssetFolder(folders, pack, directory).empty() && fs::exists(pack), "folder cannot leave root");
+        fs::create_directories(folderRoot / "Library" / "Sub" / "Pack", error);
+        check(tg::io::MoveAssetFolder(folders, pack, folderRoot / "Library" / "Sub").empty() && fs::exists(pack), "folder name clash refused");
+        fs::remove(folderRoot / "Library" / "Sub" / "Pack", error);
+
+        const auto movedPack = tg::io::MoveAssetFolder(folders, pack, folderRoot / "Library");
+        const auto movedRock = folderRoot / "Library" / "Pack" / "Textures" / "rock.png";
+        check(movedPack == folderRoot / "Library" / "Pack" && !fs::exists(pack) && fs::exists(movedRock) &&
+              fs::exists(movedRock.wstring() + L".meta"), "folder moved with contents");
+        check(folders.Resolve(rockRef) == movedRock, "id reference follows moved folder");
+        nlohmann::json inner, outer;
+        check(tg::io::ProjectWorkspace::ReadJson(movedPack / "inner.mmmat", inner) &&
+              inner["inside"] == "Textures/rock.png" && inner["outside"] == "../../outside.png" &&
+              fs::exists(movedPack / "../../outside.png"), "paths inside moved document");
+        check(tg::io::ProjectWorkspace::ReadJson(folderRoot / "Library" / "outer.mmmat", outer) &&
+              outer["relative"] == "Pack/Textures/rock.png" && outer["rooted"] == "Library/Pack/Textures/rock.png" &&
+              outer["noId"]["path"] == "Library/Pack/Textures/rock.png" && outer["label"] == "Pack", "paths into moved folder");
+        const auto thumbnailAfter = tg::io::AssetThumbnailRecord(folders, movedRock);
+        check(thumbnailAfter.image != thumbnailBefore.image && fs::exists(thumbnailAfter.image) &&
+              !fs::exists(thumbnailBefore.image), "thumbnail follows moved folder");
+        tg::io::ProjectWorkspace reopenedFolders;
+        check(reopenedFolders.Open(folderRoot) && reopenedFolders.Resolve(rockRef) == movedRock, "moved folder resolves after reopen");
+        // ペイントデータのフォルダは本体を置いたまま単独では動かさない。
+        std::ofstream(folderRoot / "scene.tgscene") << "{}";
+        fs::create_directories(folderRoot / "scene.assets", error);
+        check(tg::io::MoveAssetFolder(folders, folderRoot / "scene.assets", folderRoot / "Library").empty() &&
+              fs::exists(folderRoot / "scene.assets"), "paint folder stays with its scene");
+    }
     // 削除前の付け替え。参照元の文書が代わりのIDへ書き換わり、以後は参照元が無くなる。
     tg::io::ProjectWorkspace replacing;
     const auto replaceRoot = directory / "replace-root";

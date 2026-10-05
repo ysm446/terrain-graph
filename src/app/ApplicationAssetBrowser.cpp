@@ -489,12 +489,24 @@ void Application::RelinkAssetPaths(const fs::path& from, const fs::path& to) {
         std::error_code error;
         if (!fs::is_directory(to, error)) m_recentProjects.Remove(m_workspace.Root(), from);
     }
+    // フォルダごと動いたシーンは、履歴のパスも付け替える（後ろから入れ直して並びを保つ）。
+    const auto recentScenes = m_recentProjects.Entries(m_workspace.Root());
+    for (auto scene = recentScenes.rbegin(); scene != recentScenes.rend(); ++scene) {
+        auto target = *scene;
+        remap(target);
+        if (target == *scene || target == m_projectPath) continue;
+        m_recentProjects.Remove(m_workspace.Root(), *scene);
+        m_recentProjects.Add(m_workspace.Root(), target);
+    }
     std::map<fs::path, size_t> movedStates;
     for (const auto& [path, state] : m_savedAssetStates) { auto target = path; remap(target); movedStates[target] = state; }
     m_savedAssetStates = std::move(movedStates);
     for (auto& path : m_selectedAssets) remap(path);
     remap(m_assetSelectionAnchor);
     remap(m_assetDirectory);
+    remap(m_componentPreviewPath);
+    remap(m_referenceCenter);
+    m_referenceIndexDirty = true;
     m_assetThumbnails.Invalidate();
 }
 
@@ -655,7 +667,9 @@ void Application::ProcessAssetWork() {
         const auto directory = m_pendingAssetMoveTarget; m_pendingAssetMoveTarget.clear();
         size_t count = 0;
         for (const auto& source : sources) {
-            const auto moved = io::MoveAsset(m_workspace, source, directory);
+            std::error_code sourceError;
+            const auto moved = fs::is_directory(source, sourceError) ? io::MoveAssetFolder(m_workspace, source, directory)
+                                                                     : io::MoveAsset(m_workspace, source, directory);
             if (moved.empty() || moved == source) continue;
             // 読み込み済みのアセットは絶対パスを持つので、移動先へ付け替える。
             RelinkAssetPaths(source, moved);
@@ -931,6 +945,9 @@ void Application::AssetFolderDropTarget(const fs::path& directory) {
     }
     std::error_code error;
     for (const auto& source : sources) {
+        // フォルダを自分自身やその中へ落としたときは何もしない。
+        const auto inside = directory.lexically_normal().lexically_relative(source.lexically_normal());
+        if (!inside.empty() && *inside.begin() != L"..") continue;
         if (!source.empty() && m_workspace.Contains(source) &&
             !fs::equivalent(source.parent_path(), directory, error)) {
             m_pendingAssetMoves.push_back(source); m_pendingAssetMoveTarget = directory;
@@ -973,6 +990,13 @@ void Application::DrawAssetBrowser() {
             if (!m_assetRevealTarget.empty() && directory == m_assetDirectory) ImGui::SetScrollHereY(0.5f);
             if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
                 m_assetDirectory = directory; m_assetRefresh = true;
+            }
+            // フォルダも掴んで別のフォルダへ移せる（ルートと改名中の行は除く）。
+            if (!root && !renaming && ImGui::BeginDragDropSource()) {
+                const auto utf8 = ToUtf8Portable(directory);
+                ImGui::SetDragDropPayload(kAssetPathDragDropType, utf8.data(), utf8.size());
+                ImGui::TextUnformatted(label.c_str());
+                ImGui::EndDragDropSource();
             }
             AssetFolderDropTarget(directory);
             // 一覧のフォルダと同じ右クリックメニュー。ルートは改名・削除できない。
@@ -1139,16 +1163,13 @@ void Application::DrawAssetBrowser() {
                 else m_pendingAssetOpen = path;
             }
             // ImGui のペイロードは 1 つしか持てない。ノードやマップ欄へ割り当てられるものは
-            // 従来どおり ID を積み、それ以外のファイルはパスを積んでフォルダへ移せるようにする。
-            const bool movable = !folder && path.filename() != L"project.tgproj";
+            // 従来どおり ID を積み、それ以外のファイルとフォルダはパスを積んでフォルダへ移せるようにする。
+            const bool movable = path.filename() != L"project.tgproj";
             // 複数選んでいるうちの 1 つを掴んだら、選択全部をパスの一覧で運ぶ。
             std::vector<fs::path> dragged;
             if (movable && IsAssetSelected(path) && m_selectedAssets.size() > 1)
-                for (const auto& selected : m_selectedAssets) {
-                    std::error_code selectedError;
-                    if (!fs::is_directory(selected, selectedError) && selected.filename() != L"project.tgproj")
-                        dragged.push_back(selected);
-                }
+                for (const auto& selected : m_selectedAssets)
+                    if (selected.filename() != L"project.tgproj") dragged.push_back(selected);
             if ((textureId || materialId || movable) && ImGui::BeginDragDropSource()) {
                 if (dragged.size() > 1) {
                     std::string utf8;

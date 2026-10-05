@@ -352,6 +352,140 @@ fs::path MoveAsset(ProjectWorkspace& workspace, const fs::path& target, const fs
     }
     return RelocateAsset(workspace, target, directory / target.filename());
 }
+namespace {
+// ルートより下にドットで始まる内部フォルダを含むか（ルートの外も含む）。
+bool InHiddenFolder(const ProjectWorkspace& workspace, const fs::path& path) {
+    for (const auto& part : path.lexically_relative(workspace.Root()))
+        if (part != L"." && part.wstring().starts_with(L".")) return true;
+    return false;
+}
+// path が folder の中（folder 自身を含む）なら、moved の下の同じ位置を返す。外ならそのまま返す。
+fs::path Rebased(const fs::path& path, const fs::path& folder, const fs::path& moved) {
+    auto a = folder.begin();
+    auto b = path.begin();
+    for (; a != folder.end(); ++a, ++b)
+        if (b == path.end() || _wcsicmp(a->c_str(), b->c_str()) != 0) return path;
+    fs::path result = moved;
+    for (; b != path.end(); ++b) result /= *b;
+    return result;
+}
+// フォルダを destination へ置き換える（移動と改名で共通）。どちらも正規化済みのパスで渡す。
+// IDの参照は再スキャンで追従するので、IDを持たない参照だけを文書の書き換えで直す。
+bool RelocateFolder(ProjectWorkspace& workspace, const fs::path& folder, const fs::path& destination) {
+    const auto& root = workspace.Root();
+    const auto rebase = [&](const fs::path& path) { return Rebased(path, folder, destination); };
+    std::error_code error;
+    // 書き換える文書（移動後のパスと中身）。先に全部作っておき、書くのは移動が済んでから。
+    std::vector<std::pair<fs::path, nlohmann::json>> rewritten;
+    std::vector<fs::path> files;                                  // フォルダの中のファイル
+    std::vector<std::pair<fs::path, fs::path>> sceneThumbnails;   // 移動後のシーン, 移動前のサムネイル
+    fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, error), end;
+    for (; it != end && !error; it.increment(error)) {
+        if (it->is_symlink(error)) { it.disable_recursion_pending(); continue; }
+        if (it->is_directory(error)) {
+            if (it->path().filename().wstring().starts_with(L".")) it.disable_recursion_pending();
+            continue;
+        }
+        const auto path = it->path();
+        const auto movedPath = rebase(path);
+        if (movedPath != path) {
+            files.push_back(path);
+            // IDの無い旧シーンのサムネイルは相対パスから名前を決めているので、移動後に付け直す。
+            if (path.extension() == L".tgscene") sceneThumbnails.emplace_back(movedPath, SceneThumbnailPath(workspace, path));
+        }
+        if (!IsDocument(path)) continue;
+        nlohmann::json document;
+        if (!ProjectWorkspace::ReadJson(path, document) ||
+            ProjectWorkspace::String(document, "format") == "terrain-graph.workspace") continue;
+        const auto ownerDirectory = path.parent_path(), movedOwnerDirectory = movedPath.parent_path();
+        bool changed = false;
+        const auto visit = [&](auto&& self, nlohmann::json& value) -> void {
+            std::error_code ignored;
+            if (value.is_object() && value.contains("uid") && value.contains("path")) {
+                // IDが空の参照は、ルートからの相対パスだけが頼り。
+                const auto text = ProjectWorkspace::String(value, "path");
+                if (!ProjectWorkspace::String(value, "uid").empty() || text.empty()) return;
+                const auto referenced = fs::weakly_canonical(root / FromUtf8(text), ignored);
+                if (ignored || rebase(referenced) == referenced) return;
+                value["path"] = ToUtf8Portable(rebase(referenced).lexically_relative(root));
+                changed = true;
+                return;
+            }
+            if (value.is_structured()) { for (auto& child : value) self(self, child); return; }
+            if (!value.is_string()) return;
+            const auto text = value.get<std::string>();
+            if (text.empty() || text.size() > 1024) return;
+            // 旧形式の素のパス。参照元から見た相対（または絶対）、ルートからの相対の順に、
+            // 実在するファイルを指すものだけを扱う。
+            const auto reference = FromUtf8(text);
+            for (const bool fromOwner : {true, false}) {
+                if (!fromOwner && reference.is_absolute()) break;
+                const auto candidate = (fromOwner ? ownerDirectory : root) / reference;
+                if (!fs::is_regular_file(candidate, ignored)) continue;
+                const auto referenced = fs::weakly_canonical(candidate, ignored);
+                if (ignored) return;
+                const auto moved = rebase(referenced);
+                const auto before = reference.is_absolute() ? referenced : referenced.lexically_relative(fromOwner ? ownerDirectory : root);
+                const auto after = reference.is_absolute() ? moved : moved.lexically_relative(fromOwner ? movedOwnerDirectory : root);
+                if (after != before) { value = ToUtf8Portable(after); changed = true; }
+                return;
+            }
+        };
+        visit(visit, document);
+        if (changed) rewritten.emplace_back(movedPath, std::move(document));
+    }
+    RenamePath(folder, destination, error);
+    if (error) return false;
+    for (const auto& [owner, document] : rewritten)
+        if (!ProjectWorkspace::WriteJson(owner, document))
+            TG_LOG_ERROR("参照のパスを書き換えられません: %s", ToUtf8Display(owner).c_str());
+    for (const auto& file : files) CarryAssetThumbnail(workspace, file, rebase(file));
+    for (const auto& [scene, previous] : sceneThumbnails) {
+        const auto current = SceneThumbnailPath(workspace, scene);
+        if (!previous.empty() && !current.empty() && previous != current &&
+            fs::is_regular_file(previous, error) && !fs::exists(current, error)) fs::rename(previous, current, error);
+    }
+    workspace.Scan();
+    return true;
+}
+}
+fs::path MoveAssetFolder(ProjectWorkspace& workspace, const fs::path& target, const fs::path& directory) {
+    std::error_code error;
+    const auto attributes = GetFileAttributesW(target.c_str());
+    const auto folder = fs::weakly_canonical(target, error);
+    std::error_code parentError;
+    const auto parent = fs::weakly_canonical(directory, parentError);
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) || error || parentError ||
+        !fs::is_directory(folder, error) || !fs::is_directory(parent, error) ||
+        !workspace.Contains(folder) || !workspace.Contains(parent) || SamePath(folder, workspace.Root()) ||
+        InHiddenFolder(workspace, folder) || InHiddenFolder(workspace, parent)) {
+        TG_LOG_WARN("移動できないフォルダまたは移動先です");
+        return {};
+    }
+    if (SamePath(folder.parent_path(), parent)) return target;
+    if (Rebased(parent, folder, folder / L"_") != parent) {
+        TG_LOG_WARN("フォルダを自分自身の中へは移動できません: %s", ToUtf8Display(folder.filename()).c_str());
+        return {};
+    }
+    // シーンや地形のペイントデータは本体の隣に置く決まりなので、単独では動かさない。
+    if (_wcsicmp(folder.extension().c_str(), L".assets") == 0) {
+        for (const auto* extension : {L".tgscene", L".tgterrain", L".tgcloud"}) {
+            if (!fs::exists(folder.parent_path() / (folder.stem().wstring() + extension), error)) continue;
+            TG_LOG_WARN("ペイントデータのフォルダは本体と一緒に移動します: %s", ToUtf8Display(folder.filename()).c_str());
+            return {};
+        }
+    }
+    const auto destination = parent / folder.filename();
+    if (fs::exists(destination, error) || error) {
+        TG_LOG_WARN("移動先に同じ名前のフォルダがあります: %s", ToUtf8Display(destination).c_str());
+        return {};
+    }
+    if (!RelocateFolder(workspace, folder, destination)) {
+        TG_LOG_ERROR("フォルダを移動できませんでした: %s", ToUtf8Display(folder).c_str());
+        return {};
+    }
+    return directory / target.filename();
+}
 fs::path RenameAsset(ProjectWorkspace& workspace, const fs::path& target, const std::string& newName) {
     const fs::path name = FromUtf8(newName);
     if (name.empty() || name.has_parent_path() || name.wstring().starts_with(L".") ||
@@ -373,9 +507,12 @@ fs::path RenameAsset(ProjectWorkspace& workspace, const fs::path& target, const 
             TG_LOG_WARN("同じ名前のフォルダがあります: %s", ToUtf8Display(destination).c_str());
             return {};
         }
-        RenamePath(target, destination, error);
-        if (error) { TG_LOG_ERROR("フォルダを改名できませんでした: %s", ToUtf8Display(target).c_str()); return {}; }
-        workspace.Scan();
+        // フォルダの移動と同じ経路。IDを持たない参照のパスとサムネイルも新しい名前へ揃う。
+        const auto folder = fs::weakly_canonical(target, error);
+        if (error || !RelocateFolder(workspace, folder, folder.parent_path() / name)) {
+            TG_LOG_ERROR("フォルダを改名できませんでした: %s", ToUtf8Display(target).c_str());
+            return {};
+        }
         return destination;
     }
     return RelocateAsset(workspace, target, destination);

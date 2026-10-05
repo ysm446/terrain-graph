@@ -50,10 +50,25 @@ void MigrateSceneThumbnails(const ProjectWorkspace& workspace) {
         }
     }
 }
-ThumbnailRecord AssetThumbnailRecord(ProjectWorkspace& workspace, const fs::path& path) {
-    const auto relative = ToUtf8Portable(path.lexically_relative(workspace.Root()));
+namespace {
+// 保存済みのサムネイルの名前。ルートからの相対パスで決まる。
+std::wstring AssetThumbnailKey(const ProjectWorkspace& workspace, const fs::path& path) {
+    return std::to_wstring(Hash(ToUtf8Portable(path.lexically_relative(workspace.Root()))));
+}
+}
+void CarryAssetThumbnail(const ProjectWorkspace& workspace, const fs::path& from, const fs::path& to) {
     const auto directory = workspace.Root() / L".terrain-graph" / L"thumbnails";
-    const auto key = std::to_wstring(Hash(relative));
+    const auto oldKey = AssetThumbnailKey(workspace, from), newKey = AssetThumbnailKey(workspace, to);
+    if (oldKey == newKey) return;
+    for (const auto* extension : {L".png", L".json"}) {
+        std::error_code error;
+        const auto source = directory / (oldKey + extension), target = directory / (newKey + extension);
+        if (fs::is_regular_file(source, error) && !fs::exists(target, error)) fs::rename(source, target, error);
+    }
+}
+ThumbnailRecord AssetThumbnailRecord(ProjectWorkspace& workspace, const fs::path& path) {
+    const auto directory = workspace.Root() / L".terrain-graph" / L"thumbnails";
+    const auto key = AssetThumbnailKey(workspace, path);
     // 形式・描画条件の変更時に版を上げて古いキャッシュを無効化する。
     uint64_t stamp = Hash(path.extension() == L".tglayer"      ? "thumbnail-layer-quarter-v3"
                           : path.extension() == L".tgboundary" ? "thumbnail-boundary-v2"
