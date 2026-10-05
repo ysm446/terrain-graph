@@ -100,6 +100,8 @@ tg::StartupOptions ParseCommandLine() {
             options.revealAsset = argv[++i];
         } else if (argument == L"--show-unsaved") {
             options.showUnsaved = true;
+        } else if (argument == L"--resolve-graph-overlaps" && (i + 1) < argc) {
+            options.resolveGraphOverlapsFrame = ::_wtoi(argv[++i]);
         } else if (argument == L"--select-node" && (i + 1) < argc) {
             options.selectNode = ::_wtoi(argv[++i]);
         } else if (argument == L"--channel-preview" && (i + 1) < argc) {

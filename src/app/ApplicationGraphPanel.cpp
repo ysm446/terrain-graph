@@ -1487,7 +1487,155 @@ void Application::CreateGraphGroup(const ImVec2& at) {
                                               : "空の枠を置きました。ノードを中へ入れるか、縁を掴んで大きさを変えます");
 }
 
+size_t Application::ResolveGraphOverlapsWithGroups() {
+    constexpr float kNodeMargin = 32.0f;   // ノードどうしの隙間
+    constexpr float kGroupMargin = 56.0f;  // 枠どうし、枠と外のノードの隙間（引いたときの名前のぶん広め）
+    const float title = ImGui::GetTextLineHeightWithSpacing();
+    const bool showNotes = m_settings.Display().showNodeNotes;
+    struct Item { graph::GraphId id; ImVec2 position, size; float note; int group; };
+    std::vector<Item> items;
+    for (const graph::Node& node : m_graph.Nodes()) {
+        if (m_editComponent >= 0 && node.component != m_editComponent) continue;
+        if (m_graphHiddenNodes.contains(node.id)) continue;
+        const ImVec2 position = ed::GetNodePosition(ed::NodeId(node.id));
+        const ImVec2 size = ed::GetNodeSize(ed::NodeId(node.id));
+        if (!IsValidNodePosition(position.x, position.y) || size.x <= 0.0f) continue;
+        float note = 0.0f;
+        if (showNotes && !node.note.empty()) {
+            const std::string excerpt = NoteExcerpt(node.note, size.x - kNotePaddingX * 2.0f, kNodeNoteLines);
+            note = ImGui::CalcTextSize(excerpt.c_str()).y + kNotePaddingY * 2.0f + kNoteGap;
+        }
+        items.push_back({node.id, position, size, note, -1});
+    }
+    // 一番外側の開いた枠（ほかの大きい枠の中に入っていないもの）。中の枠は、外の枠の中身として一緒に動く。
+    std::vector<graph::NodeGroup*> tops;
+    const auto inside = [&](const graph::NodeGroup& outer, float x, float y) {
+        return x >= outer.x && x <= outer.x + outer.width && y >= outer.y && y <= outer.y + title + outer.height;
+    };
+    for (graph::NodeGroup& group : m_graph.MutableGroups()) {
+        if (m_editComponent >= 0 && group.component != m_editComponent) continue;
+        if (group.collapsed || m_graphHiddenGroups.contains(group.id)) continue;
+        bool nested = false;
+        for (const graph::NodeGroup& other : m_graph.Groups()) {
+            if (other.id == group.id || other.component != group.component || other.collapsed) continue;
+            nested |= inside(other, group.x, group.y) && other.width * other.height > group.width * group.height;
+        }
+        if (!nested) tops.push_back(&group);
+    }
+    for (Item& item : items) {
+        const ImVec2 center(item.position.x + item.size.x * 0.5f, item.position.y + item.size.y * 0.5f);
+        for (size_t g = 0; g < tops.size() && item.group < 0; ++g)
+            if (inside(*tops[g], center.x, center.y)) item.group = static_cast<int>(g);
+    }
+    std::unordered_map<graph::GraphId, ImVec2> target;
+    for (const Item& item : items) target[item.id] = item.position;
+
+    // 1) 枠の中のノードの重なりを解く。枠の新しい大きさは、解いた後の中身から決める。
+    struct Rect { float x, y, width, height; bool any; };
+    std::vector<Rect> rects(tops.size());
+    for (size_t g = 0; g < tops.size(); ++g) {
+        std::vector<size_t> members;
+        std::vector<graph::LayoutBox> boxes;
+        for (size_t i = 0; i < items.size(); ++i) {
+            if (items[i].group != static_cast<int>(g)) continue;
+            members.push_back(i);
+            boxes.push_back({items[i].position.x, items[i].position.y, items[i].size.x, items[i].size.y + items[i].note});
+        }
+        graph::ResolveOverlaps(boxes, kNodeMargin);
+        ImVec2 lo(FLT_MAX, FLT_MAX), hi(-FLT_MAX, -FLT_MAX);
+        for (size_t k = 0; k < members.size(); ++k) {
+            const Item& item = items[members[k]];
+            target[item.id] = ImVec2(boxes[k].x, boxes[k].y);
+            lo = ImVec2(std::min(lo.x, boxes[k].x), std::min(lo.y, boxes[k].y));
+            hi = ImVec2(std::max(hi.x, boxes[k].x + item.size.x), std::max(hi.y, boxes[k].y + item.size.y));
+        }
+        const graph::NodeGroup& group = *tops[g];
+        // RefitGraphGroups と同じ余白。中身の無い枠は今の大きさのまま。
+        rects[g] = members.empty()
+            ? Rect{group.x, group.y, group.width, group.height + title, false}
+            : Rect{lo.x - kGroupPadding, lo.y - kGroupPadding - title,
+                   std::max(hi.x - lo.x + kGroupPadding * 2.0f, kGroupMinSize),
+                   std::max(hi.y - lo.y + kGroupPadding * 3.0f, kGroupMinSize) + title, true};
+    }
+
+    // 2) 枠・畳んだグループ・枠の外のノードを箱として、重なりを解く。
+    enum class Kind { Group, Collapsed, Node };
+    struct Top { Kind kind; size_t index; };
+    std::vector<Top> order;
+    std::vector<graph::LayoutBox> boxes;
+    for (size_t g = 0; g < tops.size(); ++g) {
+        order.push_back({Kind::Group, g});
+        boxes.push_back({rects[g].x, rects[g].y, rects[g].width, rects[g].height});
+    }
+    std::vector<graph::NodeGroup*> collapsed;
+    for (graph::NodeGroup& group : m_graph.MutableGroups()) {
+        if (!group.collapsed || (m_editComponent >= 0 && group.component != m_editComponent)) continue;
+        if (m_graphHiddenGroups.contains(group.id)) continue;
+        const ed::NodeId editorId(static_cast<uintptr_t>(kCollapsedEditorIdBase + group.id));
+        const ImVec2 position = ed::GetNodePosition(editorId);
+        const ImVec2 size = ed::GetNodeSize(editorId);
+        if (!IsValidNodePosition(position.x, position.y) || size.x <= 0.0f) continue;
+        order.push_back({Kind::Collapsed, collapsed.size()});
+        collapsed.push_back(&group);
+        boxes.push_back({position.x, position.y, size.x, size.y});
+    }
+    for (size_t i = 0; i < items.size(); ++i) {
+        if (items[i].group >= 0) continue;
+        order.push_back({Kind::Node, i});
+        boxes.push_back({items[i].position.x, items[i].position.y, items[i].size.x, items[i].size.y + items[i].note});
+    }
+    const std::vector<graph::LayoutBox> before = boxes;
+    graph::ResolveOverlaps(boxes, kGroupMargin);
+
+    size_t moved = 0;
+    std::vector<std::pair<graph::NodeGroup*, ImVec2>> collapsedMoves;
+    std::vector<std::pair<graph::NodeGroup*, float>> emptyMoves;
+    for (size_t b = 0; b < boxes.size(); ++b) {
+        const float dy = boxes[b].y - before[b].y;
+        if (order[b].kind == Kind::Group) {
+            const size_t g = order[b].index;
+            for (const Item& item : items)
+                if (item.group == static_cast<int>(g)) target[item.id].y += dy;
+            if (!rects[g].any && dy != 0.0f) emptyMoves.emplace_back(tops[g], dy);
+        } else if (order[b].kind == Kind::Collapsed) {
+            if (dy != 0.0f) collapsedMoves.emplace_back(collapsed[order[b].index], ImVec2(boxes[b].x, boxes[b].y));
+        } else {
+            target[items[order[b].index].id].y += dy;
+        }
+    }
+    for (const Item& item : items) moved += (target[item.id].x != item.position.x || target[item.id].y != item.position.y) ? 1 : 0;
+    moved += collapsedMoves.size() + emptyMoves.size();
+    if (moved == 0) return 0;
+
+    if (!m_documentDirty) m_committed = CaptureDocument();
+    // 枠は動かした後の中身へ合わせ直す（中の枠も）。エディタの位置を読むので、ノードを動かす前に呼ぶ。
+    RefitGraphGroups(target);
+    for (const auto& [group, dy] : emptyMoves) group->y += dy;
+    for (const auto& [group, position] : collapsedMoves) MoveCollapsedGraphGroup(*group, position);
+    for (const Item& item : items) {
+        const ImVec2 to = target[item.id];
+        if (to.x != item.position.x || to.y != item.position.y) ed::SetNodePosition(ed::NodeId(item.id), to);
+    }
+    MarkDocumentChanged(false);
+    return moved;
+}
+
 void Application::ArrangeGraphLeftToRight(bool overlapsOnly) {
+    // 開いた枠があるとき（で、選んだノードだけを対象にしていないとき）は、枠ごと重なりを解く。
+    if (overlapsOnly && m_selectedGraphNodes.size() < 2 &&
+        std::any_of(m_graph.Groups().begin(), m_graph.Groups().end(), [&](const graph::NodeGroup& group) {
+            return !group.collapsed && (m_editComponent < 0 || group.component == m_editComponent);
+        })) {
+        const size_t moved = ResolveGraphOverlapsWithGroups();
+        if (moved == 0) {
+            m_toasts.Push("重なっているノードやグループはありません", "編集中のグラフ全体を調べました");
+        } else {
+            char detail[96];
+            std::snprintf(detail, sizeof(detail), "%zu 個のノードとグループを動かしました（Ctrl+Z で戻せます）", moved);
+            m_toasts.Push("ノードとグループの重なりを解消しました", detail);
+        }
+        return;
+    }
     // 直した接続の間に空ける幅、これより狭い接続も直す幅、縦にずらすときにほかのノードとの間に
     // 空ける幅（キャンバス座標）。最初は 40 / 0 / 16 だったが、詰まって見えるので広げた（ユーザー指定）。
     constexpr float kArrangeGap = 80.0f;
@@ -1931,6 +2079,10 @@ void Application::DrawGraphEditor() {
     if (m_pendingGraphArrange) {
         m_pendingGraphArrange = false;
         ArrangeGraphLeftToRight();
+    }
+    if (m_options.resolveGraphOverlapsFrame > 0 &&
+        m_frameCounter == static_cast<uint64_t>(m_options.resolveGraphOverlapsFrame)) {
+        m_pendingGraphSpread = true;
     }
     if (m_pendingGraphSpread) {
         m_pendingGraphSpread = false;

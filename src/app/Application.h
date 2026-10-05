@@ -99,6 +99,9 @@ struct StartupOptions {
     std::vector<std::filesystem::path> bakeImpostors;
     std::filesystem::path revealAsset; // 開発用。参照元への移動を画面確認する。
     graph::GraphId selectNode = 0; // 開発用。読み込んだグラフのプロパティを画像で確認する。
+    // 開発用。この番号のフレームで「ノードの重なりを解消」を 1 回実行する（0 なら何もしない）。
+    // `--screenshot-ui` や `--save-project` と組み合わせて、結果を画像やファイルで確かめる。
+    int resolveGraphOverlapsFrame = 0;
     // 開発用。「チャンネル」パネルを前面にして、この番号のチャンネルを出す（--screenshot-ui で確かめる）。負なら何もしない。
     int channelPreview = -1;
     // 開発用。読み込んだシーンの全項目を未保存扱いにし、階層の印と保存ボタンを画像で確認する。
@@ -208,6 +211,9 @@ private:
     // 整列や並べ直しでノードを動かす直前に呼ぶ。枠の中にあるノードが動くなら、動いた後のノードを
     // 囲むように枠を合わせ直す（moved はノードの ID → 動かした後の位置）。中身が動かない枠はそのまま。
     void RefitGraphGroups(const std::unordered_map<graph::GraphId, ImVec2>& moved);
+    // 「ノードの重なりを解消」の、グループ（枠）があるときの版。枠の中のノードの重なりを解いてから、
+    // 枠どうし・枠と外のノードが重ならないように、枠を中身ごと下へずらす。動かしたノードと枠の数を返す。
+    size_t ResolveGraphOverlapsWithGroups();
     // エディタへ伝えてある枠の位置と大きさ（グループの ID → x, y, 幅, 高さ）。モデルの値がこれと違えば、
     // アンドゥや読み込みで変わったとみなしてエディタへ流し込む。
     std::unordered_map<int, std::array<float, 4>> m_graphGroupSynced;

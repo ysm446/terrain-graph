@@ -1,7 +1,7 @@
 # plan — 実装方針と優先順位
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-10-05 20:41
+更新日時: 2026-10-06 10:10
 
 ## ユニークなモデルの配置（Model Place。2026-10-05 20:41、段階 1 実装済み）
 
@@ -379,6 +379,7 @@ terrain_graph.exe [--project <path>] [--save-project <path>]
                    [--screenshot <path>] [--screenshot-ui <path>]
                    [--screenshot-frame <n>] [--select-node <id>]
                    [--show-unsaved] [--gpu-validation]
+                   [--resolve-graph-overlaps <frame>]
                    [--bake-impostors <model.tgmodel | all>]...
 ```
 
@@ -398,6 +399,8 @@ terrain_graph.exe [--project <path>] [--save-project <path>]
 `--select-node <id>` は読み込み直後にそのノードを選ぶ（エディタ側の選択も合わせる）。部品構成の
 シーンではファイルの ID ではなく**結合後の ID**（地形 → 雲の順に 1 から振り直したもの）を指す。
 選んだノードのコンポーネントのエディタを開く。
+
+`--resolve-graph-overlaps <frame>` は、そのフレームでグラフの「ノードの重なりを解消」を 1 回実行する（開発用。`--screenshot-ui` や `--save-project` と組み合わせて結果を確かめる）。
 
 `--gpu-validation` は Debug のデバッグレイヤーに加えて GPU ベースバリデーションを有効にする
 （2026-09-17 に既定オフへ変更。有効だと最初のフレームが数分経っても終わらないため、
