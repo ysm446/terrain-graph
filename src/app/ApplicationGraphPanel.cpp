@@ -3123,7 +3123,10 @@ void Application::DrawNodeProperties(graph::Node* selected) {
                 ui::PropertyLabel(label.c_str());
                 ImGui::SetNextItemWidth(AssetReferenceWidth(std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x)));
                 if (ImGui::BeginCombo("##model", !index && choice.model ? "見つからないモデル" : names[index])) {
+                    ui::ComboFilterInput();
                     for (size_t j=0; j<names.size(); ++j) {
+                        // 絞り込み中は「未指定」を出さない。
+                        if (j == 0 ? ui::ComboFilterActive() : !ui::ComboFilterPass(names[j])) continue;
                         ImGui::PushID(static_cast<int>(j));
                         if (ImGui::Selectable(names[j], index == static_cast<int>(j))) {
                             index = static_cast<int>(j);
@@ -3135,6 +3138,7 @@ void Application::DrawNodeProperties(graph::Node* selected) {
                     for (const auto& path : m_workspace.AssetsWithExtension(L".tgmodel")) {
                         if (std::any_of(m_models.begin(), m_models.end(), [&](const auto& model) { return model.assetPath == path; })) continue;
                         const auto relative = ToUtf8Display(path.lexically_relative(m_workspace.Root()));
+                        if (!ui::ComboFilterPass(relative)) continue;
                         ImGui::PushID(relative.c_str());
                         if (ImGui::Selectable(relative.c_str())) {
                             m_pendingScatterModel = path;
@@ -3172,7 +3176,9 @@ void Application::DrawNodeProperties(graph::Node* selected) {
             ui::PropertyLabel("モデル");
             ImGui::SetNextItemWidth(AssetReferenceWidth(std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x)));
             if (ImGui::BeginCombo("##model", !index && place->model ? "見つからないモデル" : names[index])) {
+                ui::ComboFilterInput();
                 for (size_t j = 0; j < names.size(); ++j) {
+                    if (j == 0 ? ui::ComboFilterActive() : !ui::ComboFilterPass(names[j])) continue;
                     ImGui::PushID(static_cast<int>(j));
                     if (ImGui::Selectable(names[j], index == static_cast<int>(j))) {
                         index = static_cast<int>(j);
@@ -3184,6 +3190,7 @@ void Application::DrawNodeProperties(graph::Node* selected) {
                 for (const auto& path : m_workspace.AssetsWithExtension(L".tgmodel")) {
                     if (std::any_of(m_models.begin(), m_models.end(), [&](const auto& model) { return model.assetPath == path; })) continue;
                     const auto relative = ToUtf8Display(path.lexically_relative(m_workspace.Root()));
+                    if (!ui::ComboFilterPass(relative)) continue;
                     ImGui::PushID(relative.c_str());
                     if (ImGui::Selectable(relative.c_str())) {
                         m_pendingScatterModel = path;

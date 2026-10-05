@@ -1125,6 +1125,36 @@ bool VerticalSplitter(const char* id, float* width, float minWidth, float maxWid
     return released;
 }
 
+namespace {
+char g_comboFilter[96] = {};
+
+// ASCII だけ小文字へ揃える（日本語はそのまま部分一致で比べる）。
+std::string LowerAscii(std::string_view text) {
+    std::string result(text);
+    for (char& c : result) {
+        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    }
+    return result;
+}
+}  // namespace
+
+void ComboFilterInput() {
+    if (ImGui::IsWindowAppearing()) {
+        g_comboFilter[0] = '\0';
+        ImGui::SetKeyboardFocusHere();
+    }
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputTextWithHint("##comboFilter", "名前で絞り込む", g_comboFilter, sizeof(g_comboFilter));
+    ImGui::Separator();
+}
+
+bool ComboFilterPass(std::string_view text) {
+    if (g_comboFilter[0] == '\0') return true;
+    return LowerAscii(text).find(LowerAscii(g_comboFilter)) != std::string::npos;
+}
+
+bool ComboFilterActive() { return g_comboFilter[0] != '\0'; }
+
 bool FlushSplitter(const char* id, bool vertical, float* size, float minSize, float maxSize, float length) {
     if (size == nullptr || length <= 0.0f) return false;
     const float grab = Scaled(kSplitterGrabWidth);

@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // UI の見た目とプロパティ行の共通部品。
@@ -61,6 +62,14 @@ inline constexpr float kSplitterGrabWidth = 8.0f;
 // 境界の線と、その左右の列との間に空ける幅。
 // **ここを詰めると、一覧の枠が境界に貼り付いて窮屈に見える。**
 inline constexpr float kSplitterMargin = 8.0f;
+// アセットを選ぶプルダウンの絞り込み欄。`ImGui::BeginCombo()` が真を返した直後に呼ぶ。
+// 開いた瞬間に欄へフォーカスが入り、打った文字を名前に含む項目だけを残す（大文字・小文字は区別しない）。
+// 開いているプルダウンは同時に 1 つなので、文字列は 1 つだけ持ち、開くたびに空に戻す。
+void ComboFilterInput();
+// 絞り込みに通るか（欄が空なら常に真）。項目を描く前に、名前やパスを渡して確かめる。
+bool ComboFilterPass(std::string_view text);
+// 絞り込み中か（欄に文字が入っているか）。「なし」のような固定の項目を隠すのに使う。
+bool ComboFilterActive();
 // 余白を取らない境界線。2 つの区画を 1 本の線で区切って繋げて見せるときに使う（グラフのパネル）。
 // 線は掴む帯の手前の端（左 / 上）に引くので、手前の区画は線にぴったり付き、帯の残りは奥の区画の
 // 余白になる。vertical が真なら左右の境界（size は左の幅）、偽なら上下の境界（size は上の高さ）。

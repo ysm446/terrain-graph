@@ -494,6 +494,7 @@ inline void DrawUnloadedAssetChoices(uint32_t widget, uint32_t previous, bool te
             kind == io::AssetKind::Material || (allowLayers && kind == io::AssetKind::LayerMaterial);
         if (!accepted || loaded(path)) continue;
         const auto relative = ToUtf8Display(path.lexically_relative(context->root));
+        if (!ui::ComboFilterPass(relative)) continue;
         ImGui::PushID(relative.c_str());
         if (thumbnailSide > 0.0f && context->thumbnail) {
             // 読み込み済みの行と同じ形: 行全体をサムネイルの高さの Selectable にし、上へ画像と名前を描く。
@@ -581,12 +582,14 @@ inline bool DrawMaterialSlotRow(const char* label, compositor::MaterialAssetId& 
     ImGui::SetNextItemWidth(
         AssetReferenceWidth(std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x)));
     if (ImGui::BeginCombo("##value", preview.c_str())) {
-        if (ImGui::Selectable("なし", slot == compositor::kNoMaterialAsset)) {
+        ui::ComboFilterInput();
+        if (!ui::ComboFilterActive() && ImGui::Selectable("なし", slot == compositor::kNoMaterialAsset)) {
             slot = compositor::kNoMaterialAsset;
             changed = true;
         }
         for (const compositor::MaterialAsset& asset : library.Entries()) {
             if (!allowLayerMaterials && asset.layerMaterial) continue;
+            if (!ui::ComboFilterPass(asset.name)) continue;
             ImGui::PushID(static_cast<int>(asset.id));
             if (asset.thumbnail.IsValid()) {
                 // サムネイルと名前を行の中央で揃えるため、行全体をサムネイルの高さの
@@ -664,11 +667,13 @@ inline bool DrawTextureCombo(const char* id, compositor::TextureId& slot,
         ImGui::PopStyleColor();
     }
     if (open) {
-        if (ImGui::Selectable("なし", slot == compositor::kNoTexture)) {
+        ui::ComboFilterInput();
+        if (!ui::ComboFilterActive() && ImGui::Selectable("なし", slot == compositor::kNoTexture)) {
             slot = compositor::kNoTexture;
             changed = true;
         }
         for (const compositor::LibraryTexture& entry : library.Entries()) {
+            if (!ui::ComboFilterPass(entry.name)) continue;
             ImGui::PushID(static_cast<int>(entry.id));
             if (entry.missing) {
                 ImGui::PushStyleColor(ImGuiCol_Text, ui::WarnColor());

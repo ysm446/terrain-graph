@@ -1089,12 +1089,14 @@ bool Application::DrawBoundaryCombo(const char* label, std::string& path, std::s
     ui::PropertyLabel(label, "内側の帯（路面か内側の路肩）との境目の形。ルート内の .tgboundary から選ぶ");
     ImGui::SetNextItemWidth(std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x));
     if (ImGui::BeginCombo("##boundary", preview.c_str())) {
-        if (ImGui::Selectable("なし", current.empty())) {
+        ui::ComboFilterInput();
+        if (!ui::ComboFilterActive() && ImGui::Selectable("なし", current.empty())) {
             path.clear();
             uid.clear();
             changed = true;
         }
         for (const auto& file : files) {
+            if (!ui::ComboFilterPass(display(file))) continue;
             if (ImGui::Selectable(display(file).c_str(), file == current)) {
                 const nlohmann::json reference = m_workspace.Reference(file);
                 path = io::ProjectWorkspace::String(reference, "path");
