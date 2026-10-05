@@ -3021,20 +3021,33 @@ void Application::DrawNodeProperties(graph::Node* selected) {
     } else if (auto* scatter = std::get_if<graph::ModelScatterSettings>(&selected->settings)) {
         bool changed = false;
         ui::HintText("Crumbling の Points を接続し、Instances をModel Outputへ接続します");
-        if (ui::BeginPropertyTable("modelScatterSettings", "LOD 距離の倍率")) {
+        if (ui::BeginPropertyTable("modelScatterSettings", "Scale マスクの最小倍率")) {
             changed |= ui::PropertyInt("シード",&scatter->seed,0,1000000,1);
             changed |= ui::PropertyFloat("描画距離", &scatter->maxDistance, 0, 100000, 0,
                 "この距離より遠いモデルを描画対象から外します。0は距離制限なし。影にも適用します", "%.0f m");
-            changed |= ui::PropertyBool("ポイントの大きさ",&scatter->usePointSize,true,"モデルの最大寸法を岩片の直径に合わせます");
+            changed |= ui::PropertyBool("点の直径に合わせる",&scatter->usePointSize,true,
+                "モデルの最大寸法を、点の直径（Scatter / Crumbling の「最小の直径」〜「最大の直径」）に合わせます。"
+                "オフならモデルの実寸で置きます");
             // 対数のスライダーにして 1.0 付近を細かく動かせるようにする。
             constexpr const char* kScaleTooltip = "株ごとの倍率はこの範囲から選ぶ。大きくすると描画と影の負荷が増える";
             changed |= ui::PropertyFloat("最小スケール",&scatter->scaleMin,graph::kModelScatterScaleMin,graph::kModelScatterScaleMax,
                                          0.8f,kScaleTooltip,"%.2f",ImGuiSliderFlags_Logarithmic);
             changed |= ui::PropertyFloat("最大スケール",&scatter->scaleMax,graph::kModelScatterScaleMin,graph::kModelScatterScaleMax,
                                          1.2f,kScaleTooltip,"%.2f",ImGuiSliderFlags_Logarithmic);
-            changed |= ui::PropertyFloat("Size が 0 の倍率",&scatter->sizeAtZero,0.05f,1.0f,1.0f,
-                "Scatter の Size 入力（マスク）が 0 の所の倍率。1 の所は等倍で、間はなめらかに変わる。"
-                "森林限界へ向かって木を低くする、などに使う。1 なら Size を使わない","%.2f");
+            changed |= ui::PropertyFloat("Scale マスクの最小倍率",&scatter->sizeAtZero,0.05f,1.0f,1.0f,
+                "Scatter の Scale 入力に繋いだマスクが 0（黒）の所の、モデルの倍率。1（白）の所は等倍で、間はなめらかに変わる。"
+                "森林限界へ向かって木を低くする、などに使う。1 ならマスクを使わない。"
+                "下の最小・最大スケール（株ごとの乱数）にさらに掛かる","%.2f");
+            {
+                // 今どう効いているかを 1 行で出す（マスクの 0 が何倍か、を値を読み替えずに分かるように）。
+                const graph::Node* source = selected->inputs.empty() ? nullptr : m_graph.FindUpstreamNodeForPin(selected->inputs[0].id);
+                const bool isScatter = source != nullptr && source->kind == graph::NodeKind::Scatter && source->inputs.size() > 3;
+                const bool connected = isScatter && m_graph.FindUpstreamNodeForPin(source->inputs[3].id) != nullptr;
+                if (!isScatter) ui::PropertyValue("Scale マスク", "%s", "なし（Scatter の点だけが持つ）");
+                else if (!connected) ui::PropertyValue("Scale マスク", "%s", "未接続（等倍）");
+                else if (scatter->sizeAtZero >= 1.0f) ui::PropertyValue("Scale マスク", "%s", "接続中だが使わない（最小倍率が 1）");
+                else ui::PropertyValue("Scale マスク", "黒 %.2f 倍 → 白 等倍", scatter->sizeAtZero);
+            }
             changed |= ui::PropertyFloat("地表に沿う",&scatter->alignToNormal,0,1,1);
             changed |= ui::PropertyFloat("接地オフセット",&scatter->offset,-10000,10000,0,"負の値で地面へ埋め込みます","%.3f m");
             changed |= ui::PropertyBool("LOD 自動",&scatter->autoLod,true,

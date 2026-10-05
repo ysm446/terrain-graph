@@ -602,12 +602,38 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
 
         ui::SectionHeader("個体");
         if (ui::BeginPropertyTable("scatterInstanceRows")) {
-            changed |= ui::PropertyFloat("最小サイズ", &layer.scatter.sizeMinMeters, 0.1f, 200.0f,
-                                         scatterDefaults.sizeMinMeters, "個体の直径（m）",
+            constexpr const char* kDiameterTooltip =
+                "点 1 つの直径（m）。最小〜最大の間で点ごとに決まる。地面に作る形と Mask 出力の大きさになる"
+                "（点の間隔ではない）。Model Scatter の「点の直径に合わせる」がオンなら、モデルもこの直径になる";
+            changed |= ui::PropertyFloat("最小の直径", &layer.scatter.sizeMinMeters, 0.1f, 200.0f,
+                                         scatterDefaults.sizeMinMeters, kDiameterTooltip,
                                          "%.1f m", ImGuiSliderFlags_Logarithmic);
-            changed |= ui::PropertyFloat("最大サイズ", &layer.scatter.sizeMaxMeters, 0.1f, 200.0f,
-                                         scatterDefaults.sizeMaxMeters, "個体の直径（m）",
+            changed |= ui::PropertyFloat("最大の直径", &layer.scatter.sizeMaxMeters, 0.1f, 200.0f,
+                                         scatterDefaults.sizeMaxMeters, kDiameterTooltip,
                                          "%.1f m", ImGuiSliderFlags_Logarithmic);
+            // Scale 入力のマスクがモデルを何倍まで縮めるかは、点を受ける Model Scatter が決める。
+            // こちらにも出して、どこで決まっているかを辿れるようにする。
+            if (const graph::Node* self = m_graph.FindNode(m_selectedGraphNode);
+                self != nullptr && self->inputs.size() > 3) {
+                if (m_graph.FindUpstreamNodeForPin(self->inputs[3].id) == nullptr) {
+                    ui::PropertyValue("Scale マスク", "%s", "未接続（モデルは等倍）");
+                } else {
+                    std::string text;
+                    for (const graph::Node& other : m_graph.Nodes()) {
+                        const auto* models = std::get_if<graph::ModelScatterSettings>(&other.settings);
+                        if (models == nullptr || other.inputs.empty() ||
+                            m_graph.FindUpstreamNodeForPin(other.inputs[0].id) != self) continue;
+                        char line[96];
+                        std::snprintf(line, sizeof(line), "%s黒 %.2f 倍 → 白 等倍", text.empty() ? "" : " / ",
+                                      models->sizeAtZero);
+                        text += line;
+                    }
+                    ui::PropertyValue("Scale マスク", "%s", text.empty() ? "接続中（Model Scatter が無い）" : text.c_str());
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Scale 入力のマスクで、置くモデルの倍率が変わる（点の直径と間隔は変わらない）。\n"
+                                          "黒の所の倍率は、Points を繋いだ Model Scatter の「Scale マスクの最小倍率」で決める");
+                }
+            }
             changed |= ui::PropertyFloat("高さ", &layer.scatter.heightMeters, 0.0f, 100.0f,
                                          scatterDefaults.heightMeters,
                                          "地形に盛り上げる高さ（m）。0 でも Mask は出る",
@@ -1004,11 +1030,11 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
             changed |= ui::PropertyFloat(
                 "岩屑の量", &layer.crumbling.amount, 0.0f, 1.0f, crumblingDefaults.amount,
                 "生む岩片の数と、盛り上がりの強さに効く", "%.2f");
-            changed |= ui::PropertyFloat("最小サイズ", &layer.crumbling.sizeMinMeters, 0.1f,
+            changed |= ui::PropertyFloat("最小の直径", &layer.crumbling.sizeMinMeters, 0.1f,
                                          100.0f, crumblingDefaults.sizeMinMeters,
                                          "岩片の直径の下限", "%.2f m",
                                          ImGuiSliderFlags_Logarithmic);
-            changed |= ui::PropertyFloat("最大サイズ", &layer.crumbling.sizeMaxMeters, 0.1f,
+            changed |= ui::PropertyFloat("最大の直径", &layer.crumbling.sizeMaxMeters, 0.1f,
                                          100.0f, crumblingDefaults.sizeMaxMeters,
                                          "岩片の直径の上限", "%.2f m",
                                          ImGuiSliderFlags_Logarithmic);

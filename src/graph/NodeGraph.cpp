@@ -1740,7 +1740,7 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace,
             // 散布の Variation（点へ書く色むら）も揃う位置で作る。チェーンに居ないレイヤーに
             // 依るときは待てないので縛らない（色むらが中立へ落ちるだけで、点は作る）。
             if (sourceNode->kind == NodeKind::Scatter) {
-                // Size（点へ書く大きさ）も同じ扱い。
+                // Scale（点へ書くモデルの倍率の割合）も同じ扱い。
                 for (const size_t input : {size_t{1}, size_t{2}}) {
                     const MaskSourceRef attribute = UpstreamMaskOf(*sourceNode, input);
                     const int dependency =

@@ -124,8 +124,9 @@ constexpr std::array<PinDefinition, 8> kScatterPins = {{
     {PinKind::Input, ValueType::Material, "Base"},
     {PinKind::Input, ValueType::Mask, "Mask"},
     {PinKind::Input, ValueType::Mask, "Variation"},
-    // 点へ書く「大きさ」（0〜1）。Model Scatter が株の倍率に掛ける（森林限界へ向かって低くする、など）。
-    {PinKind::Input, ValueType::Mask, "Size"},
+    // 点へ書く「倍率の割合」（0〜1）。Model Scatter が株の倍率に掛ける（森林限界へ向かって低くする、など）。
+    // 表示名は Scale（点の直径や間隔ではなく、置くモデルの倍率に効くため）。
+    {PinKind::Input, ValueType::Mask, "Scale"},
     {PinKind::Output, ValueType::Material, "Result"},
     {PinKind::Output, ValueType::Mask, "Mask"},
     {PinKind::Output, ValueType::Mask, "Unique"},

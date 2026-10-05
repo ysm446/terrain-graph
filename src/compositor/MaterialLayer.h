@@ -735,7 +735,7 @@ struct MaterialLayer {
     int hardnessMaskOp = -1; // コンパイル時だけ設定する硬度マスク
     // 散布の Variation 入力（配置の点へ書く色むらの値）。コンパイル時だけ設定する。
     int variationMaskOp = -1;
-    // 散布の Size 入力（配置の点へ書く大きさの値）。コンパイル時だけ設定する。
+    // 散布の Scale 入力（配置の点へ書く、モデルの倍率の割合）。コンパイル時だけ設定する。
     int sizeMaskOp = -1;
 
 
