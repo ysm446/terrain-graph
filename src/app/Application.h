@@ -186,7 +186,10 @@ private:
     // 編集中のグラフのノードを、どの接続も左から右へ向くように並べ直す（graph::ArrangeLeftToRight）。
     // ノードと背景の右クリックの「グラフ全体を左から右へ並べ直す」。選択には依らない。アンドゥ 1 段になる。
     // ノードエディタを current にした状態で呼ぶ。
-    void ArrangeGraphLeftToRight();
+    void ArrangeGraphLeftToRight(bool overlapsOnly = false);
+    // 重なったノードを縦にずらして離す（graph::ResolveOverlaps）。2 個以上を選んでいればその中だけ、
+    // そうでなければ編集中のグラフ全体。アンドゥ 1 段。
+    bool m_pendingGraphSpread = false;
     // メニューはエディタを止めたポップアップの中にあるので、要求だけ置いて次のフレームで実行する。
     bool m_pendingGraphArrange = false;
     // ビューポートに出すノードを決める。出力ノードや無効な ID は

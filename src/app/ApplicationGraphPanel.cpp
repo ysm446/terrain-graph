@@ -1187,7 +1187,7 @@ void Application::AlignSelectedGraphNodes(GraphAlign mode) {
 // 位置と大きさはエディタが持つ値を使う（実際に描かれた大きさ。種類で高さが違う）。メモの吹き出しを
 // 出している間は、その高さも箱に含める（縦にずらしたとき吹き出しが下のノードに重ならないように）。
 // アンドゥの扱いは AlignSelectedGraphNodes と同じ（「並べ直す前」を 1 段にする）。
-void Application::ArrangeGraphLeftToRight() {
+void Application::ArrangeGraphLeftToRight(bool overlapsOnly) {
     // 直した接続の間に空ける幅、これより狭い接続も直す幅、縦にずらすときにほかのノードとの間に
     // 空ける幅（キャンバス座標）。最初は 40 / 0 / 16 だったが、詰まって見えるので広げた（ユーザー指定）。
     constexpr float kArrangeGap = 80.0f;
@@ -1225,10 +1225,27 @@ void Application::ArrangeGraphLeftToRight() {
         edges.push_back({from->second, to->second});
     }
     const std::vector<graph::LayoutBox> before = boxes;
-    const size_t moved = graph::ArrangeLeftToRight(boxes, edges, kArrangeGap, kArrangeMinGap, kArrangeMargin);
-    if (moved == 0) {
-        m_toasts.Push("並べ直す所はありません", "どの接続も左から右へ向いています");
-        return;
+    size_t moved = 0;
+    if (overlapsOnly) {
+        // 2 個以上を選んでいれば、その中だけを動かす（ほかのノードは固定して避ける）。
+        std::vector<bool> movable;
+        if (m_selectedGraphNodes.size() >= 2) {
+            movable.assign(boxes.size(), false);
+            for (const graph::GraphId id : m_selectedGraphNodes) {
+                if (const auto found = indexOf.find(id); found != indexOf.end()) movable[found->second] = true;
+            }
+        }
+        moved = graph::ResolveOverlaps(boxes, kArrangeMargin, movable);
+        if (moved == 0) {
+            m_toasts.Push("重なっているノードはありません", movable.empty() ? "編集中のグラフ全体を調べました" : "選択したノードを調べました");
+            return;
+        }
+    } else {
+        moved = graph::ArrangeLeftToRight(boxes, edges, kArrangeGap, kArrangeMinGap, kArrangeMargin);
+        if (moved == 0) {
+            m_toasts.Push("並べ直す所はありません", "どの接続も左から右へ向いています");
+            return;
+        }
     }
     if (!m_documentDirty) m_committed = CaptureDocument();
     for (size_t i = 0; i < boxes.size(); ++i) {
@@ -1238,7 +1255,7 @@ void Application::ArrangeGraphLeftToRight() {
     MarkDocumentChanged(false);
     char detail[96];
     std::snprintf(detail, sizeof(detail), "%zu 個のノードを動かしました（Ctrl+Z で戻せます）", moved);
-    m_toasts.Push("左から右へ並べ直しました", detail);
+    m_toasts.Push(overlapsOnly ? "ノードの重なりを解消しました" : "左から右へ並べ直しました", detail);
 }
 
 // ノードのメモの先頭を、ノードの下端のすぐ下に吹き出しとして出す（グラフパネルの「メモを表示」）。
@@ -1529,6 +1546,10 @@ void Application::DrawGraphEditor() {
         m_pendingGraphArrange = false;
         ArrangeGraphLeftToRight();
     }
+    if (m_pendingGraphSpread) {
+        m_pendingGraphSpread = false;
+        ArrangeGraphLeftToRight(true);
+    }
     // --- ノードの右クリックで整列 -------------------------------------------
     // 右クリックしたノードが選択に入っていなければ、そのノードだけを選び直す
     // （選択の外で開いたメニューが、別の所にある選択へ効かないように）。
@@ -1565,6 +1586,10 @@ void Application::DrawGraphEditor() {
         // ポップアップの中ではエディタを止めているので、要求だけ置いて次のフレームで実行する。
         ImGui::Separator();
         if (ImGui::MenuItem("グラフ全体を左から右へ並べ直す")) m_pendingGraphArrange = true;
+        if (ImGui::MenuItem(m_selectedGraphNodes.size() >= 2 ? "選択したノードの重なりを解消" : "ノードの重なりを解消"))
+            m_pendingGraphSpread = true;
+        ImGui::SetItemTooltip("重なっているノードを縦にずらして離す（横には動かさない）。\n"
+                              "2 個以上を選んでいればその中だけ、そうでなければグラフ全体");
         ImGui::EndPopup();
     }
     if (ImGui::BeginPopup("addGraphNode")) {
@@ -1707,6 +1732,10 @@ void Application::DrawGraphEditor() {
         // ノードを選んでいなくても並べ直せるよう、背景のメニューにも置く。
         ImGui::Separator();
         if (ImGui::MenuItem("グラフ全体を左から右へ並べ直す")) m_pendingGraphArrange = true;
+        if (ImGui::MenuItem(m_selectedGraphNodes.size() >= 2 ? "選択したノードの重なりを解消" : "ノードの重なりを解消"))
+            m_pendingGraphSpread = true;
+        ImGui::SetItemTooltip("重なっているノードを縦にずらして離す（横には動かさない）。\n"
+                              "2 個以上を選んでいればその中だけ、そうでなければグラフ全体");
         // めったに触らない表示の切り替えなので、パネルに行を取らずここへ置く。
         if (ImGui::MenuItem("ノードのメモを表示", nullptr, &m_settings.Display().showNodeNotes)) {
             m_settings.Save();

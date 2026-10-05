@@ -37,6 +37,30 @@ bool AnyOverlap(const std::vector<LayoutBox>& boxes) {
 }  // namespace
 
 void RunGraphLayoutTests() {
+    Section("GraphLayout: 重なりを解消する");
+    {
+        const auto overlaps = [](const LayoutBox& a, const LayoutBox& b, float margin) {
+            return a.x < b.x + b.width + margin && b.x < a.x + a.width + margin &&
+                   a.y < b.y + b.height + margin && b.y < a.y + a.height + margin;
+        };
+        // 3 つが同じ所に重なり、1 つは離れている。
+        std::vector<LayoutBox> boxes = {{0, 0, 200, 100}, {20, 30, 200, 100}, {40, 10, 200, 100}, {600, 0, 200, 100}};
+        const std::vector<LayoutBox> before = boxes;
+        const size_t moved = tg::graph::ResolveOverlaps(boxes, 10.0f);
+        bool clear = true, sameX = true;
+        for (size_t i = 0; i < boxes.size(); ++i) {
+            sameX &= boxes[i].x == before[i].x;
+            for (size_t j = i + 1; j < boxes.size(); ++j) clear &= !overlaps(boxes[i], boxes[j], 10.0f);
+        }
+        Check(moved == 2 && clear, "重なった箱を離す");
+        Check(sameX && boxes[0].y == 0.0f && boxes[3].y == 0.0f, "横には動かさず、重なっていない箱と一番上の箱は動かさない");
+        Check(tg::graph::ResolveOverlaps(boxes, 10.0f) == 0, "もう一度かけても動かない");
+        // 選んだ箱だけを動かす。固定した箱は下にあっても動かず、動かせる箱がそれを避ける。
+        std::vector<LayoutBox> pair = {{0, 0, 200, 100}, {0, 50, 200, 100}};
+        Check(tg::graph::ResolveOverlaps(pair, 10.0f, {true, false}) == 1 && pair[1].y == 50.0f &&
+              pair[0].y == 160.0f, "固定した箱を避ける");
+    }
+
     Section("GraphLayout: 左から右へ並べ直す");
     constexpr float kGap = 40.0f;
     constexpr float kMinGap = 20.0f;

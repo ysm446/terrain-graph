@@ -34,4 +34,12 @@ struct LayoutEdge {
 size_t ArrangeLeftToRight(std::vector<LayoutBox>& boxes, const std::vector<LayoutEdge>& edges,
                           float gap, float minGap, float margin);
 
+// 重なっている箱を、縦にずらして離す。動かした箱の数を返す。
+//
+// 上にある箱から順に場所を決め、すでに決まった箱と（間に margin を空けて）重なる箱だけを、
+// 重ならなくなる所まで下へ下ろす。**横には動かさない**ので、列の並びと接続の向きは変わらない。
+// 重なっていない箱は動かさない。movable が空でなければ、偽の箱は動かさない（その場に固定して、
+// ほかの箱がそれを避ける）。
+size_t ResolveOverlaps(std::vector<LayoutBox>& boxes, float margin, const std::vector<bool>& movable = {});
+
 }  // namespace tg::graph

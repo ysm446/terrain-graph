@@ -60,6 +60,41 @@ bool Overlaps(const LayoutBox& a, const LayoutBox& b, float margin) {
 
 }  // namespace
 
+size_t ResolveOverlaps(std::vector<LayoutBox>& boxes, float margin, const std::vector<bool>& movable) {
+    const auto canMove = [&](size_t index) { return movable.empty() || (index < movable.size() && movable[index]); };
+    // 動かさない箱を先に置き、動かせる箱は上から（同じ高さなら左から）順に決める。
+    std::vector<size_t> order;
+    for (size_t i = 0; i < boxes.size(); ++i) order.push_back(i);
+    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+        if (canMove(a) != canMove(b)) return !canMove(a);
+        if (boxes[a].y != boxes[b].y) return boxes[a].y < boxes[b].y;
+        return boxes[a].x < boxes[b].x;
+    });
+    std::vector<size_t> placed;
+    size_t moved = 0;
+    for (const size_t index : order) {
+        LayoutBox& box = boxes[index];
+        if (canMove(index)) {
+            const float original = box.y;
+            // 重なる相手の下端のうち一番下まで下ろす。下ろした先でまた重なれば繰り返す
+            // （1 回ごとに必ず下へ進むので、置いた箱の数だけ回れば終わる）。
+            for (size_t pass = 0; pass <= placed.size(); ++pass) {
+                float target = box.y;
+                for (const size_t other : placed) {
+                    if (Overlaps(box, boxes[other], margin)) {
+                        target = std::max(target, boxes[other].y + boxes[other].height + margin);
+                    }
+                }
+                if (target == box.y) break;
+                box.y = target;
+            }
+            if (box.y != original) ++moved;
+        }
+        placed.push_back(index);
+    }
+    return moved;
+}
+
 size_t ArrangeLeftToRight(std::vector<LayoutBox>& boxes, const std::vector<LayoutEdge>& edges,
                           float gap, float minGap, float margin) {
     minGap = std::clamp(minGap, 0.0f, gap);
