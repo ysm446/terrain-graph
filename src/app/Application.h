@@ -762,6 +762,9 @@ private:
     int m_graphPasteCount = 0;
     // メモの印（か省略したメモ）にカーソルが載っているノード。ed::End の後でツールチップを出す。
     graph::GraphId m_graphNoteHover = 0;
+    // カーソルを載せているピンと、載せ始めた時刻（少し待ってから説明を出す）。
+    graph::GraphId m_graphPinHover = 0;
+    double m_graphPinHoverTime = 0.0;
     // ビューポートに出しているノード。**選択とは別に持つ。**
     // 結果を見ながら別のノードのプロパティをいじれるようにするため
     // （terrain-editor と同じ作法）。0 は出力ノードのチェーン。

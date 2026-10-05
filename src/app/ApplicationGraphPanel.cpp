@@ -1725,6 +1725,11 @@ void Application::DrawGraphEditor() {
     // **同じピンの上でほとんど動かずに離したとき**だけクリックとみなす。
     {
         const graph::GraphId hoveredPin = ToGraphId(ed::GetHoveredPin().Get());
+        // ピンの説明のツールチップ用。載せ替えたら待ち時間を数え直す。
+        if (hoveredPin != m_graphPinHover) {
+            m_graphPinHover = hoveredPin;
+            m_graphPinHoverTime = ImGui::GetTime();
+        }
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             m_graphPressedPin = hoveredPin;
             m_graphPressedPinPos = ImGui::GetMousePos();
@@ -1800,6 +1805,35 @@ void Application::DrawGraphEditor() {
     }
 
     ed::End();
+
+    // ピンの説明。載せて少し待つと出す（リンクを引いている間は出さない）。
+    if (const graph::Pin* pin = m_graph.FindPin(m_graphPinHover);
+        pin != nullptr && !ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup) &&
+        ImGui::GetTime() - m_graphPinHoverTime > 0.35) {
+        static const char* const kTypeNames[] = {"地形", "マスク", "パス", "雲のボリューム", "", "雲の形状", "点", "モデルの配置",
+                                                 "風の場", "道路の線形", "メッシュ"};
+        const auto typeIndex = static_cast<size_t>(pin->valueType);
+        const char* typeName = typeIndex < std::size(kTypeNames) ? kTypeNames[typeIndex] : "";
+        const bool input = pin->kind == graph::PinKind::Input;
+        const graph::Node* owner = m_graph.FindNode(pin->nodeId);
+        const char* description = owner != nullptr ? graph::PinDescription(*owner, *pin) : "";
+        ImGui::BeginTooltip();
+        ImGui::PushTextWrapPos(ui::Scaled(360.0f));
+        ImGui::Text("%s（%s・%s）", pin->label.c_str(), typeName, input ? "入力" : "出力");
+        if (description[0] != '\0') ImGui::TextUnformatted(description);
+        else ImGui::TextDisabled("%s", input ? "同じ型の出力を繋ぐ" : "同じ型の入力へ繋ぐ");
+        if (input) {
+            // 何が繋がっているか。バイパスしたノードは飛ばして、実際に値を出すピンを示す。
+            const graph::Pin* source = m_graph.ResolveSourcePin(pin->id);
+            const graph::Node* sourceNode = source != nullptr ? m_graph.FindNode(source->nodeId) : nullptr;
+            if (sourceNode != nullptr) ImGui::TextDisabled("接続: %s の %s", NodeDisplayName(*sourceNode), source->label.c_str());
+            else ImGui::TextDisabled("未接続");
+        } else if (owner != nullptr && graph::IsPreviewableNodeKind(owner->kind)) {
+            ImGui::TextDisabled("クリックでこの出力をビューポートに出す");
+        }
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
+    }
 
     // メモの全文。ノードエディタの外（ed::End の後）でないとツールチップの位置がずれる。
     if (const graph::Node* noted = m_graph.FindNode(std::exchange(m_graphNoteHover, 0));

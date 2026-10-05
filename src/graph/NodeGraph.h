@@ -171,6 +171,8 @@ struct PinDefinition {
     PinKind kind = PinKind::Input;
     ValueType valueType = ValueType::Material;
     const char* label = "";
+    // 何を繋ぐ / 何が出るか（ノードビューでピンに載せたときのツールチップ）。空なら型ごとの一般的な説明を出す。
+    const char* description = "";
 };
 
 // ノードの静的な定義。種類・保存名・表示名・ピン構成をテーブルで持ち、
@@ -794,6 +796,8 @@ private:
 
 std::span<const NodeDefinition> NodeDefinitions();
 const NodeDefinition* FindNodeDefinition(NodeKind kind);
+// ピンの説明（PinDefinition::description）。無ければ空文字列。
+const char* PinDescription(const Node& node, const Pin& pin);
 const NodeDefinition* FindNodeDefinitionByName(std::string_view name);
 // 定義のピンを名前で探し、同じ向き（入力 / 出力）のピンの中での番号を返す。
 // ファイルのリンクを「ノード ID + ピン名」でも書けるようにするため。ラベルと、

@@ -17,50 +17,69 @@ namespace {
 // 合成レイヤーのピン。**Mask 入力は「どこに乗せるか」**を外から与えるもので、
 // 繋がっていなければノード側のマスク設定がそのまま効く。
 constexpr std::array<PinDefinition, 3> kLayerNodePins = {{
-    {PinKind::Input, ValueType::Material, "Base"},
-    {PinKind::Input, ValueType::Mask, "Mask"},
-    {PinKind::Output, ValueType::Material, "Result"},
+    {PinKind::Input, ValueType::Material, "Base",
+     "下地の地形。この上に重ねる"},
+    {PinKind::Input, ValueType::Mask, "Mask",
+     "どこに乗せるか（白い所に乗る）。繋がなければノード側のマスク設定が効く"},
+    {PinKind::Output, ValueType::Material, "Result",
+     "重ねた後の地形"},
 }};
 
 // Sea（Liquid）のピン。Result のほかに、水と陸を分ける Mask を出す（水の場から焼く）。
 // 古いファイルは出力 1 本で保存されているので、Mask は末尾に足す（欠けたぶんは採番し直される）。
 constexpr std::array<PinDefinition, 6> kLiquidPins = {{
-    {PinKind::Input, ValueType::Material, "Base"},
-    {PinKind::Input, ValueType::Mask, "Mask"},
-    {PinKind::Output, ValueType::Material, "Result"},
-    {PinKind::Output, ValueType::Mask, "Water"},
-    {PinKind::Output, ValueType::Mask, "Depth"},
-    {PinKind::Output, ValueType::Mask, "Shore"},
+    {PinKind::Input, ValueType::Material, "Base",
+     "水を張る地形"},
+    {PinKind::Input, ValueType::Mask, "Mask",
+     "水を張る範囲（白い所だけ）。繋がなければ全体"},
+    {PinKind::Output, ValueType::Material, "Result",
+     "水を張った後の地形"},
+    {PinKind::Output, ValueType::Mask, "Water",
+     "水面の範囲"},
+    {PinKind::Output, ValueType::Mask, "Depth",
+     "水深"},
+    {PinKind::Output, ValueType::Mask, "Shore",
+     "水際の帯"},
 }};
 
 // Surface のピン。**UV Path に Path を繋ぐと、パスに沿った帯の座標で素材を貼る**
 // （進行方向が V、幅方向が U。帯の外には乗らない）。繋がなければ地形の UV で並べる。
 // 古いファイルは入力 2 本で保存されているので、3 本目は末尾に足す（欠けたぶんは採番し直される）。
 constexpr std::array<PinDefinition, 4> kSurfacePins = {{
-    {PinKind::Input, ValueType::Material, "Base"},
-    {PinKind::Input, ValueType::Mask, "Mask"},
-    {PinKind::Input, ValueType::Path, "UV Path"},
-    {PinKind::Output, ValueType::Material, "Result"},
+    {PinKind::Input, ValueType::Material, "Base",
+     "下地の地形。この上に素材を張る"},
+    {PinKind::Input, ValueType::Mask, "Mask",
+     "素材を張る範囲（白い所に張る）。繋がなければノード側のマスク設定が効く"},
+    {PinKind::Input, ValueType::Path, "UV Path",
+     "Path を繋ぐと、パスに沿った帯の座標で素材を貼る（進行方向が V、幅方向が U）。繋がなければ地形の UV で並べる"},
+    {PinKind::Output, ValueType::Material, "Result",
+     "素材を張った後の地形"},
 }};
 
 // マスクを取らない加工（ブラー）のピン。
 // ぼかしのピン。**Mask はどこをぼかすか**（明るい所ほどぼける。繋がなければ全体）。
 constexpr std::array<PinDefinition, 3> kBlurPins = {{
-    {PinKind::Input, ValueType::Material, "Base"},
-    {PinKind::Input, ValueType::Mask, "Mask"},
-    {PinKind::Output, ValueType::Material, "Result"},
+    {PinKind::Input, ValueType::Material, "Base",
+     "加工する地形"},
+    {PinKind::Input, ValueType::Mask, "Mask",
+     "効かせる範囲（白い所ほど強く）。繋がなければ全体"},
+    {PinKind::Output, ValueType::Material, "Result",
+     "加工した後の地形"},
 }};
 
 // マスクのソースのピン。**入力を持たない。**
 constexpr std::array<PinDefinition, 1> kMaskSourcePins = {{
-    {PinKind::Output, ValueType::Mask, "Mask"},
+    {PinKind::Output, ValueType::Mask, "Mask",
+     "このノードが作るマスク"},
 }};
 
 // 高さから作るマスクのピン。**どこのハイトから作るか**を Base 入力で指す。
 // 繋がなければ、そのマスクを使うレイヤーの直下のハイトを使う。
 constexpr std::array<PinDefinition, 2> kMaskFromHeightPins = {{
-    {PinKind::Input, ValueType::Material, "Base"},
-    {PinKind::Output, ValueType::Mask, "Mask"},
+    {PinKind::Input, ValueType::Material, "Base",
+     "どの時点の地形から測るか。繋がなければ、このマスクを使うレイヤーの直下の地形"},
+    {PinKind::Output, ValueType::Mask, "Mask",
+     "地形から作ったマスク"},
 }};
 
 // 積雪のピン。ハイトの加工に加えて、**積もった量を Mask として出す**。
@@ -68,52 +87,77 @@ constexpr std::array<PinDefinition, 2> kMaskFromHeightPins = {{
 // Mask 入力（省略可）は**雪を降らせる場所**（標高で雪線を切るなど）。
 // 降った後の滑落はマスクの外へも出る（縁から下へ流れ出るのは自然な形）。
 constexpr std::array<PinDefinition, 4> kDepositPins = {{
-    {PinKind::Input, ValueType::Material, "Base"},
-    {PinKind::Input, ValueType::Mask, "Mask"},
-    {PinKind::Output, ValueType::Material, "Result"},
-    {PinKind::Output, ValueType::Mask, "Mask"},
+    {PinKind::Input, ValueType::Material, "Base",
+     "積もらせる地形"},
+    {PinKind::Input, ValueType::Mask, "Mask",
+     "降らせる場所（白い所に降る）。滑り落ちた分はマスクの外へも出る"},
+    {PinKind::Output, ValueType::Material, "Result",
+     "積もった後の地形"},
+    {PinKind::Output, ValueType::Mask, "Mask",
+     "積もった量。積もった所へ別のマテリアルを乗せるのに使う"},
 }};
 
 // 堆積のピン。積雪と同じ形に加えて、**土砂を供給する場所**（Emission、省略可）を受ける。
 // 繋がなければ全面へ一様に供給する。注ぎ口を絞ると「そこから流した液体」になる。
 constexpr std::array<PinDefinition, 4> kSedimentPins = {{
-    {PinKind::Input, ValueType::Material, "Base"},
-    {PinKind::Input, ValueType::Mask, "Emission"},
-    {PinKind::Output, ValueType::Material, "Result"},
-    {PinKind::Output, ValueType::Mask, "Mask"},
+    {PinKind::Input, ValueType::Material, "Base",
+     "土砂を積もらせる地形"},
+    {PinKind::Input, ValueType::Mask, "Emission",
+     "土砂を供給する場所。繋がなければ全面へ一様に供給する"},
+    {PinKind::Output, ValueType::Material, "Result",
+     "土砂が積もった後の地形"},
+    {PinKind::Output, ValueType::Mask, "Mask",
+     "積もった厚み"},
 }};
 
 // 崩落のピン。発生源のマスクを受け、地形に加えて
 // **岩屑の厚み**と**岩片ごとの乱数**を出す。
 constexpr std::array<PinDefinition, 6> kCrumblingPins = {{
-    {PinKind::Input, ValueType::Material, "Base"},
-    {PinKind::Input, ValueType::Mask, "Emission"},
-    {PinKind::Output, ValueType::Material, "Result"},
-    {PinKind::Output, ValueType::Mask, "Mask"},
-    {PinKind::Output, ValueType::Mask, "Unique"},
-    {PinKind::Output, ValueType::Points, "Points"},
+    {PinKind::Input, ValueType::Material, "Base",
+     "岩屑を落とす地形"},
+    {PinKind::Input, ValueType::Mask, "Emission",
+     "岩屑の発生源（白い所から崩れる）"},
+    {PinKind::Output, ValueType::Material, "Result",
+     "岩屑が積もった後の地形"},
+    {PinKind::Output, ValueType::Mask, "Mask",
+     "岩屑の厚み"},
+    {PinKind::Output, ValueType::Mask, "Unique",
+     "岩片ごとに違う値（色分けなどに使う）"},
+    {PinKind::Output, ValueType::Points, "Points",
+     "岩片 1 つずつの点（位置と直径）。Model Scatter に繋ぐと石のモデルを置ける"},
 }};
 
 // 河川のピン。川の出どころを絞る Seed（省略可）を受け、地形に加えて
 // **水面の被覆**・**河原**・**水深**を出す。
 constexpr std::array<PinDefinition, 6> kRiverPins = {{
-    {PinKind::Input, ValueType::Material, "Base"},
-    {PinKind::Input, ValueType::Mask, "Seed"},
-    {PinKind::Output, ValueType::Material, "Result"},
-    {PinKind::Output, ValueType::Mask, "Water"},
-    {PinKind::Output, ValueType::Mask, "Bank"},
-    {PinKind::Output, ValueType::Mask, "Depth"},
+    {PinKind::Input, ValueType::Material, "Base",
+     "川を流す地形"},
+    {PinKind::Input, ValueType::Mask, "Seed",
+     "川の出どころを絞る範囲。繋がなければ地形全体から"},
+    {PinKind::Output, ValueType::Material, "Result",
+     "河床を掘った後の地形"},
+    {PinKind::Output, ValueType::Mask, "Water",
+     "水面の範囲"},
+    {PinKind::Output, ValueType::Mask, "Bank",
+     "河原（岩や砂利を置く帯）"},
+    {PinKind::Output, ValueType::Mask, "Depth",
+     "水深"},
 }};
 
 // 水滴侵食のピン。効かせる範囲を絞る Mask（省略可）を受け、地形に加えて
 // **流量**（水の通った量）と**堆積量**を出す。Mask は削り / 積みの差分に
 // 掛けるだけで、水滴の落とし方は変えない。
 constexpr std::array<PinDefinition, 5> kDropletPins = {{
-    {PinKind::Input, ValueType::Material, "Base"},
-    {PinKind::Input, ValueType::Mask, "Mask"},
-    {PinKind::Output, ValueType::Material, "Result"},
-    {PinKind::Output, ValueType::Mask, "Flow"},
-    {PinKind::Output, ValueType::Mask, "Deposit"},
+    {PinKind::Input, ValueType::Material, "Base",
+     "侵食する地形"},
+    {PinKind::Input, ValueType::Mask, "Mask",
+     "効かせる範囲。削り・積みの差分に掛かる（水滴の落とし方は変えない）"},
+    {PinKind::Output, ValueType::Material, "Result",
+     "侵食した後の地形"},
+    {PinKind::Output, ValueType::Mask, "Flow",
+     "水の通った量"},
+    {PinKind::Output, ValueType::Mask, "Deposit",
+     "土砂が積もった量"},
 }};
 
 // 散布のピン。散布範囲を絞る Mask（省略可）を受け、地形に加えて
@@ -121,16 +165,24 @@ constexpr std::array<PinDefinition, 5> kDropletPins = {{
 // Variation（省略可）は配置の点へ書く色むらの値。Model Scatter の株が、
 // マテリアルの「色むら」の設定でこの値に応じて色を寄せる（未接続は中立の 0.5）。
 constexpr std::array<PinDefinition, 8> kScatterPins = {{
-    {PinKind::Input, ValueType::Material, "Base"},
-    {PinKind::Input, ValueType::Mask, "Mask"},
-    {PinKind::Input, ValueType::Mask, "Variation"},
+    {PinKind::Input, ValueType::Material, "Base",
+     "点を置く地形（点の高さと傾きをここから読む）"},
+    {PinKind::Input, ValueType::Mask, "Mask",
+     "どこに置くか。白い所ほど置かれやすく、黒い所には置かない（本数が変わる）"},
+    {PinKind::Input, ValueType::Mask, "Variation",
+     "株の色むら。この値でマテリアルの「色むら」の色へ寄せる（未接続は中立の 0.5）"},
     // 点へ書く「倍率の割合」（0〜1）。Model Scatter が株の倍率に掛ける（森林限界へ向かって低くする、など）。
     // 表示名は Scale（点の直径や間隔ではなく、置くモデルの倍率に効くため）。
-    {PinKind::Input, ValueType::Mask, "Scale"},
-    {PinKind::Output, ValueType::Material, "Result"},
-    {PinKind::Output, ValueType::Mask, "Mask"},
-    {PinKind::Output, ValueType::Mask, "Unique"},
-    {PinKind::Output, ValueType::Points, "Points"},
+    {PinKind::Input, ValueType::Mask, "Scale",
+     "置くモデルの倍率。白は等倍、黒は Model Scatter の「Scale マスクの最小倍率」まで小さくなる。点の直径と間隔は変わらない"},
+    {PinKind::Output, ValueType::Material, "Result",
+     "形を置いた後の地形（高さが 0 なら元のまま）"},
+    {PinKind::Output, ValueType::Mask, "Mask",
+     "形が置かれた範囲"},
+    {PinKind::Output, ValueType::Mask, "Unique",
+     "点ごとに違う値（色分けなどに使う）"},
+    {PinKind::Output, ValueType::Points, "Points",
+     "点 1 つずつの位置・直径・向き。Model Scatter に繋ぐとモデルを置ける"},
 }};
 
 // マスクを 1 枚受けて 1 枚返す加工のピン。
@@ -188,29 +240,40 @@ constexpr std::array<PinDefinition, 1> kMeshOutputPins = {{
 
 // パスの足跡をマスクにするピン。
 constexpr std::array<PinDefinition, 2> kMaskPathPins = {{
-    {PinKind::Input, ValueType::Path, "Path"},
-    {PinKind::Output, ValueType::Mask, "Mask"},
+    {PinKind::Input, ValueType::Path, "Path",
+     "足跡をマスクにするパス"},
+    {PinKind::Output, ValueType::Mask, "Mask",
+     "パスの足跡（または閉じた鎖の内側）"},
 }};
 
 // メッシュ（道路）の足跡をマスクにするピン。Road Mesh か Shoulder の出力を繋ぐ。
 constexpr std::array<PinDefinition, 2> kMaskMeshPins = {{
-    {PinKind::Input, ValueType::Mesh, "Mesh"},
-    {PinKind::Output, ValueType::Mask, "Mask"},
+    {PinKind::Input, ValueType::Mesh, "Mesh",
+     "Road Mesh / Shoulder の出力か、Model Place の Pad（敷地）"},
+    {PinKind::Output, ValueType::Mask, "Mask",
+     "メッシュの足跡（内側が白）"},
 }};
 
 // 均し（Grading）のピン。Base は地形、Mesh は Road Mesh / Shoulder の出力か、Model Place の Pad。
 // Mask は 路面の下（平らな幅まで）/ 切土の法面 / 盛土の法面。
 constexpr std::array<PinDefinition, 6> kRoadGradingPins = {{
-    {PinKind::Input, ValueType::Material, "Base"},
-    {PinKind::Input, ValueType::Mesh, "Mesh"},
-    {PinKind::Output, ValueType::Material, "Result"},
-    {PinKind::Output, ValueType::Mask, "Road"},
-    {PinKind::Output, ValueType::Mask, "Cut"},
-    {PinKind::Output, ValueType::Mask, "Fill"},
+    {PinKind::Input, ValueType::Material, "Base",
+     "均す前の地形"},
+    {PinKind::Input, ValueType::Mesh, "Mesh",
+     "合わせる面。Road Mesh / Shoulder の出力か、Model Place の Pad（敷地）"},
+    {PinKind::Output, ValueType::Material, "Result",
+     "切土・盛土で均した後の地形"},
+    {PinKind::Output, ValueType::Mask, "Road",
+     "路面や敷地の下（平らな幅まで）"},
+    {PinKind::Output, ValueType::Mask, "Cut",
+     "切土の法面（地形を削った所）"},
+    {PinKind::Output, ValueType::Mask, "Fill",
+     "盛土の法面（地形を盛った所）"},
 }};
 
 constexpr std::array<PinDefinition, 1> kOutputNodePins = {{
-    {PinKind::Input, ValueType::Material, "Material"},
+    {PinKind::Input, ValueType::Material, "Material",
+     "ここに繋いだ地形がシーンの最終の出力になる"},
 }};
 
 // 風の場。Base の地形に一様な風をぶつけて流れを作り、地表の風速と粉雪の発生量を Mask で出す。
@@ -304,20 +367,27 @@ constexpr std::array<PinDefinition, 2> kCloudTransformPins = {{
 constexpr std::array<PinDefinition, 2> kCloudAnimationPins = {{{PinKind::Input, ValueType::Volume, "Volume"}, {PinKind::Output, ValueType::Volume, "Volume"}}};
 
 constexpr std::array<PinDefinition, 2> kModelScatterPins = {{
-    {PinKind::Input, ValueType::Points, "Points"},
-    {PinKind::Output, ValueType::Instances, "Instances"},
+    {PinKind::Input, ValueType::Points, "Points",
+     "モデルを置く点。Scatter か Crumbling の Points を繋ぐ"},
+    {PinKind::Output, ValueType::Instances, "Instances",
+     "置いたモデルの配置。Model Output（Model Merge を挟める）へ繋ぐと表示される"},
 }};
 // ユニークなモデルの配置。Pad は敷地の足跡（Grading / Mask Mesh の Mesh へ繋ぐ）。
 constexpr std::array<PinDefinition, 2> kModelPlacePins = {{
-    {PinKind::Output, ValueType::Instances, "Instances"},
-    {PinKind::Output, ValueType::Mesh, "Pad"},
+    {PinKind::Output, ValueType::Instances, "Instances",
+     "置いたモデルの配置。Model Output（Model Merge を挟める）へ繋ぐと表示される"},
+    {PinKind::Output, ValueType::Mesh, "Pad",
+     "敷地（接地点の標高の平らな面）。Grading に繋ぐと地形を均し、Mask Mesh に繋ぐと敷地の範囲のマスクになる"},
 }};
 constexpr std::array<PinDefinition, 2> kModelMergePins = {{
-    {PinKind::Input, ValueType::Instances, "Instances 1"},
-    {PinKind::Output, ValueType::Instances, "Instances"},
+    {PinKind::Input, ValueType::Instances, "Instances 1",
+     "まとめる配置。繋ぐと空きの入力が 1 つ増える"},
+    {PinKind::Output, ValueType::Instances, "Instances",
+     "まとめた配置"},
 }};
 constexpr std::array<PinDefinition, 1> kModelOutputPins = {{
-    {PinKind::Input, ValueType::Instances, "Instances"},
+    {PinKind::Input, ValueType::Instances, "Instances",
+     "ビューポートに出す配置（Model Scatter / Model Place / Model Merge）"},
 }};
 // 雪煙。Source のマスク（Wind Field の Spindrift を想定）から風下へ帯を伸ばして描く。出力は持たない。
 constexpr std::array<PinDefinition, 1> kSnowPlumePins = {{
@@ -457,6 +527,21 @@ static_assert(std::ranges::all_of(kNodeDefinitions, [](const NodeDefinition& def
 
 std::span<const NodeDefinition> NodeDefinitions() {
     return kNodeDefinitions;
+}
+
+const char* PinDescription(const Node& node, const Pin& pin) {
+    const NodeDefinition* definition = FindNodeDefinition(node.kind);
+    if (definition == nullptr) return "";
+    // そのノードの入力 / 出力の何番目かで、定義の同じ向きのピンを引く。
+    const auto& pins = pin.kind == PinKind::Input ? node.inputs : node.outputs;
+    size_t index = 0;
+    while (index < pins.size() && pins[index].id != pin.id) ++index;
+    for (const PinDefinition& candidate : definition->pins) {
+        if (candidate.kind != pin.kind) continue;
+        if (index == 0) return candidate.description;
+        --index;
+    }
+    return "";  // 定義に無いピン（Model Merge の増えた入力など）
 }
 
 const NodeDefinition* FindNodeDefinition(NodeKind kind) {

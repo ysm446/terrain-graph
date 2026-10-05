@@ -297,6 +297,16 @@ void RunNodeGraphTests() {
         compiled = graph.CompileModelPlaces();
         Check(compiled.size()==1 && compiled[0].padReaders.size()==2,"敷地の読み手を集める");
         Check(graph.CompileRoadMeshes().empty(),"敷地は道路の鎖にはならない");
+        // ピンの説明は定義から引く。向きごとの順番で引くので、入力と出力で取り違えない。
+        const auto* placeNode = graph.FindNode(place);
+        const auto* gradingNode = graph.FindNode(grading);
+        const auto* mergeNode = graph.FindNode(merge);
+        Check(std::string(tg::graph::PinDescription(*placeNode,placeNode->outputs[1])).find("敷地")!=std::string::npos &&
+              std::string(tg::graph::PinDescription(*gradingNode,gradingNode->inputs[1])).find("Pad")!=std::string::npos &&
+              std::string(tg::graph::PinDescription(*gradingNode,gradingNode->outputs[2])).find("切土")!=std::string::npos,
+              "ピンの説明を向きと順番で引く");
+        Check(mergeNode->inputs.size()==2 && tg::graph::PinDescription(*mergeNode,mergeNode->inputs[1])[0]=='\0',
+              "定義に無い増えた入力は説明なし");
         Check(graph.CompileLayers().layers.size()==original,"配置の接続でハイトチェーンは変わらない");
         graph.DeleteNode(output);
         compiled = graph.CompileModelPlaces();
