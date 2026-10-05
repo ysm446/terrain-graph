@@ -1077,7 +1077,7 @@ void Application::DrawBoundarySummary(const char* id, const std::string& path, c
 // 境界マテリアル（.tgboundary）を選ぶ行。プロパティ表の中で呼ぶ。
 bool Application::DrawBoundaryCombo(const char* label, std::string& path, std::string& uid) {
     bool changed = false;
-    const std::vector<std::filesystem::path> files = m_workspace.AssetsWithExtension(L".tgboundary");
+    // 開いていない間は、いま割り当ててあるものを引くのに ID の表を使う。一覧は開いた瞬間にディスクから探す。
     const std::filesystem::path current =
         (path.empty() && uid.empty()) ? std::filesystem::path{}
                                       : m_workspace.Resolve(nlohmann::json{{"path", path}, {"uid", uid}});
@@ -1095,7 +1095,7 @@ bool Application::DrawBoundaryCombo(const char* label, std::string& path, std::s
             uid.clear();
             changed = true;
         }
-        for (const auto& file : files) {
+        for (const auto& file : DropdownFiles(L".tgboundary")) {
             if (!ui::ComboFilterPass(display(file))) continue;
             if (ImGui::Selectable(display(file).c_str(), file == current)) {
                 const nlohmann::json reference = m_workspace.Reference(file);

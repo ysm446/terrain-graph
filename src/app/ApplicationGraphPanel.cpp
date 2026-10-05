@@ -1652,6 +1652,35 @@ void Application::DrawGraphNodeTitles() {
         drawList->AddText(font, fontSize, ImVec2(box.min.x + padding.x, box.min.y + padding.y),
                           graph::IsBypassed(node) ? textDisabled : text, name);
     };
+    // グループ（枠）の名前を先に置く（ノードの名前より優先）。ノードの名前より一回り大きい文字で、
+    // 開いた枠は左上の角の上、畳んだものはノードの中央の上に出す。
+    {
+        const float groupFontSize = fontSize * 1.25f;
+        const ImU32 groupBackground = ImGui::GetColorU32(ImVec4(0.20f, 0.26f, 0.32f, 0.92f * alpha));
+        const ImU32 groupBorder = ImGui::GetColorU32(ImVec4(0.70f, 0.82f, 0.94f, 0.85f * alpha));
+        for (const graph::NodeGroup& group : m_graph.Groups()) {
+            if (m_editComponent >= 0 && group.component != m_editComponent) continue;
+            if (m_graphHiddenGroups.contains(group.id)) continue;
+            const ed::NodeId editorId(static_cast<uintptr_t>((group.collapsed ? kCollapsedEditorIdBase : kGroupEditorIdBase) + group.id));
+            const ImVec2 position = ed::GetNodePosition(editorId);
+            const ImVec2 size = ed::GetNodeSize(editorId);
+            if (!IsValidNodePosition(position.x, position.y) || size.x <= 0.0f) continue;
+            const char* name = group.name.empty() ? "グループ" : group.name.c_str();
+            const ImVec2 textSize = font->CalcTextSizeA(groupFontSize, FLT_MAX, 0.0f, name);
+            const float top = position.y - kNoteGap;
+            const float left = group.collapsed ? position.x + size.x * 0.5f - textSize.x * 0.5f - padding.x : position.x;
+            const Box box{ImVec2(left, top - textSize.y - padding.y * 2.0f),
+                          ImVec2(left + textSize.x + padding.x * 2.0f, top)};
+            bool blocked = false;
+            for (const Box& other : placed)
+                blocked |= box.min.x < other.max.x && box.max.x > other.min.x && box.min.y < other.max.y && box.max.y > other.min.y;
+            if (blocked) continue;
+            placed.push_back(box);
+            drawList->AddRectFilled(box.min, box.max, groupBackground, 4.0f / scale);
+            drawList->AddRect(box.min, box.max, groupBorder, 4.0f / scale, 0, 1.0f / scale);
+            drawList->AddText(font, groupFontSize, ImVec2(box.min.x + padding.x, box.min.y + padding.y), text, name);
+        }
+    }
     for (int pass = 0; pass < 3; ++pass) {
         for (const graph::Node& node : m_graph.Nodes()) {
             if (m_editComponent >= 0 && node.component != m_editComponent) continue;
@@ -2751,6 +2780,73 @@ void Application::DrawGraphPanel() {
     ImGui::End();
 }
 
+bool Application::DrawModelSlotRow(const char* label, uint64_t& model, graph::GraphId nodeId, size_t choice) {
+    bool changed = false;
+    const renderer::ModelAsset* current = nullptr;
+    for (const auto& asset : m_models) if (asset.id == model) current = &asset;
+    const auto pathOf = [](const renderer::ModelAsset& asset) { return asset.assetPath.empty() ? asset.path : asset.assetPath; };
+    const float thumbnailSize = ui::Scaled(40.0f);
+    ui::PropertyLabel(label);
+    // 割り当ててあるモデルのサムネイル（マテリアルの行と同じ並び）。
+    const float rowY = ImGui::GetCursorPosY();
+    ui::ThumbnailImage(current ? AssetThumbnailHandle(pathOf(*current)) : ImTextureID{}, thumbnailSize);
+    ImGui::SameLine();
+    ImGui::SetCursorPosY(rowY + (thumbnailSize - ImGui::GetFrameHeight()) * 0.5f);
+    ImGui::SetNextItemWidth(AssetReferenceWidth(std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x)));
+    if (ImGui::BeginCombo("##model", current ? current->name.c_str() : (model ? "見つからないモデル" : "未指定"))) {
+        ui::ComboFilterInput();
+        // 絞り込み中は「未指定」を出さない。
+        if (!ui::ComboFilterActive() && ImGui::Selectable("未指定", model == 0)) { model = 0; changed = true; }
+        // サムネイルと名前の行。行全体をサムネイルの高さの Selectable にして、その上へ画像と名前を描く。
+        // 画面の外の行はサムネイルを頼まない（作るのは 1 フレームに 1 枚なので、見えているものを優先する）。
+        const auto row = [&](const char* id, const std::filesystem::path& path, const char* name, const char* folder, bool picked) {
+            ImGui::PushID(id);
+            const ImVec2 rowPos = ImGui::GetCursorPos();
+            const bool visible = ImGui::IsRectVisible(ImVec2(thumbnailSize, thumbnailSize));
+            const bool clicked = ImGui::Selectable("##item", picked, ImGuiSelectableFlags_None, ImVec2(0.0f, thumbnailSize));
+            const ImVec2 nextPos = ImGui::GetCursorPos();
+            ImGui::SetCursorPos(rowPos);
+            ui::ThumbnailImage(visible ? AssetThumbnailHandle(path) : ImTextureID{}, thumbnailSize);
+            ImGui::SameLine();
+            const float textY = rowPos.y + (thumbnailSize - ImGui::GetTextLineHeight()) * 0.5f;
+            ImGui::SetCursorPosY(textY);
+            ImGui::TextUnformatted(name);
+            if (folder != nullptr && folder[0] != '\0') {
+                ImGui::SameLine();
+                ImGui::SetCursorPosY(textY);
+                ImGui::TextDisabled("%s", folder);
+            }
+            ImGui::SetCursorPos(nextPos);
+            ImGui::PopID();
+            return clicked;
+        };
+        for (const auto& asset : m_models) {
+            if (!ui::ComboFilterPass(asset.name)) continue;
+            if (row(std::to_string(asset.id).c_str(), pathOf(asset), asset.name.c_str(), nullptr, asset.id == model)) {
+                model = asset.id; changed = true;
+            }
+        }
+        // プロジェクト内の未読み込みモデルも選べる。読み込みは描画の外で行う。
+        for (const auto& path : DropdownFiles(L".tgmodel")) {
+            if (std::any_of(m_models.begin(), m_models.end(), [&](const auto& asset) { return AssetSlotPathMatches(asset.assetPath, path); })) continue;
+            const auto relative = ToUtf8Display(path.lexically_relative(m_workspace.Root()));
+            if (!ui::ComboFilterPass(relative)) continue;
+            const auto name = ToUtf8Display(path.stem());
+            const auto folder = ToUtf8Display(path.parent_path().lexically_relative(m_workspace.Root()));
+            if (row(relative.c_str(), path, name.c_str(), folder.c_str(), false)) {
+                m_pendingScatterModel = path;
+                m_pendingScatterNode = nodeId;
+                m_pendingScatterChoice = choice;
+            }
+        }
+        ImGui::Dummy(ImVec2(0, 0));  // SetCursorPos で戻した最終行の領域を確定。
+        ImGui::EndCombo();
+    }
+    DrawAssetSourceButton(current ? pathOf(*current) : std::filesystem::path{}, m_pendingAssetReveal);
+    ui::PropertyEnd();
+    return changed;
+}
+
 // 選択したノードの設定の行。グラフのパネルのほか、ノードカタログと評価のレポートが
 // ノードの複製を渡して描き、行の範囲と既定値を記録する（ui::SetPropertyRecorder）。
 void Application::DrawNodeProperties(graph::Node* selected) {
@@ -3547,47 +3643,13 @@ void Application::DrawNodeProperties(graph::Node* selected) {
                 changed |= ui::PropertyInt("LOD",&scatter->lod,0,16,0,"モデルにないLODは最も近い段階を使います");
             ui::EndPropertyTable();
         }
-        std::vector<const char*> names{"未指定"};
-        for (const auto& model : m_models) names.push_back(model.name.c_str());
         int remove = -1;
         if (ui::BeginPropertyTable("scatterModels")) {
             for (size_t i=0;i<scatter->models.size();++i) {
                 ImGui::PushID(static_cast<int>(i));
-                auto& choice=scatter->models[i]; int index=0;
-                for(size_t j=0;j<m_models.size();++j) if(m_models[j].id==choice.model) index=static_cast<int>(j)+1;
+                auto& choice=scatter->models[i];
                 const auto label="モデル "+std::to_string(i+1);
-                ui::PropertyLabel(label.c_str());
-                ImGui::SetNextItemWidth(AssetReferenceWidth(std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x)));
-                if (ImGui::BeginCombo("##model", !index && choice.model ? "見つからないモデル" : names[index])) {
-                    ui::ComboFilterInput();
-                    for (size_t j=0; j<names.size(); ++j) {
-                        // 絞り込み中は「未指定」を出さない。
-                        if (j == 0 ? ui::ComboFilterActive() : !ui::ComboFilterPass(names[j])) continue;
-                        ImGui::PushID(static_cast<int>(j));
-                        if (ImGui::Selectable(names[j], index == static_cast<int>(j))) {
-                            index = static_cast<int>(j);
-                            choice.model = j ? m_models[j-1].id : 0; changed = true;
-                        }
-                        ImGui::PopID();
-                    }
-                    // プロジェクト内の未読み込みモデルも選べる。読み込みは描画の外で行う。
-                    for (const auto& path : m_workspace.AssetsWithExtension(L".tgmodel")) {
-                        if (std::any_of(m_models.begin(), m_models.end(), [&](const auto& model) { return model.assetPath == path; })) continue;
-                        const auto relative = ToUtf8Display(path.lexically_relative(m_workspace.Root()));
-                        if (!ui::ComboFilterPass(relative)) continue;
-                        ImGui::PushID(relative.c_str());
-                        if (ImGui::Selectable(relative.c_str())) {
-                            m_pendingScatterModel = path;
-                            m_pendingScatterNode = selected->id;
-                            m_pendingScatterChoice = i;
-                        }
-                        ImGui::PopID();
-                    }
-                    ImGui::EndCombo();
-                }
-                DrawAssetSourceButton(index ? (m_models[index-1].assetPath.empty() ? m_models[index-1].path : m_models[index-1].assetPath)
-                                            : std::filesystem::path{}, m_pendingAssetReveal);
-                ui::PropertyEnd();
+                changed |= DrawModelSlotRow(label.c_str(), choice.model, selected->id, i);
                 changed |= ui::PropertyFloat("出現比率",&choice.weight,0,1000,1);
                 ui::PropertyLabel("候補"); if(ui::Button("削除")) remove=static_cast<int>(i); ui::PropertyEnd();
                 ImGui::PopID();
@@ -3605,41 +3667,7 @@ void Application::DrawNodeProperties(graph::Node* selected) {
         ui::HintText("建物などのモデルを 1 つずつ置く。Instances を Model Output（Model Merge を挟める）へ、"
                      "Pad（敷地）を Grading / Mask Mesh の Mesh へ繋ぐ");
         if (ui::BeginPropertyTable("modelPlaceSettings", "LOD 距離の倍率")) {
-            std::vector<const char*> names{"未指定"};
-            for (const auto& model : m_models) names.push_back(model.name.c_str());
-            int index = 0;
-            for (size_t j = 0; j < m_models.size(); ++j) if (m_models[j].id == place->model) index = static_cast<int>(j) + 1;
-            ui::PropertyLabel("モデル");
-            ImGui::SetNextItemWidth(AssetReferenceWidth(std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x)));
-            if (ImGui::BeginCombo("##model", !index && place->model ? "見つからないモデル" : names[index])) {
-                ui::ComboFilterInput();
-                for (size_t j = 0; j < names.size(); ++j) {
-                    if (j == 0 ? ui::ComboFilterActive() : !ui::ComboFilterPass(names[j])) continue;
-                    ImGui::PushID(static_cast<int>(j));
-                    if (ImGui::Selectable(names[j], index == static_cast<int>(j))) {
-                        index = static_cast<int>(j);
-                        place->model = j ? m_models[j - 1].id : 0; changed = true;
-                    }
-                    ImGui::PopID();
-                }
-                // プロジェクト内の未読み込みモデルも選べる。読み込みは描画の外で行う。
-                for (const auto& path : m_workspace.AssetsWithExtension(L".tgmodel")) {
-                    if (std::any_of(m_models.begin(), m_models.end(), [&](const auto& model) { return model.assetPath == path; })) continue;
-                    const auto relative = ToUtf8Display(path.lexically_relative(m_workspace.Root()));
-                    if (!ui::ComboFilterPass(relative)) continue;
-                    ImGui::PushID(relative.c_str());
-                    if (ImGui::Selectable(relative.c_str())) {
-                        m_pendingScatterModel = path;
-                        m_pendingScatterNode = selected->id;
-                        m_pendingScatterChoice = 0;
-                    }
-                    ImGui::PopID();
-                }
-                ImGui::EndCombo();
-            }
-            DrawAssetSourceButton(index ? (m_models[index - 1].assetPath.empty() ? m_models[index - 1].path : m_models[index - 1].assetPath)
-                                        : std::filesystem::path{}, m_pendingAssetReveal);
-            ui::PropertyEnd();
+            changed |= DrawModelSlotRow("モデル", place->model, selected->id, 0);
             changed |= ui::PropertyFloat("接地オフセット", &place->offset, -10000, 10000, defaults.offset,
                 "接地点（標高）からモデルを上下へずらす。負の値で基礎を地面へ埋めます", "%.3f m");
             changed |= ui::PropertyFloat("描画距離", &place->maxDistance, 0, 100000, defaults.maxDistance,

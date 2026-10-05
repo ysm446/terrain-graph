@@ -924,6 +924,24 @@ void Application::SyncLoadedMaterialThumbnails() {
     if (!error && rhi::SaveTextureToPng(m_device, asset->thumbnail, record.image, 128)) io::CommitThumbnail(record);
 }
 
+const std::vector<fs::path>& Application::DropdownFiles(const wchar_t* extension) {
+    // 開いているプルダウンは同時に 1 つなので、一覧は 1 つだけ持つ。
+    if (!ImGui::IsWindowAppearing()) return m_dropdownFiles;
+    m_dropdownFiles.clear();
+    std::error_code error;
+    fs::recursive_directory_iterator it(m_workspace.Root(), fs::directory_options::skip_permission_denied, error), end;
+    for (; it != end && !error; it.increment(error)) {
+        if (it->is_symlink(error)) { it.disable_recursion_pending(); continue; }
+        if (it->is_directory(error)) {
+            if (it->path().filename().wstring().starts_with(L".")) it.disable_recursion_pending();
+            continue;
+        }
+        if (_wcsicmp(it->path().extension().c_str(), extension) == 0) m_dropdownFiles.push_back(it->path());
+    }
+    std::sort(m_dropdownFiles.begin(), m_dropdownFiles.end());
+    return m_dropdownFiles;
+}
+
 void Application::AssetFolderDropTarget(const fs::path& directory) {
     if (!ImGui::BeginDragDropTarget()) return;
     // 読み込み済みのテクスチャ / マテリアルは ID で運ばれてくるので、パスへ引き直す。

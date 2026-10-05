@@ -1110,6 +1110,13 @@ private:
     bool m_pendingAtmosphereSave = false;
     bool m_focusLighting = false;
     std::filesystem::path m_pendingAssetOpen;
+    // プルダウンに出す、ルート内のファイルの一覧（拡張子で探す。ドットで始まるフォルダは見ない）。
+    // プルダウンを開いた瞬間に探し直すので、アプリの外で足したファイルも「更新」を押さずに出る。
+    const std::vector<std::filesystem::path>& DropdownFiles(const wchar_t* extension);
+    // モデルを選ぶ行（Model Scatter / Model Place）。割り当ててあるモデルのサムネイルと、サムネイル付きの
+    // プルダウン。未読み込みのモデルを選ぶと、読み込みを頼んで（m_pendingScatterModel）偽を返す。
+    bool DrawModelSlotRow(const char* label, uint64_t& model, graph::GraphId nodeId, size_t choice);
+    std::vector<std::filesystem::path> m_dropdownFiles;
     std::filesystem::path m_pendingScatterModel;
     graph::GraphId m_pendingScatterNode = 0;
     size_t m_pendingScatterChoice = 0;
