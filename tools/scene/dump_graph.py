@@ -19,7 +19,8 @@ SETTINGS_KEY = {
     "maskHeight": "height", "maskSlope": "slope", "maskLevels": "levels", "maskBlend": "blend",
     "maskNoise": "noise", "maskCurvature": "curvature", "maskBlur": "blur", "maskFluvial": "fluvial",
     "maskArea": "maskArea", "maskPath": "maskPath", "maskFlowline": "flowline", "maskWind": "wind",
-    "maskMap": "map", "modelScatter": "modelScatter", "roadMesh": "roadMesh", "shoulder": "shoulder",
+    "maskMap": "map", "modelScatter": "modelScatter", "modelPlace": "modelPlace", "maskMesh": "maskMesh",
+    "roadMesh": "roadMesh", "shoulder": "shoulder",
     "laneMarking": "laneMarking",
 }
 

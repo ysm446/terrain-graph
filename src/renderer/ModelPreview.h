@@ -22,6 +22,8 @@ struct ModelInstanceDraw {
     float weightStart = 0, weightEnd = 1;
     float scaleMin = 1, scaleMax = 1, align = 1, offset = 0;
     bool usePointSize = true, shadow = false;
+    // 点の向きと倍率をそのまま使う（Model Place）。株ごとの乱数の回転と倍率を足さず、点の w を倍率に読む。
+    bool exactPlacement = false;
     bool lodView = false;  // LOD の色分け表示（ベースカラーを段の色にする）
     float maxDistance = 0;
     // 全 LOD を用意したときだけ使う。lodBias はモデルの切り替え距離に掛ける倍率。

@@ -153,11 +153,14 @@ InstancePlacement LoadInstance(uint instance) {
     result.up = normalize(lerp(float3(0,1,0),orientation.xyz,g_model.align));
     const float3 right = normalize(cross(abs(result.up.z)<0.99 ? float3(0,0,1) : float3(1,0,0),result.up));
     const float3 forward = cross(right,result.up);
-    const float angle = orientation.w + InstanceRandom(instance ^ g_model.seed ^ 0xa6e1u)*6.2831853;
+    // usePointSize が 2 なら点の向きと倍率をそのまま使う（Model Place。乱数を足さず、w が倍率）。
+    const bool exact = g_model.usePointSize == 2;
+    const float angle = orientation.w + (exact ? 0 : InstanceRandom(instance ^ g_model.seed ^ 0xa6e1u)*6.2831853);
     const float c = cos(angle), s = sin(angle);
     result.axisX = right*c+forward*s; result.axisZ = forward*c-right*s;
-    result.scale = lerp(g_model.scaleMin,g_model.scaleMax,InstanceRandom(instance ^ g_model.seed ^ 0x3187u)) *
-                   (g_model.usePointSize != 0 ? placement.w/g_model.modelSize : 1);
+    result.scale = exact ? placement.w
+                         : lerp(g_model.scaleMin,g_model.scaleMax,InstanceRandom(instance ^ g_model.seed ^ 0x3187u)) *
+                           (g_model.usePointSize != 0 ? placement.w/g_model.modelSize : 1);
     result.origin = placement.xyz;
     result.fade = asfloat(entry.y);
     result.variation = InstanceVariation(instance);

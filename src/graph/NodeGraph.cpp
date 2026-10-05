@@ -500,6 +500,46 @@ std::vector<CompiledModelScatter> NodeGraph::CompileModelScatters() const {
     return result;
 }
 
+std::vector<CompiledModelPlace> NodeGraph::CompileModelPlaces() const {
+    std::vector<CompiledModelPlace> result;
+    std::unordered_map<GraphId, size_t> placed;
+    const auto entry = [&](const Node& node) -> CompiledModelPlace* {
+        const auto* settings = std::get_if<ModelPlaceSettings>(&node.settings);
+        if (node.kind != NodeKind::ModelPlace || settings == nullptr) return nullptr;
+        const auto [found, inserted] = placed.emplace(node.id, result.size());
+        if (inserted) result.push_back({node.id, *settings, {}, {}});
+        return &result[found->second];
+    };
+    // Model Output から遡る（Model Scatter と同じ辿り方。Model Merge を挟める）。
+    for (const auto& output : m_nodes) {
+        if (output.kind != NodeKind::ModelOutput || output.inputs.empty()) continue;
+        std::unordered_set<GraphId> visited;
+        std::vector<const Node*> pending{FindUpstreamNodeForPin(output.inputs[0].id)};
+        while (!pending.empty()) {
+            const auto* node = pending.back();
+            pending.pop_back();
+            if (!node || !visited.insert(node->id).second) continue;
+            if (node->kind == NodeKind::ModelMerge) {
+                for (auto it = node->inputs.rbegin(); it != node->inputs.rend(); ++it)
+                    pending.push_back(FindUpstreamNodeForPin(it->id));
+                continue;
+            }
+            if (auto* compiled = entry(*node)) compiled->outputs.push_back(output.id);
+        }
+    }
+    // Pad の読み手。Grading のメッシュは 2 番目の入力（Base の次）。
+    for (const Node& reader : m_nodes) {
+        const bool grading = reader.kind == NodeKind::RoadGrading;
+        if (reader.kind != NodeKind::MaskMesh && !grading) continue;
+        const size_t meshInput = grading ? 1 : 0;
+        if (reader.inputs.size() <= meshInput) continue;
+        const Node* source = FindUpstreamNodeForPin(reader.inputs[meshInput].id);
+        if (source == nullptr) continue;
+        if (auto* compiled = entry(*source)) compiled->padReaders.push_back(reader.id);
+    }
+    return result;
+}
+
 std::vector<CompiledRoadMesh> NodeGraph::CompileRoadMeshes() const {
     std::vector<CompiledRoadMesh> result;
     // 終端の直前のノード → result の添字。同じ鎖を 2 つの Mesh Output へ繋いでも 1 回だけ描き、
@@ -772,6 +812,7 @@ GraphId NodeGraph::CreateNode(NodeKind kind) {
     } else if (kind == NodeKind::CloudWeatherLayer) { node.settings = CloudWeatherSettings{};
     } else if (kind == NodeKind::CloudTransform) { node.settings = CloudTransformSettings{};
     } else if (kind == NodeKind::ModelScatter) { node.settings = ModelScatterSettings{};
+    } else if (kind == NodeKind::ModelPlace) { node.settings = ModelPlaceSettings{};
     } else if (kind == NodeKind::SnowPlume) { node.settings = SnowPlumeSettings{};
     } else if (kind == NodeKind::Missing) { node.settings = MissingNodeSettings{};
     } else if (kind == NodeKind::Path) {

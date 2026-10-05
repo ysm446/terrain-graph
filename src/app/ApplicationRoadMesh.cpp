@@ -462,6 +462,8 @@ void Application::PrepareRoadMeshes() {
         if (std::find(alive.begin(), alive.end(), it->first) == alive.end()) it = m_roadMeshCache.erase(it);
         else ++it;
     }
+    // 建物の敷地（Model Place の Pad）も同じ置き場に置く。
+    UpdateModelPlacePads(aliveFootprints);
     // 読み手の無くなった足跡（Mask Mesh の削除・切断、鎖が作れなくなった）は捨てる。
     for (const uint32_t key : m_meshFootprints.Keys()) {
         if (std::find(aliveFootprints.begin(), aliveFootprints.end(), static_cast<graph::GraphId>(key)) ==

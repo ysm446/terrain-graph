@@ -143,6 +143,17 @@ bool Application::WriteEvaluationReport(bool timedOut, bool& reportOk) {
         scatters.push_back(std::move(item));
     }
 
+    // 1 つずつ置いたモデル（Model Place）。
+    json places = json::array();
+    for (const graph::CompiledModelPlace& place : m_modelPlaces) {
+        places.push_back({{"node", place.node}, {"outputs", place.outputs}, {"padReaders", place.padReaders},
+                          {"instances", place.settings.placements.size()}});
+        if (!place.outputs.empty()) instanceTotal += place.settings.placements.size();
+        if (place.settings.placements.empty()) addIssue(warnings, place.node, "配置が 1 つも無い");
+        if (std::none_of(m_models.begin(), m_models.end(), [&](const auto& model) { return model.id == place.settings.model; }))
+            addIssue(warnings, place.node, "配置するモデルが選ばれていない");
+    }
+
     // --- メッシュ（道路・路肩・区画線） ----------------------------------
     size_t meshVertices = 0, meshTriangles = 0, meshNodes = 0;
     for (const auto& [id, status] : m_roadNodeStatus) {
@@ -201,6 +212,7 @@ bool Application::WriteEvaluationReport(bool timedOut, bool& reportOk) {
         {"instances", instanceTotal},
     };
     report["scatters"] = std::move(scatters);
+    report["places"] = std::move(places);
     report["nodes"] = std::move(nodes);
     report["log"] = std::move(log);
 

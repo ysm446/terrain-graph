@@ -697,7 +697,7 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
         return changed;
     }
 
-    // 道路の均しは、道路メッシュに合わせて地形を切土・盛土の形へ変える加工。
+    // 均し（Grading）は、道路や敷地のメッシュに合わせて地形を切土・盛土の形へ変える加工。
     if (layer.kind == compositor::LayerKind::RoadGrading) {
         auto& params = layer.roadGrading;
         const compositor::MaterialLayer::RoadGradingSettings d;
@@ -708,14 +708,14 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
             if (ui::PropertyTextInput("名前", name, sizeof(name))) { layer.name = name; changed = true; }
             ui::EndPropertyTable();
         }
-        ui::SectionHeader("道路の下");
+        ui::SectionHeader("メッシュの下");
         if (ui::BeginPropertyTable("roadGradingRoadRows", "路面下の余裕")) {
             changed |= ui::PropertyFloat("路面下の余裕", &params.clearanceMeters, 0.0f, 2.0f, d.clearanceMeters,
-                                         "路面の下の地形を、路面からどれだけ下げるか（m）。"
+                                         "路面や敷地の下の地形を、その面からどれだけ下げるか（m）。"
                                          "地形が路面を突き抜けないための余裕",
                                          "%.2f m");
             changed |= ui::PropertyFloat("平らな幅", &params.vergeMeters, 0.0f, 20.0f, d.vergeMeters,
-                                         "道路の端から、法面が始まるまでの平らな幅（m）", "%.1f m");
+                                         "道路や敷地の端から、法面が始まるまでの平らな幅（m）", "%.1f m");
             ui::EndPropertyTable();
         }
         ui::SectionHeader("法面");
@@ -738,9 +738,9 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                                          "Cut / Fill のマスクが 1 になる、削った / 盛った量（m）", "%.2f m");
             ui::EndPropertyTable();
         }
-        ui::HintText("Mesh 入力に Road Mesh か Shoulder を繋ぐ。Road は路面の下（平らな幅まで）、"
-                     "Cut は切土の法面、Fill は盛土の法面。"
-                     "Road Path の Base は、この Road Grading より手前の地形に繋ぐこと"
+        ui::HintText("Mesh 入力に Road Mesh / Shoulder か、Model Place の Pad（建物の敷地）を繋ぐ。"
+                     "Road は路面や敷地の下（平らな幅まで）、Cut は切土の法面、Fill は盛土の法面。"
+                     "Road Path の Base は、この Grading より手前の地形に繋ぐこと"
                      "（均した後の地形に繋ぐと、道路が自分で均した地形を読み直して循環する）");
         return changed;
     }

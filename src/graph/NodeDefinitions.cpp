@@ -195,7 +195,7 @@ constexpr std::array<PinDefinition, 2> kMaskMeshPins = {{
     {PinKind::Output, ValueType::Mask, "Mask"},
 }};
 
-// 道路の均しのピン。Base は地形、Mesh は Road Mesh か Shoulder の出力。
+// 均し（Grading）のピン。Base は地形、Mesh は Road Mesh / Shoulder の出力か、Model Place の Pad。
 // Mask は 路面の下（平らな幅まで）/ 切土の法面 / 盛土の法面。
 constexpr std::array<PinDefinition, 6> kRoadGradingPins = {{
     {PinKind::Input, ValueType::Material, "Base"},
@@ -304,6 +304,11 @@ constexpr std::array<PinDefinition, 2> kModelScatterPins = {{
     {PinKind::Input, ValueType::Points, "Points"},
     {PinKind::Output, ValueType::Instances, "Instances"},
 }};
+// ユニークなモデルの配置。Pad は敷地の足跡（Grading / Mask Mesh の Mesh へ繋ぐ）。
+constexpr std::array<PinDefinition, 2> kModelPlacePins = {{
+    {PinKind::Output, ValueType::Instances, "Instances"},
+    {PinKind::Output, ValueType::Mesh, "Pad"},
+}};
 constexpr std::array<PinDefinition, 2> kModelMergePins = {{
     {PinKind::Input, ValueType::Instances, "Instances 1"},
     {PinKind::Output, ValueType::Instances, "Instances"},
@@ -315,7 +320,7 @@ constexpr std::array<PinDefinition, 1> kModelOutputPins = {{
 constexpr std::array<PinDefinition, 1> kSnowPlumePins = {{
     {PinKind::Input, ValueType::Mask, "Source"},
 }};
-constexpr std::array<NodeDefinition, 57> kNodeDefinitions = {{
+constexpr std::array<NodeDefinition, 58> kNodeDefinitions = {{
     {NodeKind::Mountain, "mountain", "Mountain", kSourceNodePins,
      "画像なしで山並みと尾根を生成する"},
     {NodeKind::Heightmap, "heightmap", "Heightmap", kSourceNodePins,
@@ -392,10 +397,12 @@ constexpr std::array<NodeDefinition, 57> kNodeDefinitions = {{
      "路面の端から外へ路肩の帯を張り出す"},
     {NodeKind::LaneMarking, "laneMarking", "Lane Marking", kLaneMarkingPins,
      "路面に中央線・外側線・車線境界線を引く"},
-    {NodeKind::RoadGrading, "roadGrading", "Road Grading", kRoadGradingPins,
-     "道路メッシュに合わせて地形を切土・盛土で均す"},
+    // 表示名は Grading（ユーザー指定 2026-10-05。建物の敷地にも使うため）。保存名（"roadGrading"）と
+    // 識別子（RoadGrading）は変えない（既存のファイルを開けるように）。
+    {NodeKind::RoadGrading, "roadGrading", "Grading", kRoadGradingPins,
+     "道路や建物の敷地のメッシュに合わせて地形を切土・盛土で均す"},
     {NodeKind::MaskMesh, "maskMesh", "Mask Mesh", kMaskMeshPins,
-     "道路などのメッシュの足跡をマスクにする（植生の除外など）"},
+     "道路や敷地のメッシュの足跡をマスクにする（植生の除外など）"},
     {NodeKind::Cloud, "cloud", "Cloud (Legacy)", kCloudPins,
      "旧形式の雲。保存済みのシーンを表示するために残している（追加メニューには出さない）"},
     {NodeKind::CloudLayer, "cloudLayer", "Cloud Layer (Legacy)", kCloudLayerPins,
@@ -418,6 +425,8 @@ constexpr std::array<NodeDefinition, 57> kNodeDefinitions = {{
      "Volume を繋いで雲を表示する"},
     {NodeKind::ModelScatter, "modelScatter", "Model Scatter", kModelScatterPins,
      "Points にモデルをランダム配置する"},
+    {NodeKind::ModelPlace, "modelPlace", "Model Place", kModelPlacePins,
+     "建物などのモデルを、位置・方位・倍率を決めて 1 つずつ置く"},
     {NodeKind::ModelOutput, "modelOutput", "Model Output", kModelOutputPins,
      "モデル配置をビューポートへ出す"},
     {NodeKind::ModelMerge, "modelMerge", "Model Merge", kModelMergePins,

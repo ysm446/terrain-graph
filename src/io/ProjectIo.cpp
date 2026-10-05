@@ -1973,6 +1973,20 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             values["models"] = json::array();
             for (const auto& choice : scatter->models)
                 values["models"].push_back({{"model",choice.model},{"weight",choice.weight}});
+        } else if (const auto* place = std::get_if<graph::ModelPlaceSettings>(&node.settings)) {
+            auto& values = item["modelPlace"];
+            values = {{"model",place->model},{"offset",place->offset},{"maxDistance",place->maxDistance},
+                      {"lod",place->lod},{"autoLod",place->autoLod},{"lodBias",place->lodBias},
+                      {"padMargin",place->padMarginMeters}};
+            values["placements"] = json::array();
+            for (const auto& placement : place->placements)
+                values["placements"].push_back({{"u",placement.u},{"v",placement.v},{"elevation",placement.elevationMeters},
+                                                {"yaw",placement.yawDegrees},{"scale",placement.scale}});
+            // 敷地の多角形は指定したときだけ書く（無ければモデルの外形の矩形）。
+            if (!place->padPolygon.empty()) {
+                values["padPolygon"] = json::array();
+                for (const auto& point : place->padPolygon) values["padPolygon"].push_back({point[0], point[1]});
+            }
         } else if (const auto* plume = std::get_if<graph::SnowPlumeSettings>(&node.settings)) {
             item["snowPlume"] = {{"seedsPerSide",plume->seedsPerSide},{"threshold",plume->threshold},{"coverage",plume->coverage},
                 {"length",plume->lengthMeters},{"widthStart",plume->widthStart},{"widthEnd",plume->widthEnd},
@@ -2306,6 +2320,38 @@ bool ReadGraph(const json& source, graph::NodeGraph& graphData, const TextureRea
                             if (modelId && modelId->is_number_integer() && *modelId >= 0)
                                 settings.models.push_back({modelId->get<uint64_t>(),std::clamp(ReadFloat(choice,"weight",1),0.0f,1000.0f)});
                         }
+                    }
+                }
+                created.settings = std::move(settings);
+            } else if (created.kind == graph::NodeKind::ModelPlace) {
+                graph::ModelPlaceSettings settings;
+                if (const auto* values = FindMember(item, "modelPlace"); values && values->is_object()) {
+                    // コンポーネント展開で再採番したIDは符号付き整数になる。
+                    if (const auto* modelId = FindMember(*values,"model"); modelId && modelId->is_number_integer() && *modelId >= 0)
+                        settings.model = modelId->get<uint64_t>();
+                    settings.offset = std::clamp(ReadFloat(*values,"offset",0),-10000.0f,10000.0f);
+                    settings.maxDistance = std::clamp(ReadFloat(*values,"maxDistance",0),0.0f,100000.0f);
+                    settings.lod = std::clamp(ReadInt(*values,"lod",0),0,16);
+                    settings.autoLod = ReadBool(*values,"autoLod",true);
+                    settings.lodBias = std::clamp(ReadFloat(*values,"lodBias",1),0.01f,100.0f);
+                    settings.padMarginMeters = std::clamp(ReadFloat(*values,"padMargin",2),0.0f,graph::kModelPlacePadMarginMax);
+                    if (const auto* placements = FindMember(*values,"placements"); placements && placements->is_array()) {
+                        for (const auto& entry : *placements) {
+                            if (!entry.is_object() || settings.placements.size() >= graph::kModelPlaceMaxPlacements) continue;
+                            graph::ModelPlacement placement;
+                            placement.u = std::clamp(ReadFloat(entry,"u",0.5f),0.0f,1.0f);
+                            placement.v = std::clamp(ReadFloat(entry,"v",0.5f),0.0f,1.0f);
+                            placement.elevationMeters = std::clamp(ReadFloat(entry,"elevation",0),-20000.0f,20000.0f);
+                            placement.yawDegrees = std::clamp(ReadFloat(entry,"yaw",0),-360.0f,360.0f);
+                            placement.scale = std::clamp(ReadFloat(entry,"scale",1),graph::kModelPlaceScaleMin,graph::kModelPlaceScaleMax);
+                            settings.placements.push_back(placement);
+                        }
+                    }
+                    if (const auto* polygon = FindMember(*values,"padPolygon"); polygon && polygon->is_array()) {
+                        for (const auto& point : *polygon)
+                            if (point.is_array() && point.size() == 2 && point[0].is_number() && point[1].is_number())
+                                settings.padPolygon.push_back({point[0].get<float>(), point[1].get<float>()});
+                        if (settings.padPolygon.size() < 3) settings.padPolygon.clear();
                     }
                 }
                 created.settings = std::move(settings);
@@ -3578,6 +3624,8 @@ void RemapNodeReferences(graph::NodeSettings& settings, const NodeReferenceRemap
         if (remap.model) {
             for (graph::ModelChoice& choice : scatter->models) choice.model = remap.model(choice.model);
         }
+    } else if (auto* place = std::get_if<graph::ModelPlaceSettings>(&settings)) {
+        if (remap.model) place->model = remap.model(place->model);
     }
 }
 
@@ -4370,6 +4418,13 @@ bool LoadSharedAsset(ProjectWorkspace& workspace, const fs::path& path,
                         const auto model = std::find_if(refs.models->begin(), refs.models->end(), [&](const auto& value) { return value.assetUid == ReadString(*entry, "uid"); });
                         if (model != refs.models->end()) choice.model = model->id;
                     }
+                }
+            }
+            if (auto* place = std::get_if<graph::ModelPlaceSettings>(&node.settings); place && refs.models) {
+                const auto entry = std::find_if(document["models"].begin(), document["models"].end(), [&](const auto& value) { return ReadInt(value, "id", 0) == place->model; });
+                if (entry != document["models"].end()) {
+                    const auto model = std::find_if(refs.models->begin(), refs.models->end(), [&](const auto& value) { return value.assetUid == ReadString(*entry, "uid"); });
+                    if (model != refs.models->end()) place->model = model->id;
                 }
             }
             nodes.push_back(std::move(node));

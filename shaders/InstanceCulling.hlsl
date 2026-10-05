@@ -39,7 +39,9 @@ void CsCull(uint3 id : SV_DispatchThreadID) {
     float choice = InstanceRandom(id.x ^ g_cull.seed);
     if (placement.w <= 0 || choice < g_cull.weightStart || choice >= g_cull.weightEnd) return;
     float scale = lerp(g_cull.scaleMin,g_cull.scaleMax,InstanceRandom(id.x ^ g_cull.seed ^ 0x3187u));
-    if (g_cull.usePointSize != 0) scale *= placement.w/g_cull.modelSize;
+    // usePointSize が 2 なら点の w が倍率そのもの（Model Place。ModelPreview.hlsl の LoadInstance と揃える）。
+    if (g_cull.usePointSize == 2) scale = placement.w;
+    else if (g_cull.usePointSize != 0) scale *= placement.w/g_cull.modelSize;
     // 回転・法線追従後も含む、底面ピボット中心の保守的な包囲球。
     float radius = g_cull.radius*abs(scale)+abs(g_cull.offset);
     for (uint i=0;i<6;++i)

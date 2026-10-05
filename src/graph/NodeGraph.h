@@ -162,6 +162,9 @@ enum class NodeKind : uint32_t {
     // 道路の均し。地形と道路メッシュ（Road Mesh か Shoulder）を受け、道路に合わせて地形を切土・盛土の
     // 形へ変える。均した地形と、路面の下 / 切土 / 盛土の Mask を出す。
     RoadGrading = 60,
+    // ユニークなモデルの配置。位置・方位・倍率を 1 つずつ決めて置く（建物など）。入力を持たず、
+    // Instances（Model Output へ）と、敷地の足跡 Pad（Mesh。Grading / Mask Mesh へ）を出す。
+    ModelPlace = 61,
 };
 
 struct PinDefinition {
@@ -455,6 +458,42 @@ struct ModelScatterSettings {
     bool autoLod = true;
     float lodBias = 1.0f;
 };
+// Model Place の 1 つの配置。位置は Path と同じ地形の UV（Heightmap の一辺を変えても同じ場所に留まる）。
+struct ModelPlacement {
+    float u = 0.5f, v = 0.5f;
+    // 接地点（モデルの底面の中心）の標高（m）。地形の最低標高を足した実際の標高で持つ。
+    float elevationMeters = 0.0f;
+    // 上から見て時計回りの回転（度）。0 でモデルの +X が東、+Z が南。
+    float yawDegrees = 0.0f;
+    float scale = 1.0f;
+};
+inline constexpr float kModelPlaceScaleMin = 0.01f;
+inline constexpr float kModelPlaceScaleMax = 100.0f;
+inline constexpr float kModelPlacePadMarginMax = 200.0f;
+inline constexpr size_t kModelPlaceMaxPlacements = 1024;
+struct ModelPlaceSettings {
+    uint64_t model = 0;
+    std::vector<ModelPlacement> placements;
+    // 接地点からモデルを上下へずらす量（m）。負で基礎を地面へ埋める。
+    float offset = 0.0f;
+    float maxDistance = 0.0f;  // m。0 は距離制限なし
+    bool autoLod = true;
+    int lod = 0;
+    float lodBias = 1.0f;
+    // 敷地（Pad 出力）。接地点の高さの平らな面で、Grading が地形をこれに合わせて均す。
+    // padPolygon は接地点を原点にしたモデル空間の x, z（m）の凸多角形。空ならモデルの外形の矩形。
+    // どちらも padMarginMeters だけ外へ広げる。
+    float padMarginMeters = 2.0f;
+    std::vector<std::array<float, 2>> padPolygon;
+};
+struct CompiledModelPlace {
+    GraphId node = 0;
+    ModelPlaceSettings settings;
+    // この配置へ届く Model Output。無ければ描かない（敷地だけ使う）。
+    std::vector<GraphId> outputs;
+    // Pad を読む Mask Mesh と Grading。
+    std::vector<GraphId> padReaders;
+};
 struct CompiledModelScatter {
     GraphId node = 0, source = 0;
     ModelScatterSettings settings;
@@ -522,7 +561,7 @@ using NodeSettings =
     std::variant<LayerNodeSettings, MaskNodeSettings, OutputNodeSettings, PathNodeSettings, CloudNodeSettings,
                  CloudMergeSettings, CloudNoiseSettings, CloudTransformSettings, CloudMapSettings, CloudAnimationSettings, CloudShapeGenerateSettings, CloudWeatherSettings, MissingNodeSettings, ModelScatterSettings,
                  TerrainNodeSettings, SnowPlumeSettings, RoadPathNodeSettings, RoadMeshNodeSettings,
-                 ShoulderNodeSettings, LaneMarkingNodeSettings>;
+                 ShoulderNodeSettings, LaneMarkingNodeSettings, ModelPlaceSettings>;
 
 struct Node {
     GraphId id = 0;
@@ -615,6 +654,8 @@ public:
     CompiledGraph CompilePathRouteInputs(GraphId pathNodeId, int& avoidOp) const;
     CompiledCloud CompileCloud() const;
     std::vector<CompiledModelScatter> CompileModelScatters() const;
+    // Model Output へ届く、または Pad を Mask Mesh / Grading が読んでいる Model Place。
+    std::vector<CompiledModelPlace> CompileModelPlaces() const;
     // Mesh Output か Mask Mesh に繋がった Road Mesh（と、その入力の Road Path）。Road Path が繋がって
     // いない Road Mesh は入れない。同じ Road Mesh へ複数の経路があっても 1 回だけ。
     // Mask Mesh だけが読む鎖は drawn が偽（形は作るが描かない）。

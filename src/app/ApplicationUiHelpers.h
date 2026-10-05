@@ -249,7 +249,7 @@ inline const compositor::MaterialLayer kDefaultHeightLevelsLayer = [] {
 inline const compositor::MaterialLayer kDefaultRoadGradingLayer = [] {
     compositor::MaterialLayer layer;
     layer.kind = compositor::LayerKind::RoadGrading;
-    layer.name = "Road Grading";
+    layer.name = "Grading";
     return layer;
 }();
 

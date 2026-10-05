@@ -208,6 +208,13 @@ private:
     void DrawModelPreviewWindow();
     void ProcessModelWork();
     void PrepareModelScatters();
+    // Model Place の配置の点を組んで上げる（PrepareModelScatters から呼ぶ。フレームの外）。
+    // 使う配置用メッシュのキーを meshKeys へ足す。
+    void PrepareModelPlaces(std::vector<std::string>& meshKeys);
+    // Model Place の敷地（Pad）を、読み手の Mask Mesh / Grading の足跡として置く（PrepareRoadMeshes から呼ぶ）。
+    void UpdateModelPlacePads(std::vector<graph::GraphId>& aliveFootprints);
+    // 地形の最低標高（m）。標高 = ハイト（0〜1）× 標高差 + これ。
+    float TerrainBaseElevation() const;
     // --- Road Mesh / Mesh Output（ApplicationRoadMesh.cpp） ---
     // Mesh Output に繋がった Road Mesh の路面を作り、GPU へ上げる。フレームの外で呼ぶ
     // （形が変わったときだけ上げ直す。ExecuteImmediate を伴う）。
@@ -620,6 +627,15 @@ private:
     // ここに無い元は m_modelPoints の評価器で作る。
     std::vector<graph::GraphId> m_mainPointSources;
     std::vector<graph::CompiledModelScatter> m_modelScatters;
+    // Model Place（ユニークなモデルの配置）。配置の点を CPU で組み、Model Scatter の点と同じ並びの
+    // 小さなテクスチャ（RGBA32_FLOAT、1024 x 2）へ上げて、同じインスタンス描画に乗せる。
+    struct ModelPlaceSlot {
+        rhi::GpuTexture points;
+        uint64_t hash = 0;
+        uint32_t count = 0;
+    };
+    std::vector<graph::CompiledModelPlace> m_modelPlaces;
+    std::unordered_map<graph::GraphId, ModelPlaceSlot> m_modelPlaceSlots;
     std::unordered_map<std::string, std::unique_ptr<renderer::ModelPreview>> m_instanceMeshes;
     // Mesh Output が描くユニークなメッシュ（Road Mesh の路面）。
     renderer::GeneratedMeshes m_generatedMeshes;

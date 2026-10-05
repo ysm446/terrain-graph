@@ -258,7 +258,7 @@ bool ModelPreview::CullInstances(rhi::Device& device, rhi::PipelineCache& cache,
     constants.modelSize = std::max({x*2,y,z*2,0.0001f});
     constants.radius = std::sqrt(x*x+y*y+z*z);
     constants.camera = draw.cameraPosition; constants.maxDistance = draw.maxDistance;
-    constants.offset = draw.offset; constants.usePointSize = draw.usePointSize;
+    constants.offset = draw.offset; constants.usePointSize = draw.exactPlacement ? 2u : (draw.usePointSize ? 1u : 0u);
     constants.lodCount = static_cast<uint32_t>(lods);
     // 影は硬く切り替える（重ね合わせの区画を描かない）。
     constants.fadeBand = draw.shadow ? 0.0f : std::max(draw.fadeBand, 0.0f);
@@ -468,7 +468,7 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
         constants.visibleIndices = m_visibleInstances.srv.index; constants.seed = draw.seed;
         constants.scaleMin = draw.scaleMin; constants.scaleMax = draw.scaleMax;
         constants.align = draw.align; constants.offset = draw.offset;
-        constants.usePointSize = draw.usePointSize; constants.sceneMode = 1;
+        constants.usePointSize = draw.exactPlacement ? 2u : (draw.usePointSize ? 1u : 0u); constants.sceneMode = 1;
         constants.shadows = draw.shadows;
         constants.atmosphere = draw.atmosphere;
         constants.cloudNoiseIndex = draw.cloudNoiseIndex;
@@ -562,7 +562,7 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
             constants.weightStart = draw.weightStart; constants.weightEnd = draw.weightEnd;
             constants.scaleMin = draw.scaleMin; constants.scaleMax = draw.scaleMax;
             constants.align = draw.align; constants.offset = draw.offset;
-            constants.usePointSize = draw.usePointSize; constants.sceneMode = 1;
+            constants.usePointSize = draw.exactPlacement ? 2u : (draw.usePointSize ? 1u : 0u); constants.sceneMode = 1;
             constants.shadows = draw.shadows;
             constants.atmosphere = draw.atmosphere;
             constants.cloudNoiseIndex = draw.cloudNoiseIndex;

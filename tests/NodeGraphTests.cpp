@@ -269,6 +269,42 @@ void RunNodeGraphTests() {
     }
 
     {
+        Section("Model Place は入力なしで置き、敷地を Grading / Mask Mesh へ渡す");
+        auto graph = NodeGraph::CreateDefault();
+        const auto original = graph.CompileLayers().layers.size();
+        const auto place = graph.CreateNode(NodeKind::ModelPlace);
+        const auto* node = graph.FindNode(place);
+        Check(node->inputs.empty() && node->outputs.size()==2 &&
+              node->outputs[0].valueType==tg::graph::ValueType::Instances &&
+              node->outputs[1].valueType==tg::graph::ValueType::Mesh,"Instances と Pad を出す");
+        Check(graph.CompileModelPlaces().empty(),"どこにも繋がなければ配置を出力しない");
+        auto& settings = std::get<tg::graph::ModelPlaceSettings>(graph.FindMutableNode(place)->settings);
+        settings.placements.push_back({0.25f,0.75f,1200.0f,90.0f,2.0f});
+        const auto merge = graph.CreateNode(NodeKind::ModelMerge);
+        const auto output = graph.CreateNode(NodeKind::ModelOutput);
+        graph.CreateLink(graph.FindNode(place)->outputs[0].id,graph.FindNode(merge)->inputs.back().id);
+        graph.CreateLink(graph.FindNode(merge)->outputs[0].id,graph.FindNode(output)->inputs[0].id);
+        auto compiled = graph.CompileModelPlaces();
+        Check(compiled.size()==1 && compiled[0].node==place && compiled[0].outputs.size()==1 &&
+              compiled[0].outputs[0]==output && compiled[0].padReaders.empty() &&
+              compiled[0].settings.placements.size()==1,"Model Merge 越しに Model Output へ届く");
+        Check(graph.CompileModelScatters().empty(),"Model Scatter の配置には混ざらない");
+        const auto grading = graph.CreateNode(NodeKind::RoadGrading);
+        const auto mask = graph.CreateNode(NodeKind::MaskMesh);
+        const auto pad = graph.FindNode(place)->outputs[1].id;
+        Check(graph.CreateLink(pad,graph.FindNode(grading)->inputs[1].id)!=0 &&
+              graph.CreateLink(pad,graph.FindNode(mask)->inputs[0].id)!=0,"Pad を Grading と Mask Mesh の Mesh へ接続");
+        compiled = graph.CompileModelPlaces();
+        Check(compiled.size()==1 && compiled[0].padReaders.size()==2,"敷地の読み手を集める");
+        Check(graph.CompileRoadMeshes().empty(),"敷地は道路の鎖にはならない");
+        Check(graph.CompileLayers().layers.size()==original,"配置の接続でハイトチェーンは変わらない");
+        graph.DeleteNode(output);
+        compiled = graph.CompileModelPlaces();
+        Check(compiled.size()==1 && compiled[0].outputs.empty() && compiled[0].padReaders.size()==2,
+              "Model Output が無くても敷地は使える");
+    }
+
+    {
         Section("配置の点はマスクの依存より後ろで、プレビューの評価と一緒に作る");
         auto graph = NodeGraph::CreateDefault();
         tg::graph::GraphId baseId = 0, outputId = 0;

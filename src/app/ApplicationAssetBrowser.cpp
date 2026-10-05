@@ -745,11 +745,14 @@ void Application::ProcessAssetWork() {
         const auto path = std::exchange(m_pendingScatterModel, {});
         auto* node = m_graph.FindMutableNode(m_pendingScatterNode);
         auto* scatter = node ? std::get_if<graph::ModelScatterSettings>(&node->settings) : nullptr;
-        if (scatter && m_pendingScatterChoice < scatter->models.size()) {
+        auto* place = node ? std::get_if<graph::ModelPlaceSettings>(&node->settings) : nullptr;
+        if (place || (scatter && m_pendingScatterChoice < scatter->models.size())) {
             if (io::LoadSharedAsset(m_workspace, path, m_device, m_pipelineCache, refs)) {
                 const auto model = std::find_if(m_models.begin(), m_models.end(), [&](const auto& asset) { return asset.assetPath == path; });
                 if (model != m_models.end()) {
-                    scatter->models[m_pendingScatterChoice].model = model->id;
+                    // 読み込みでノードの置き場が変わることは無いが、設定は引き直す。
+                    if (place) place->model = model->id;
+                    else scatter->models[m_pendingScatterChoice].model = model->id;
                     m_graph.MarkDirty(); MarkDocumentChanged(false);
                     m_assetRefresh = true;
                 }

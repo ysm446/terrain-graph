@@ -1690,6 +1690,7 @@ void Application::DrawGraphEditor() {
         section("配置", {
             graph::NodeKind::Scatter,
             graph::NodeKind::ModelScatter,
+            graph::NodeKind::ModelPlace,
             graph::NodeKind::ModelMerge,
             graph::NodeKind::ModelOutput,
         });
@@ -2553,7 +2554,9 @@ void Application::DrawNodeProperties(graph::Node* selected) {
             if (meshNode == nullptr) {
                 ui::HintText("Mesh 入力が繋がっていないので、マスクは空になる");
             } else if (footprint == nullptr) {
-                ui::HintText("道路の形を組み立て中（Road Path に線が無い、または形を作れないときは空のまま）");
+                ui::HintText(meshNode->kind == graph::NodeKind::ModelPlace
+                                 ? "敷地の形がまだ無い（Model Place にモデルと配置が無いときは空のまま）"
+                                 : "道路の形を組み立て中（Road Path に線が無い、または形を作れないときは空のまま）");
             } else if (ui::BeginPropertyTable("maskMeshStatusRows")) {
                 ui::PropertyValue("足跡", "三角形 %zu", footprint->TriangleCount());
                 ui::EndPropertyTable();
@@ -3080,10 +3083,132 @@ void Application::DrawNodeProperties(graph::Node* selected) {
             scatter->models.push_back({m_models.empty()?0:m_models.front().id,1}); changed=true;
         }
         if(changed) { m_graph.MarkDirty(); MarkDocumentChanged(false); }
+    } else if (auto* place = std::get_if<graph::ModelPlaceSettings>(&selected->settings)) {
+        bool changed = false;
+        const graph::ModelPlaceSettings defaults;
+        ui::HintText("建物などのモデルを 1 つずつ置く。Instances を Model Output（Model Merge を挟める）へ、"
+                     "Pad（敷地）を Grading / Mask Mesh の Mesh へ繋ぐ");
+        if (ui::BeginPropertyTable("modelPlaceSettings", "LOD 距離の倍率")) {
+            std::vector<const char*> names{"未指定"};
+            for (const auto& model : m_models) names.push_back(model.name.c_str());
+            int index = 0;
+            for (size_t j = 0; j < m_models.size(); ++j) if (m_models[j].id == place->model) index = static_cast<int>(j) + 1;
+            ui::PropertyLabel("モデル");
+            ImGui::SetNextItemWidth(AssetReferenceWidth(std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x)));
+            if (ImGui::BeginCombo("##model", !index && place->model ? "見つからないモデル" : names[index])) {
+                for (size_t j = 0; j < names.size(); ++j) {
+                    ImGui::PushID(static_cast<int>(j));
+                    if (ImGui::Selectable(names[j], index == static_cast<int>(j))) {
+                        index = static_cast<int>(j);
+                        place->model = j ? m_models[j - 1].id : 0; changed = true;
+                    }
+                    ImGui::PopID();
+                }
+                // プロジェクト内の未読み込みモデルも選べる。読み込みは描画の外で行う。
+                for (const auto& path : m_workspace.AssetsWithExtension(L".tgmodel")) {
+                    if (std::any_of(m_models.begin(), m_models.end(), [&](const auto& model) { return model.assetPath == path; })) continue;
+                    const auto relative = ToUtf8Display(path.lexically_relative(m_workspace.Root()));
+                    ImGui::PushID(relative.c_str());
+                    if (ImGui::Selectable(relative.c_str())) {
+                        m_pendingScatterModel = path;
+                        m_pendingScatterNode = selected->id;
+                        m_pendingScatterChoice = 0;
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::EndCombo();
+            }
+            DrawAssetSourceButton(index ? (m_models[index - 1].assetPath.empty() ? m_models[index - 1].path : m_models[index - 1].assetPath)
+                                        : std::filesystem::path{}, m_pendingAssetReveal);
+            ui::PropertyEnd();
+            changed |= ui::PropertyFloat("接地オフセット", &place->offset, -10000, 10000, defaults.offset,
+                "接地点（標高）からモデルを上下へずらす。負の値で基礎を地面へ埋めます", "%.3f m");
+            changed |= ui::PropertyFloat("描画距離", &place->maxDistance, 0, 100000, defaults.maxDistance,
+                "この距離より遠いモデルを描画対象から外します。0は距離制限なし。影にも適用します", "%.0f m");
+            changed |= ui::PropertyBool("LOD 自動", &place->autoLod, defaults.autoLod,
+                "画面に映る大きさで LOD を切り替えます。切り替えの画面サイズはモデルのプロパティで設定します");
+            if (place->autoLod)
+                changed |= ui::PropertyFloat("LOD 距離の倍率", &place->lodBias, 0.01f, 100.0f, defaults.lodBias,
+                    "切り替わる距離に掛けます。小さくすると近くから簡略な段階になり軽くなります", "%.2f");
+            else
+                changed |= ui::PropertyInt("LOD", &place->lod, 0, 16, defaults.lod, "モデルにないLODは最も近い段階を使います");
+            ui::EndPropertyTable();
+        }
+        // 位置は地形の UV で持ち、中心からの m（東が +X、南が +Z）で見せる。
+        const float sizeMeters = std::max(m_renderer.PlaneSize(), 1e-3f);
+        const float half = sizeMeters * 0.5f;
+        const float baseElevation = TerrainBaseElevation();
+        const auto terrainElevation = [&](float u, float v) {
+            return m_renderer.Evaluator().Heightfield().Sample(u, v) * m_renderer.DisplacementScale() + baseElevation;
+        };
+        const auto atTarget = [&](graph::ModelPlacement& placement) {
+            const auto& target = m_renderer.GetCamera().Target();
+            placement.u = std::clamp(target.x / sizeMeters + 0.5f, 0.0f, 1.0f);
+            placement.v = std::clamp(target.z / sizeMeters + 0.5f, 0.0f, 1.0f);
+            placement.elevationMeters = terrainElevation(placement.u, placement.v);
+        };
+        int remove = -1;
+        for (size_t i = 0; i < place->placements.size(); ++i) {
+            ImGui::PushID(static_cast<int>(i));
+            auto& placement = place->placements[i];
+            ui::SectionHeader(("配置 " + std::to_string(i + 1)).c_str());
+            if (ui::BeginPropertyTable("placementRows", "位置 X（東）")) {
+                float x = (placement.u - 0.5f) * sizeMeters, z = (placement.v - 0.5f) * sizeMeters;
+                if (ui::PropertyFloat("位置 X（東）", &x, -half, half, 0.0f, "地形の中心からの距離（m）。東が正", "%.2f m")) {
+                    placement.u = std::clamp(x / sizeMeters + 0.5f, 0.0f, 1.0f); changed = true;
+                }
+                if (ui::PropertyFloat("位置 Z（南）", &z, -half, half, 0.0f, "地形の中心からの距離（m）。南が正", "%.2f m")) {
+                    placement.v = std::clamp(z / sizeMeters + 0.5f, 0.0f, 1.0f); changed = true;
+                }
+                changed |= ui::PropertyFloat("標高", &placement.elevationMeters, baseElevation - 100.0f,
+                    baseElevation + m_renderer.DisplacementScale() + 100.0f, baseElevation,
+                    "接地点（モデルの底面の中心）の標高。地形には追従しないので、敷地を Grading で均してこの高さに合わせる", "%.2f m");
+                changed |= ui::PropertyFloat("方位", &placement.yawDegrees, -180.0f, 180.0f, 0.0f,
+                    "上から見て時計回りの回転。0 でモデルの +X が東、+Z が南を向く", "%.1f°");
+                changed |= ui::PropertyFloat("倍率", &placement.scale, graph::kModelPlaceScaleMin, graph::kModelPlaceScaleMax, 1.0f,
+                    "モデルの実寸に掛ける倍率", "%.3f", ImGuiSliderFlags_Logarithmic);
+                ui::PropertyValue("地形の標高", "%.2f m", terrainElevation(placement.u, placement.v));
+                ui::PropertyLabel("操作");
+                if (ui::Button("地形の高さへ")) { placement.elevationMeters = terrainElevation(placement.u, placement.v); changed = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("標高を、今の地形（均した後）のこの位置の高さにする");
+                ImGui::SameLine();
+                if (ui::Button("注視点へ")) { atTarget(placement); changed = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("ビューポートの注視点（回転の中心）の位置へ移し、標高を地形に合わせる");
+                ImGui::SameLine();
+                if (ui::Button("削除")) remove = static_cast<int>(i);
+                ui::PropertyEnd();
+                ui::EndPropertyTable();
+            }
+            ImGui::PopID();
+        }
+        if (remove >= 0) { place->placements.erase(place->placements.begin() + remove); changed = true; }
+        ImGui::BeginDisabled(place->placements.size() >= graph::kModelPlaceMaxPlacements);
+        if (ui::Button("配置を追加", ui::kWideButtonWidth)) {
+            graph::ModelPlacement placement;
+            atTarget(placement);
+            place->placements.push_back(placement); changed = true;
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("ビューポートの注視点の位置に、地形の高さで置く");
+        ui::SectionHeader("敷地（Pad）");
+        if (ui::BeginPropertyTable("modelPlacePadRows", "余白")) {
+            changed |= ui::PropertyFloat("余白", &place->padMarginMeters, 0.0f, graph::kModelPlacePadMarginMax, defaults.padMarginMeters,
+                "敷地を外へ広げる幅（m）。敷地は接地点の標高の平らな面で、Grading が地形をこれに合わせて均す", "%.1f m");
+            if (place->padPolygon.empty()) ui::PropertyValue("形", "%s", "モデルの外形（矩形）");
+            else {
+                ui::PropertyValue("形", "多角形（%zu 点）", place->padPolygon.size());
+                ui::PropertyLabel("多角形");
+                if (ui::Button("矩形に戻す")) { place->padPolygon.clear(); changed = true; }
+                ui::PropertyEnd();
+            }
+            ui::EndPropertyTable();
+        }
+        if (changed) { m_graph.MarkDirty(); MarkDocumentChanged(false); }
     } else if (selected->kind == graph::NodeKind::ModelMerge) {
         ui::HintText("複数のInstancesをまとめます。接続すると入力が増え、各Model Scatterの設定を保持します");
     } else if (selected->kind == graph::NodeKind::ModelOutput) {
-        ui::HintText("Model Scatter / Model Merge のInstancesを接続します。ハイトマップとは独立してモデルを描画します");
+        ui::HintText("Model Scatter / Model Place / Model Merge のInstancesを接続します。ハイトマップとは独立してモデルを描画します");
     } else if (selected->kind == graph::NodeKind::Terrain) {
         ui::HintText("地形グラフの Output に繋いだ結果を Result に出します。Mask Slope / Mask Height などの "
                      "Base に繋ぐと、雲グラフのマスクを実際の地形から作れます");

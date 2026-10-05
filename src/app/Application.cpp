@@ -225,6 +225,8 @@ void Application::Shutdown() {
         if (slot->mask.evaluator.Resolution() != 0) slot->mask.evaluator.Destroy(m_device);
     m_snowPlumeMasks.clear();
     m_modelPoints.clear();
+    for (auto& [id,slot] : m_modelPlaceSlots) m_device.DeferRelease(slot.points);
+    m_modelPlaceSlots.clear();
     for (auto& [id,mesh] : m_instanceMeshes) mesh->Destroy(m_device);
     m_generatedMeshes.Destroy(m_device);
     m_instanceMeshes.clear();

@@ -1,7 +1,21 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-10-05 20:16
+更新日時: 2026-10-05 20:41
+
+## Model Place と Grading、木曽駒ヶ岳の整理（2026-10-05 20:41）
+
+ユーザー依頼「ユニークなモデルを置くノードが必要。Grading に名前を変える。新しくノードを作り、kiso-komagatake も整理してほしい」。方針と残りは [plan.md](plan.md) の「ユニークなモデルの配置」、仕様は [nodes.md](../reference/nodes.md)。
+
+- **Model Place**（NodeKind 61、保存名 `modelPlace`）。入力なし、出力は Instances と Pad（Mesh）。配置は地形の UV・標高・方位・倍率のリスト。`NodeGraph::CompileModelPlaces` が Model Output へ届くものと Pad の読み手（Mask Mesh / Grading）を集める。
+- **描画**は Model Scatter のインスタンス描画に乗せた。点を CPU で組んで 1024 x 2 のテクスチャへ上げ（`Application::PrepareModelPlaces`）、シェーダは `usePointSize == 2` のとき点の向きと倍率をそのまま使う（`ModelPreview.hlsl` / `InstanceCulling.hlsl`）。
+- **敷地**は `MeshFootprintStore` に読み手の ID で置く（`UpdateModelPlacePads`。道路の足跡と同じ置き場）。評価器とシェーダは変えていない。
+- **Road Grading → Grading**。表示名・既定の名前・説明だけ。保存名と識別子はそのまま。
+- **木曽駒ヶ岳**: `tools/scene/place_senjojiki.py` を書き直して実行。千畳敷駅のノードが 13 → 9（Scatter の固定シード・1 点用の Path と Mask Area・敷地の Path と Mask Area・Height Levels・Model Scatter の 7 個を、Model Place・Grading・Mask Mesh の 3 個へ）。植生から敷地を引く Mask Blend 5 個と Model Output はそのまま。作業前のバックアップは `data/Test/kiso-komagatake-before-model-place-20261005.zip`。
+- **見た目の違い**: 建物の位置・向き・高さは前と同じ（位置は 5 cm 以内）。敷地の縁は「12 m のぼかし」から「平らな幅 2 m + 切土 1:1 / 盛土 1:1.5 の法面」に変わった。急斜面で盛土が長く伸びたので、法面の長さを 12 m で止めてある（その先は段）。
+- **検証**: Debug / Release ビルド、CTest 6 件（NodeGraphTests に Model Place の接続とコンパイルを追加）。Release で正面・背面・遠景を撮り、前の版（`data/Test/senjojiki-qa/v5_*.png`）と並べて確認（`v7_*.png`。ログの警告・エラー 0）。Debug で開いて保存し直し、Model Place・Grading・Mask Mesh の設定が保たれることを確認（警告・エラー 0）。
+- **途中で直した不具合**: 終了時に点のテクスチャを解放しておらず、終了でアクセス違反になっていた（`Application` の後片付けに追加）。
+- **未確認**: Model Place のプロパティ画面（`--select-node` で選べず、撮影できなかった）。「配置を追加」「注視点へ」「地形の高さへ」のボタン、モデルの選び直し、複数の配置、倍率と方位を変えたときの敷地の向き。アンドゥ、ノードのコピーと貼り付け。
 
 ## フォルダのドラッグ移動（2026-10-05 20:16）
 

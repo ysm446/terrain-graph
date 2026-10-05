@@ -1,7 +1,9 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <tuple>
 
 #include "app/Application.h"
@@ -12,11 +14,60 @@
 #include "io/AssetRelations.h"
 #include "ui/UiStyle.h"
 
+#include <pix3.h>
+
 namespace tg {
 namespace {
 // 配置用メッシュの共有キー。自動 LOD は全段を持つので固定 LOD と分ける。
+std::string InstanceMeshKey(uint64_t model, bool autoLod, int lod) {
+    return std::to_string(model) + ":" + (autoLod ? std::string("auto") : std::to_string(lod));
+}
 std::string InstanceMeshKey(uint64_t model, const graph::ModelScatterSettings& settings) {
-    return std::to_string(model) + ":" + (settings.autoLod ? std::string("auto") : std::to_string(settings.lod));
+    return InstanceMeshKey(model, settings.autoLod, settings.lod);
+}
+// Model Place の点のテクスチャ。Model Scatter の点と同じ並び（1 行 1024 点、上の行が位置と倍率、
+// 下の行が上向きと向き）。
+constexpr uint32_t kPlacePointColumns = 1024;
+// 点の列を 1 枚のテクスチャへ上げる。上げ終わるまで待つ（フレームの外で呼ぶこと）。
+bool UploadPlacePoints(rhi::Device& device, const std::vector<float>& texels, rhi::GpuTexture& outTexture) {
+    rhi::TextureDesc desc;
+    desc.width = kPlacePointColumns;
+    desc.height = 2;
+    desc.format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+    desc.createSrv = true;
+    desc.initialState = D3D12_RESOURCE_STATE_COPY_DEST;
+    desc.debugName = L"ModelPlacePoints";
+    if (!device.Allocator().CreateTexture2D(desc, outTexture)) return false;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+    UINT rowCount = 0;
+    UINT64 rowSizeInBytes = 0, totalBytes = 0;
+    const D3D12_RESOURCE_DESC resourceDesc = outTexture.resource->GetDesc();
+    device.GetDevice()->GetCopyableFootprints(&resourceDesc, 0, 1, 0, &footprint, &rowCount, &rowSizeInBytes, &totalBytes);
+    rhi::GpuBuffer staging;
+    void* mapped = nullptr;
+    const D3D12_RANGE readRange = {0, 0};
+    if (!device.Allocator().CreateUploadBuffer(totalBytes, L"ModelPlacePointsStaging", staging) ||
+        !TG_CHECK_HR(staging.resource->Map(0, &readRange, &mapped))) {
+        device.DeferRelease(staging);
+        device.DeferRelease(outTexture);
+        return false;
+    }
+    const size_t sourcePitch = static_cast<size_t>(kPlacePointColumns) * 4 * sizeof(float);
+    for (uint32_t row = 0; row < rowCount; ++row)
+        std::memcpy(static_cast<uint8_t*>(mapped) + footprint.Offset + static_cast<size_t>(row) * footprint.Footprint.RowPitch,
+                    reinterpret_cast<const uint8_t*>(texels.data()) + row * sourcePitch, sourcePitch);
+    staging.resource->Unmap(0, nullptr);
+    const bool executed = device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {
+        PIXBeginEvent(commandList, PIX_COLOR(120, 180, 255), "ModelPlacePointsUpload");
+        const CD3DX12_TEXTURE_COPY_LOCATION destinationLocation(outTexture.resource.Get(), 0);
+        const CD3DX12_TEXTURE_COPY_LOCATION sourceLocation(staging.resource.Get(), footprint);
+        commandList->CopyTextureRegion(&destinationLocation, 0, 0, 0, &sourceLocation, nullptr);
+        rhi::TransitionIfNeeded(commandList, outTexture, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        PIXEndEvent(commandList);
+    });
+    // 実行に失敗しても、ステージングは必ず GPU の完了後に返す。
+    device.DeferRelease(staging);
+    return executed;
 }
 }  // namespace
 void Application::PrepareModelScatters() {
@@ -70,6 +121,7 @@ void Application::PrepareModelScatters() {
             slot->footprintRevision = m_meshFootprints.Revision();
         }
     }
+    PrepareModelPlaces(meshKeys);
     for (auto it=m_modelPoints.begin();it!=m_modelPoints.end();) {
         if (std::find(sources.begin(),sources.end(),it->first)==sources.end()) {
             it->second->evaluator.Destroy(m_device); it=m_modelPoints.erase(it);
@@ -83,6 +135,134 @@ void Application::PrepareModelScatters() {
     m_renderer.drawInstances = [this](auto* list,const auto& matrix,bool shadow) { DrawModelScatters(list,matrix,shadow); };
     // Mesh Output のユニークなメッシュ（道路）。描く所は配置と同じ。
     m_renderer.drawMeshes = [this](auto* list,const auto& matrix,bool shadow) { DrawGeneratedMeshes(list,matrix,shadow); };
+}
+float Application::TerrainBaseElevation() const {
+    const auto* scale = m_graph.FindChainScale(0);
+    return scale ? scale->baseElevationMeters : 0.0f;
+}
+void Application::PrepareModelPlaces(std::vector<std::string>& meshKeys) {
+    m_modelPlaces = m_graph.CompileModelPlaces();
+    const float sizeMeters = m_renderer.PlaneSize();
+    // 標高 → ワールドの y（ハイト 0.5 の基準面が 0）。
+    const float zeroElevation = TerrainBaseElevation() + m_renderer.DisplacementScale() * 0.5f;
+    std::vector<graph::GraphId> alive;
+    for (const auto& place : m_modelPlaces) {
+        const auto model = std::find_if(m_models.begin(), m_models.end(), [&](const auto& m) { return m.id == place.settings.model; });
+        // 描くのは Model Output へ届く配置だけ（敷地だけ使う配置は点を作らない）。
+        if (place.outputs.empty() || place.settings.placements.empty() || model == m_models.end() || !model->geometry) continue;
+        const auto key = InstanceMeshKey(place.settings.model, place.settings.autoLod, place.settings.lod);
+        meshKeys.push_back(key);
+        auto& mesh = m_instanceMeshes[key];
+        if (!mesh) mesh = std::make_unique<renderer::ModelPreview>();
+        mesh->Prepare(m_device, *model, place.settings.autoLod ? renderer::kAllLods : place.settings.lod,
+                      place.settings.autoLod && m_impostors.Find(model->id) != nullptr);
+
+        const uint32_t count = static_cast<uint32_t>(std::min<size_t>(place.settings.placements.size(), kPlacePointColumns));
+        std::vector<float> texels(static_cast<size_t>(kPlacePointColumns) * 2 * 4, 0.0f);
+        for (uint32_t i = 0; i < count; ++i) {
+            const graph::ModelPlacement& placement = place.settings.placements[i];
+            float* position = &texels[static_cast<size_t>(i) * 4];
+            position[0] = (placement.u - 0.5f) * sizeMeters;
+            position[1] = placement.elevationMeters - zeroElevation;
+            position[2] = (placement.v - 0.5f) * sizeMeters;
+            position[3] = std::max(placement.scale, graph::kModelPlaceScaleMin);
+            // 上向きは鉛直。向きは ModelPreview.hlsl の LoadInstance の基準（0 で -X / -Z）に合わせて半回転足す。
+            float* orientation = &texels[(static_cast<size_t>(kPlacePointColumns) + i) * 4];
+            orientation[1] = 1.0f;
+            orientation[3] = DirectX::XMConvertToRadians(placement.yawDegrees) + DirectX::XM_PI;
+        }
+        uint64_t hash = 1469598103934665603ull;
+        const auto mix = [&](const void* data, size_t size) {
+            const auto* bytes = static_cast<const unsigned char*>(data);
+            for (size_t i = 0; i < size; ++i) hash = (hash ^ bytes[i]) * 1099511628211ull;
+        };
+        mix(&count, sizeof(count));
+        mix(texels.data(), static_cast<size_t>(count) * 4 * sizeof(float));
+        mix(texels.data() + static_cast<size_t>(kPlacePointColumns) * 4, static_cast<size_t>(count) * 4 * sizeof(float));
+        ModelPlaceSlot& slot = m_modelPlaceSlots[place.node];
+        if (slot.hash != hash || !slot.points.IsValid()) {
+            // 描画中のフレームが前のテクスチャを読んでいるので、遅延破棄へ回す。
+            m_device.DeferRelease(slot.points);
+            slot = {};
+            if (UploadPlacePoints(m_device, texels, slot.points)) {
+                slot.hash = hash;
+                slot.count = count;
+            } else {
+                TG_LOG_ERROR("Model Place の配置を GPU へ上げられませんでした");
+            }
+        }
+        if (slot.points.IsValid()) alive.push_back(place.node);
+    }
+    for (auto it = m_modelPlaceSlots.begin(); it != m_modelPlaceSlots.end();) {
+        if (std::find(alive.begin(), alive.end(), it->first) == alive.end()) {
+            m_device.DeferRelease(it->second.points);
+            it = m_modelPlaceSlots.erase(it);
+        } else ++it;
+    }
+}
+void Application::UpdateModelPlacePads(std::vector<graph::GraphId>& aliveFootprints) {
+    const float sizeMeters = std::max(m_renderer.PlaneSize(), 1e-3f);
+    const float heightMeters = std::max(m_renderer.DisplacementScale(), 1e-3f);
+    const float baseElevation = TerrainBaseElevation();
+    for (const auto& place : m_graph.CompileModelPlaces()) {
+        if (place.padReaders.empty()) continue;
+        // 敷地の形（接地点を原点にしたモデル空間の x, z）。指定が無ければモデルの外形の矩形。
+        std::vector<std::array<float, 2>> outline = place.settings.padPolygon;
+        if (outline.size() < 3) {
+            const auto model = std::find_if(m_models.begin(), m_models.end(), [&](const auto& m) { return m.id == place.settings.model; });
+            if (model == m_models.end() || !model->geometry) continue;
+            const float hx = (model->geometry->maximum.x - model->geometry->minimum.x) * 0.5f;
+            const float hz = (model->geometry->maximum.z - model->geometry->minimum.z) * 0.5f;
+            outline = {{{-hx, -hz}}, {{hx, -hz}}, {{hx, hz}}, {{-hx, hz}}};
+        }
+        // 回り方（符号付き面積）で外向きを決める。
+        float area = 0.0f;
+        for (size_t i = 0; i < outline.size(); ++i) {
+            const auto& a = outline[i];
+            const auto& b = outline[(i + 1) % outline.size()];
+            area += a[0] * b[1] - b[0] * a[1];
+        }
+        const float outward = area >= 0.0f ? 1.0f : -1.0f;
+        compositor::MeshFootprint footprint;
+        for (const graph::ModelPlacement& placement : place.settings.placements) {
+            const size_t n = outline.size();
+            // 倍率を掛けてから、余白ぶん外へ広げる（凸の多角形の頂点を、両隣の辺の外向きの法線で押し出す）。
+            std::vector<std::array<float, 2>> scaled(n), expanded(n);
+            for (size_t i = 0; i < n; ++i) scaled[i] = {outline[i][0] * placement.scale, outline[i][1] * placement.scale};
+            const auto normal = [&](size_t from, size_t to) {
+                const float dx = scaled[to][0] - scaled[from][0], dz = scaled[to][1] - scaled[from][1];
+                const float length = std::max(std::sqrt(dx * dx + dz * dz), 1e-6f);
+                return std::array<float, 2>{dz / length * outward, -dx / length * outward};
+            };
+            for (size_t i = 0; i < n; ++i) {
+                const auto n0 = normal((i + n - 1) % n, i), n1 = normal(i, (i + 1) % n);
+                const float k = place.settings.padMarginMeters / std::max(1.0f + n0[0] * n1[0] + n0[1] * n1[1], 0.25f);
+                expanded[i] = {scaled[i][0] + (n0[0] + n1[0]) * k, scaled[i][1] + (n0[1] + n1[1]) * k};
+            }
+            // モデルの +X が (cos, sin)、+Z が (-sin, cos)（ワールドの X, Z。配置の点の向きと同じ）。
+            const float yaw = DirectX::XMConvertToRadians(placement.yawDegrees);
+            const float c = std::cos(yaw), s = std::sin(yaw);
+            const float originX = (placement.u - 0.5f) * sizeMeters, originZ = (placement.v - 0.5f) * sizeMeters;
+            const uint32_t baseVertex = static_cast<uint32_t>(footprint.vertices.size());
+            for (const auto& point : expanded) {
+                compositor::MeshFootprintVertex vertex;
+                vertex.u = (originX + point[0] * c - point[1] * s) / sizeMeters + 0.5f;
+                vertex.v = (originZ + point[0] * s + point[1] * c) / sizeMeters + 0.5f;
+                vertex.height = std::clamp((placement.elevationMeters - baseElevation) / heightMeters, 0.0f, 1.0f);
+                footprint.vertices.push_back(vertex);
+            }
+            for (uint32_t i = 1; i + 1 < n; ++i) {
+                footprint.indices.push_back(baseVertex);
+                footprint.indices.push_back(baseVertex + i);
+                footprint.indices.push_back(baseVertex + i + 1);
+            }
+        }
+        if (footprint.indices.empty()) continue;
+        for (const graph::GraphId reader : place.padReaders) {
+            aliveFootprints.push_back(reader);
+            m_meshFootprints.Set(static_cast<uint32_t>(reader), footprint);
+        }
+    }
 }
 Application::PlacementPointsState Application::PlacementPointsOf(
     graph::GraphId source, const compositor::PlacementPointSet** out) const {
@@ -155,6 +335,39 @@ void Application::DrawModelScatters(ID3D12GraphicsCommandList* commandList,
             if (!shadow && std::find(drawn.begin(),drawn.end(),mesh->second.get())==drawn.end())
                 drawn.push_back(mesh->second.get());
         }
+    }
+    // 1 つずつ置いたモデル（Model Place）。点の向きと倍率をそのまま使う。
+    for (const auto& place : m_modelPlaces) {
+        if (std::all_of(place.outputs.begin(), place.outputs.end(),
+                        [&](graph::GraphId output) { return OutputHidden(output); })) continue;
+        const auto slot = m_modelPlaceSlots.find(place.node);
+        const auto model = std::find_if(m_models.begin(), m_models.end(), [&](const auto& m) { return m.id == place.settings.model; });
+        const auto mesh = m_instanceMeshes.find(InstanceMeshKey(place.settings.model, place.settings.autoLod, place.settings.lod));
+        if (slot == m_modelPlaceSlots.end() || !slot->second.points.IsValid() || slot->second.count == 0 ||
+            model == m_models.end() || !model->geometry || mesh == m_instanceMeshes.end()) continue;
+        renderer::ModelInstanceDraw draw;
+        draw.points = slot->second.points.SrvIndex();
+        draw.rows = 1; draw.count = slot->second.count;
+        draw.exactPlacement = true;
+        draw.align = 0.0f; draw.offset = place.settings.offset;
+        draw.maxDistance = place.settings.maxDistance;
+        draw.lodBias = place.settings.lodBias;
+        draw.shadow = shadow;
+        draw.lodView = m_renderer.Debug() == renderer::DebugView::Lod;
+        draw.viewProjection = viewProjection; draw.cameraPosition = m_renderer.GetCamera().Position();
+        draw.fovY = m_renderer.GetCamera().FovY();
+        if (!shadow) {
+            draw.shadows = m_renderer.InstanceShadows();
+            const auto& clouds = m_renderer.InstanceClouds();
+            draw.atmosphere = clouds.atmosphere; draw.cloudNoiseIndex = clouds.noiseIndex; draw.atmosphericMode = clouds.mode;
+            draw.ambient = m_renderer.InstanceAmbient();
+        }
+        m_renderer.RecordInstanceDrawCalls(mesh->second->Render(m_device, m_pipelineCache, commandList, *model,
+            m_materialLibrary, m_textureLibrary, m_renderer.GetEnvironment(), m_renderer.EnvironmentIntensity(),
+            m_renderer.EffectiveLight(), m_renderer.Exposure().Exposure(), m_renderer.Tonemap(), &draw,
+            m_impostors.Find(model->id)));
+        if (!shadow && std::find(drawn.begin(), drawn.end(), mesh->second.get()) == drawn.end())
+            drawn.push_back(mesh->second.get());
     }
     // 影も含めた 1 フレームぶんの合計が、完了したフレームから読み戻してある。
     for (const auto* mesh : drawn) {
