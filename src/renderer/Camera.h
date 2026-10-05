@@ -66,6 +66,10 @@ public:
     void Pan(float deltaX, float deltaY);
     // ホイールの刻み単位でズームする。正で寄る。
     void Zoom(float delta);
+    // ワールドの点 point が画面上で動かないように寄る・離れる（カーソルの下の点へのズーム）。
+    // 向きは変えない。注視点は、画面の中央の線上で point と同じ奥行きへ移す（回転の中心と
+    // ピント面が、寄った場所の深さになる）。point が目の後ろなら Zoom と同じ。
+    void ZoomAbout(const DirectX::XMFLOAT3& point, float delta);
     // ドラッグ量（ピクセル）でズームする。右へ引くと寄る（Alt + 右ドラッグ）。
     void Dolly(float deltaPixels);
     // その場で見回す（フライ。右ドラッグ）。目の位置を保ち、向きを変えて注視点を付け直す。

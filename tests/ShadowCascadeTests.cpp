@@ -156,4 +156,65 @@ void RunShadowCascadeTests() {
         tests::Check(std::abs(still.forward.x - lookAfter.forward.x) < 1e-5f && std::abs(still.forward.y - lookAfter.forward.y) < 1e-5f,
                      "平行移動で向きは変わらない");
     }
+    {
+        // カーソルの下の点へのズーム: その点は画面上で動かず、向きは変わらず、注視点はその点の奥行きへ移る。
+        renderer::Camera zoom;
+        zoom.SetSceneRadius(5000);
+        zoom.SetViewportSize(1600, 900);
+        renderer::CameraState zoomState;
+        zoomState.target = {100.0f, 20.0f, -50.0f};
+        zoomState.distance = 800;
+        zoomState.yaw = 0.7f;
+        zoomState.pitch = 0.4f;
+        zoom.SetState(zoomState);
+        const XMFLOAT3 point{-150.0f, 5.0f, 60.0f};  // 画面の中央から外れた、目の前の点
+        const auto project = [&](const renderer::Camera& camera) {
+            XMFLOAT3 ndc;
+            XMStoreFloat3(&ndc, XMVector3TransformCoord(XMLoadFloat3(&point),
+                                                        camera.ViewMatrix() * camera.ProjectionMatrix()));
+            return ndc;
+        };
+        const auto depthOf = [&](const renderer::Camera& camera) {
+            const XMFLOAT3 eye = camera.Position();
+            const renderer::CameraBasis basis = camera.Basis();
+            return (point.x - eye.x) * basis.forward.x + (point.y - eye.y) * basis.forward.y +
+                   (point.z - eye.z) * basis.forward.z;
+        };
+        const XMFLOAT3 ndcBefore = project(zoom);
+        const renderer::CameraBasis basisBefore = zoom.Basis();
+        const float depthBefore = depthOf(zoom);
+        zoom.ZoomAbout(point, 3.0f);
+        const XMFLOAT3 ndcAfter = project(zoom);
+        const renderer::CameraBasis basisAfter = zoom.Basis();
+        tests::Check(std::abs(ndcBefore.x) > 0.05f && std::abs(ndcAfter.x - ndcBefore.x) < 1e-3f &&
+                         std::abs(ndcAfter.y - ndcBefore.y) < 1e-3f,
+                     "カーソルの下の点は、寄っても画面上で動かない");
+        tests::Check(std::abs(basisAfter.forward.x - basisBefore.forward.x) < 1e-5f &&
+                         std::abs(basisAfter.forward.y - basisBefore.forward.y) < 1e-5f,
+                     "カーソルへのズームで向きは変わらない");
+        const float depthAfter = depthOf(zoom);
+        tests::Check(depthAfter < depthBefore * 0.8f, "ホイールを奥へ回すと、その点へ近づく");
+        const XMFLOAT3 eyeAfterZoom = zoom.Position();
+        const XMFLOAT3& targetAfter = zoom.Target();
+        const float targetDistance = std::sqrt((targetAfter.x - eyeAfterZoom.x) * (targetAfter.x - eyeAfterZoom.x) +
+                                               (targetAfter.y - eyeAfterZoom.y) * (targetAfter.y - eyeAfterZoom.y) +
+                                               (targetAfter.z - eyeAfterZoom.z) * (targetAfter.z - eyeAfterZoom.z));
+        tests::Check(std::abs(targetDistance - depthAfter) < depthAfter * 1e-3f,
+                     "注視点は、その点と同じ奥行きへ移る（回転の中心とピント面になる）");
+        zoom.ZoomAbout(point, -3.0f);
+        const XMFLOAT3 back = project(zoom);
+        tests::Check(std::abs(back.x - ndcBefore.x) < 1e-3f && std::abs(back.y - ndcBefore.y) < 1e-3f &&
+                         std::abs(depthOf(zoom) - depthBefore) < depthBefore * 1e-3f,
+                     "同じだけ戻すと元の距離に戻り、点は動かない");
+        // 目の後ろの点は、今までどおり注視点へ寄る（距離だけが変わる）。
+        const XMFLOAT3 eyeBehind = zoom.Position();
+        const renderer::CameraBasis basisBehind = zoom.Basis();
+        const XMFLOAT3 behind{eyeBehind.x - basisBehind.forward.x * 50.0f, eyeBehind.y - basisBehind.forward.y * 50.0f,
+                              eyeBehind.z - basisBehind.forward.z * 50.0f};
+        const XMFLOAT3 targetBefore = zoom.Target();
+        zoom.ZoomAbout(behind, 1.0f);
+        tests::Check(std::abs(zoom.Target().x - targetBefore.x) < 1e-4f &&
+                         std::abs(zoom.Target().z - targetBefore.z) < 1e-4f,
+                     "目の後ろの点へは寄らず、注視点へ寄る");
+    }
 }

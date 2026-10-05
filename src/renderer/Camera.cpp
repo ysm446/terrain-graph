@@ -77,6 +77,28 @@ void Camera::Zoom(float delta) {
     m_distance = std::clamp(m_distance * std::pow(1.1f, -delta), MinDistance(), MaxDistance());
 }
 
+void Camera::ZoomAbout(const XMFLOAT3& point, float delta) {
+    // 注視点から目への向き（単位ベクトル）。視線はその逆。
+    const XMFLOAT3 toEye{std::cos(m_pitch) * std::sin(m_yaw), std::sin(m_pitch), std::cos(m_pitch) * std::cos(m_yaw)};
+    const XMFLOAT3 eye = Position();
+    const XMFLOAT3 offset{eye.x - point.x, eye.y - point.y, eye.z - point.z};
+    const float range = std::sqrt(offset.x * offset.x + offset.y * offset.y + offset.z * offset.z);
+    // 目から見た point の奥行き（視線方向の距離）。(point − eye)・視線 = offset・toEye。
+    const float forwardDepth = offset.x * toEye.x + offset.y * toEye.y + offset.z * toEye.z;
+    if (range <= 1.0e-6f || forwardDepth <= 0.0f) {
+        Zoom(delta);
+        return;
+    }
+    // point を中心に、目までの距離を伸び縮みさせる。寄りすぎ・離れすぎは距離の範囲で止める。
+    const float wanted = std::pow(1.1f, -delta);
+    const float scale = std::clamp(range * wanted, MinDistance(), MaxDistance()) / range;
+    const XMFLOAT3 newEye{point.x + offset.x * scale, point.y + offset.y * scale, point.z + offset.z * scale};
+    // 向きを変えないので、奥行きも同じ比で伸び縮みする。
+    m_distance = std::clamp(forwardDepth * scale, MinDistance(), MaxDistance());
+    m_target = XMFLOAT3{newEye.x - toEye.x * m_distance, newEye.y - toEye.y * m_distance,
+                        newEye.z - toEye.z * m_distance};
+}
+
 // 目の位置を保ったまま向きだけ変える。m_yaw / m_pitch は「注視点から目への向き」なので、
 // 符号は Orbit と同じでよい（右へ動かすと右を向き、下へ動かすと下を向く）。
 void Camera::Look(float deltaYaw, float deltaPitch) {

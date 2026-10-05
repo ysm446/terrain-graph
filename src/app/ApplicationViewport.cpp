@@ -1047,7 +1047,14 @@ void Application::DrawViewportPanel() {
             }
 
             if (itemHovered && !cloudDragging && !m_fly.held && io.MouseWheel != 0.0f) {
-                camera.Zoom(io.MouseWheel);
+                // カーソルの下の点へ寄る・離れる（地図アプリと同じ）。注視点はその点の奥行きへ移るので、
+                // 回転の中心とピント面も寄った場所になる。当たる所が無ければ注視点へ。
+                DirectX::XMFLOAT3 zoomPoint;
+                if (PickZoomPoint(io.MousePos, imageOrigin, imageMax, zoomPoint)) {
+                    camera.ZoomAbout(zoomPoint, io.MouseWheel);
+                } else {
+                    camera.Zoom(io.MouseWheel);
+                }
             }
 
             // フライ中の WASD / Q / E を、F / A などの視点のショートカットに渡さない。

@@ -515,6 +515,10 @@ private:
     // 地形に当たらなければ偽。
     bool PickTerrainUv(const ImVec2& mouse, const ImVec2& viewportMin, const ImVec2& viewportMax,
                        float& outU, float& outV) const;
+    // ホイールのズームの中心にする、カーソルの下のワールドの点。地形に当たればその点、当たらなければ
+    // 高さ 0 の水平面との交点。どちらにも当たらなければ偽（空を見上げているとき）。
+    bool PickZoomPoint(const ImVec2& mouse, const ImVec2& viewportMin, const ImVec2& viewportMax,
+                       DirectX::XMFLOAT3& outPoint) const;
     // --- 経路探索（ApplicationPathEdit.cpp） ---
     // Path ノードの Base に繋いだチェーンを 512² で焼いて、経路探索用の地形の写しにする。
     // 上流が前回と同じ（Height に効く状態のハッシュが同じ）なら焼かない。

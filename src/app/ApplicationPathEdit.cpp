@@ -532,6 +532,36 @@ XMFLOAT3 Application::PathWorldPosition(float u, float v, float heightOffsetMete
                     (v - 0.5f) * size};
 }
 
+bool Application::PickZoomPoint(const ImVec2& mouse, const ImVec2& viewportMin, const ImVec2& viewportMax,
+                                XMFLOAT3& outPoint) const {
+    float u = 0.0f;
+    float v = 0.0f;
+    if (m_renderer.Evaluator().Heightfield().IsValid() && PickTerrainUv(mouse, viewportMin, viewportMax, u, v)) {
+        outPoint = PathWorldPosition(u, v, 0.0f);
+        return true;
+    }
+    // 地形に当たらない（地形の外、地形が無い）。高さ 0 の水平面で受ける。
+    const ImVec2 size(viewportMax.x - viewportMin.x, viewportMax.y - viewportMin.y);
+    if (size.x <= 0.0f || size.y <= 0.0f) return false;
+    const renderer::Camera& camera = m_renderer.GetCamera();
+    XMVECTOR determinant;
+    const XMMATRIX inverse = XMMatrixInverse(&determinant, camera.ViewMatrix() * camera.ProjectionMatrix());
+    if (XMVectorGetX(determinant) == 0.0f) return false;
+    const float ndcX = ((mouse.x - viewportMin.x) / size.x) * 2.0f - 1.0f;
+    const float ndcY = 1.0f - ((mouse.y - viewportMin.y) / size.y) * 2.0f;
+    XMFLOAT3 origin;
+    XMFLOAT3 farPoint;
+    XMStoreFloat3(&origin, XMVector3TransformCoord(XMVectorSet(ndcX, ndcY, 0.0f, 1.0f), inverse));
+    XMStoreFloat3(&farPoint, XMVector3TransformCoord(XMVectorSet(ndcX, ndcY, 1.0f, 1.0f), inverse));
+    const float dy = farPoint.y - origin.y;
+    if (std::abs(dy) < 1.0e-9f) return false;
+    const float t = -origin.y / dy;
+    // 目の後ろと、描画の奥行きの外（地平線の近く）は受けない。
+    if (t <= 0.0f || t > 1.0f) return false;
+    outPoint = XMFLOAT3{origin.x + (farPoint.x - origin.x) * t, 0.0f, origin.z + (farPoint.z - origin.z) * t};
+    return true;
+}
+
 // カーソルからレイを飛ばし、CPU 側のハイトと最初に交わる所を探す。
 //
 // 地形を包む箱の中だけを一定の歩幅で進み、レイが地形の下へ潜った区間を二分法で詰める。
