@@ -61,6 +61,11 @@ inline constexpr float kSplitterGrabWidth = 8.0f;
 // 境界の線と、その左右の列との間に空ける幅。
 // **ここを詰めると、一覧の枠が境界に貼り付いて窮屈に見える。**
 inline constexpr float kSplitterMargin = 8.0f;
+// 余白を取らない境界線。2 つの区画を 1 本の線で区切って繋げて見せるときに使う（グラフのパネル）。
+// 線は掴む帯の手前の端（左 / 上）に引くので、手前の区画は線にぴったり付き、帯の残りは奥の区画の
+// 余白になる。vertical が真なら左右の境界（size は左の幅）、偽なら上下の境界（size は上の高さ）。
+// 前後の ItemSpacing は呼び出し側で詰めること。離したときに true を返す。
+bool FlushSplitter(const char* id, bool vertical, float* size, float minSize, float maxSize, float length);
 inline constexpr float kTextInputWidth = 190.0f;
 
 // グレー基調のテーマを適用する。ImGui のコンテキストを作った直後に 1 回だけ呼ぶ。

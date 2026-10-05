@@ -2166,18 +2166,26 @@ void Application::DrawGraphPanel() {
     if (m_focusDefaultTabs > 0) {
         ImGui::SetNextWindowFocus();
     }
-    if (!ImGui::Begin("グラフ")) {
+    // パネルの余白は取らない。グラフとプロパティを 1 本の線で区切り、繋がった 1 枚に見せる
+    // （グラフのキャンバスがパネルの端まで届く）。文字や行を置く所だけ、元の余白ぶん字下げする。
+    const ImVec2 panelPadding = ImGui::GetStyle().WindowPadding;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    const bool panelOpen = ImGui::Begin("グラフ");
+    ImGui::PopStyleVar();
+    if (!panelOpen) {
         ImGui::End();
         return;
     }
 
     if (m_componentPreview >= 0) {
+        ImGui::Indent(panelPadding.x);
         ui::HintText("未配置のアセットをシーン内で一時プレビュー中");
         if (ui::Button("保存")) RequestSaveProject(false);
         ImGui::SameLine();
         if (ui::Button("元を保存して配置", ui::kWideButtonWidth)) m_pendingPreviewFinish = 1;
         ImGui::SameLine();
         if (ui::Button("破棄して戻る", ui::kWideButtonWidth)) m_pendingPreviewFinish = 2;
+        ImGui::Unindent(panelPadding.x);
     }
     if (m_sceneComponents.is_array()) {
         // 編集するグラフはタブで選ぶ（選ばれているタブが「いま編集中」の表示を兼ねる）。
@@ -2206,19 +2214,25 @@ void Application::DrawGraphPanel() {
         ImGui::EndDisabled();
     }
     if (const size_t cycleCount = GraphCycleNodes().size(); cycleCount > 0) {
+        ImGui::Indent(panelPadding.x);
         ImGui::PushStyleColor(ImGuiCol_Text, ui::ErrorColor());
         ImGui::TextWrapped("接続が循環しています（%zu 個のノード）。赤枠のノードの間の接続を 1 本外してください",
                            cycleCount);
         ImGui::PopStyleColor();
+        ImGui::Unindent(panelPadding.x);
     }
+
+    // 上の行（タブなど）とグラフの間は詰める。
+    const float itemSpacingY = ImGui::GetStyle().ItemSpacing.y;
+    if (ImGui::GetCursorPosY() > ImGui::GetCursorStartPos().y) ImGui::SetCursorPosY(ImGui::GetCursorPosY() - itemSpacingY);
 
     // 横に広い枠（下の帯など）へ置いたときは左右に割る（左がグラフ、右がプロパティ）。
     // 縦長の枠（右カラム）では上下のまま。プロパティは幅を取るので、狭い枠を左右に割ると成立しない。
+    // 境界は余白なしの 1 本の線（ui::FlushSplitter）。グラフは線にぴったり付く。
     const ImVec2 available = ImGui::GetContentRegionAvail();
     const float minEditorWidth = ui::Scaled(320.0f);
     const float minPropertyWidth = ui::Scaled(280.0f);
-    const float margin = ui::Scaled(ui::kSplitterMargin);
-    const float usableWidth = available.x - margin * 2.0f - ui::Scaled(ui::kSplitterGrabWidth);
+    const float usableWidth = available.x - ui::Scaled(ui::kSplitterGrabWidth);
     const bool sideBySide =
         usableWidth >= minEditorWidth + minPropertyWidth && available.x > available.y * 1.2f;
     if (sideBySide) {
@@ -2229,15 +2243,15 @@ void Application::DrawGraphPanel() {
         DrawGraphEditor();
         ImGui::EndChild();
 
-        ImGui::SameLine(0.0f, margin);
+        ImGui::SameLine(0.0f, 0.0f);
         const float previousWidth = editorWidth;
-        const bool released = ui::VerticalSplitter("graphSplitterSide", &editorWidth, minEditorWidth,
-                                                   usableWidth - minPropertyWidth, available.y);
+        const bool released = ui::FlushSplitter("graphSplitterSide", true, &editorWidth, minEditorWidth,
+                                                usableWidth - minPropertyWidth, available.y);
         if (editorWidth != previousWidth) {
             m_settings.Ui().graphPropertyWidth = (usableWidth - editorWidth) / ui::Scaled(1.0f);
         }
         if (released) m_settings.Save();
-        ImGui::SameLine(0.0f, margin);
+        ImGui::SameLine(0.0f, 0.0f);
     } else {
         float editorHeight = ui::Scaled(m_graphEditorHeight);
         const float maxHeight = std::max(ui::Scaled(160.0f), available.y - ui::Scaled(120.0f));
@@ -2245,12 +2259,16 @@ void Application::DrawGraphPanel() {
         DrawGraphEditor();
         ImGui::EndChild();
 
-        ui::HorizontalSplitter("graphSplitter", &editorHeight, ui::Scaled(160.0f), maxHeight,
-                               available.x);
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() - itemSpacingY);
+        ui::FlushSplitter("graphSplitter", false, &editorHeight, ui::Scaled(160.0f), maxHeight, available.x);
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() - itemSpacingY);
         m_graphEditorHeight = editorHeight / std::max(ui::Scaled(1.0f), 0.01f);
     }
 
-    ImGui::BeginChild("graphPropertyPane", ImVec2(0.0f, 0.0f));
+    // プロパティの中は元の余白で並べる（パネルの余白を消したぶんを、この区画の内側で取る）。
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, panelPadding);
+    ImGui::BeginChild("graphPropertyPane", ImVec2(0.0f, 0.0f), ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleVar();
 
     // **プレビュー対象は選択とは別。** どれが画面に出ているかをここに出し、
     // 出力へ戻す手段も置く（出力ピンのクリックで切り替わる、と気づけるように）。

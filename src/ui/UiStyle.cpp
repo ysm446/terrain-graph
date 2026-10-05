@@ -1125,6 +1125,27 @@ bool VerticalSplitter(const char* id, float* width, float minWidth, float maxWid
     return released;
 }
 
+bool FlushSplitter(const char* id, bool vertical, float* size, float minSize, float maxSize, float length) {
+    if (size == nullptr || length <= 0.0f) return false;
+    const float grab = Scaled(kSplitterGrabWidth);
+    ImGui::InvisibleButton(id, vertical ? ImVec2(grab, length) : ImVec2(length, grab));
+    const bool hovered = ImGui::IsItemHovered();
+    const bool active = ImGui::IsItemActive();
+    const bool released = ImGui::IsItemDeactivated();
+    if (hovered || active) ImGui::SetMouseCursor(vertical ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_ResizeNS);
+    if (active) {
+        const ImVec2 delta = ImGui::GetIO().MouseDelta;
+        *size = std::clamp(*size + (vertical ? delta.x : delta.y), minSize, std::max(minSize, maxSize));
+    }
+    const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+    const ImU32 color = ImGui::GetColorU32(active ? ImGuiCol_SeparatorActive :
+                                           hovered ? ImGuiCol_SeparatorHovered : ImGuiCol_Separator);
+    const float thickness = Scaled(1.0f);
+    if (vertical) ImGui::GetWindowDrawList()->AddLine(ImVec2(min.x, min.y), ImVec2(min.x, max.y), color, thickness);
+    else ImGui::GetWindowDrawList()->AddLine(ImVec2(min.x, min.y), ImVec2(max.x, min.y), color, thickness);
+    return released;
+}
+
 bool HorizontalSplitter(const char* id, float* height, float minHeight, float maxHeight,
                         float width) {
     if (height == nullptr || width <= 0.0f) {
