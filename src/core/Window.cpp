@@ -52,7 +52,7 @@ bool Window::Create(const wchar_t* title, uint32_t width, uint32_t height) {
     // AdjustWindowRect は 96 DPI の枠しか見ないため、実際の DPI 版を使う。
     // 高 DPI で枠が太くなるぶんクライアント領域が縮むのを防ぐ。
     RECT rect = {0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
-    ::AdjustWindowRectExForDpi(&rect, WS_OVERLAPPEDWINDOW, FALSE, 0, ::GetDpiForSystem());
+    ::AdjustWindowRectExForDpi(&rect, WS_OVERLAPPEDWINDOW, FALSE, 0, systemDpi);
 
     m_hwnd = ::CreateWindowExW(0, kWindowClassName, title, WS_OVERLAPPEDWINDOW,
                                CW_USEDEFAULT, CW_USEDEFAULT,
@@ -212,8 +212,10 @@ LRESULT Window::WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                 if (length == 0) {
                     continue;
                 }
-                std::wstring buffer(length, L' ');
+                // 終端は size() の外へ書かれるので、1 文字ぶん多く確保してから詰める。
+                std::wstring buffer(static_cast<size_t>(length) + 1, L'\0');
                 if (::DragQueryFileW(drop, i, buffer.data(), length + 1) != 0) {
+                    buffer.resize(length);
                     paths.emplace_back(buffer);
                 }
             }

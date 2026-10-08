@@ -5,6 +5,7 @@
 #include "core/Log.h"
 
 #include <algorithm>
+#include <climits>
 #include <cstdarg>
 #include <cstdlib>
 #include <fstream>
@@ -15,6 +16,11 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
@@ -43,6 +49,11 @@ std::vector<uint8_t> ReadFileBytes(const std::filesystem::path& path) {
     if (size <= 0) {
         return {};
     }
+    // stb は長さを int で受ける。溢れる大きさは切り詰めて渡さず、読まない。
+    if (size > static_cast<std::streamsize>(INT_MAX)) {
+        TG_LOG_ERROR("画像ファイルが大きすぎます (2 GB 超): %s", ToUtf8Display(path).c_str());
+        return {};
+    }
     std::vector<uint8_t> bytes(static_cast<size_t>(size));
     stream.seekg(0);
     stream.read(reinterpret_cast<char*>(bytes.data()), size);
@@ -52,13 +63,34 @@ std::vector<uint8_t> ReadFileBytes(const std::filesystem::path& path) {
     return bytes;
 }
 
+// 一時ファイル（<path>.tmp）へ書き切ってから置き換える。書いている途中で落ちても、
+// 元のファイルが欠けた状態で残らないようにする（ProjectWorkspace::WriteJson と同じ方式）。
 bool WriteFileBytes(const std::filesystem::path& path, const void* data, size_t size) {
-    std::ofstream stream(path, std::ios::binary | std::ios::trunc);
-    if (!stream.is_open()) {
+    const std::filesystem::path temp = path.wstring() + L".tmp";
+    const auto discard = [&temp] {
+        std::error_code error;
+        std::filesystem::remove(temp, error);
         return false;
+    };
+    {
+        std::ofstream stream(temp, std::ios::binary | std::ios::trunc);
+        if (!stream.is_open()) {
+            return false;
+        }
+        stream.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
+        stream.flush();
+        if (!stream.good()) {
+            return discard();
+        }
+        stream.close();
+        if (stream.fail()) {
+            return discard();
+        }
     }
-    stream.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
-    return stream.good();
+    if (!::MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        return discard();
+    }
+    return true;
 }
 
 bool SavePng(const std::filesystem::path& path, uint32_t width, uint32_t height,
@@ -186,9 +218,6 @@ void DiscardPrefetchedImages() {
     // 走っているデコードは終わるまで待つ（結果は捨てる）。
     for (auto& [key, future] : pending) future.wait();
 }
-
-namespace {
-}  // namespace
 
 bool DecodeLdrImage(const std::filesystem::path& path, LdrImage& outImage, std::string& message) {
     outImage = LdrImage{};

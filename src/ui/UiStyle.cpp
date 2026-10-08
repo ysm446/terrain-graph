@@ -103,7 +103,10 @@ const char* NumericTooltip(const char* tooltip) {
 //
 // 「既定値から変えてあるか」の視覚表現はこの点だけに集約する。
 // ラベルの色を変えるといった二重の表現は入れない。
-bool ResetDot(bool isDefault, const std::string& defaultText) {
+//
+// 点の描画と押下判定だけを行い、ツールチップは呼び出し側が hovered を見て出す。
+// 既定値の文字列を毎フレーム作らず、ホバー中だけ作れるようにするため。
+bool ResetDotCore(bool isDefault, bool& hovered) {
     ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
 
     const float size = ImGui::GetFrameHeight();
@@ -112,7 +115,7 @@ bool ResetDot(bool isDefault, const std::string& defaultText) {
     const ImVec2 min = ImGui::GetItemRectMin();
     const ImVec2 max = ImGui::GetItemRectMax();
     const ImVec2 center((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
-    const bool hovered = ImGui::IsItemHovered();
+    hovered = ImGui::IsItemHovered();
 
     ImU32 color = ImGui::GetColorU32(hovered ? kResetDotHovered : kResetDot);
     if (!isDefault) {
@@ -120,7 +123,12 @@ bool ResetDot(bool isDefault, const std::string& defaultText) {
     }
     const float radius = std::max(2.0f, size * 0.16f);
     ImGui::GetWindowDrawList()->AddCircleFilled(center, radius, color);
+    return pressed;
+}
 
+bool ResetDot(bool isDefault, const std::string& defaultText) {
+    bool hovered = false;
+    const bool pressed = ResetDotCore(isDefault, hovered);
     if (hovered) {
         ImGui::SetTooltip("既定値に戻す\n既定値: %s", defaultText.c_str());
     }
@@ -208,7 +216,7 @@ void ThumbnailImage(ImTextureID texture, float size) {
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     const float rounding = ImGui::GetStyle().FrameRounding;
-    if (texture != 0) {
+    if (texture != ImTextureID_Invalid) {
         drawList->AddImage(texture, min, max, ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f),
                            IM_COL32_WHITE);
     }
@@ -282,20 +290,8 @@ void ColorSwatch(const ImVec4& color, float size) {
     ImGui::Dummy(ImVec2(size, size));
 }
 
-// レイヤー種類のアイコン。字形を持たないので図形で描く。
-//
-// ThumbnailImage / ColorSwatch と同じ大きさ・同じ枠のタイルに、
-// 本文の色（テーマ）で線画を載せる。塗りは持たせない。
-// 一覧の行では素材のサムネイルと同じ場所に並ぶので、箱の見た目を揃える。
-namespace {
-
-void IconTileFrame(ImDrawList* drawList, const ImVec2& min, const ImVec2& max) {
-    drawList->AddRect(min, max, ImGui::GetColorU32(ImGuiCol_Border),
-                      ImGui::GetStyle().FrameRounding, 0, Scaled(1.0f));
-}
-
-}  // namespace
-
+// アセット種類のアイコン。字形を持たないので図形で描く。
+// 既存のサムネイル枠の上に、線画だけを載せる。塗りは持たせない。
 void DrawAssetIcon(AssetIcon icon, const ImVec2& min, const ImVec2& max) {
     const float size = std::min(max.x - min.x, max.y - min.y);
     const ImVec2 origin((min.x + max.x - size) * 0.5f, (min.y + max.y - size) * 0.5f);
@@ -337,54 +333,6 @@ void DrawAssetIcon(AssetIcon icon, const ImVec2& min, const ImVec2& max) {
         draw->PathBezierCubicCurveTo(at(0.10f, 0.55f), at(0.14f, 0.70f), at(0.27f, 0.70f));
         draw->PathStroke(color, ImDrawFlags_Closed, thickness);
     }
-}
-
-void MountainIcon(float size) {
-    const ImVec2 min = ImGui::GetCursorScreenPos();
-    const ImVec2 max(min.x + size, min.y + size);
-    ImDrawList* drawList = ImGui::GetWindowDrawList();
-
-    // 高い峰と低い峰の 2 つ。地面の線は引かない（稜線だけで山と読める）。
-    const auto at = [&](float x, float y) {
-        return ImVec2(min.x + x * size, min.y + y * size);
-    };
-    drawList->PathClear();
-    drawList->PathLineTo(at(0.14f, 0.74f));
-    drawList->PathLineTo(at(0.40f, 0.30f));
-    drawList->PathLineTo(at(0.54f, 0.52f));
-    drawList->PathLineTo(at(0.68f, 0.40f));
-    drawList->PathLineTo(at(0.86f, 0.74f));
-    drawList->PathStroke(ImGui::GetColorU32(ImGuiCol_Text), ImDrawFlags_None, Scaled(1.3f));
-
-    IconTileFrame(drawList, min, max);
-    ImGui::Dummy(ImVec2(size, size));
-}
-
-void WavesIcon(float size) {
-    const ImVec2 min = ImGui::GetCursorScreenPos();
-    const ImVec2 max(min.x + size, min.y + size);
-    ImDrawList* drawList = ImGui::GetWindowDrawList();
-
-    // 横に走る波を 2 本。1 周期の正弦をずらして重ねる。
-    constexpr int kSegments = 16;
-    constexpr float kPi = 3.14159265358979323846f;
-    const float left = min.x + size * 0.16f;
-    const float width = size * 0.68f;
-    const float amplitude = size * 0.07f;
-    const ImU32 color = ImGui::GetColorU32(ImGuiCol_Text);
-    for (int wave = 0; wave < 2; ++wave) {
-        const float baseY = min.y + size * (0.40f + 0.24f * static_cast<float>(wave));
-        drawList->PathClear();
-        for (int i = 0; i <= kSegments; ++i) {
-            const float t = static_cast<float>(i) / static_cast<float>(kSegments);
-            drawList->PathLineTo(
-                ImVec2(left + t * width, baseY + std::sin(t * 2.0f * kPi) * amplitude));
-        }
-        drawList->PathStroke(color, ImDrawFlags_None, Scaled(1.3f));
-    }
-
-    IconTileFrame(drawList, min, max);
-    ImGui::Dummy(ImVec2(size, size));
 }
 
 // 目のアイコン。字形を持たないので図形で描く。
@@ -848,7 +796,14 @@ bool PropertyFloat(const char* label, float* value, float minValue, float maxVal
     }
     bool changed = CommitDeferredInput(value, shown, edited, minValue, maxValue);
 
-    if (ResetDot(NearlyEqual(*value, defaultValue), FormatFloat(defaultValue, format))) {
+    // 既定値の文字列は、ツールチップを出すとき（ホバー中）だけ作る。
+    // 行ごと・フレームごとに書式化すると、パネルが多いときに無駄が積み上がる。
+    bool resetHovered = false;
+    const bool resetPressed = ResetDotCore(NearlyEqual(*value, defaultValue), resetHovered);
+    if (resetHovered) {
+        ImGui::SetTooltip("既定値に戻す\n既定値: %s", FormatFloat(defaultValue, format).c_str());
+    }
+    if (resetPressed) {
         *value = std::clamp(defaultValue, minValue, maxValue);
         changed = true;
     }

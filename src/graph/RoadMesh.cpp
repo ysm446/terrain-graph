@@ -164,12 +164,17 @@ std::vector<RoadShoulderSpan> ShoulderSpans(const RoadShoulderSettings& settings
     std::vector<RoadShoulderSpan> spans{{0.0f, 0.0f, settings.material, settings.uvRepeatMeters, settings.boundaryPath,
                                          settings.boundaryUid}};
     std::vector<RoadShoulderSwitch> switches = settings.switches;
+    // NaN を先に 0 へ正してから並べる（NaN が混じると並べ替えの順序が壊れる）。
+    for (RoadShoulderSwitch& change : switches) {
+        if (!std::isfinite(change.atMeters)) change.atMeters = 0.0f;
+        if (!std::isfinite(change.transitionMeters)) change.transitionMeters = 0.0f;
+    }
     // 同じ位置は後に足したものを使うため、安定に並べてから前のものを捨てる。
     std::stable_sort(switches.begin(), switches.end(),
                      [](const RoadShoulderSwitch& a, const RoadShoulderSwitch& b) { return a.atMeters < b.atMeters; });
     for (const RoadShoulderSwitch& change : switches) {
-        const float at = std::clamp(std::isfinite(change.atMeters) ? change.atMeters : 0.0f, 0.0f, length);
-        RoadShoulderSpan span{at, std::max(std::isfinite(change.transitionMeters) ? change.transitionMeters : 0.0f, 0.0f),
+        const float at = std::clamp(change.atMeters, 0.0f, length);
+        RoadShoulderSpan span{at, std::max(change.transitionMeters, 0.0f),
                               change.material, change.uvRepeatMeters, change.boundaryPath, change.boundaryUid};
         if (spans.back().startMeters >= at) {
             // 同じ位置（か 0 の位置）の切り替えは前の区間を置き換える。最初の区間は移行を持たない。

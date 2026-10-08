@@ -48,11 +48,6 @@ uint32_t MipCountFor(uint32_t size) {
 
 using rhi::DispatchCount;
 
-void InsertUavBarrier(ID3D12GraphicsCommandList* commandList, const rhi::GpuTexture& texture) {
-    const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(texture.resource.Get());
-    commandList->ResourceBarrier(1, &barrier);
-}
-
 }  // namespace
 
 bool Environment::Initialize(rhi::Device& device, rhi::PipelineCache& pipelineCache, bool buildDefaultSky) {
@@ -232,7 +227,7 @@ bool Environment::BuildFromEquirect(rhi::Device& device, rhi::PipelineCache& pip
         commandList->SetComputeRoot32BitConstants(
             0, sizeof(toCubeConstants) / sizeof(uint32_t), &toCubeConstants, 0);
         commandList->Dispatch(DispatchCount(kCubeSize), DispatchCount(kCubeSize), 6);
-        InsertUavBarrier(commandList, m_cube);
+        rhi::UavBarrier(commandList, m_cube);
         PIXEndEvent(commandList);
 
         // --- キューブのミップ連鎖 -----------------------------------------
@@ -257,7 +252,7 @@ bool Environment::BuildFromEquirect(rhi::Device& device, rhi::PipelineCache& pip
             commandList->SetComputeRoot32BitConstants(0, sizeof(constants) / sizeof(uint32_t),
                                                       &constants, 0);
             commandList->Dispatch(DispatchCount(mipSize), DispatchCount(mipSize), 6);
-            InsertUavBarrier(commandList, m_cube);
+            rhi::UavBarrier(commandList, m_cube);
         }
 
         // 最後のミップも読み取り状態へ移し、リソース全体を揃える。
@@ -318,7 +313,7 @@ bool Environment::BuildFromEquirect(rhi::Device& device, rhi::PipelineCache& pip
             commandList->SetComputeRoot32BitConstants(0, sizeof(constants) / sizeof(uint32_t),
                                                       &constants, 0);
             commandList->Dispatch(DispatchCount(prefilterSize), DispatchCount(prefilterSize), 6);
-            InsertUavBarrier(commandList, m_prefiltered);
+            rhi::UavBarrier(commandList, m_prefiltered);
             prefilterSize = std::max<uint32_t>(prefilterSize >> 1, 1);
         }
         TransitionIfNeeded(commandList, m_prefiltered, kShaderReadState);
@@ -335,7 +330,7 @@ bool Environment::BuildFromEquirect(rhi::Device& device, rhi::PipelineCache& pip
 }
 
 bool Environment::BuildFromAtmosphere(rhi::Device& device, rhi::PipelineCache& pipelineCache,
-                                       const AtmosphereSettings& settings, uint32_t lutIndex, uint32_t noiseIndex, uint32_t skyOutputIndex, uint32_t cloudLightingIndex,
+                                       const AtmosphereSettings& settings, uint32_t lutIndex, uint32_t noiseIndex, rhi::GpuTexture& skyView, uint32_t cloudLightingIndex,
                                        bool irradianceOnly) {
     auto* pipeline = pipelineCache.GetCompute(L"AtmosphereEnvironment.hlsl", L"CsMain");
     if (!pipeline) return false;
@@ -343,17 +338,20 @@ bool Environment::BuildFromAtmosphere(rhi::Device& device, rhi::PipelineCache& p
     if ((!m_ready || m_equirect.width != 512 || m_equirect.height != 256) &&
         !CreateTargets(device, 512, 256)) return false;
     struct Constants { AtmosphereSettings settings; uint32_t output, lut, noise, skyOutput; uint32_t lighting; };
-    const Constants constants{settings, m_equirect.UavIndex(), lutIndex, noiseIndex, skyOutputIndex, cloudLightingIndex};
+    const Constants constants{settings, m_equirect.UavIndex(), lutIndex, noiseIndex, skyView.UavIndex(), cloudLightingIndex};
     const auto allocation = device.Upload().Allocate(sizeof(Constants), 256);
     if (!allocation.IsValid()) return false;
     std::memcpy(allocation.cpu, &constants, sizeof(constants));
     if (!device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commands) {
         PIXBeginEvent(commands, PIX_COLOR(120, 180, 255), "AtmosphereEnvironment");
         TransitionIfNeeded(commands, m_equirect, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        TransitionIfNeeded(commands, skyView, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         commands->SetComputeRootSignature(pipelineCache.GlobalRootSignature());
         commands->SetPipelineState(pipeline);
         commands->SetComputeRootConstantBufferView(1, allocation.gpuAddress);
         commands->Dispatch(64, 32, 1);
+        // 空の LUT は呼び出し側（Atmosphere）が毎フレーム SRV で読むので、ここで読み出し状態へ戻す。
+        TransitionIfNeeded(commands, skyView, kShaderReadState);
         PIXEndEvent(commands);
     })) return false;
     m_sourceName = "大気散乱スカイ";
@@ -484,8 +482,7 @@ bool Environment::BuildFromHdrFile(rhi::Device& device, rhi::PipelineCache& pipe
         PIXEndEvent(commandList);
     });
     // ステージングバッファは GPU の完了後に解放する（実行に失敗しても必ず返す）。
-    device.Defer(staging.resource);
-    device.Defer(staging.allocation);
+    device.DeferRelease(staging);
     if (!executed) {
         return false;
     }

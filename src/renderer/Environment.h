@@ -43,8 +43,9 @@ public:
 
     // 手続き的な空から作り直す。irradianceOnly なら鏡面（プリフィルタ）を作らない
     // （拡散だけを使う補助の環境用。PrefilteredSrvIndex の中身は不定になる）。
+    // skyView には空の LUT を UAV で書き、終わったら読み出し状態へ戻す（遷移は生成のリストの中で行う）。
     bool BuildFromAtmosphere(rhi::Device& device, rhi::PipelineCache& pipelineCache,
-                             const AtmosphereSettings& settings, uint32_t lutIndex, uint32_t noiseIndex, uint32_t skyOutputIndex, uint32_t cloudLightingIndex,
+                             const AtmosphereSettings& settings, uint32_t lutIndex, uint32_t noiseIndex, rhi::GpuTexture& skyView, uint32_t cloudLightingIndex,
                              bool irradianceOnly = false);
     bool BuildFromSky(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                       const SkySettings& sky);
@@ -67,9 +68,6 @@ public:
     // ファイルを読み直さない（スライダーを動かしても速い）。
     bool RebuildWithSkyLuminance(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                                  float skyLuminance);
-
-    // 読み込んだ HDRI の空の代表輝度（ファイルの生の値）。較正の分母。
-    float MeasuredSkyLuminance() const { return m_measuredSkyLuminance; }
 
     bool IsReady() const { return m_ready; }
 

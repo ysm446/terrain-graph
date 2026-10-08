@@ -10,6 +10,7 @@ namespace {
 
 // 真上・真下でビュー行列が縮退しないよう、わずかに手前で止める。
 constexpr float kPitchLimit = 1.55334306f;  // 89 度
+constexpr float kTwoPi = 6.28318530717958648f;
 
 // 距離の可動域。Zoom / SetState / Frame で同じ範囲に収める。
 // 軌道の距離とクリップ面は、被写体を包む球の半径に合わせて**広げる**。
@@ -54,7 +55,8 @@ constexpr float kDollyNotchPerPixel = 0.012f;
 void Camera::Orbit(float deltaX, float deltaY) {
     // 右手系では画面の右が +X なので、ヨーは符号を反転する。
     // そうしないと、ドラッグした向きと逆に内容が回る。
-    m_yaw -= deltaX;
+    // 回し続けても値が育たないように 2π で畳む（三角関数の精度を保つ）。
+    m_yaw = std::remainder(m_yaw - deltaX, kTwoPi);
     m_pitch = std::clamp(m_pitch + deltaY, -kPitchLimit, kPitchLimit);
 }
 
@@ -103,7 +105,7 @@ void Camera::ZoomAbout(const XMFLOAT3& point, float delta) {
 // 符号は Orbit と同じでよい（右へ動かすと右を向き、下へ動かすと下を向く）。
 void Camera::Look(float deltaYaw, float deltaPitch) {
     const XMFLOAT3 eye = Position();
-    m_yaw -= deltaYaw;
+    m_yaw = std::remainder(m_yaw - deltaYaw, kTwoPi);
     m_pitch = std::clamp(m_pitch + deltaPitch, -kPitchLimit, kPitchLimit);
     m_target = XMFLOAT3{eye.x - m_distance * std::cos(m_pitch) * std::sin(m_yaw),
                         eye.y - m_distance * std::sin(m_pitch),

@@ -44,7 +44,10 @@ void PaintWaterColor(uint2 texel, float cover, float depthMeters)
     baseColorTarget[texel] =
         float4(lerp(baseColorTarget[texel].rgb, color, cover * (1.0f - bedVisibility)), 1.0f);
     const float4 surface = surfaceTarget[texel];
-    surfaceTarget[texel] = float4(lerp(surface.rgb, float3(g_paint.params.x, 0.0f, 1.0f), cover), surface.a);
+    // アルファは 1 − 水面の被覆（CompositeLayer.hlsl の Liquid と同じく、水の分だけ 0 へ寄せる）。
+    // 1 のまま残すと、MeshPbr.hlsl の近景マテリアルが川・湖の水面にも貼り直される。
+    surfaceTarget[texel] = float4(lerp(surface.rgb, float3(g_paint.params.x, 0.0f, 1.0f), cover),
+                                  lerp(surface.a, 0.0f, cover));
 }
 
 [numthreads(8, 8, 1)]

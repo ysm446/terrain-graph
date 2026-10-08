@@ -181,7 +181,9 @@ bool FindPathRoute(const PathRouteTerrain& terrain, const PathRouteQuery& query,
     }
     const int resolution = static_cast<int>(terrain.resolution);
     const auto cellOf = [resolution](float coordinate) {
-        return std::clamp(static_cast<int>(coordinate * static_cast<float>(resolution)), 0,
+        // NaN / 無限大を int へ落とすと未定義なので、真ん中へ寄せる。
+        const float safe = std::isfinite(coordinate) ? coordinate : 0.5f;
+        return std::clamp(static_cast<int>(safe * static_cast<float>(resolution)), 0,
                           resolution - 1);
     };
     const int startX = cellOf(query.fromU);

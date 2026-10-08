@@ -141,7 +141,6 @@ public:
     bool& FullResolutionClouds() { return m_fullResolutionClouds; }
     // 半解像度の雲を前フレームから再投影して蓄積する。全解像度では使わない。
     bool& TemporalClouds() { return m_temporalClouds; }
-    void ResetCloudHistory() { m_historyValid = false; }
     float WeatherLoopPosition(uint32_t source, float fallback) const {
         return m_ready && m_requested.localCloud == 4 && m_requested.cloudSource == source
             ? static_cast<float>(m_weatherPlayback.position) : fallback;

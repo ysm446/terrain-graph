@@ -177,6 +177,7 @@ set(tg_sources
     src/io/MaterialExport.h
     src/io/ProjectWorkspace.cpp src/io/SceneComponents.cpp
     src/io/GraphJson.cpp src/io/GraphJson.h
+    src/io/JsonRead.h
     src/app/ApplicationAssetSaving.cpp
     src/app/ApplicationAssetBrowser.cpp
     src/app/ApplicationReferenceViewer.cpp

@@ -11,6 +11,5 @@ bool ExtractPresetLayers(const LayerMaterial& material, std::vector<PresetMateri
 bool CompilePresetMaterials(const LayerMaterial& material, std::vector<PresetMaterial>& layers, std::string& error);
 uint32_t AddPresetNode(PresetGraph& graph, PresetNodeKind kind, std::array<float, 2> position);
 bool ConnectPresetNodes(PresetGraph& graph, uint32_t source, uint32_t target, uint32_t input, std::string& error);
-bool DeletePresetNode(PresetGraph& graph, uint32_t id);
 bool AppendPresetLayer(PresetGraph& graph, std::string& error);
 }  // namespace tg::graph

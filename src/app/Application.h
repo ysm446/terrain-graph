@@ -33,8 +33,10 @@
 
 #include <imgui.h>
 
+#include <array>
 #include <chrono>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -190,8 +192,8 @@ private:
     // ノードと背景の右クリックの「グラフ全体を左から右へ並べ直す」。選択には依らない。アンドゥ 1 段になる。
     // ノードエディタを current にした状態で呼ぶ。
     void ArrangeGraphLeftToRight(bool overlapsOnly = false);
-    // 重なったノードを縦にずらして離す（graph::ResolveOverlaps）。2 個以上を選んでいればその中だけ、
-    // そうでなければ編集中のグラフ全体。アンドゥ 1 段。
+    // 「ノードの重なりを解消」の要求（右クリックのメニュー）。メニューはエディタを止めたポップアップの
+    // 中にあるので、次のフレームで ArrangeGraphLeftToRight(true) を実行する。
     bool m_pendingGraphSpread = false;
     // グループ（枠）。選んだノードを囲む枠を作る（G キー、右クリックのメニュー）。選択が無ければ at に空の枠。
     void CreateGraphGroup(const ImVec2& at);
@@ -223,6 +225,8 @@ private:
     ImVec2 m_pendingGraphGroupAt{};
     // メニューはエディタを止めたポップアップの中にあるので、要求だけ置いて次のフレームで実行する。
     bool m_pendingGraphArrange = false;
+    // 背景の右クリックで「ノードを追加」を開いた位置（キャンバス座標）。追加したノードをここへ置く。
+    ImVec2 m_graphAddNodeAt{};
     // ビューポートに出すノードを決める。出力ノードや無効な ID は
     // 「出力ノードのチェーン」（0）に落とす。
     // outputPin は**どの出力を見るか**。0 なら最初の出力（レイヤーなら Result）。
@@ -237,8 +241,6 @@ private:
     size_t HiddenOutputCount();
     // 地形の面と雲を隠すか、地形の面をリファレンス表示にするかをレンダラへ渡す（Output / Cloud Output のフラグ）。
     void SyncOutputDisplay();
-    void DrawMaterialLibraryPanel();
-    void DrawModelLibraryPanel();
     void DrawModelPreviewWindow();
     void ProcessModelWork();
     void PrepareModelScatters();
@@ -314,9 +316,6 @@ private:
     void DrawModelScatters(ID3D12GraphicsCommandList* commandList, const DirectX::XMFLOAT4X4& viewProjection, bool shadow);
     void RenderModelPreviews(ID3D12GraphicsCommandList* commandList);
 
-    // 一覧の右クリックメニュー（追加 / 複製 / 削除 / 読み込み / 書き出し）。
-    // target が kNoMaterialAsset なら、対象の要る項目は出さない。
-    void DrawMaterialContextMenu(compositor::MaterialAssetId target);
     // マテリアル 1 つのプロパティ（基本 + マップ）。変更があれば真を返す。
     // **置き場所はプレビューの窓だけ**（一覧はサムネイルだけを出す）。
     bool DrawLayerMaterialProperties(compositor::MaterialAsset& asset);
@@ -332,7 +331,6 @@ private:
     // 天球プレビューの窓（大きい絵 + 設定）。
     // 一覧のサムネイルをダブルクリックするか、ウィンドウメニューから開く。
     void DrawSkyPreviewWindow();
-    void DrawTextureLibraryPanel();
     void DrawAssetBrowser();
     void RefreshAssetBrowser();
     void ProcessAssetWork();
@@ -379,11 +377,6 @@ private:
     // 日時モードなら観測地と日時から太陽・月・星空の回転を計算して設定へ書き込む。
     void ApplyCelestialSettings();
     void ResumeSceneSwitch();
-    // テクスチャ一覧の右クリックメニュー（読み込む / 削除）。
-    // target が kNoTexture なら、対象の要る項目は出さない。
-    void DrawTextureContextMenu(compositor::TextureId target);
-    // 削除の確認モーダルを開く。参照が無くても必ず通す。
-    void RequestTextureRemove(compositor::TextureId id);
     // --- リンク切れの解消 ---------------------------------------------------
     // ファイルを選ぶダイアログを出し、選ばれたら再リンクを予約する
     // （読み込みは GPU 待機を伴うのでフレームの外で行う）。
@@ -492,12 +485,8 @@ private:
     void ResetProject();
     // ウィンドウタイトルを「プロジェクト名 - Terrain Graph」に揃える。
     void UpdateWindowTitle();
-    // このテクスチャを使っている場所の一覧（削除の確認に出す）。
-    std::vector<std::string> CollectTextureUsers(compositor::TextureId id) const;
     // 参照している箇所の数だけを数える。毎フレーム呼ぶので文字列は作らない。
     size_t CountTextureUsers(compositor::TextureId id) const;
-    // 参照が残っているテクスチャを消そうとしたときの確認。
-    void DrawTextureRemoveModal();
     // --- アンドゥ -----------------------------------------------------------
     // 対象はグラフ（ノード / リンク / 設定 / 位置）とマテリアル。
     // テクスチャの読み込みと削除、ペイントの筆致、プレビュー設定は含めない
@@ -710,6 +699,11 @@ private:
     };
     std::unordered_map<graph::GraphId, std::unique_ptr<SnowPlumeSlot>> m_snowPlumeMasks;
     std::vector<graph::CompiledSnowPlume> m_snowPlumes;
+    // 雲と雪煙のコンパイル結果は、グラフの版（Revision）が変わったときだけ求め直す。
+    // グラフを丸ごと入れ替えたら（読み込み・リセット・アンドゥ）版が偶然一致し得るので 0 へ戻す。
+    graph::CompiledCloud m_compiledCloud;
+    uint64_t m_compiledCloudRevision = 0;
+    uint64_t m_snowPlumesRevision = 0;
     // マスクの再コンパイルと評価器の作成。作成に失敗したら偽。
     bool PrepareCloudMask(CloudMaskSlot& slot, graph::GraphId maskNode, graph::GraphId maskPin);
     uint64_t m_compiledGraphRevision = 0;
@@ -852,7 +846,6 @@ private:
     bool m_modelShowImpostor = false;  // モデルプレビューを焼いた画像で描く（確認用、保存しない）
     bool m_showModelPreview = false;
     bool m_modelPreviewVisible = false;
-    bool m_focusModelLibrary = false;
     std::vector<std::filesystem::path> m_pendingModels;
     std::unordered_map<uint64_t, std::unique_ptr<renderer::ModelPreview>> m_modelPreviews;
     std::unordered_set<uint64_t> m_renderedModelThumbnails;
@@ -1002,11 +995,6 @@ private:
     // 拡大プレビューで出すチャンネル。0 = RGB、1..4 = R / G / B / A。
     // ORD のように 1 枚へ複数のマップを詰めたテクスチャの中身を確かめるためのもの。
     int m_previewChannel = 0;
-    // 読み込んだ直後のテクスチャを一覧に見せるための要求。
-    // 一覧はスクロールするので、追加しただけでは枠外に入って気づけない。
-    bool m_scrollToSelectedTexture = false;
-    // 追加・複製した直後のマテリアルを一覧の枠内へ送る要求。上と同じ理由。
-    bool m_scrollToSelectedMaterial = false;
 
     // ステータスバーに出す直近の通知。ログから受け取る。
     // 時刻は ImGui に依存させない（ログはコンテキストが無い時期にも来る）。
@@ -1130,7 +1118,6 @@ private:
     // 「天球を作成」で足した天球だけを残す要求。破棄は GPU 待機を伴うのでフレームの外で。
     bool m_pendingSkyKeepOnly = false;
     bool m_assetRefresh = true;
-    char m_assetSearch[128]{};
     std::filesystem::path m_deferredRoot;
     std::filesystem::path m_deferredScene;
     bool m_deferredNew = false;
@@ -1238,7 +1225,6 @@ private:
     std::filesystem::path m_pendingMaterialExport;
     std::filesystem::path m_pendingMaterialImport;
     compositor::MaterialAssetId m_pendingExportMaterial = compositor::kNoMaterialAsset;
-    compositor::TextureId m_pendingTextureRemove = compositor::kNoTexture;
     // 繋ぎ直しの予約（対象のテクスチャと新しいパス）。ダイアログで選んだものと、
     // フォルダ指定で見つけたものの両方がここへ積まれる。
     struct TextureRelink {
@@ -1248,10 +1234,6 @@ private:
     std::vector<TextureRelink> m_pendingTextureRelinks;
     // 削除要求のあったマテリアル。一覧の描画中に消すと、描画側が erase 済みの
     // 要素を読んでしまうため、フレームの外で処理する。
-    compositor::MaterialAssetId m_pendingMaterialRemove = compositor::kNoMaterialAsset;
-    // 確認待ちのテクスチャ。参照が残っているときだけ入る。
-    compositor::TextureId m_textureRemoveCandidate = compositor::kNoTexture;
-    std::vector<std::string> m_textureRemoveUsers;
     bool m_pendingProjectNew = false;
 
     // --- アンドゥの状態 -----------------------------------------------------

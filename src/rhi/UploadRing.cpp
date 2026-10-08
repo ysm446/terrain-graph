@@ -53,8 +53,7 @@ UploadAllocation UploadRing::Allocate(uint64_t size, uint64_t alignment) {
     if (m_mapped == nullptr || size == 0) {
         return result;
     }
-    if (alignment == 0 || (alignment & (alignment - 1)) != 0 ||
-        alignment > D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT) {
+    if (!IsPowerOfTwo(alignment) || alignment > D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT) {
         // 0 や非 2 冪を通すと AlignUp が壊れ、無言で確保が重なり合う。
         TG_LOG_ERROR("アップロードリングのアライメント指定が不正です (%llu)",
                      static_cast<unsigned long long>(alignment));

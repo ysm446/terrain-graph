@@ -146,7 +146,8 @@ void Application::DrawExportWindow() {
         ImGui::EndDisabled();
         ui::EndPropertyTable();
     }
-    ui::HintText(PreviewFileNames(settings).c_str());
+    // 書き出し名はユーザーの文字列なので、書式として渡さない。
+    ui::HintText("%s", PreviewFileNames(settings).c_str());
 
     ImGui::Spacing();
     const bool ready = !settings.directory.empty() && !settings.baseName.empty() &&

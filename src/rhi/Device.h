@@ -1,5 +1,4 @@
 #pragma once
-#include <string>
 
 #include "rhi/Common.h"
 #include "rhi/DeletionQueue.h"
@@ -9,6 +8,8 @@
 
 #include <filesystem>
 #include <functional>
+#include <string>
+#include <vector>
 
 namespace tg::rhi {
 
@@ -63,6 +64,8 @@ public:
     // フレームの外で走る仕事（合成の評価を流すコンピュートキュー）の完了条件を登録する。
     // 以降の DeferRelease はこの完了も待ち、WaitForGpu もこれを含めて待つ。
     // 仕事を投入するたびに、その完了値で呼び直すこと。
+    // フェンスごとに覚えるので、複数のキュー（ビューポートの合成と Road Path の各スロット）が
+    // 同時に走っていても、それぞれの完了まで解放を待てる。
     void SetAuxiliaryFence(ID3D12Fence* fence, uint64_t value);
 
     // フレームのフェンスと、いま記録中のフレームが EndFrame で立てる値。
@@ -89,8 +92,6 @@ public:
     ID3D12Device* GetDevice() const { return m_device.Get(); }
     ID3D12CommandQueue* GetCommandQueue() const { return m_commandQueue.Get(); }
     DescriptorHeap& SrvHeap() { return m_srvHeap; }
-    DescriptorHeap& RtvHeap() { return m_rtvHeap; }
-    DescriptorHeap& DsvHeap() { return m_dsvHeap; }
     ResourceAllocator& Allocator() { return m_allocator; }
     UploadRing& Upload() { return m_uploadRing; }
 
@@ -145,6 +146,8 @@ private:
     void FinishCapture(bool success);
     void ReleaseBackBuffers();
     void MoveToNextFrame();
+    // 補助フェンスのうち完了したものを忘れる。
+    void PruneAuxiliaryFences();
 
     ComPtr<IDXGIFactory6> m_factory;
     ComPtr<IDXGIAdapter4> m_adapter;
@@ -160,6 +163,8 @@ private:
     ComPtr<ID3D12GraphicsCommandList> m_commandList;
     ComPtr<ID3D12QueryHeap> m_frameTimestampHeap;
     GpuBuffer m_frameTimestampReadback;
+    // READBACK ヒープは Map したままにできるので、作ったときに一度だけ Map する。
+    const uint64_t* m_frameTimestampMapped = nullptr;
     uint64_t m_timestampFrequency = 0;
     bool m_frameTimestampPending[kFrameCount] = {};
     double m_gpuFrameMilliseconds = -1.0;
@@ -179,8 +184,11 @@ private:
     ComPtr<ID3D12Fence> m_fence;
     HANDLE m_fenceEvent = nullptr;
     // 補助フェンス。フレームの外で走る仕事の完了条件（WaitForGpu が併せて待つ）。
-    ComPtr<ID3D12Fence> m_auxiliaryFence;
-    uint64_t m_auxiliaryFenceValue = 0;
+    struct AuxiliaryFence {
+        ComPtr<ID3D12Fence> fence;
+        uint64_t value = 0;
+    };
+    std::vector<AuxiliaryFence> m_auxiliaryFences;
     // 次に Signal する値。0 は「まだ一度も投入していない」を表すため 1 から始める。
     uint64_t m_nextFenceValue = 1;
     // 各フレームスロットが最後に投入した Signal 値。0 なら未使用。

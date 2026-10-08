@@ -11,7 +11,7 @@ void CsFlatten(uint3 id : SV_DispatchThreadID) {
     uint n=g_flat.indices.z;
     if(any(id.xy>=n)) return;
     RWTexture2D<float> h=ResourceDescriptorHeap[g_flat.indices.x];
-    float2 p=float2(id.xy)*g_flat.scale.x/n;
+    float2 p=(float2(id.xy)+0.5)*g_flat.scale.x/n; // テクセル中心（マスクの参照と揃え、左右の辺で対称にする）
     float2 distance=max(g_flat.scale.xx,g_flat.shape.xx);
     if(g_flat.indices.w&1) distance.x=min(distance.x,p.x);
     if(g_flat.indices.w&2) distance.x=min(distance.x,g_flat.scale.x-p.x);

@@ -369,6 +369,14 @@ void Application::RequestGraphNodePlacement(bool navigate) {
     for (const graph::Node& node : m_graph.Nodes()) {
         m_graphNodesToPlace.push_back(node.id);
     }
+    // ID ごとの控えを捨てる。ID は振り直されるので、消えたノードや枠の控えが新しいものに付かないように。
+    // 枠の同期を捨てると、次の描画でモデルの位置と大きさがエディタへ流し込み直される。
+    std::erase_if(m_graphNodeSizes, [&](const auto& entry) { return m_graph.FindNode(entry.first) == nullptr; });
+    m_graphGroupSynced.clear();
+    m_graphCollapsedSynced.clear();
+    // グラフが丸ごと入れ替わったときは版が偶然一致し得るので、版で控えたコンパイル結果も捨てる。
+    m_compiledCloudRevision = 0;
+    m_snowPlumesRevision = 0;
     // 全体の流し込みの後だけ画面へ収め直す。1 個の追加やアンドゥでは
     // 視点を動かさない（そのたびに視点が飛ぶと編集にならない）。
     if (navigate) {
@@ -1413,10 +1421,11 @@ void Application::DrawGraphGroups() {
     std::erase_if(m_graphGroupSynced, [&](const auto& entry) {
         return std::find(alive.begin(), alive.end(), entry.first) == alive.end();
     });
-    // 動かし終えたら未保存にする（ドラッグ中の毎フレームは積まない）。
+    // 動かし終えたら未保存の判定へ映す（ドラッグ中の毎フレームは見ない）。
+    // ノードのドラッグと同じく段は積まない（m_committed を控え直していないので、積むと動かす前の枠が段になる）。
     if (m_graphGroupMoved && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
         m_graphGroupMoved = false;
-        MarkDocumentChanged(false);
+        RefreshSceneDirty();
     }
 }
 
@@ -1874,7 +1883,6 @@ void Application::DrawGraphEditor() {
         m_graphNavigateCountdown = remembered ? 0 : 3;
     }
 
-    static ImVec2 addNodePosition(0.0f, 0.0f);
     const ImVec2 canvasMin = ImGui::GetCursorScreenPos();
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const ImVec2 canvasMax(canvasMin.x + avail.x, canvasMin.y + avail.y);
@@ -1968,16 +1976,18 @@ void Application::DrawGraphEditor() {
     }
 
     for (const graph::Link& link : m_graph.Links()) {
-        const auto* pin = m_graph.FindPin(link.startPin);
-        const auto* owner = pin ? m_graph.FindNode(pin->nodeId) : nullptr;
+        // ピンの検索は線ごとに 1 回ずつ（毎フレーム回るので重ねて引かない）。
+        const graph::Pin* startPin = m_graph.FindPin(link.startPin);
+        const graph::Pin* endPin = m_graph.FindPin(link.endPin);
+        const auto* owner = startPin ? m_graph.FindNode(startPin->nodeId) : nullptr;
         if (m_editComponent >= 0 && (!owner || owner->component != m_editComponent)) continue;
         // 畳んだグループの中で閉じている線は描かない（両端のピンがどこにも出ていない）。
-        if (const auto* endPin = m_graph.FindPin(link.endPin); owner != nullptr && endPin != nullptr) {
+        if (owner != nullptr && endPin != nullptr) {
             const auto a = m_graphHiddenNodes.find(owner->id), b = m_graphHiddenNodes.find(endPin->nodeId);
             if (a != m_graphHiddenNodes.end() && b != m_graphHiddenNodes.end() && a->second == b->second) continue;
         }
         ImVec4 color(0.52f, 0.60f, 0.55f, 1.0f);
-        if (const graph::Pin* startPin = m_graph.FindPin(link.startPin)) {
+        if (startPin != nullptr) {
             color = PinTypeColor(startPin->valueType);
         }
         ed::Link(ed::LinkId(link.id), ed::PinId(link.startPin), ed::PinId(link.endPin), color,
@@ -2038,11 +2048,15 @@ void Application::DrawGraphEditor() {
                         if (group.id == groupId && group.collapsed) ToggleGraphGroupCollapsed(groupId);
                     if (m_graph.RemoveGroup(groupId)) {
                         if (m_selectedGraphGroup == groupId) m_selectedGraphGroup = 0;
+                        // 枠の ID は振り直されるので、控えを残さない。
+                        m_graphGroupSynced.erase(groupId);
+                        m_graphCollapsedSynced.erase(groupId);
                         MarkDocumentChanged(false);
                     }
                     continue;
                 }
                 if (m_graph.DeleteNode(nodeId)) {
+                    m_graphNodeSizes.erase(nodeId);
                     MarkDocumentChanged();
                     if (m_previewGraphNode == nodeId) {
                         m_previewGraphNode = 0;
@@ -2062,15 +2076,15 @@ void Application::DrawGraphEditor() {
         // エディタのフレーム内では io.MousePos が**キャンバス座標に差し替えられている**
         // （imgui_canvas が Begin で変換する）。そのまま使う。ScreenToCanvas を
         // 重ねると二重変換になり、ノードが視界の外へ飛ぶ（実際に踏んだ）。
-        addNodePosition = ImGui::GetMousePos();
+        m_graphAddNodeAt = ImGui::GetMousePos();
         // 念のため現在の視界へ収める。視界の外に生まれると見失う。
         // 深いズームでは上限が下限を割り得るので、max で順序を保証する。
         const ImVec2 viewMin = ed::ScreenToCanvas(canvasMin);
         const ImVec2 viewMax = ed::ScreenToCanvas(canvasMax);
         const float loX = viewMin.x + 16.0f;
         const float loY = viewMin.y + 16.0f;
-        addNodePosition.x = std::clamp(addNodePosition.x, loX, std::max(loX, viewMax.x - 240.0f));
-        addNodePosition.y = std::clamp(addNodePosition.y, loY, std::max(loY, viewMax.y - 120.0f));
+        m_graphAddNodeAt.x = std::clamp(m_graphAddNodeAt.x, loX, std::max(loX, viewMax.x - 240.0f));
+        m_graphAddNodeAt.y = std::clamp(m_graphAddNodeAt.y, loY, std::max(loY, viewMax.y - 120.0f));
         ed::Suspend();
         ImGui::OpenPopup("addGraphNode");
         ed::Resume();
@@ -2149,9 +2163,11 @@ void Application::DrawGraphEditor() {
                 name != "terrain" && name != "windField") return false;
             return true;
         };
+        // Cloud Output は 1 つだけ。コンパイルは項目ごとではなくポップアップごとに 1 回。
+        const bool cloudOutputExists = m_graph.CompileCloud().hasOutput;
         const auto addNodeMenuItem = [&](graph::NodeKind kind, const char* label) {
             if (!offered(kind)) return;
-            const bool available = kind != graph::NodeKind::CloudOutput || !m_graph.CompileCloud().hasOutput;
+            const bool available = kind != graph::NodeKind::CloudOutput || !cloudOutputExists;
             if (!ImGui::MenuItem(label, nullptr, false, available)) {
                 return;
             }
@@ -2172,8 +2188,8 @@ void Application::DrawGraphEditor() {
                     " " + std::to_string(m_graph.Nodes().size());
             }
             node->component = std::max(0, m_editComponent);
-            node->posX = addNodePosition.x;
-            node->posY = addNodePosition.y;
+            node->posX = m_graphAddNodeAt.x;
+            node->posY = m_graphAddNodeAt.y;
             node->positionValid = true;
             m_graphNodesToPlace.push_back(nodeId);
             m_selectedGraphNode = nodeId;
@@ -2514,7 +2530,8 @@ void Application::DrawSceneHierarchy() {
     const auto eye = [&](const char* id, bool* value, const char* tooltip) {
         const float rowY = ImGui::GetCursorPosY();
         ImGui::SetCursorPosY(rowY + (ImGui::GetTextLineHeight() - eyeSize) * 0.5f);
-        if (ui::EyeToggle(id, value, eyeSize)) MarkDocumentChanged(false);
+        // 表示フラグはアンドゥの写しに入らないので段は積まず、未保存の判定だけ映す。
+        if (ui::EyeToggle(id, value, eyeSize)) RefreshSceneDirty();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", tooltip);
         ImGui::SameLine();
         ImGui::SetCursorPosY(rowY);
@@ -3448,9 +3465,9 @@ void Application::DrawNodeProperties(graph::Node* selected) {
             changed |= ui::PropertyFloat("つなぎの滑らかさ", &generate->smoothnessRatio, 0.0f, 3.0f, defaults.smoothnessRatio, "球の半径（サイズ×球の間隔）に対する比率。実際の値は下に表示します。球のくびれは最大で実際の値の1/4埋まります。", "%.2f");
             const auto generated=m_graph.CompileCloudShapes(selected->id);
             char text[48]; std::snprintf(text,sizeof(text),"%.0f m",generated.smoothness);
-            ui::PropertyValue("実際の滑らかさ",text);
+            ui::PropertyValue("実際の滑らかさ", "%s", text);
             std::snprintf(text,sizeof(text),"%zu 個",generated.primitives.size());
-            ui::PropertyValue("合計形状数",text);
+            ui::PropertyValue("合計形状数", "%s", text);
             changed |= ui::PropertyBool("配置ガイド", &generate->showGuides, defaults.showGuides, "選択中に元形状の球を大円で表示します。多数の場合は表示のみ間引きます。");
             ui::EndPropertyTable();
             if (generated.shapeOverflow) ui::HintText("作業メモリ予算を超えました。球の間隔を大きくするか二次形状の繰り返しを減らしてください。");
@@ -3484,10 +3501,10 @@ void Application::DrawNodeProperties(graph::Node* selected) {
             if (generated.mapGuide) {
                 char text[96];
                 std::snprintf(text,sizeof(text),"%u / %u",generated.mapGuide->edgeCount,generated.mapGuide->columnCount);
-                ui::PropertyValue("接続線 / 成長ライン",text);
+                ui::PropertyValue("接続線 / 成長ライン", "%s", text);
             }
             char text[48]; std::snprintf(text,sizeof(text),"%zu 個",generated.primitives.size());
-            ui::PropertyValue("合計形状数",text);
+            ui::PropertyValue("合計形状数", "%s", text);
             ui::EndPropertyTable();
             if (generated.shapeOverflow) ui::HintText("作業メモリ予算を超えました。ポイント数・接続距離・成長ライン密度を下げてください。");
         }
@@ -3568,8 +3585,9 @@ void Application::DrawNodeProperties(graph::Node* selected) {
         const auto compiled = m_graph.CompileCloud();
         if (compiled.shapeOverflow) ui::HintText("形状生成の作業メモリ予算を超えています。球の数や配置密度を下げてください。");
         if (!m_renderer.AtmosphericMode() && ui::Button("大気散乱へ切替", ui::kWideButtonWidth)) {
+            // ライティングの方式はアンドゥの写しに入らないので段は積まず、未保存の判定だけ映す。
             m_renderer.AtmosphericMode() = true;
-            MarkDocumentChanged(false);
+            RefreshSceneDirty();
         }
         if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
     } else if (auto* cloud = std::get_if<graph::CloudNodeSettings>(&selected->settings)) {
@@ -3671,8 +3689,9 @@ void Application::DrawNodeProperties(graph::Node* selected) {
         }
         ui::HintText("Volume をCloud Output へ接続して表示。太陽と照明はライティング設定を共有します");
         if (!m_renderer.AtmosphericMode() && ui::Button("大気散乱へ切替", ui::kWideButtonWidth)) {
+            // ライティングの方式はアンドゥの写しに入らないので段は積まず、未保存の判定だけ映す。
             m_renderer.AtmosphericMode() = true;
-            MarkDocumentChanged(false);
+            RefreshSceneDirty();
         }
         if (changed) {
             m_graph.MarkCloudDirty();
@@ -3911,15 +3930,18 @@ void Application::DrawNodeProperties(graph::Node* selected) {
     } else if (selected->kind == graph::NodeKind::Terrain) {
         ui::HintText("地形グラフの Output に繋いだ結果を Result に出します。Mask Slope / Mask Height などの "
                      "Base に繋ぐと、雲グラフのマスクを実際の地形から作れます");
-        if (m_graph.CompileLayers().layers.empty() || m_graph.FindChainScale(0) == nullptr) {
+        // CompileLayers は何も繋がっていなくてもベースのレイヤーを 1 つ出す（空にはならない）ので、
+        // 実寸を持つチェーンの根があるかで判定する。
+        if (m_graph.FindChainScale(0) == nullptr) {
             ui::HintText("地形グラフの Output に何も繋がっていないので、Result は空になる");
         }
     } else if (selected->kind == graph::NodeKind::CloudOutput) {
         ui::HintText("Cloud Noise の Volume を接続して表示します。Cloud Animation を挟むと移動できます。未接続なら雲は表示しません");
         ui::HintText("保存済みの Cloud / Cloud Layer (Legacy) も引き続き表示できます");
         if (!m_renderer.AtmosphericMode() && ui::Button("大気散乱へ切替", ui::kWideButtonWidth)) {
+            // ライティングの方式はアンドゥの写しに入らないので段は積まず、未保存の判定だけ映す（他の切替と同じ）。
             m_renderer.AtmosphericMode() = true; m_pendingWorkEnvironmentSave = true;
-            MarkDocumentChanged();
+            RefreshSceneDirty();
         }
     } else if (std::get_if<graph::PathNodeSettings>(&selected->settings) != nullptr) {
         if (DrawPathSettings(*selected)) {

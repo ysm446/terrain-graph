@@ -161,13 +161,6 @@ bool ConnectPresetNodes(PresetGraph& graph, uint32_t source, uint32_t target, ui
     if (!ValidatePresetGraph(candidate, error)) return false;
     graph = std::move(candidate); return true;
 }
-bool DeletePresetNode(PresetGraph& graph, uint32_t id) {
-    const auto* node = Find(graph, id);
-    if (!node || node->kind == PresetNodeKind::Output) return false;
-    std::erase_if(graph.nodes, [id](const auto& n) { return n.id == id; });
-    for (auto& other : graph.nodes) for (auto& input : other.inputs) if (input == id) input = 0;
-    return true;
-}
 bool AppendPresetLayer(PresetGraph& graph, std::string& error) {
     auto candidate = graph;
     if (!ValidatePresetGraph(candidate, error)) return false;

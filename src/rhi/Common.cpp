@@ -13,4 +13,18 @@ bool CheckHr(HRESULT hr, const char* expr, const char* file, int line) {
     return false;
 }
 
+bool WaitForFence(ID3D12Fence* fence, uint64_t value, HANDLE event) {
+    if (fence == nullptr || event == nullptr) {
+        return false;
+    }
+    if (fence->GetCompletedValue() >= value) {
+        return true;
+    }
+    if (!TG_CHECK_HR(fence->SetEventOnCompletion(value, event))) {
+        return false;
+    }
+    ::WaitForSingleObjectEx(event, INFINITE, FALSE);
+    return true;
+}
+
 }  // namespace tg::rhi

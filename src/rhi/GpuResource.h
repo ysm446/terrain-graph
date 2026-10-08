@@ -62,6 +62,32 @@ struct GpuTexture {
     uint32_t SubresourceIndex(uint32_t mip, uint32_t slice) const {
         return mip + slice * mipLevels;
     }
+
+    // 持っているディスクリプタを全部 fn(heapKind, handle) に渡す。
+    // uav は mipUavs[0] と同じハンドルなので渡さない（二重解放を防ぐ）。
+    // 即時解放（ResourceAllocator）と遅延解放（Device）の両方がこれを使う。
+    enum class DescriptorHeapKind { Srv, Rtv, Dsv };
+    template <typename Fn>
+    void ForEachDescriptor(Fn&& fn) const {
+        fn(DescriptorHeapKind::Srv, srv);
+        for (const DescriptorHandle& handle : mipUavs) {
+            fn(DescriptorHeapKind::Srv, handle);
+        }
+        for (const DescriptorHandle& handle : mipSrvs) {
+            fn(DescriptorHeapKind::Srv, handle);
+        }
+        fn(DescriptorHeapKind::Rtv, rtv);
+        fn(DescriptorHeapKind::Dsv, dsv);
+    }
+    // ディスクリプタのハンドルを全部空にする（ヒープへは返さない）。
+    void ClearDescriptors() {
+        srv = DescriptorHandle{};
+        uav = DescriptorHandle{};
+        rtv = DescriptorHandle{};
+        dsv = DescriptorHandle{};
+        mipUavs.clear();
+        mipSrvs.clear();
+    }
 };
 
 struct TextureDesc {
@@ -115,6 +141,19 @@ void TransitionIfNeeded(ID3D12GraphicsCommandList* commandList, GpuBuffer& buffe
 void TransitionMip(ID3D12GraphicsCommandList* commandList, const GpuTexture& texture,
                    uint32_t mip, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after);
 
+// UAV バリア。同じリソースへの連続する書き込み（または書き込み→読み出し）の間に入れる。
+// resource が null なら全 UAV が対象。
+inline void UavBarrier(ID3D12GraphicsCommandList* commandList, ID3D12Resource* resource = nullptr) {
+    const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(resource);
+    commandList->ResourceBarrier(1, &barrier);
+}
+inline void UavBarrier(ID3D12GraphicsCommandList* commandList, const GpuTexture& texture) {
+    UavBarrier(commandList, texture.resource.Get());
+}
+inline void UavBarrier(ID3D12GraphicsCommandList* commandList, const GpuBuffer& buffer) {
+    UavBarrier(commandList, buffer.resource.Get());
+}
+
 // D3D12MemoryAllocator を包み、リソース生成とディスクリプタ確保をまとめて行う。
 class ResourceAllocator {
 public:
@@ -152,6 +191,11 @@ public:
     D3D12MA::Allocator* Raw() const { return m_allocator.Get(); }
 
 private:
+    // バッファ生成の共通部。ヒープ種別と初期状態、フラグだけが違う。
+    bool CreateBuffer(D3D12_HEAP_TYPE heapType, uint64_t sizeInBytes,
+                      D3D12_RESOURCE_STATES initialState, D3D12_RESOURCE_FLAGS flags,
+                      const wchar_t* debugName, GpuBuffer& outBuffer);
+
     ComPtr<D3D12MA::Allocator> m_allocator;
     ID3D12Device* m_device = nullptr;
     DescriptorHeap* m_srvHeap = nullptr;

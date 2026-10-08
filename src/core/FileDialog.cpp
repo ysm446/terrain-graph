@@ -193,6 +193,17 @@ std::filesystem::path ShowSaveFileDialog(const wchar_t* title,
         dialog->SetDefaultExtension(defaultExtension);
     }
     if (!initialPath.empty()) {
+        // フォルダ選択と同じく、親フォルダがあればそこから開く。名前だけ入れても
+        // 前回のフォルダが開くので、別のプロジェクトの隣に保存しかねない。
+        const std::filesystem::path parent = initialPath.parent_path();
+        std::error_code error;
+        if (!parent.empty() && std::filesystem::is_directory(parent, error)) {
+            ComPtr<IShellItem> folder;
+            if (SUCCEEDED(::SHCreateItemFromParsingName(parent.c_str(), nullptr,
+                                                        IID_PPV_ARGS(&folder)))) {
+                dialog->SetFolder(folder.Get());
+            }
+        }
         dialog->SetFileName(initialPath.filename().wstring().c_str());
     }
 

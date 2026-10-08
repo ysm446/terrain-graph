@@ -394,6 +394,10 @@ float3 ComputeLayerNormal(LayerUv layerUv, float2 texelSize)
         {
             tangentNormal.y = -tangentNormal.y;
         }
+        // 「起伏の強さ」（heightGain）はハイトでは SampleLayerHeight の中で掛かる。
+        // 法線マップにも同じ倍率を傾き（xy = tan(傾き)）へ掛けないと、
+        // つまみを下げたときに形だけが平らになって陰影が元の強さのまま残る。
+        tangentNormal.xy *= g_layer.heightNoise.y;
         normal = normalize(tangentNormal);
     }
     else if (g_layer.blendParams.y <= 0.0f)
@@ -483,9 +487,13 @@ SurfaceSample EvaluateSurface(LayerUv layerUv, float2 outputUv, float2 texelSize
                                     uvPerOutputTexel);
     }
 
-    float layerHeight = SampleLayerHeight(uv, uvPerOutputTexel);
-    float3 layerNormal = ComputeLayerNormal(layerUv, texelSize);
-    if (g_layer.layerMaterial.count > 0) {
+    float layerHeight;
+    float3 layerNormal;
+    if (g_layer.layerMaterial.count == 0) {
+        // 層マテリアルが無いときだけ自前のハイトと法線を求める（あるときは下で置き換わるので評価しない）。
+        layerHeight = SampleLayerHeight(uv, uvPerOutputTexel);
+        layerNormal = ComputeLayerNormal(layerUv, texelSize);
+    } else {
         const float sizeMeters = max(g_layer.pathUvParams.w, 0.001f);
         // UV一周を1mとしてSurfaceのスケールを掛ける。worldUvは配置側の拡縮に依存しない。
         const LayerMaterialSample material = EvaluateLayerMaterial(g_layer.layerMaterial, uv, (outputUv - 0.5f) * sizeMeters, float2(uvPerOutputTexel, texelSize.x * sizeMeters), layerUv.path ? layerUv.uvPerMeter : g_layer.blendParams.zz / sizeMeters, layerUv.xAxis, layerUv.yAxis);
@@ -524,14 +532,17 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     // 出力テクセル 1 つが張る UV 幅。テクスチャのミップ選択に使う。
     const float uvPerOutputTexel = layerUv.uvPerOutputTexel;
 
-    SurfaceSample sample = EvaluateSurface(layerUv, outputUv, texelSize);
-    float layerMask = SampleLayerMask(uv, outputUv, outputUv, uvPerOutputTexel) * layerUv.coverage;
-    if (layerUv.path) {
+    SurfaceSample sample;
+    float layerMask = 0.0f;
+    if (!layerUv.path) {
+        sample = EvaluateSurface(layerUv, outputUv, texelSize);
+        layerMask = SampleLayerMask(uv, outputUv, outputUv, uvPerOutputTexel) * layerUv.coverage;
+    } else {
         // 各鎖は自身のUVで評価する。覆いを足して濃くせず、最大値を帯全体の覆いに使う。
+        // 帯全体の UV での評価は鎖に置き換わるので、先にはしない。
         ByteAddressBuffer segments = ResourceDescriptorHeap[g_layer.pathUvIndices.x];
         const float sizeMeters = max(g_layer.pathUvParams.w, 1e-3f);
         float total = 0;
-        layerMask = 0;
         uint begin = 0;
         [loop] while (begin < g_layer.pathUvIndices.y) {
             const uint end = PathStrandEnd(segments, begin, g_layer.pathUvIndices.y, sizeMeters);
@@ -539,15 +550,24 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
             const float influence = strandUv.coverage * SampleLayerMask(strandUv.uv, outputUv, outputUv, strandUv.uvPerOutputTexel);
             if (influence > 0) {
                 const SurfaceSample strand = EvaluateSurface(strandUv, outputUv, texelSize);
-                const float weight = influence / (total + influence);
-                sample.color = lerp(sample.color, strand.color, weight);
-                sample.surface = lerp(sample.surface, strand.surface, weight);
-                sample.height = lerp(sample.height, strand.height, weight);
-                sample.normal = ReorientNormal(FlattenNormal(sample.normal, 1 - weight), FlattenNormal(strand.normal, weight));
+                if (total <= 0) {
+                    // 最初に覆う鎖はそのまま採る（重み 1 の lerp と同じ）。
+                    sample = strand;
+                } else {
+                    const float weight = influence / (total + influence);
+                    sample.color = lerp(sample.color, strand.color, weight);
+                    sample.surface = lerp(sample.surface, strand.surface, weight);
+                    sample.height = lerp(sample.height, strand.height, weight);
+                    sample.normal = ReorientNormal(FlattenNormal(sample.normal, 1 - weight), FlattenNormal(strand.normal, weight));
+                }
                 total += influence;
                 layerMask = max(layerMask, influence);
             }
             begin = end;
+        }
+        if (total <= 0) {
+            // どの鎖にも覆われないテクセル。従来どおり帯全体の UV で評価する（マスクは 0 なので下地が残る）。
+            sample = EvaluateSurface(layerUv, outputUv, texelSize);
         }
     }
     float3 layerBaseColor = sample.color;
@@ -656,7 +676,10 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
         const float3 destination = isBaseLayer ? layerSurface : destinationSurface.rgb;
         // アルファは **1 − 水面の被覆**（地形の描画が波を重ねる範囲）。既定の 1 が「水なし」なので、
         // アルファを 1 で書くほかのパスは水を消す側に倒れる。Liquid は 0 へ、上に重なるほかのレイヤーは 1 へ寄せる。
-        const float dry = isBaseLayer ? 1.0f : lerp(destinationSurface.a, isLiquid ? 0.0f : 1.0f, weight);
+        // シェイプは高さを足すだけで水チャンネルにも触らないので、アルファもそのまま残す（水を消さない）。
+        const float dry = isBaseLayer ? 1.0f
+                        : (isShape ? destinationSurface.a
+                                   : lerp(destinationSurface.a, isLiquid ? 0.0f : 1.0f, weight));
         surfaceTarget[texel] = float4(lerp(destination, layerSurface, weight), dry);
     }
 

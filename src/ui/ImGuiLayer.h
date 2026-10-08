@@ -55,7 +55,6 @@ private:
     // 作り直すので、**呼んだあとは必ずここを通す**こと。
     void ApplyScaleToStyle();
 
-    rhi::Device* m_device = nullptr;
     float m_uiScale = 1.0f;
     float m_fontSize = ui::kDefaultFontSize;
     float m_monitorScale = 1.0f;

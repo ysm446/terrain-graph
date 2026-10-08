@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include "core/Log.h"
+#include <array>
 #include "renderer/InstanceCulling.h"
 namespace tg::renderer {
 namespace {
@@ -224,11 +224,6 @@ bool ModelPreview::CullInstances(rhi::Device& device, rhi::PipelineCache& cache,
         device.DeferRelease(m_indirectArguments);
         if (!device.Allocator().CreateStructuredBuffer(argumentCount,sizeof(D3D12_DRAW_INDEXED_ARGUMENTS),L"InstanceArguments",m_indirectArguments,true)) return false;
     }
-    const auto transition = [&](rhi::GpuBuffer& buffer, D3D12_RESOURCE_STATES state) {
-        if (buffer.state == state) return;
-        const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(buffer.resource.Get(),buffer.state,state);
-        list->ResourceBarrier(1,&barrier); buffer.state = state;
-    };
     const auto upload = device.Upload().Allocate(argumentBytes,16);
     if (!upload.IsValid()) return false;
     auto* arguments = static_cast<D3D12_DRAW_INDEXED_ARGUMENTS*>(upload.cpu);
@@ -286,14 +281,14 @@ bool ModelPreview::CullInstances(rhi::Device& device, rhi::PipelineCache& cache,
         const auto zeros = device.Upload().Allocate(kStatSlots*sizeof(uint32_t),16);
         if (!zeros.IsValid()) { PIXEndEvent(list); return false; }
         std::memset(zeros.cpu,0,kStatSlots*sizeof(uint32_t));
-        transition(m_statCounters,D3D12_RESOURCE_STATE_COPY_DEST);
+        rhi::TransitionIfNeeded(list, m_statCounters, D3D12_RESOURCE_STATE_COPY_DEST);
         list->CopyBufferRegion(m_statCounters.resource.Get(),0,zeros.resource,zeros.offset,kStatSlots*sizeof(uint32_t));
         m_statFrame = device.NextFenceValue();
     }
-    transition(m_indirectArguments,D3D12_RESOURCE_STATE_COPY_DEST);
+    rhi::TransitionIfNeeded(list, m_indirectArguments, D3D12_RESOURCE_STATE_COPY_DEST);
     list->CopyBufferRegion(m_indirectArguments.resource.Get(),0,upload.resource,upload.offset,argumentBytes);
-    transition(m_indirectArguments,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    transition(m_visibleInstances,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    rhi::TransitionIfNeeded(list, m_indirectArguments, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    rhi::TransitionIfNeeded(list, m_visibleInstances, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     list->SetComputeRootSignature(cache.GlobalRootSignature());
     list->SetComputeRootConstantBufferView(1,cb.gpuAddress);
     list->SetPipelineState(cull); list->Dispatch((draw.count+63)/64,1,1);
@@ -305,14 +300,14 @@ bool ModelPreview::CullInstances(rhi::Device& device, rhi::PipelineCache& cache,
         list->ResourceBarrier(1,&barrier);
     }
     // 区画ごとの件数を足し込み、このフレームの読み戻し先へ写す（後の使用で上書きされ、最後が合計）。
-    transition(m_statCounters,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    rhi::TransitionIfNeeded(list, m_statCounters, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     list->SetPipelineState(accumulate); list->Dispatch(1,1,1);
-    transition(m_statCounters,D3D12_RESOURCE_STATE_COPY_SOURCE);
+    rhi::TransitionIfNeeded(list, m_statCounters, D3D12_RESOURCE_STATE_COPY_SOURCE);
     list->CopyBufferRegion(m_statReadback[frame].resource.Get(),0,m_statCounters.resource.Get(),0,kStatSlots*sizeof(uint32_t));
     m_statFence[frame] = device.NextFenceValue();
     m_statLodCount[frame] = lods;
-    transition(m_visibleInstances,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    transition(m_indirectArguments,D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+    rhi::TransitionIfNeeded(list, m_visibleInstances, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    rhi::TransitionIfNeeded(list, m_indirectArguments, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
     PIXEndEvent(list);
     return true;
 }
@@ -378,24 +373,36 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
     const Camera& camera = thumbnail ? thumbnailCamera : m_camera;
     // パーツのマテリアルごとに PSO を選ぶ。アルファ抜きは早期深度テストが効きにくいので、
     // 使うパーツだけ clip 付きの PS にする。影は不透明なら PS なしの深度だけで描く。
+    // GetGraphics はキーの文字列を組み立てて引くので、パーツ×区画ごとに呼ばず、
+    // この描画で最初に使うときに 1 回だけ引いて配列に持つ（変種は cutout | twoSided << 1 | fade << 2 の 8 通り）。
+    std::array<ID3D12PipelineState*, 8> meshPipelines{};
+    std::array<bool, 8> meshPipelineResolved{};
     const auto pipelineFor = [&](bool cutout, bool twoSided, bool fade) {
-        rhi::GraphicsPipelineDesc desc;
-        desc.shaderPath = L"ModelPreview.hlsl";
-        desc.vertexEntry = L"VsMain";
-        desc.pixelEntry = L"PsMain";
-        desc.layout = rhi::VertexLayout::MeshStandard;
-        desc.rtvFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
-        desc.dsvFormat = DXGI_FORMAT_D32_FLOAT;
-        desc.cullMode = twoSided ? D3D12_CULL_MODE_NONE : D3D12_CULL_MODE_BACK;
-        if (instances) {
-            desc.rtvFormat = instances->shadow ? DXGI_FORMAT_UNKNOWN : DXGI_FORMAT_R16G16B16A16_FLOAT;
-            if (instances->shadow) desc.pixelEntry = cutout ? L"PsShadow" : L"";
-            else if (fade) desc.pixelEntry = L"PsDither";
-            desc.cullMode = D3D12_CULL_MODE_NONE;
+        const size_t variant = (cutout ? 1u : 0u) | (twoSided ? 2u : 0u) | (fade ? 4u : 0u);
+        if (!meshPipelineResolved[variant]) {
+            meshPipelineResolved[variant] = true;
+            rhi::GraphicsPipelineDesc desc;
+            desc.shaderPath = L"ModelPreview.hlsl";
+            desc.vertexEntry = L"VsMain";
+            desc.pixelEntry = L"PsMain";
+            desc.layout = rhi::VertexLayout::MeshStandard;
+            desc.rtvFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+            desc.dsvFormat = DXGI_FORMAT_D32_FLOAT;
+            desc.cullMode = twoSided ? D3D12_CULL_MODE_NONE : D3D12_CULL_MODE_BACK;
+            if (instances) {
+                desc.rtvFormat = instances->shadow ? DXGI_FORMAT_UNKNOWN : DXGI_FORMAT_R16G16B16A16_FLOAT;
+                if (instances->shadow) desc.pixelEntry = cutout ? L"PsShadow" : L"";
+                else if (fade) desc.pixelEntry = L"PsDither";
+                desc.cullMode = D3D12_CULL_MODE_NONE;
+            }
+            meshPipelines[variant] = pipelineCache.GetGraphics(desc);
         }
-        return pipelineCache.GetGraphics(desc);
+        return meshPipelines[variant];
     };
     if (!pipelineFor(false, false, false)) return 0;
+    // インポスターの変種は fade の 2 通り（影かどうかはこの描画で固定）。
+    std::array<ID3D12PipelineState*, 2> impostorPipelines{};
+    std::array<bool, 2> impostorPipelineResolved{};
     if (!instances) {
     if (!output.IsValid()) {
         rhi::TextureDesc target;
@@ -437,8 +444,11 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
     commandList->SetGraphicsRootSignature(pipelineCache.GlobalRootSignature());
     ID3D12PipelineState* current = nullptr;
     uint32_t drawCalls = 0;
-    // カメラ・ライト・環境。メッシュとインポスターで共通。
-    const auto fillScene = [&](ModelConstants& constants) {
+    // カメラ・ライト・環境。メッシュとインポスターで共通なので 1 回だけ組み、パーツごとに写す。
+    ModelConstants sceneConstants = {};
+    sceneConstants.pointAttributes = sceneConstants.impostorVariation = sceneConstants.opacityIndex = compositor::kInvalidTextureIndex;
+    {
+        ModelConstants& constants = sceneConstants;
         const auto position = camera.Position();
         std::memcpy(constants.cameraPosition, &position, sizeof(position));
         DirectX::XMStoreFloat4x4(
@@ -462,20 +472,35 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
         constants.prefilteredMipCount = environment.PrefilteredMipCount();
         constants.exposure = exposure;
         constants.tonemapMode = static_cast<uint32_t>(tonemap);
-    };
+        if (instances) {
+            // 配置では視点が描画の指定で決まる。
+            DirectX::XMStoreFloat4x4(&constants.viewProjection,
+                DirectX::XMMatrixTranspose(DirectX::XMLoadFloat4x4(&instances->viewProjection)));
+            std::memcpy(constants.cameraPosition, &instances->cameraPosition, sizeof(constants.cameraPosition));
+        }
+    }
+    // インポスターは 1 枚に全パーツを焼くので、色むらの応え方は 1 つ（焼いたときに
+    // 色むらを持っていたマテリアルの先頭）。マテリアル表を引くので描画ごとに求めず 1 回にする。
+    const compositor::ColorVariation impostorVariation =
+        impostor ? ImpostorColorVariation(model, materials) : compositor::ColorVariation{};
     // segment / argument はインスタンス描画のときだけ使う。fade は切り替え中の区画。
     // インポスター段の 1 回の描画（配置のときだけ）。影パスでは光源へ向けた板で深度だけを書く。
     const auto drawImpostor = [&](size_t i, bool fade, size_t segment, size_t argument) {
         if (!impostor) return;
         const bool shadow = instances->shadow;
-        rhi::GraphicsPipelineDesc desc;
-        desc.shaderPath = L"ModelPreview.hlsl";
-        desc.vertexEntry = L"VsImpostor";
-        desc.pixelEntry = shadow ? L"PsImpostorShadow" : fade ? L"PsImpostorDither" : L"PsImpostor";
-        desc.rtvFormat = shadow ? DXGI_FORMAT_UNKNOWN : DXGI_FORMAT_R16G16B16A16_FLOAT;
-        desc.dsvFormat = DXGI_FORMAT_D32_FLOAT;
-        desc.cullMode = D3D12_CULL_MODE_NONE;
-        auto* pipeline = pipelineCache.GetGraphics(desc);
+        const size_t variant = fade ? 1 : 0;
+        if (!impostorPipelineResolved[variant]) {
+            impostorPipelineResolved[variant] = true;
+            rhi::GraphicsPipelineDesc desc;
+            desc.shaderPath = L"ModelPreview.hlsl";
+            desc.vertexEntry = L"VsImpostor";
+            desc.pixelEntry = shadow ? L"PsImpostorShadow" : fade ? L"PsImpostorDither" : L"PsImpostor";
+            desc.rtvFormat = shadow ? DXGI_FORMAT_UNKNOWN : DXGI_FORMAT_R16G16B16A16_FLOAT;
+            desc.dsvFormat = DXGI_FORMAT_D32_FLOAT;
+            desc.cullMode = D3D12_CULL_MODE_NONE;
+            impostorPipelines[variant] = pipelineCache.GetGraphics(desc);
+        }
+        auto* pipeline = impostorPipelines[variant];
         const auto cb = device.Upload().Allocate(sizeof(ModelConstants), 256);
         if (!pipeline || !cb.IsValid()) return;
         if (pipeline != current) {
@@ -483,9 +508,7 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
             current = pipeline;
         }
         const auto& draw = *instances;
-        ModelConstants constants = {};
-        constants.pointAttributes = constants.impostorVariation = constants.opacityIndex = compositor::kInvalidTextureIndex;
-        fillScene(constants);
+        ModelConstants constants = sceneConstants;
         constants.aoValue = 1.0f;
         constants.points = draw.points; constants.rows = draw.rows;
         constants.visibleIndices = m_visibleInstances.srv.index; constants.seed = draw.seed;
@@ -503,9 +526,6 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
         const auto& lo = m_geometry->minimum; const auto& hi = m_geometry->maximum;
         constants.pivot[0] = (lo.x+hi.x)*0.5f; constants.pivot[1] = lo.y; constants.pivot[2] = (lo.z+hi.z)*0.5f;
         constants.modelSize = std::max({hi.x-lo.x,hi.y-lo.y,hi.z-lo.z,0.0001f});
-        DirectX::XMStoreFloat4x4(&constants.viewProjection,
-            DirectX::XMMatrixTranspose(DirectX::XMLoadFloat4x4(&draw.viewProjection)));
-        std::memcpy(constants.cameraPosition,&draw.cameraPosition,sizeof(constants.cameraPosition));
         constants.visibleOffset = static_cast<uint32_t>(segment * draw.count);
         if (draw.lodView) {
             const size_t lod = std::min<size_t>(m_firstLod + m_parts[i].lod, std::size(kLodDebugColors) - 1);
@@ -525,9 +545,8 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
         constants.impostorShadow = shadow ? 1u : 0u;
         constants.impostorVariation = impostor->variation.IsValid() ? impostor->variation.SrvIndex()
                                                                     : compositor::kInvalidTextureIndex;
-        // インポスターは 1 枚に全パーツを焼くので、色むらの応え方は 1 つ（焼いたときに
-        // 色むらを持っていたマテリアルの先頭）。受ける画素は重みのアトラスで絞る。
-        FillColorVariation(constants, ImpostorColorVariation(model, materials), draw.attributes);
+        // 受ける画素は重みのアトラスで絞る。
+        FillColorVariation(constants, impostorVariation, draw.attributes);
         constants.variationLow[3] = draw.sizeShrink;
         std::memcpy(cb.cpu, &constants, sizeof(constants));
         commandList->SetGraphicsRootConstantBufferView(1, cb.gpuAddress);
@@ -556,8 +575,7 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
             commandList->SetPipelineState(pipeline);
             current = pipeline;
         }
-        ModelConstants constants = {};
-        constants.pointAttributes = constants.impostorVariation = constants.opacityIndex = compositor::kInvalidTextureIndex;
+        ModelConstants constants = sceneConstants;
         // ベースカラーだけ sRGB として読む。それ以外はリニア（サムネイルと同じ）。
         constants.baseColorIndex = textures.SrvIndex(asset.baseColor, true);
         constants.normalIndex = textures.SrvIndex(asset.normal, false);
@@ -578,7 +596,6 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
         constants.alphaCutoff = cutout ? asset.AlphaCutoff() : 0.0f;
         constants.opacityIndex = opacityIndex;
         constants.opacityChannel = static_cast<uint32_t>(asset.opacity.channel);
-        fillScene(constants);
         if (instances) {
             const auto& draw = *instances;
             constants.points = draw.points; constants.rows = draw.rows;
@@ -612,9 +629,6 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
                 constants.brightness = 1.0f;
             }
             constants.modelSize = std::max({hi.x-lo.x,hi.y-lo.y,hi.z-lo.z,0.0001f});
-            DirectX::XMStoreFloat4x4(&constants.viewProjection,
-                DirectX::XMMatrixTranspose(DirectX::XMLoadFloat4x4(&draw.viewProjection)));
-            std::memcpy(constants.cameraPosition,&draw.cameraPosition,sizeof(constants.cameraPosition));
         }
 
 
@@ -639,9 +653,7 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
         auto* pipeline = pipelineCache.GetGraphics(desc);
         const auto cb = device.Upload().Allocate(sizeof(ModelConstants), 256);
         if (pipeline && cb.IsValid()) {
-            ModelConstants constants = {};
-            constants.pointAttributes = constants.impostorVariation = constants.opacityIndex = compositor::kInvalidTextureIndex;
-            fillScene(constants);
+            ModelConstants constants = sceneConstants;
             constants.aoValue = 1.0f;
             constants.impostorColor = impostor->color.SrvIndex();
             constants.impostorNormal = impostor->normal.SrvIndex();

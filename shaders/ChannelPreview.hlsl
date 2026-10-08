@@ -74,7 +74,16 @@ float3 LayerWeightsColor(uint packed)
            LayerIdColor(layers.ids.z) * layers.weights.z;
 }
 
-// 表示色（リニア）。
+// 値をそのまま表示の明るさにするモード（法線マップの色や 0〜1 のスカラー）。
+// sRGB へ直さずに書くので、ChannelColor の戻り値は表示値そのもの。
+bool IsRawValueMode(uint mode)
+{
+    return mode == TG_CHANNEL_NORMAL || mode == TG_CHANNEL_ROUGHNESS || mode == TG_CHANNEL_METALLIC ||
+           mode == TG_CHANNEL_AO || mode == TG_CHANNEL_HEIGHT || mode == TG_CHANNEL_WATER_COVER ||
+           mode == TG_CHANNEL_WATER_WAVE || mode == TG_CHANNEL_RAPIDS;
+}
+
+// 表示色（リニア。IsRawValueMode のモードは表示値そのもの）。
 float3 ChannelColor(float4 value)
 {
     const uint mode = g_constants.mode;
@@ -87,15 +96,15 @@ float3 ChannelColor(float4 value)
         // タンジェント空間法線（xy のみ。z は再構成）。法線マップの見慣れた色で出す。
         const float2 xy = value.xy;
         const float z = sqrt(saturate(1.0f - dot(xy, xy)));
-        return SrgbToLinear(float3(xy, z) * 0.5f + 0.5f);
+        return float3(xy, z) * 0.5f + 0.5f;
     }
-    if (mode == TG_CHANNEL_ROUGHNESS) { return SrgbToLinear(value.rrr); }
-    if (mode == TG_CHANNEL_METALLIC) { return SrgbToLinear(value.ggg); }
-    if (mode == TG_CHANNEL_AO) { return SrgbToLinear(value.bbb); }
-    if (mode == TG_CHANNEL_HEIGHT) { return SrgbToLinear(saturate(value.rrr)); }
-    if (mode == TG_CHANNEL_WATER_COVER) { return SrgbToLinear(saturate(value.zzz)); }
-    if (mode == TG_CHANNEL_WATER_WAVE) { return SrgbToLinear(saturate(value.zzz)); }
-    if (mode == TG_CHANNEL_RAPIDS) { return SrgbToLinear(saturate(value.www)); }
+    if (mode == TG_CHANNEL_ROUGHNESS) { return value.rrr; }
+    if (mode == TG_CHANNEL_METALLIC) { return value.ggg; }
+    if (mode == TG_CHANNEL_AO) { return value.bbb; }
+    if (mode == TG_CHANNEL_HEIGHT) { return saturate(value.rrr); }
+    if (mode == TG_CHANNEL_WATER_COVER) { return saturate(value.zzz); }
+    if (mode == TG_CHANNEL_WATER_WAVE) { return saturate(value.zzz); }
+    if (mode == TG_CHANNEL_RAPIDS) { return saturate(value.www); }
     if (mode == TG_CHANNEL_WATER_DEPTH)
     {
         // 水の中は深いほど濃い青、陸は灰（水位に近いほど明るい）、水の場に何も無ければ黒。
@@ -169,7 +178,9 @@ void CsMain(uint3 id : SV_DispatchThreadID)
                                    : source.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
         color = ChannelColor(value);
     }
-    output[id.xy] = float4(LinearToSrgb(saturate(color)), 1.0f);
+    // 値をそのまま見せるモードは sRGB へ直さない（直して戻すだけの往復になる）。
+    const float3 shown = saturate(color);
+    output[id.xy] = float4(IsRawValueMode(g_constants.mode) ? shown : LinearToSrgb(shown), 1.0f);
 
     // カーソルの位置の元の値。1 スレッドだけが書く。
     if (id.x == 0u && id.y == 0u)

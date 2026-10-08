@@ -26,8 +26,10 @@ int LodFromName(const ufbx_string& name) {
         return -1;
     int lod = 0;
     for (const char c : text.substr(mark + 4)) {
-        if (c < '0' || c > '9' || lod > 64) return -1;
+        if (c < '0' || c > '9') return -1;
         lod = lod * 10 + (c - '0');
+        // 上限は足し込んだ後に見る（先に見ると _LOD649 のような値が通ってしまう）。
+        if (lod > 64) return -1;
     }
     return lod;
 }

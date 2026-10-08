@@ -1,4 +1,5 @@
 #include "io/AppSettings.h"
+#include "io/ProjectWorkspace.h"
 
 #include "core/Log.h"
 
@@ -175,14 +176,13 @@ bool AppSettings::Save() const {
     document["ui"] = std::move(ui);
     document["display"] = std::move(display);
 
-    std::ofstream stream(path, std::ios::binary | std::ios::trunc);
-    if (!stream.is_open()) {
+    // 一時ファイルへ書いてから置き換える（書きかけの settings.json を残さない）。
+    // 壊れた文字列が混ざっていても例外を出さない（不正な UTF-8 は置換文字にする）のは WriteJson 側。
+    if (!ProjectWorkspace::WriteJson(path, document)) {
         TG_LOG_WARN("設定を保存できませんでした");
         return false;
     }
-    // 壊れた文字列が混ざっていても例外を出さない（不正な UTF-8 は置換文字にする）。
-    stream << document.dump(2, ' ', false, json::error_handler_t::replace) << '\n';
-    return stream.good();
+    return true;
 }
 
 }  // namespace tg::io

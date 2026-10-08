@@ -97,12 +97,8 @@ void GeneratedMeshes::Update(rhi::Device& device, const std::vector<GeneratedMes
         }
         if (!entry->mesh.IsValid() || entry->geometryKey != item.geometryKey) {
             entry->mesh.Release(device);
-            entry->vertices = entry->triangles = 0;
-            if (item.geometry != nullptr && !item.geometry->indices.empty() &&
-                entry->mesh.Create(device, *item.geometry, L"GeneratedMesh")) {
-                entry->vertices = item.geometry->vertices.size();
-                entry->triangles = item.geometry->indices.size() / 3;
-            }
+            if (item.geometry != nullptr && !item.geometry->indices.empty())
+                entry->mesh.Create(device, *item.geometry, L"GeneratedMesh");
             entry->geometryKey = item.geometryKey;
         }
         entry->look = item;
@@ -236,18 +232,6 @@ void GeneratedMeshes::Destroy(rhi::Device& device) {
         if (entry) entry->mesh.Release(device);
     }
     m_entries.clear();
-}
-
-uint64_t GeneratedMeshes::Vertices() const {
-    uint64_t total = 0;
-    for (const auto& entry : m_entries) if (entry && entry->look.visible) total += entry->vertices;
-    return total;
-}
-
-uint64_t GeneratedMeshes::Triangles() const {
-    uint64_t total = 0;
-    for (const auto& entry : m_entries) if (entry && entry->look.visible) total += entry->triangles;
-    return total;
 }
 
 }  // namespace tg::renderer

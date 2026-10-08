@@ -167,9 +167,12 @@ bool PipelineCache::CreateGlobalRootSignature() {
     return true;
 }
 
-ID3D12PipelineState* PipelineCache::GetCompute(const std::wstring& relativePath,
-                                               const std::wstring& entryPoint) {
-    const std::wstring key = relativePath + L"#" + entryPoint;
+ID3D12PipelineState* PipelineCache::GetCompute(std::wstring_view relativePath,
+                                               std::wstring_view entryPoint) {
+    std::wstring& key = m_computeKey;
+    key.assign(relativePath);
+    key += L'#';
+    key += entryPoint;
     if (const auto it = m_computePipelines.find(key); it != m_computePipelines.end()) {
         return it->second.Get();
     }
@@ -180,7 +183,9 @@ ID3D12PipelineState* PipelineCache::GetCompute(const std::wstring& relativePath,
 
     // 失敗した組み合わせも記録する。そうしないと毎フレーム再コンパイルしてしまう。
     // ホットリロード時は InvalidateAll() でまとめて捨てるため、再挑戦はそこで行われる。
-    ComPtr<IDxcBlob> bytecode = m_compiler->Compile(relativePath, entryPoint.c_str(), L"cs_6_6");
+    const std::wstring path(relativePath);
+    const std::wstring entry(entryPoint);
+    ComPtr<IDxcBlob> bytecode = m_compiler->Compile(path, entry.c_str(), L"cs_6_6");
     if (!bytecode) {
         m_computePipelines.emplace(key, nullptr);
         return nullptr;

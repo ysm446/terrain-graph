@@ -156,19 +156,19 @@ TrackBlend TrackAt(bool inner, float d) {
     // 次の区間の始まりの手前（移行の前半）。
     if (index + 1 < count) {
         const TrackSpan next = SpanOf(inner, index + 1);
-        const float half = next.transition * 0.5f;
-        if (half > 0 && d > next.start - half) {
+        const float halfTransition = next.transition * 0.5f;
+        if (halfTransition > 0 && d > next.start - halfTransition) {
             blend.b = next.material; blend.boundaryB = next.boundary;
-            blend.w = smoothstep(next.start - half, next.start + half, d);
+            blend.w = smoothstep(next.start - halfTransition, next.start + halfTransition, d);
             return blend;
         }
     }
     // この区間の始まりの直後（移行の後半）。
     if (index > 0 && span.transition > 0 && d < span.start + span.transition * 0.5f) {
         const TrackSpan previous = SpanOf(inner, index - 1);
-        const float half = span.transition * 0.5f;
+        const float halfTransition = span.transition * 0.5f;
         blend.a = previous.material; blend.boundaryA = previous.boundary;
-        blend.w = smoothstep(span.start - half, span.start + half, d);
+        blend.w = smoothstep(span.start - halfTransition, span.start + halfTransition, d);
     }
     return blend;
 }

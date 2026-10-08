@@ -1,4 +1,5 @@
 #include "io/GraphJson.h"
+#include "io/JsonRead.h"
 
 #include "core/Log.h"
 #include "graph/NodeGraph.h"
@@ -126,7 +127,8 @@ void NormalizeGraphJson(json& graph) {
             return std::nullopt;
         }
         json& node = *found->second;
-        const std::string kindName = node.value("kind", std::string());
+        // 手書きのグラフでは "kind" が文字列でないこともある。value() は型違いで投げるので使わない。
+        const std::string kindName = ReadString(node, "kind");
         const graph::NodeDefinition* definition = graph::FindNodeDefinitionByName(kindName);
         const bool variadic = IsVariadic(definition, kind);
 

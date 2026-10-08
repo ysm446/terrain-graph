@@ -14,6 +14,9 @@ struct LibraryTexture {
     TextureId id = kNoTexture;
     std::string name;
     std::filesystem::path path;
+    // 同一判定用に正規化した path（weakly_canonical）。path を入れたときに一度だけ作る。
+    // FindByPath は読み込みのたびに全項目を見るので、毎回正規化すると O(n^2) になる。
+    std::filesystem::path pathKey;
     rhi::GpuTexture texture;
     // 同じリソースに対する 2 つの SRV。用途に応じて使い分ける。
     // float テクスチャ（EXR）は中身がすでにリニアなので、両方とも同じ SRV を指す。

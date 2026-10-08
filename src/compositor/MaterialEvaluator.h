@@ -316,8 +316,6 @@ public:
     // 解像度は op のもの（川筋は自前の解像度を持つ）。値は 0〜1。
     bool ReadbackMaskOp(rhi::Device& device, size_t opIndex, CpuHeightfield& out);
 
-    uint32_t TileSize() const { return m_tileSize; }
-
     // 配置の点の組。`MaterialLayer::pointsId` を持つレイヤーが評価のたびに作る。
     // まだ無ければ nullptr。
     const PlacementPointSet* PlacementPoints(uint32_t pointsId) const {
@@ -342,14 +340,6 @@ public:
     }
     uint32_t Resolution() const { return m_resolution; }
     uint32_t EvaluatedLayerCount() const { return m_evaluatedLayerCount; }
-
-    // --- レイヤー一覧のマスクサムネイル -------------------------------------
-    // 評価のついでにレイヤー 1 枚ぶんのマスクを小さく焼く。
-    // 中間結果由来のマスク（傾斜や曲率）はそのレイヤーを合成する直前の下地から
-    // しか作れないので、一覧側で後から作り直すことはできない。
-    //
-    // 添字はスタックの index。並べ替えても次の評価で作り直されるので追従する。
-    // ImGui へ渡すハンドル。まだ無ければ ptr が 0。
 
     // --- ノードのマスクサムネイル ------------------------------------------
     // マスクの op ごとの結果を小さく落としたもの。グラフのノードに出す。
@@ -643,6 +633,8 @@ private:
                                const MaterialLayer& layer, const MaterialStack& stack,
                                uint32_t maskIndex);
     ScatterResources m_scatter;
+    // 散布の点の数が GPU の予算を超えて縮めたときの警告を 1 回に抑える。
+    bool m_scatterBudgetWarned = false;
     // マスクの op の結果。添字は MaskProgram と同じ。
     std::vector<rhi::GpuTexture> m_maskOpTextures;
     // パスの線分列（Path / Area の op だけ持つ。他は空）。アップロードヒープのバッファに

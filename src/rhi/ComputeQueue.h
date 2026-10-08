@@ -38,6 +38,8 @@ public:
     // 投入した仕事がまだ終わっていないか。
     bool IsBusy() const;
     // 投入した仕事の完了を CPU で待つ。
+    // **Submit したフレームの BeginFrame〜EndFrame の間では呼ばないこと。** 仕事はそのフレームの
+    // フェンスを GPU 側で待ってから走るので、EndFrame で Signal する前に待つと戻ってこない。
     void Wait();
 
     // 記録中の仕事が使う定数の置き場。仕事の完了で巻き戻る。
@@ -50,7 +52,8 @@ public:
     // 最後に投入した仕事が完了時に立てる値。0 なら未投入。
     uint64_t SubmittedValue() const { return m_submittedValue; }
 
-    bool IsValid() const { return m_queue != nullptr; }
+    // 作りかけ（Create の途中失敗）を有効と見なさない。
+    bool IsValid() const;
 
 private:
     ComPtr<ID3D12CommandQueue> m_queue;

@@ -392,7 +392,6 @@ void Application::ProcessModelWork() {
             m_selectedModel = asset.id;
             m_modelLod = 0;
             m_showModelPreview = true;
-            m_focusModelLibrary = true;
             m_models.push_back(std::move(asset));
             m_pendingAssetsSave = true;
             m_assetRefresh = true;
@@ -407,7 +406,6 @@ void Application::ProcessModelWork() {
         m_modelLod = m_options.previewModelLod;
         m_options.previewModel = -1;
         m_showModelPreview = true;
-        m_focusModelLibrary = true;
     }
     for (auto it = m_modelPreviews.begin(); it != m_modelPreviews.end();) {
         if (std::none_of(m_models.begin(), m_models.end(),
@@ -557,64 +555,6 @@ void Application::RenderModelPreviews(ID3D12GraphicsCommandList* commandList) {
                               m_textureLibrary, m_renderer.GetEnvironment(),
                               m_renderer.EnvironmentIntensity(), m_renderer.EffectiveLight(),
                               m_renderer.Exposure().Exposure(), m_renderer.Tonemap(), nullptr, impostor);
-    }
-}
-void Application::DrawModelLibraryPanel() {
-    // 初回のドック構築が終わってから、読み込んだ一覧のタブへ移る。
-    if (m_focusModelLibrary && m_frameCounter >= 2) {
-        ImGui::SetNextWindowFocus();
-        m_focusModelLibrary = false;
-    }
-    if (!ImGui::Begin("モデル")) {
-        ImGui::End();
-        return;
-    }
-    uint64_t remove = 0;
-    const float size = ui::Scaled(84);
-    if (ImGui::BeginChild("modelGrid", ImVec2(0, 0), ImGuiChildFlags_Borders)) {
-        if (m_models.empty()) ui::HintText("FBXファイルをドロップ、または右クリックの「読み込み」から追加できます");
-        const int columns = std::max(
-            1, int(ImGui::GetContentRegionAvail().x / (size + ImGui::GetStyle().ItemSpacing.x)));
-        int index = 0;
-        for (const auto& asset : m_models) {
-            ImGui::PushID(static_cast<int>(asset.id));
-            ImGui::BeginGroup();
-            const auto preview = m_modelPreviews.find(asset.id);
-            const auto handle = preview != m_modelPreviews.end() && preview->second->HasThumbnail()
-                                    ? preview->second->ThumbnailHandle().ptr
-                                    : 0;
-            const auto thumb = ui::ThumbnailButton("##model", static_cast<ImTextureID>(handle),
-                                                   size, m_selectedModel == asset.id);
-            if (thumb.clicked) {
-                m_selectedModel = asset.id;
-                m_modelLod = 0;
-                m_showModelPreview = true;
-            }
-            if (!asset.geometry) ui::MissingBadge(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
-            if (thumb.hovered)
-                ImGui::SetTooltip("%s\nクリックでプレビューとプロパティ", asset.name.c_str());
-            if (ImGui::BeginPopupContextItem("modelMenu")) {
-                if (ImGui::MenuItem("削除")) remove = asset.id;
-                ImGui::EndPopup();
-            }
-            ui::GridCaption(asset.name.c_str(), size);
-            ImGui::EndGroup();
-            ImGui::PopID();
-            if (++index % columns && index < int(m_models.size())) ImGui::SameLine();
-        }
-        if (ImGui::BeginPopupContextWindow("modelImport", ImGuiPopupFlags_MouseButtonRight |
-                                                              ImGuiPopupFlags_NoOpenOverItems)) {
-            if (ImGui::MenuItem("読み込み…"))
-                m_pendingModels =
-                    ShowOpenFilesDialog(L"モデルを読み込む", {{L"FBXモデル", L"*.fbx"}});
-            ImGui::EndPopup();
-        }
-    }
-    ImGui::EndChild();
-    ImGui::End();
-    if (remove) {
-        std::erase_if(m_models, [&](const auto& a) { return a.id == remove; });
-        MarkDocumentChanged(false);
     }
 }
 void Application::DrawModelPreviewWindow() {

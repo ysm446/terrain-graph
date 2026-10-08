@@ -102,16 +102,12 @@ public:
     uint32_t Draw(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                   ID3D12GraphicsCommandList* commandList, const GeneratedMeshFrame& frame) const;
     void Destroy(rhi::Device& device);
-    // 描く量（統計用）。
-    uint64_t Vertices() const;
-    uint64_t Triangles() const;
 
 private:
     struct Entry {
         uint64_t id = 0;
         uint64_t geometryKey = 0;
         Mesh mesh;
-        uint64_t vertices = 0, triangles = 0;
         // 描き方（形の参照 geometry は使わない）。
         GeneratedMeshItem look;
     };

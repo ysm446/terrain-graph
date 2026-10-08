@@ -197,12 +197,13 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
         settings.windOffsetZ = m_motion.LocalNoiseOffset(m_motion.driftZ, requested.cloudScale, requested.cloudMotionMode);
     } else {
         // ローカル雲の細部は周波数 3.1 倍なので、共通周期は基準周期の 10 倍。
-        const double period = requested.cloudScale * (requested.localCloud ? 10.0 : 1.0);
+        // 0 で割ると fmod が NaN を返すので、周期は最低 1e-3 にする。
+        const double period = std::max(requested.cloudScale * (requested.localCloud ? 10.0 : 1.0), 1e-3);
         settings.windOffsetX = static_cast<float>(std::fmod(m_motion.x, period));
         settings.windOffsetZ = static_cast<float>(std::fmod(m_motion.z, period));
         if (requested.localCloud == 2 || requested.localCloud == 4) {
             // 天候層は雲量の場（本体）を移動量で、形状・細部ノイズを相対移動を引いた量で進める。
-            const double bodyPeriod = requested.localCloud == 4 ? period : requested.cloudScale * std::clamp(requested.cloudCellCount, 1u, 32u);
+            const double bodyPeriod = std::max(requested.localCloud == 4 ? period : double(requested.cloudScale) * std::clamp(requested.cloudCellCount, 1u, 32u), 1e-3);
             settings.cloudBodyOffsetX = static_cast<float>(std::fmod(m_motion.x, bodyPeriod));
             settings.cloudBodyOffsetZ = static_cast<float>(std::fmod(m_motion.z, bodyPeriod));
             // 積算済みの相対移動を使い、速度比の編集時に表面を飛ばさない。
@@ -262,9 +263,18 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
     auto* cellPipeline = pipelines.GetCompute(L"AtmosphereCloudCells.hlsl", L"CsMain");
     if (!lutPipeline || !noisePipeline || !cellPipeline) return false;
     settings.cloudCellIndex = m_cloudCells.SrvIndex();
-    if ((updateLut || updateNoise || updateCells) && !device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commands) {
-        PIXBeginEvent(commands, PIX_COLOR(120, 180, 255), "AtmosphereCaches");
+    auto* lightingPipeline=pipelines.GetCompute(L"AtmosphereCloudLighting.hlsl",L"CsMain");
+    if (!lightingPipeline) return false;
+    struct LightingConstants { AtmosphereSettings settings; uint32_t output, lut, pad[2]; };
+    const LightingConstants lightingConstants{settings,m_cloudLighting.UavIndex(),m_multiScatter.SrvIndex(),{0,0}};
+    const auto lightingAllocation=device.Upload().Allocate(sizeof(LightingConstants),256);
+    if (!lightingAllocation.IsValid()) return false;
+    std::memcpy(lightingAllocation.cpu,&lightingConstants,sizeof(lightingConstants));
+    // キャッシュの更新と雲の照明は同じコンピュートのリストで流す
+    // （ExecuteImmediate は毎回 GPU 全体を待つので、呼ぶ回数を減らす）。
+    if (!device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commands) {
         commands->SetComputeRootSignature(pipelines.GlobalRootSignature());
+        if (updateLut || updateNoise || updateCells) PIXBeginEvent(commands, PIX_COLOR(120, 180, 255), "AtmosphereCaches");
         if (updateLut) {
             TransitionIfNeeded(commands, m_multiScatter, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             struct Constants { float density, mie, groundAlbedo; uint32_t output; };
@@ -292,29 +302,18 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
             commands->Dispatch(8, 8, 64);
             TransitionIfNeeded(commands, m_noise, ReadState);
         }
-        PIXEndEvent(commands);
-    })) return false;
-    m_cellsDirty = false;
-    auto* lightingPipeline=pipelines.GetCompute(L"AtmosphereCloudLighting.hlsl",L"CsMain");
-    if (!lightingPipeline) return false;
-    struct LightingConstants { AtmosphereSettings settings; uint32_t output, lut, pad[2]; };
-    const LightingConstants lightingConstants{settings,m_cloudLighting.UavIndex(),m_multiScatter.SrvIndex(),{0,0}};
-    const auto lightingAllocation=device.Upload().Allocate(sizeof(LightingConstants),256);
-    if (!lightingAllocation.IsValid()) return false;
-    std::memcpy(lightingAllocation.cpu,&lightingConstants,sizeof(lightingConstants));
-    if (!device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commands) {
+        if (updateLut || updateNoise || updateCells) PIXEndEvent(commands);
+        // 雲の照明。LUT は上の遷移で読み出し状態になっている（更新しなければ元から読み出し状態）。
         PIXBeginEvent(commands,PIX_COLOR(120,180,255),"AtmosphereCloudLighting");
         TransitionIfNeeded(commands,m_cloudLighting,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        commands->SetComputeRootSignature(pipelines.GlobalRootSignature());
         commands->SetComputeRootConstantBufferView(1,lightingAllocation.gpuAddress);
         commands->SetPipelineState(lightingPipeline);
         commands->Dispatch(1,1,1);
         TransitionIfNeeded(commands,m_cloudLighting,ReadState);
         PIXEndEvent(commands);
     })) return false;
-    if (!device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commands) {
-        TransitionIfNeeded(commands, m_skyView, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    })) return false;
+    m_cellsDirty = false;
+    // m_skyView の UAV / 読み出しへの遷移は Environment::BuildFromAtmosphere が自分のリストの中で行う。
     // 実験用形状は環境描画も照明キャッシュを使い、多重レイマーチを避ける。
     if (settings.localCloud == 3 && settings.clouds) {
         const bool wasReady = m_ready;
@@ -327,7 +326,7 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
         m_ready = wasReady;
         if (!updated || (settings.opticalDepthIndex & 0x80000000u) == 0) return false;
     }
-    if (!m_environment.BuildFromAtmosphere(device, pipelines, settings, m_multiScatter.SrvIndex(), m_noise.SrvIndex(), m_skyView.UavIndex(), m_cloudLighting.SrvIndex())) {
+    if (!m_environment.BuildFromAtmosphere(device, pipelines, settings, m_multiScatter.SrvIndex(), m_noise.SrvIndex(), m_skyView, m_cloudLighting.SrvIndex())) {
         m_ready = false;
         TG_LOG_WARN("大気散乱の環境マップを生成できませんでした");
         return false;
@@ -342,14 +341,11 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
             AtmosphereSettings clear = settings;
             clear.clouds = 0;
             m_clearEnvironmentValid = m_clearEnvironment.BuildFromAtmosphere(
-                device, pipelines, clear, m_multiScatter.SrvIndex(), m_noise.SrvIndex(), m_skyView.UavIndex(),
+                device, pipelines, clear, m_multiScatter.SrvIndex(), m_noise.SrvIndex(), m_skyView,
                 m_cloudLighting.SrvIndex(), true);
         }
         if (!m_clearEnvironmentValid) TG_LOG_WARN("雲なしの環境マップを生成できませんでした（環境光は雲ありの環境だけで照らします）");
     }
-    if (!device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commands) {
-        TransitionIfNeeded(commands, m_skyView, ReadState);
-    })) return false;
     m_applied = settings;
     m_requested = requested;
     m_environmentTime = m_cloudTime;
@@ -593,10 +589,12 @@ void Atmosphere::Render(rhi::Device& device, rhi::PipelineCache& pipelines,
             constants.halfDepth = m_halfDepth.SrvIndex();
             // 前フレームの蓄積結果を再投影して今フレームへ混ぜ、合成側にはその結果を読ませる。
             auto* temporalPipeline = pipelines.GetCompute(L"AtmosphereComposite.hlsl", L"CsCloudTemporal");
-            const auto temporalAllocation = device.Upload().Allocate(sizeof(Constants), 256);
             rhi::GpuTexture& resolved = m_resolvedCloud[m_historySlot];
             rhi::GpuTexture& history = m_resolvedCloud[m_historySlot ^ 1];
-            if (temporal && resolved.IsValid() && history.IsValid() && temporalPipeline && temporalAllocation.IsValid()) {
+            // 定数バッファは再投影を実際に行うときだけ確保する。
+            const bool reproject = temporal && resolved.IsValid() && history.IsValid() && temporalPipeline;
+            const auto temporalAllocation = reproject ? device.Upload().Allocate(sizeof(Constants), 256) : rhi::UploadAllocation{};
+            if (reproject && temporalAllocation.IsValid()) {
                 constants.history = m_historyValid ? history.SrvIndex() : UINT32_MAX;
                 constants.resolvedOutput = resolved.UavIndex();
                 std::memcpy(temporalAllocation.cpu, &constants, sizeof(constants));
@@ -629,9 +627,7 @@ void Atmosphere::Render(rhi::Device& device, rhi::PipelineCache& pipelines,
     ++m_frameIndex;
     std::memcpy(allocation.cpu, &constants, sizeof(constants));
     PIXBeginEvent(commands, PIX_COLOR(120, 180, 255), "AtmosphereComposite");
-    // DSV を外してから深度を SRV として読む。
-    commands->OMSetRenderTargets(1, &scene.rtv.cpu, FALSE, nullptr);
-    TransitionIfNeeded(commands, depth, ReadState);
+    // 描画先（DSV なし）と深度の読み出し状態は、上の雲のパスの前にそろえてある。
     commands->SetGraphicsRootSignature(pipelines.GlobalRootSignature());
     commands->SetGraphicsRootConstantBufferView(1, allocation.gpuAddress);
     commands->SetPipelineState(pipeline);

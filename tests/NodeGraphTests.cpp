@@ -1963,4 +1963,91 @@ void RunNodeGraphTests() {
                   connected.layers.front().heightSource != tg::compositor::ValueSource::Constant,
               "Base 接続中のハイト由来マスクは自身の入力地形上で表示する");
     }
+
+    Section("ノードグラフ — 下地の無いチェーンの出どころ");
+    {
+        // 下地が無くて中立平面へ戻すときも、layerSources / maskOpSources は layers / maskOps と
+        // 同じ長さ（グラフパネルがサムネイルを引くときの前提）。
+        NodeGraph graph;
+        const tg::graph::GraphId blurId = graph.CreateNode(NodeKind::Blur);
+        const tg::graph::GraphId sedimentId = graph.CreateNode(NodeKind::Sediment);
+        const tg::graph::Node* blur = graph.FindNode(blurId);
+        const tg::graph::Node* sediment = graph.FindNode(sedimentId);
+        const bool connected = blur != nullptr && sediment != nullptr && !blur->outputs.empty() &&
+                               !sediment->inputs.empty() &&
+                               graph.CreateLink(blur->outputs.front().id, sediment->inputs.front().id);
+        const tg::graph::CompiledGraph compiled = graph.CompileLayersTo(sedimentId);
+        Check(connected && IsNeutralPlane(compiled) &&
+                  compiled.layerSources.size() == compiled.layers.size() &&
+                  compiled.layerSources.front() == 0 &&
+                  compiled.maskOpSources.size() == compiled.maskOps.size(),
+              "下地の無いチェーンでも layerSources は layers と同じ長さ（元ノードは 0）");
+    }
+
+    Section("ノードグラフ — 同じ Road Mesh へ届く 2 つの Mesh Output");
+    {
+        // Road Path → Road Mesh → Mesh Output（直接）と、Road Mesh → Shoulder → Mesh Output。
+        // 終端の直前のノードは違うが Road Mesh は同じなので、鎖は 1 本（路肩のある長いほう）。
+        NodeGraph graph;
+        const auto pin = [&](tg::graph::GraphId id, bool output, size_t index) {
+            const auto* node = graph.FindNode(id);
+            return output ? node->outputs[index].id : node->inputs[index].id;
+        };
+        const auto roadPath = graph.CreateNode(NodeKind::RoadPath);
+        const auto roadMesh = graph.CreateNode(NodeKind::RoadMesh);
+        const auto shoulder = graph.CreateNode(NodeKind::Shoulder);
+        const auto directOutput = graph.CreateNode(NodeKind::MeshOutput);
+        const auto shoulderOutput = graph.CreateNode(NodeKind::MeshOutput);
+        const auto maskMesh = graph.CreateNode(NodeKind::MaskMesh);
+        bool linked = graph.CreateLink(pin(roadPath, true, 0), pin(roadMesh, false, 0));
+        linked &= graph.CreateLink(pin(roadMesh, true, 0), pin(directOutput, false, 0));
+        linked &= graph.CreateLink(pin(roadMesh, true, 0), pin(shoulder, false, 0));
+        linked &= graph.CreateLink(pin(shoulder, true, 0), pin(shoulderOutput, false, 0));
+        auto roads = graph.CompileRoadMeshes();
+        Check(linked && roads.size() == 1 && roads[0].roadMesh == roadMesh && roads[0].drawn,
+              "同じ Road Mesh へ届く 2 つの Mesh Output は 1 本の鎖にまとめる");
+        Check(roads.size() == 1 && roads[0].shoulders.size() == 1 && roads[0].chain.size() == 3 &&
+                  roads[0].chain.back() == shoulder,
+              "まとめた鎖は帯の多いほう（路肩を挟む側）を残す");
+        // Mask Mesh を Shoulder の先（描く鎖と同じ形）に繋げば、描く鎖の足跡を読む。
+        // Road Mesh に直接繋いだときに路肩なしの別の足跡になることは RoadPathTests が確かめる。
+        linked = graph.CreateLink(pin(shoulder, true, 0), pin(maskMesh, false, 0));
+        roads = graph.CompileRoadMeshes();
+        Check(linked && roads.size() == 1 && roads[0].maskNodes.size() == 1 &&
+                  roads[0].maskNodes.front() == maskMesh && roads[0].shoulders.size() == 1,
+              "描く鎖と同じ形で繋いだ Mask Mesh はその鎖へ加える");
+    }
+
+    Section("パス — エッジを割っても設定を引き継ぐ");
+    {
+        using tg::graph::PathElementId;
+        using tg::graph::PathSettings;
+        PathSettings path;
+        const PathElementId a = tg::graph::AddPathPoint(path, 0.2f, 0.5f, 0);
+        const PathElementId b = tg::graph::AddPathPoint(path, 0.8f, 0.5f, a);
+        tg::graph::PathEdge* ab = const_cast<tg::graph::PathEdge*>(path.FindEdgeBetween(a, b));
+        bool styled = ab != nullptr;
+        if (ab != nullptr) {
+            tg::graph::PathEdgeStyle style = tg::graph::GetPathEdgeStyle(*ab);
+            style.route = tg::graph::PathRoute::Road;
+            style.maxGradePercent = 17.0f;
+            style.ridgeWeight = 2.5f;
+            style.avoidWeight = 7.0f;
+            style.meanderMeters = 3.0f;
+            style.meanderWavelengthMeters = 35.0f;
+            styled = tg::graph::ApplyPathEdgeStyle(*ab, style);
+        }
+        const PathElementId edgeId = (ab != nullptr) ? ab->id : 0;
+        const PathElementId mid = tg::graph::InsertPathPointOnEdge(path, edgeId, 0.5f);
+        const tg::graph::PathEdge* head = path.FindEdgeBetween(a, mid);
+        const tg::graph::PathEdge* tail = path.FindEdgeBetween(mid, b);
+        const auto keeps = [](const tg::graph::PathEdge* edge) {
+            return edge != nullptr && edge->route == tg::graph::PathRoute::Road &&
+                   edge->maxGradePercent == 17.0f && edge->ridgeWeight == 2.5f &&
+                   edge->avoidWeight == 7.0f && edge->meanderMeters == 3.0f &&
+                   edge->meanderWavelengthMeters == 35.0f;
+        };
+        Check(styled && mid != 0 && path.edges.size() == 2 && keeps(head) && keeps(tail),
+              "エッジを割った両方の半分が稜線 / Avoid の重みと蛇行を引き継ぐ");
+    }
 }

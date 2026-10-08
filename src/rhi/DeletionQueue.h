@@ -3,6 +3,7 @@
 #include "rhi/Common.h"
 #include "rhi/DescriptorHeap.h"
 
+#include <memory>
 #include <vector>
 
 namespace tg::rhi {
@@ -17,7 +18,13 @@ public:
     // 別のキュー（合成の評価を流すコンピュートキュー）で走っている仕事の完了条件。
     // これ以降に積むものは、フレームのフェンスに加えてこの条件も満たすまで解放しない。
     // フレームの外で走る仕事が、参照中のテクスチャを消されないようにするため。
+    //
+    // **フェンスごとに 1 つ持つ。** 非同期の評価器は複数ある（ビューポートの合成と
+    // Road Path の各スロット）ので、1 本しか覚えないと先に投入した仕事の条件が
+    // 後の仕事で上書きされ、まだ読んでいるテクスチャを解放してしまう。
+    // 同じフェンスは値の大きいほうで置き換える。
     void SetAuxiliaryFence(ComPtr<ID3D12Fence> fence, uint64_t value);
+    void ClearAuxiliaryFences();
 
     // fenceValue は「この値が完了したら解放してよい」という値。
     void Push(ComPtr<IUnknown> object, uint64_t fenceValue);
@@ -35,29 +42,36 @@ public:
     size_t PendingCount() const { return m_entries.size() + m_descriptorEntries.size(); }
 
 private:
-    // 補助フェンスの条件。fence が null なら条件なし。
+    // 補助フェンスの条件。
     struct Guard {
         ComPtr<ID3D12Fence> fence;
         uint64_t value = 0;
 
-        bool Passed() const {
-            return !fence || fence->GetCompletedValue() >= value;
-        }
+        bool Passed() const { return !fence || fence->GetCompletedValue() >= value; }
     };
+    // 積んだ時点で未完了だった条件の組。積むたびに写さず、条件が変わるまで共有する。
+    using GuardSet = std::vector<Guard>;
+    using GuardSetPtr = std::shared_ptr<const GuardSet>;
+
     struct Entry {
         uint64_t fenceValue = 0;
-        Guard guard;
+        GuardSetPtr guards;
         ComPtr<IUnknown> object;
     };
     struct DescriptorEntry {
         uint64_t fenceValue = 0;
-        Guard guard;
+        GuardSetPtr guards;
         DescriptorHeap* heap = nullptr;
         DescriptorHandle handle;
     };
 
-    // いま積むものに付ける補助フェンスの条件。
-    Guard m_guard;
+    static bool AllPassed(const GuardSetPtr& guards);
+    // いま積むものに付ける条件。完了済みのものは落として返す（空なら null）。
+    GuardSetPtr CurrentGuards();
+
+    GuardSet m_guards;
+    // m_guards から作った共有の写し。m_guards を変えたら捨てる。
+    GuardSetPtr m_currentGuards;
     std::vector<Entry> m_entries;
     std::vector<DescriptorEntry> m_descriptorEntries;
 };

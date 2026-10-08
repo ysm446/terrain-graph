@@ -144,6 +144,11 @@ private:
     // 現在の内容を履歴テクスチャへ退避する要求を積み、stack へ積む。
     bool PushHistory(rhi::Device& device, PaintMaskId id, std::vector<Snapshot>& stack);
     void ReleaseSnapshots(rhi::Device& device, std::vector<Snapshot>& stack);
+    // 要求を記録せずに捨てるとき、Restore が持ち込んだ履歴テクスチャ（releaseHistory）を
+    // 遅延解放する。この Op だけが所有者なので、黙って消すと VRAM が漏れる。
+    void DiscardOp(rhi::Device& device, Op& op);
+    // 積んである要求をすべて捨てる。
+    void DiscardPending(rhi::Device& device);
 
     std::vector<PaintMaskEntry> m_entries;
     std::vector<Op> m_pending;

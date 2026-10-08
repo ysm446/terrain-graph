@@ -31,9 +31,12 @@ struct CloudMotion {
     static float LocalNoiseOffset(double displacement, double scale, unsigned mode) {
         // 範囲に対する模様の相対移動量をローカル座標へ変換する。
         // 細部ノイズ (3.1 倍) と共通の周期で丸め、長時間再生の精度低下を防ぐ。
-        return mode == 2 ? static_cast<float>(std::fmod(-displacement, scale * 10.0)) : 0.0f;
+        // 周期が 0 だと fmod が NaN を返すので最低 1e-3 にする。
+        return mode == 2 ? static_cast<float>(std::fmod(-displacement, std::max(scale * 10.0, 1e-3))) : 0.0f;
     }
     static float LoopOffset(double displacement, double extent) {
+        // ループの幅が 0 だと NaN になるので最低 1e-3 にする。
+        extent = std::max(extent, 1e-3);
         return static_cast<float>(displacement-std::floor(displacement/extent)*extent);
     }
     void Reset() { x = z = driftX = driftZ = 0.0; }

@@ -65,7 +65,9 @@ LayerMaterialGpu MaterialLibrary::CompileLayerMaterial(const MaterialAsset& asse
     error.clear();
     if (!asset.layerMaterial) return result;
     std::vector<graph::PresetMaterial> layers;
-    if (!graph::CompilePresetMaterials(*asset.layerMaterial, layers, error) || layers.size() > 4) return result;
+    if (!graph::CompilePresetMaterials(*asset.layerMaterial, layers, error)) return result;
+    // 層の上限は LayerMaterialGpu::slots の数。黙って空を返すと UI に理由が出ない。
+    if (layers.size() > 4) { error = "合成材質の層は 4 つまでです"; return result; }
     result.blendRange = asset.layerMaterial->layerBlendRange;
     result.displacementMeters = asset.layerMaterial->displacementMeters;
     for (const auto& layer : layers) {
@@ -324,6 +326,8 @@ bool MaterialLibrary::BuildThumbnail(rhi::Device& device, rhi::PipelineCache& pi
     constants.brightness = asset.brightness;
 
     rhi::GpuTexture& thumbnail = asset.thumbnail;
+    // 定数を積めなかったときも、状態遷移だけは最後まで通して失敗を返す。
+    bool ok = true;
     const auto record = [&](ID3D12GraphicsCommandList* list) {
         PIXBeginEvent(list, PIX_COLOR(120, 200, 200), "MaterialThumbnail");
 
@@ -338,10 +342,14 @@ bool MaterialLibrary::BuildThumbnail(rhi::Device& device, rhi::PipelineCache& pi
         list->SetComputeRootSignature(pipelineCache.GlobalRootSignature());
         list->SetPipelineState(pipeline);
         const auto cb = device.Upload().Allocate(sizeof(constants), 256);
-        if (!cb.IsValid()) { PIXEndEvent(list); return; }
-        std::memcpy(cb.cpu, &constants, sizeof(constants));
-        list->SetComputeRootConstantBufferView(1, cb.gpuAddress);
-        list->Dispatch(DispatchCount(kThumbnailSize), DispatchCount(kThumbnailSize), 1);
+        if (cb.IsValid()) {
+            std::memcpy(cb.cpu, &constants, sizeof(constants));
+            list->SetComputeRootConstantBufferView(1, cb.gpuAddress);
+            list->Dispatch(DispatchCount(kThumbnailSize), DispatchCount(kThumbnailSize), 1);
+        } else {
+            // 中身は書けないが、UAV のまま置き去りにせず読める状態へは揃える。
+            ok = false;
+        }
 
         // ImGui から SRV として読むので、ピクセルシェーダ可視の状態へ移す。
         // 同じコマンドリストのこの後に ImGui の描画が積まれるので、順序は保たれる。
@@ -353,9 +361,9 @@ bool MaterialLibrary::BuildThumbnail(rhi::Device& device, rhi::PipelineCache& pi
     // フレームの中ならそのまま積む。**GPU 待機を挟まない**のはこちらの経路。
     if (commandList != nullptr) {
         record(commandList);
-        return true;
+        return ok;
     }
-    return device.ExecuteImmediate(record);
+    return device.ExecuteImmediate(record) && ok;
 }
 
 }  // namespace tg::compositor

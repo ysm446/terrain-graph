@@ -3,6 +3,7 @@
 #include "rhi/Common.h"
 
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
 namespace tg::rhi {
@@ -75,8 +76,9 @@ public:
     ID3D12RootSignature* GlobalRootSignature() const { return m_rootSignature.Get(); }
 
     // コンピュート PSO を取得する。未生成ならコンパイルして作る。失敗時は nullptr。
-    ID3D12PipelineState* GetCompute(const std::wstring& relativePath,
-                                    const std::wstring& entryPoint);
+    // 評価の記録中に op ごとに呼ばれるので、キーの文字列は使い回して毎回確保しない。
+    ID3D12PipelineState* GetCompute(std::wstring_view relativePath,
+                                    std::wstring_view entryPoint);
 
     // グラフィックス PSO を取得する。未生成ならコンパイルして作る。失敗時は nullptr。
     ID3D12PipelineState* GetGraphics(const GraphicsPipelineDesc& desc);
@@ -96,6 +98,8 @@ private:
     ComPtr<ID3D12RootSignature> m_rootSignature;
     std::unordered_map<std::wstring, ComPtr<ID3D12PipelineState>> m_computePipelines;
     std::unordered_map<std::wstring, ComPtr<ID3D12PipelineState>> m_graphicsPipelines;
+    // GetCompute のキー作りに使い回す。
+    std::wstring m_computeKey;
 };
 
 }  // namespace tg::rhi

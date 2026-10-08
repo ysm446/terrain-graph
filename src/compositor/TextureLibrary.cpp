@@ -40,6 +40,14 @@ bool IsExrPath(const std::filesystem::path& path) {
     return extension == ".exr";
 }
 
+// 同じ画像を別の書き方（相対 / 絶対、大文字小文字）で指していても 1 枚に寄せるための鍵。
+// 比較は _wcsicmp で行うので、ここでは大文字小文字を揃えない。
+std::filesystem::path NormalizePathKey(const std::filesystem::path& path) {
+    std::error_code error;
+    std::filesystem::path normalized = std::filesystem::weakly_canonical(path, error);
+    return error ? path : normalized;
+}
+
 // EXR の float RGBA を half RGBA へ詰め直す。
 // 8bit だとハイトの階段が見えるので、EXR は 16bit float のまま持つ。
 std::vector<uint8_t> ConvertToHalf4(const HdrImage& image) {
@@ -91,17 +99,10 @@ LibraryTexture* TextureLibrary::FindMutable(TextureId id) {
 }
 
 TextureId TextureLibrary::FindByPath(const std::filesystem::path& path) const {
-    // 同じ画像を別の書き方（相対 / 絶対、大文字小文字）で指していても 1 枚に寄せる。
-    std::error_code error;
-    const std::filesystem::path normalized = std::filesystem::weakly_canonical(path, error);
-    const std::filesystem::path& key = error ? path : normalized;
-
+    // 問い合わせ側だけを正規化する。項目側は入れたときに作った pathKey と比べる。
+    const std::filesystem::path key = NormalizePathKey(path);
     for (const LibraryTexture& entry : m_entries) {
-        std::error_code entryError;
-        const std::filesystem::path entryNormalized =
-            std::filesystem::weakly_canonical(entry.path, entryError);
-        const std::filesystem::path& entryKey = entryError ? entry.path : entryNormalized;
-        if (_wcsicmp(entryKey.c_str(), key.c_str()) == 0) {
+        if (_wcsicmp(entry.pathKey.c_str(), key.c_str()) == 0) {
             return entry.id;
         }
     }
@@ -141,6 +142,7 @@ TextureId TextureLibrary::AddMissing(const std::filesystem::path& path, const st
     }
     LibraryTexture entry;
     entry.path = path;
+    entry.pathKey = NormalizePathKey(path);
     entry.name = name.empty() ? ToUtf8Display(path.filename()) : name;
     entry.isFloat = IsExrPath(path);
     entry.missing = true;
@@ -235,6 +237,7 @@ bool TextureLibrary::LoadInto(rhi::Device& device, rhi::PipelineCache& pipelineC
     }
 
     entry.path = path;
+    entry.pathKey = NormalizePathKey(path);
     // 名前は UTF-8 で持つ（string() の ACP 変換は日本語名を壊す）。
     entry.name = ToUtf8Display(path.filename());
     entry.isFloat = isFloat;

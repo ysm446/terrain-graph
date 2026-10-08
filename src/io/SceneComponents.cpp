@@ -1,5 +1,6 @@
 #include "io/SceneComponents.h"
 #include "io/GraphJson.h"
+#include "io/JsonRead.h"
 #include "core/PathUtf8.h"
 #include "core/Log.h"
 #include <algorithm>
@@ -120,7 +121,10 @@ bool ExpandSceneAtmosphere(ProjectWorkspace& workspace, json& document) {
     json body;
     const auto path = workspace.Resolve(reference);
     if (path.empty() || !workspace.ReadAsset(path, "atmosphere-sky", body) ||
-        !body.contains("settings") || !body["settings"].is_object()) return false;
+        !body.contains("settings") || !body["settings"].is_object()) {
+        TG_LOG_ERROR("大気散乱スカイのアセットを読み込めません: %s", ProjectWorkspace::String(reference, "path").c_str());
+        return false;
+    }
     auto& preview = document["preview"];
     if (preview.is_null()) preview = json::object();
     if (!preview.is_object()) return false;
@@ -194,11 +198,11 @@ bool SaveSceneComponents(ProjectWorkspace& workspace, const fs::path& scene, jso
     const auto preview = document.value("preview", json::object());
     if (only < 0 && preview.is_object()) {
         const auto mode = ProjectWorkspace::String(preview, "lightingMode");
-        work["lightingMode"] = mode.empty() ? previousWork.value("lightingMode", "atmospheric") : mode;
+        work["lightingMode"] = mode.empty() ? ReadString(previousWork, "lightingMode", "atmospheric") : mode;
         if (preview.contains("light")) work["light"] = preview["light"];
         const auto skies = document.value("skies", json::array());
         if (skies.is_array() && !skies.empty()) {
-            const int active = document.value("activeSky", 0);
+            const int active = ReadInt(document, "activeSky", 0);
             const auto& sky = skies[active >= 0 && active < static_cast<int>(skies.size()) ? active : 0];
             if (sky.contains("asset")) work["sky"] = sky["asset"];
         }
@@ -438,7 +442,7 @@ bool ExpandSceneComponents(ProjectWorkspace& workspace, json& document) {
                 group["component"] = component;
                 result["graph"]["groups"].push_back(std::move(group));
             }
-        result["paintResolution"] = body.value("paintResolution", 1024);
+        result["paintResolution"] = ReadInt(body, "paintResolution", 1024);
         if (!component && body.contains("geometry") && body["geometry"].is_object())
             for (const auto& [key, value] : body["geometry"].items()) result["preview"][key] = value;
     }

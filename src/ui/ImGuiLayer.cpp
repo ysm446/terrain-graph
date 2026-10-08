@@ -40,7 +40,10 @@ void SrvDescriptorFree(ImGui_ImplDX12_InitInfo* info, D3D12_CPU_DESCRIPTOR_HANDL
     const D3D12_CPU_DESCRIPTOR_HANDLE start = heap.At(0).cpu;
     const uint32_t index =
         static_cast<uint32_t>((cpu.ptr - start.ptr) / heap.DescriptorSize());
-    heap.Free(heap.At(index));
+    // 記録中のフレームがまだ参照しているので、ヒープへ直接返さず遅延解放に回す。
+    // Shutdown からも呼ばれるが、ImGuiLayer::Shutdown は Device::Shutdown より先に
+    // 走り、Device 側が最後に遅延キューを流すので、ここで積んでも取りこぼさない。
+    device->DeferFree(heap, heap.At(index));
 }
 
 }  // namespace
@@ -78,6 +81,8 @@ bool ImGuiLayer::Initialize(Window& window, rhi::Device& device) {
 
     if (!ImGui_ImplWin32_Init(window.Handle())) {
         TG_LOG_ERROR("ImGui_ImplWin32_Init に失敗しました");
+        // 途中で失敗したら、ここまでに作ったものを戻す（Shutdown は未初期化だと何もしない）。
+        ImGui::DestroyContext();
         return false;
     }
 
@@ -94,6 +99,8 @@ bool ImGuiLayer::Initialize(Window& window, rhi::Device& device) {
 
     if (!ImGui_ImplDX12_Init(&info)) {
         TG_LOG_ERROR("ImGui_ImplDX12_Init に失敗しました");
+        ImGui_ImplWin32_Shutdown();
+        ImGui::DestroyContext();
         return false;
     }
 
@@ -101,7 +108,6 @@ bool ImGuiLayer::Initialize(Window& window, rhi::Device& device) {
     // 読み込んだ大きさではなく、こちらが持っている基準サイズで描く。
     ApplyScaleToStyle();
 
-    m_device = &device;
     m_initialized = true;
     return true;
 }
@@ -170,7 +176,6 @@ void ImGuiLayer::Shutdown() {
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
     m_initialized = false;
-    m_device = nullptr;
     m_uiScale = 1.0f;
     m_fontSize = ui::kDefaultFontSize;
 }

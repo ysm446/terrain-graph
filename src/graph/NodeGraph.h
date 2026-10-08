@@ -8,6 +8,7 @@
 #include "graph/RoadMesh.h"
 #include "graph/RoadPath.h"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>

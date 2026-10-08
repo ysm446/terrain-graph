@@ -6,8 +6,6 @@
 #include "core/Log.h"
 
 #include <algorithm>
-#include <array>
-#include <bit>
 #include <cmath>
 #include <functional>
 #include <unordered_set>
@@ -554,9 +552,9 @@ std::vector<CompiledModelPlace> NodeGraph::CompileModelPlaces() const {
 
 std::vector<CompiledRoadMesh> NodeGraph::CompileRoadMeshes() const {
     std::vector<CompiledRoadMesh> result;
-    // 終端の直前のノード → result の添字。同じ鎖を 2 つの Mesh Output へ繋いでも 1 回だけ描き、
-    // Mask Mesh を Mesh Output と同じメッシュに繋げば、描く鎖の足跡を読む。
-    std::unordered_map<GraphId, size_t> visited;
+    // Road Mesh → 描く鎖の result の添字。同じ Road Mesh へ届く Mesh Output が複数あっても
+    // （直接と路肩越しなど、終端の直前が違っても）路面を二重に描かないよう 1 本にまとめる。
+    std::unordered_map<GraphId, size_t> drawnByRoadMesh;
     // 終端（Mesh Output か Mask Mesh）から Road Mesh まで遡って鎖を作る。作れなければ偽。
     // meshInput は、終端のどの入力にメッシュが繋がるか（Road Grading は Base の次）。
     const auto compileChain = [&](const Node& terminal, CompiledRoadMesh& out, size_t meshInput = 0) {
@@ -586,34 +584,45 @@ std::vector<CompiledRoadMesh> NodeGraph::CompileRoadMeshes() const {
         out.chain = std::move(chain);
         return true;
     };
+    // 同じ Road Mesh の鎖が既にあれば、帯の多い（長い）ほうの鎖を残す。
+    const auto takeLonger = [](CompiledRoadMesh& kept, CompiledRoadMesh&& fresh) {
+        if (fresh.chain.size() <= kept.chain.size()) return;
+        kept.shoulders = std::move(fresh.shoulders);
+        kept.markings = std::move(fresh.markings);
+        kept.chain = std::move(fresh.chain);
+    };
     // 先に Mesh Output（描く鎖）。
     for (const Node& output : m_nodes) {
         if (output.kind != NodeKind::MeshOutput || output.inputs.empty()) continue;
-        const Node* mesh = FindUpstreamNodeForPin(output.inputs[0].id);
-        if (mesh == nullptr || visited.contains(mesh->id)) continue;
         CompiledRoadMesh compiled;
         if (!compileChain(output, compiled)) continue;
-        visited[mesh->id] = result.size();
+        if (const auto found = drawnByRoadMesh.find(compiled.roadMesh); found != drawnByRoadMesh.end()) {
+            takeLonger(result[found->second], std::move(compiled));
+            continue;
+        }
+        drawnByRoadMesh[compiled.roadMesh] = result.size();
         result.push_back(std::move(compiled));
     }
-    // 次に Mask Mesh と Road Grading（どちらも鎖の足跡を読む）。描く鎖の同じメッシュに繋いであれば
-    // その鎖へ加え、無ければ描かない鎖を作る。Road Grading のメッシュは 2 番目の入力（Base の次）。
+    // 次に Mask Mesh と Road Grading（どちらも鎖の足跡を読む）。**足跡の形は繋いだ場所で決まる**
+    // （Road Mesh に直接繋げば路肩なし、Shoulder の先に繋げば路肩込み）ので、鎖の形が同じものが
+    // 既にあればその読み手になり、無ければ描かない鎖を別に作る。描く鎖の形は変えない
+    // （Mesh Output に繋いでいない帯を描かないため）。Road Grading のメッシュは 2 番目の入力（Base の次）。
     for (const Node& maskNode : m_nodes) {
         const bool grading = maskNode.kind == NodeKind::RoadGrading;
         if (maskNode.kind != NodeKind::MaskMesh && !grading) continue;
         const size_t meshInput = grading ? 1 : 0;
         if (maskNode.inputs.size() <= meshInput) continue;
-        const Node* mesh = FindUpstreamNodeForPin(maskNode.inputs[meshInput].id);
-        if (mesh == nullptr) continue;
-        if (const auto found = visited.find(mesh->id); found != visited.end()) {
-            result[found->second].maskNodes.push_back(maskNode.id);
-            continue;
-        }
         CompiledRoadMesh compiled;
         if (!compileChain(maskNode, compiled, meshInput)) continue;
+        const auto same = std::find_if(result.begin(), result.end(), [&](const CompiledRoadMesh& kept) {
+            return kept.roadMesh == compiled.roadMesh && kept.chain == compiled.chain;
+        });
+        if (same != result.end()) {
+            same->maskNodes.push_back(maskNode.id);
+            continue;
+        }
         compiled.drawn = false;
         compiled.maskNodes.push_back(maskNode.id);
-        visited[mesh->id] = result.size();
         result.push_back(std::move(compiled));
     }
     return result;
@@ -1676,6 +1685,9 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace,
         compiled.layers.clear();
         compiled.layers.push_back(compositor::MaterialStack::MakeBaseLayer());
         layerNodes.clear();
+        // 出どころの列は layers と同じ長さに保つ（中立平面は元ノード無しの 0）。
+        RecordMaskOpSources(state.emitted, compiled);
+        RecordLayerSources(layerNodes, compiled);
         return compiled;
     }
 
@@ -1690,7 +1702,10 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace,
         inserted = false;
         for (size_t i = 0; i < layerNodes.size() && !inserted; ++i) {
             std::vector<const Node*> sources;
-            const size_t maskCount = layerNodes[i]->kind == NodeKind::FluvialErosion ? 2 : 1;
+            // 侵食は Mask と Hardness、散布は Mask と Variation と Scale を読む。
+            const size_t maskCount = layerNodes[i]->kind == NodeKind::FluvialErosion ? 2
+                                     : layerNodes[i]->kind == NodeKind::Scatter    ? 3
+                                                                                    : 1;
             for (size_t which = 0; which < maskCount; ++which) {
                 const MaskSourceRef mask = UpstreamMaskOf(*layerNodes[i], which);
                 if (mask.node != nullptr) CollectLayerMaskSources(*mask.node, sources, 0);

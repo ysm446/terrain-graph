@@ -1,7 +1,7 @@
 # plan — 実装方針と優先順位
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-10-06 10:10
+更新日時: 2026-10-09 08:50
 
 ## ユニークなモデルの配置（Model Place。2026-10-05 20:41、段階 1 実装済み）
 
@@ -418,19 +418,19 @@ terrain_graph.exe [--project <path>] [--save-project <path>]
 
 原因は路肩のメッシュの組み立て（`Application::UpdateRoadMeshes` の路肩のループ）での、`std::vector` の要素を指すポインタのぶら下がり。路肩の帯を `cache.shoulders.emplace_back()` で足す間に、描く項目（`item.geometry = &strip.mesh`）と次の路肩の張り出し元（`edges[side].strip`）が前の要素を指していて、伸びて付け替わると解放済みのメモリを読んでいた。`Mesh::Create` がでたらめなバッファの大きさ（1.3e19 バイトなど）を頼み、ドライバが内部エラーでデバイスを失っていた。Debug では解放済みのメモリが 0xDD で埋まり、大きさが 0 になって黙って飛ばされるので起きなかった。シーンを続けて開くと起きやすかったのも、解放済みのメモリの再利用のされ方が変わるため。ループの前に `reserve` して直した。
 
-### `起伏の強さ` が法線マップに効かない
+### `起伏の強さ` が法線マップに効かない — 解決済み（2026-10-09）
 
-`ComputeLayerNormal` は**法線マップがあると早期 return** する。そのため
-法線マップを持つマテリアルでは、`起伏の強さ`（`heightGain`）を下げても
-**形（Height）だけが平らになり、陰影は元の強さのまま**残る。
-マップを持たないレイヤーでは両方に効くので、挙動が食い違っている。
+`ComputeLayerNormal` は法線マップがあると、ハイトの勾配を取らずにマップの値をそのまま返していた。
+そのため法線マップを持つマテリアルでは、`起伏の強さ`（`heightGain`）を下げても
+形（Height）だけが平らになり、陰影は元の強さのまま残っていた。
+法線マップの xy に `heightGain`（`g_layer.heightNoise.y`）を掛けてから正規化する形にして直した
+（傾き tan(θ) を gain 倍する。ハイトの側では `SampleLayerHeight` の中で同じ gain が掛かる）。
 
-- 直し方の案: 法線マップの xy に `heightGain` を掛けてから正規化する
-  （傾きを gain 倍する、が実寸の意味に合う）。
-- 経緯: 実寸化のときに「法線の強さ」パラメータを廃したので、
-  残っているつまみは `起伏の強さ` だけ。ここが効かないのは筋が通らない。
+### 起動直後の GPU ベースバリデーション（MaterialThumbnail）— 対策済み・未確認
 
-### 起動直後の GPU ベースバリデーション（MaterialThumbnail）
+`MaterialLibrary::BuildThumbnail` は、作った直後（COMMON）のサムネイルを Discard で初期化してから
+UAV へ遷移するようにしてある（TextureLibrary::BuildPreview と同じ）。`--gpu-validation` での
+再現確認はまだしていない（2026-10-09 のレビューでも起動に数分かかるため省略）。
 
 `--project` でプロジェクトを開いて数フレームで撮ると、`MaterialThumbnail.hlsl` の Dispatch で
 「Incompatible texture barrier layout（UAV なのに COMMON）」が 1〜2 回出ることがある

@@ -38,9 +38,22 @@ void PaintMaskStore::Destroy(rhi::Device& device) {
         device.DeferRelease(entry.texture);
     }
     m_entries.clear();
-    m_pending.clear();
+    DiscardPending(device);
     ReleaseSnapshots(device, m_undo);
     ReleaseSnapshots(device, m_redo);
+}
+
+void PaintMaskStore::DiscardOp(rhi::Device& device, Op& op) {
+    if (op.releaseHistory) {
+        device.DeferRelease(op.history);
+    }
+}
+
+void PaintMaskStore::DiscardPending(rhi::Device& device) {
+    for (Op& op : m_pending) {
+        DiscardOp(device, op);
+    }
+    m_pending.clear();
 }
 
 bool PaintMaskStore::CreateMaskTexture(rhi::Device& device, uint32_t resolution,
@@ -115,6 +128,11 @@ void PaintMaskStore::Remove(rhi::Device& device, PaintMaskId id) {
     // 破棄するマスクを対象にした要求と履歴を先に片付ける。
     // テクスチャ本体とディスクリプタの解放はフレーム同期後（DeferRelease）なので、
     // GPU 待機は要らない。
+    for (Op& op : m_pending) {
+        if (op.target == id) {
+            DiscardOp(device, op);
+        }
+    }
     m_pending.erase(std::remove_if(m_pending.begin(), m_pending.end(),
                                    [id](const Op& op) { return op.target == id; }),
                     m_pending.end());
@@ -311,7 +329,7 @@ PaintMaskId PaintMaskStore::AddFromPixels(rhi::Device& device, uint32_t resoluti
 }
 
 void PaintMaskStore::Clear(rhi::Device& device) {
-    m_pending.clear();
+    DiscardPending(device);
     ReleaseSnapshots(device, m_undo);
     ReleaseSnapshots(device, m_redo);
     for (PaintMaskEntry& entry : m_entries) {
@@ -401,11 +419,15 @@ void PaintMaskStore::ProcessPendingWork(rhi::Device& device, rhi::PipelineCache&
     // 履歴は解像度が変わると使えない。アンドゥの段は捨てる。
     // 積んであった履歴のコピー要求（Capture / Restore）もサイズ不一致で
     // 成立しないため、あわせて捨てる。
-    m_pending.erase(std::remove_if(m_pending.begin(), m_pending.end(),
-                                   [](const Op& op) {
-                                       return op.type == OpType::Capture ||
-                                              op.type == OpType::Restore;
-                                   }),
+    const auto isHistoryOp = [](const Op& op) {
+        return op.type == OpType::Capture || op.type == OpType::Restore;
+    };
+    for (Op& op : m_pending) {
+        if (isHistoryOp(op)) {
+            DiscardOp(device, op);
+        }
+    }
+    m_pending.erase(std::remove_if(m_pending.begin(), m_pending.end(), isHistoryOp),
                     m_pending.end());
     ReleaseSnapshots(device, m_undo);
     ReleaseSnapshots(device, m_redo);
@@ -526,7 +548,7 @@ bool PaintMaskStore::Process(rhi::Device& device, rhi::PipelineCache& pipelineCa
     ID3D12PipelineState* fillPipeline = pipelineCache.GetCompute(L"PaintFill.hlsl", L"CsMain");
     ID3D12PipelineState* brushPipeline = pipelineCache.GetCompute(L"PaintBrush.hlsl", L"CsMain");
     if (fillPipeline == nullptr || brushPipeline == nullptr) {
-        m_pending.clear();
+        DiscardPending(device);
         return false;
     }
 
@@ -543,6 +565,8 @@ bool PaintMaskStore::Process(rhi::Device& device, rhi::PipelineCache& pipelineCa
     for (Op& op : m_pending) {
         PaintMaskEntry* entry = FindMutable(op.target);
         if (entry == nullptr) {
+            // 対象が消えていて記録しない。履歴テクスチャは持ち主がいないので返す。
+            DiscardOp(device, op);
             continue;
         }
 

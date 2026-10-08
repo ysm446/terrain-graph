@@ -296,10 +296,6 @@ inline const compositor::MaterialLayer& DefaultLayerFor(compositor::LayerKind ki
     }
 }
 
-// レイヤー一覧のツールチップなどで使う種類の表示名。LayerKind の並びと一致させること。
-inline const char* const kLayerKindLabels[] = {"サーフェス", "シェイプ", "水面", "ブラー",
-                                               "堆積",       "崩落",     "積雪", "河川",
-                                               "水滴侵食", "散布", "マルチスケール侵食", "Fluvial Erosion", "Flatten Borders"};
 // 曲率マスクの向き。compositor::CurvatureMode の並びと一致させること。
 inline const char* const kCurvatureModeLabels[] = {"尾根", "谷", "両方"};
 // 岩片の形。compositor::RockStyle の並びと一致させること。
@@ -363,28 +359,6 @@ inline float PreviewPaneSize() {
     return std::max(ui::Scaled(120.0f), std::min(available.x, maxHeight));
 }
 
-// レイヤー一覧のドラッグ＆ドロップで使うペイロードの種別。
-inline constexpr const char* kLayerDragDropType = "TG_LAYER";
-// レイヤー一覧の行に並べるサムネイルの一辺（96 DPI 基準）。行の高さはこれで決まる。
-// 中身（マテリアルとマスク）を読めることを優先して、文字より大きく取る。
-inline constexpr float kLayerRowThumbnail = 40.0f;
-// レイヤー一覧の行で、部品どうしと行の左右に空ける間隔（96 DPI 基準）。
-// ImGui の ItemInnerSpacing（6）では目・サムネイル・マスク・名前が詰まって
-// 1 つの塊に見える。**どれも意味の違う情報なので、読み分けられる間隔を取る。**
-inline constexpr float kLayerRowGap = 12.0f;
-// 目のアイコンの一辺。**サムネイルより小さくする。**
-// 同じ大きさだと切り替えのアイコンが素材と同じ重みで並び、目線が散る。
-inline constexpr float kLayerRowEye = 20.0f;
-// レイヤーパネルの一覧側（上の区画）の高さの下限と上限（96 DPI 基準）。
-// 既定値は AppSettings が持ち、境界のドラッグで変わる。
-// 下限はツールバーの 1 行 + 行 2 つ + ヒントの 1 行が入る高さ。
-inline constexpr float kLayerListMinHeight = 120.0f;
-inline constexpr float kLayerListMaxHeight = 640.0f;
-
-// テクスチャの拡大プレビューの一辺（96 DPI 基準）。
-// サムネイル（72）では中身を確かめられないので、その 3 倍弱を取る。
-inline constexpr float kTexturePreviewSize = 200.0f;
-
 // テクスチャ一覧からマップ欄へのドラッグ＆ドロップで使うペイロードの種別。
 inline constexpr const char* kTextureDragDropType = "TG_TEXTURE";
 // マテリアル一覧から Surface のマテリアル欄（プロパティの行 / ノードのサムネイル）へ
@@ -393,7 +367,6 @@ inline constexpr const char* kMaterialDragDropType = "TG_MATERIAL";
 // アセット一覧のサムネイルをフォルダ階層へドラッグ＆ドロップして移動するときの
 // ペイロードの種別。中身は UTF-8 のパス文字列（終端なし）。
 inline constexpr const char* kAssetPathDragDropType = "TG_ASSET_PATH";
-inline constexpr const char* kTextureRemoveModalTitle = "テクスチャを削除";
 
 // テクスチャの一覧に出すフォーマット名。DXGI の名前は長いので短く言い換える。
 inline const char* TextureFormatLabel(const compositor::LibraryTexture& entry) {
@@ -403,7 +376,7 @@ inline const char* TextureFormatLabel(const compositor::LibraryTexture& entry) {
 // ステータスバーの通知を残す時間（秒）。情報だけが時間で消える。
 inline constexpr float kStatusHoldSeconds = 6.0f;
 
-// ビューポートの背景色の既定値。Application のメンバ初期化と揃えること。
+// ビューポートの背景色の既定値（設定の行の「既定へ戻す」用）。io::AppSettings の clearColor の初期値と揃えること。
 inline constexpr float kDefaultClearColor[3] = {0.09f, 0.09f, 0.11f};
 
 // 解像度コンボの選択位置。一致するものが無ければ 1（1024）に寄せる。

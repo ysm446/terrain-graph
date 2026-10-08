@@ -4,6 +4,7 @@
 
 #include "core/Log.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdio>
 #include <string>
@@ -84,9 +85,25 @@ void Device::Defer(ComPtr<IUnknown> object) {
 }
 
 void Device::SetAuxiliaryFence(ID3D12Fence* fence, uint64_t value) {
-    m_auxiliaryFence = fence;
-    m_auxiliaryFenceValue = value;
-    m_deletionQueue.SetAuxiliaryFence(m_auxiliaryFence, value);
+    if (fence == nullptr) {
+        return;
+    }
+    PruneAuxiliaryFences();
+    const auto it = std::find_if(
+        m_auxiliaryFences.begin(), m_auxiliaryFences.end(),
+        [fence](const AuxiliaryFence& aux) { return aux.fence.Get() == fence; });
+    if (it != m_auxiliaryFences.end()) {
+        it->value = std::max(it->value, value);
+    } else {
+        m_auxiliaryFences.push_back(AuxiliaryFence{fence, value});
+    }
+    m_deletionQueue.SetAuxiliaryFence(fence, value);
+}
+
+void Device::PruneAuxiliaryFences() {
+    std::erase_if(m_auxiliaryFences, [](const AuxiliaryFence& aux) {
+        return aux.fence->GetCompletedValue() >= aux.value;
+    });
 }
 
 void Device::RequestBackBufferCapture(const std::filesystem::path& path,
@@ -130,16 +147,14 @@ void Device::DeferFreeMipViews(GpuTexture& texture) {
 }
 
 void Device::DeferRelease(GpuTexture& texture) {
-    // uav は mipUavs[0] と同じハンドルなので、二重解放しないよう mipUavs 側だけ返す。
-    DeferFree(m_srvHeap, texture.srv);
-    for (const DescriptorHandle& handle : texture.mipUavs) {
-        DeferFree(m_srvHeap, handle);
-    }
-    for (const DescriptorHandle& handle : texture.mipSrvs) {
-        DeferFree(m_srvHeap, handle);
-    }
-    DeferFree(m_rtvHeap, texture.rtv);
-    DeferFree(m_dsvHeap, texture.dsv);
+    texture.ForEachDescriptor([&](GpuTexture::DescriptorHeapKind kind,
+                                  const DescriptorHandle& handle) {
+        switch (kind) {
+            case GpuTexture::DescriptorHeapKind::Srv: DeferFree(m_srvHeap, handle); break;
+            case GpuTexture::DescriptorHeapKind::Rtv: DeferFree(m_rtvHeap, handle); break;
+            case GpuTexture::DescriptorHeapKind::Dsv: DeferFree(m_dsvHeap, handle); break;
+        }
+    });
     Defer(texture.resource);
     Defer(texture.allocation);
     texture = GpuTexture{};
@@ -396,18 +411,25 @@ bool Device::CreateFrameTiming() {
     }
     m_frameTimestampHeap->SetName(L"FrameTimestamps");
     // READBACK は COPY_DEST 固定。スロットごとに開始・終了の 2 値を置く。
-    return m_allocator.CreateReadbackBuffer(sizeof(uint64_t) * desc.Count,
-                                            L"FrameTimestampReadback", m_frameTimestampReadback);
+    if (!m_allocator.CreateReadbackBuffer(sizeof(uint64_t) * desc.Count,
+                                          L"FrameTimestampReadback", m_frameTimestampReadback)) {
+        return false;
+    }
+    // 毎フレーム Map / Unmap しない。読むのは ReadFrameTiming でフェンス待ちのあとだけ。
+    void* mapped = nullptr;
+    const D3D12_RANGE readRange = {0, 0};
+    if (!TG_CHECK_HR(m_frameTimestampReadback.resource->Map(0, &readRange, &mapped))) {
+        m_frameTimestampReadback = GpuBuffer{};
+        return false;
+    }
+    m_frameTimestampMapped = static_cast<const uint64_t*>(mapped);
+    return true;
 }
 
 void Device::ReadFrameTiming() {
-    if (!m_frameTimestampPending[m_frameIndex]) return;
+    if (!m_frameTimestampPending[m_frameIndex] || m_frameTimestampMapped == nullptr) return;
     m_frameTimestampPending[m_frameIndex] = false;
-    const SIZE_T offset = sizeof(uint64_t) * 2 * m_frameIndex;
-    const D3D12_RANGE readRange = {offset, offset + sizeof(uint64_t) * 2};
-    void* mapped = nullptr;
-    if (!TG_CHECK_HR(m_frameTimestampReadback.resource->Map(0, &readRange, &mapped))) return;
-    const auto* timestamps = static_cast<const uint64_t*>(mapped) + 2 * m_frameIndex;
+    const uint64_t* timestamps = m_frameTimestampMapped + 2 * m_frameIndex;
     if (timestamps[1] >= timestamps[0]) {
         const double milliseconds = static_cast<double>(timestamps[1] - timestamps[0]) *
                                     1000.0 / static_cast<double>(m_timestampFrequency);
@@ -415,8 +437,6 @@ void Device::ReadFrameTiming() {
         m_gpuFrameMilliseconds = m_gpuFrameMilliseconds < 0.0 ? milliseconds :
                                  m_gpuFrameMilliseconds * 0.9 + milliseconds * 0.1;
     }
-    const D3D12_RANGE writtenRange = {0, 0};
-    m_frameTimestampReadback.resource->Unmap(0, &writtenRange);
 }
 
 bool Device::CreateSwapChain(HWND hwnd, uint32_t width, uint32_t height) {
@@ -511,11 +531,8 @@ ID3D12GraphicsCommandList* Device::BeginFrame(const float clearColor[4]) {
     // このフレームスロットが前回投入した処理の完了を待つ。
     // m_fenceValues[i] == 0 は未使用スロットなので待たない。
     const uint64_t pending = m_fenceValues[m_frameIndex];
-    if (pending != 0 && m_fence->GetCompletedValue() < pending) {
-        if (!TG_CHECK_HR(m_fence->SetEventOnCompletion(pending, m_fenceEvent))) {
-            return nullptr;
-        }
-        ::WaitForSingleObjectEx(m_fenceEvent, INFINITE, FALSE);
+    if (pending != 0 && !WaitForFence(m_fence.Get(), pending, m_fenceEvent)) {
+        return nullptr;
     }
 
     // このスロットの処理は完了しているので、解放待ちを回収してリングを巻き戻す。
@@ -849,21 +866,16 @@ void Device::WaitForGpu() {
     if (!TG_CHECK_HR(m_commandQueue->Signal(m_fence.Get(), value))) {
         return;
     }
-    if (m_fence->GetCompletedValue() < value) {
-        if (!TG_CHECK_HR(m_fence->SetEventOnCompletion(value, m_fenceEvent))) {
-            return;
-        }
-        ::WaitForSingleObjectEx(m_fenceEvent, INFINITE, FALSE);
+    if (!WaitForFence(m_fence.Get(), value, m_fenceEvent)) {
+        return;
     }
 
     // 補助フェンスの仕事（別キューの合成の評価）も終わるまで待つ。
     // 「GPU が止まった」と信じて消す側は、そちらが参照中かどうかを知らない。
-    if (m_auxiliaryFence && m_auxiliaryFence->GetCompletedValue() < m_auxiliaryFenceValue) {
-        if (TG_CHECK_HR(m_auxiliaryFence->SetEventOnCompletion(m_auxiliaryFenceValue,
-                                                                m_fenceEvent))) {
-            ::WaitForSingleObjectEx(m_fenceEvent, INFINITE, FALSE);
-        }
+    for (const AuxiliaryFence& aux : m_auxiliaryFences) {
+        WaitForFence(aux.fence.Get(), aux.value, m_fenceEvent);
     }
+    PruneAuxiliaryFences();
 
     // ここまでで全スロットの処理は完了している。
     for (auto& fenceValue : m_fenceValues) {
@@ -888,10 +900,13 @@ void Device::Shutdown() {
     m_captureCallback = {};
 
     m_deletionQueue.Flush();
-    m_deletionQueue.SetAuxiliaryFence(nullptr, 0);
-    m_auxiliaryFence.Reset();
-    m_auxiliaryFenceValue = 0;
+    m_deletionQueue.ClearAuxiliaryFences();
+    m_auxiliaryFences.clear();
     m_uploadRing.Destroy();
+    if (m_frameTimestampMapped != nullptr) {
+        m_frameTimestampReadback.resource->Unmap(0, nullptr);
+        m_frameTimestampMapped = nullptr;
+    }
     m_frameTimestampReadback = GpuBuffer{};
     m_frameTimestampHeap.Reset();
     m_timestampFrequency = 0;

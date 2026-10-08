@@ -2,7 +2,6 @@
 #include "../../shaders/AtmosphereIntegration.hlsli"
 #include "renderer/PreviewRenderer.h"
 
-#include "core/ImageIo.h"
 #include "core/Log.h"
 
 #include <pix3.h>
@@ -311,26 +310,6 @@ bool PreviewRenderer::Initialize(rhi::Device& device, rhi::PipelineCache& pipeli
     return true;
 }
 
-namespace {
-void TransitionBuffer(ID3D12GraphicsCommandList* commandList, rhi::GpuBuffer& buffer, D3D12_RESOURCE_STATES state) {
-    if (buffer.state == state) return;
-    D3D12_RESOURCE_BARRIER barrier = {};
-    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    barrier.Transition.pResource = buffer.resource.Get();
-    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    barrier.Transition.StateBefore = buffer.state;
-    barrier.Transition.StateAfter = state;
-    commandList->ResourceBarrier(1, &barrier);
-    buffer.state = state;
-}
-void UavBarrier(ID3D12GraphicsCommandList* commandList, rhi::GpuBuffer& buffer) {
-    D3D12_RESOURCE_BARRIER barrier = {};
-    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-    barrier.UAV.pResource = buffer.resource.Get();
-    commandList->ResourceBarrier(1, &barrier);
-}
-}
-
 void PreviewRenderer::MeterExposure(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                                     ID3D12GraphicsCommandList* commandList) {
     ID3D12PipelineState* clearPipeline = pipelineCache.GetCompute(L"ExposureMeter.hlsl", L"CsClear");
@@ -346,19 +325,19 @@ void PreviewRenderer::MeterExposure(rhi::Device& device, rhi::PipelineCache& pip
     // 暗い側の半分と明るい側の 2% を捨て、黒い地形や太陽・月の円盤に引っ張られないようにする。
     const MeterConstants constants{m_sceneColor.SrvIndex(), m_meterHistogram.uav.index, m_meterResult.uav.index,
                                    m_width, m_height, -16.0f, 50.0f, 0.5f, 0.02f, 12.5f};
-    TransitionBuffer(commandList, m_meterHistogram, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    TransitionBuffer(commandList, m_meterResult, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    rhi::TransitionIfNeeded(commandList, m_meterHistogram, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    rhi::TransitionIfNeeded(commandList, m_meterResult, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     commandList->SetComputeRootSignature(pipelineCache.GlobalRootSignature());
     commandList->SetComputeRoot32BitConstants(0, sizeof(constants) / sizeof(uint32_t), &constants, 0);
     commandList->SetPipelineState(clearPipeline);
     commandList->Dispatch(1, 1, 1);
-    UavBarrier(commandList, m_meterHistogram);
+    rhi::UavBarrier(commandList, m_meterHistogram);
     commandList->SetPipelineState(histogramPipeline);
     commandList->Dispatch(rhi::DispatchCount(m_width, 16), rhi::DispatchCount(m_height, 16), 1);
-    UavBarrier(commandList, m_meterHistogram);
+    rhi::UavBarrier(commandList, m_meterHistogram);
     commandList->SetPipelineState(resolvePipeline);
     commandList->Dispatch(1, 1, 1);
-    TransitionBuffer(commandList, m_meterResult, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    rhi::TransitionIfNeeded(commandList, m_meterResult, D3D12_RESOURCE_STATE_COPY_SOURCE);
     const uint32_t slot = device.FrameIndex();
     commandList->CopyBufferRegion(m_meterReadback.resource.Get(), sizeof(float) * 4 * slot,
                                   m_meterResult.resource.Get(), 0, sizeof(float) * 4);
@@ -633,10 +612,6 @@ float PreviewRenderer::BoundingRadius() const {
     return radius;
 }
 
-const Mesh& PreviewRenderer::CurrentMesh() const {
-    return m_plane;
-}
-
 void PreviewRenderer::ReleaseTargets(rhi::Device& device) {
     rhi::GpuTexture* targets[] = {&m_sceneColor, &m_sceneColorDof, &m_materialUv, &m_depth,
                                   &m_output};
@@ -663,8 +638,7 @@ bool PreviewRenderer::Resize(rhi::Device& device, uint32_t width, uint32_t heigh
         return true;
     }
 
-    // 作り直す前に、GPU がまだ参照しているターゲットを解放できる状態にする。
-    device.WaitForGpu();
+    // 古いターゲットは DeferRelease でフレーム同期後に返るので、ここで GPU を待たない。
     ReleaseTargets(device);
 
     rhi::TextureDesc colorDesc;
@@ -706,13 +680,6 @@ bool PreviewRenderer::Resize(rhi::Device& device, uint32_t width, uint32_t heigh
         return false;
     }
 
-    // リサイズ直後の最初のフレームには「前フレームの UV」がまだ無い。
-    // 未初期化のままブラシが読むと、被覆フラグのゴミで意図しない位置に描いてしまう。
-    const float uvClearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-    device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {
-        commandList->ClearRenderTargetView(m_materialUv.rtv.cpu, uvClearColor, 0, nullptr);
-    });
-
     // **被写界深度が深度を読むので SRV も張る。** 深度として書き、SRV としても
     // 読むため TYPELESS で作る（シャドウマップと同じ作法）。
     rhi::TextureDesc depthDesc;
@@ -745,14 +712,21 @@ bool PreviewRenderer::Resize(rhi::Device& device, uint32_t width, uint32_t heigh
         return false;
     }
 
-    // RTV フラグ付きのリソースは、最初に Clear / Discard / Copy で初期化しないと
-    // デバッグレイヤーが「未初期化のまま描画に使った」というエラーを出す
-    // （NOT_ZEROED ヒープの規則）。中身はトーンマップが毎フレーム全画素を
-    // 書き潰すので、Discard で十分。
+    // 新しいターゲットの初期化は 1 本のリストにまとめる（ExecuteImmediate は毎回 GPU 全体を待つ）。
+    // - UV バッファ: リサイズ直後の最初のフレームには「前フレームの UV」がまだ無い。
+    //   未初期化のままブラシが読むと、被覆フラグのゴミで意図しない位置に描いてしまう。
+    // - 出力: RTV フラグ付きのリソースは、最初に Clear / Discard / Copy で初期化しないと
+    //   デバッグレイヤーが「未初期化のまま描画に使った」というエラーを出す
+    //   （NOT_ZEROED ヒープの規則）。中身はトーンマップが毎フレーム全画素を
+    //   書き潰すので、Discard で十分。
+    const float uvClearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {
+        PIXBeginEvent(commandList, PIX_COLOR(120, 180, 255), "PreviewResizeInit");
+        commandList->ClearRenderTargetView(m_materialUv.rtv.cpu, uvClearColor, 0, nullptr);
         TransitionIfNeeded(commandList, m_output, D3D12_RESOURCE_STATE_RENDER_TARGET);
         commandList->DiscardResource(m_output.resource.Get(), nullptr);
         TransitionIfNeeded(commandList, m_output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        PIXEndEvent(commandList);
     });
 
     m_width = width;
@@ -846,7 +820,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
         return;
     }
 
-    const Mesh& mesh = CurrentMesh();
+    const Mesh& mesh = m_plane;
     if (!mesh.IsValid()) {
         return;
     }
@@ -1114,7 +1088,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     XMStoreFloat4x4(&m_instanceShadows.view, view);
     m_instanceShadows.count = constants.shadowCascadeCount;
     m_instanceShadows.nearDistance = constants.cascadeNear;
-    for (uint32_t i=0;i<4;++i) {
+    for (uint32_t i = 0; i < kShadowCascadeCount; ++i) {
         m_instanceShadows.matrices[i] = constants.cascadeViewProjections[i];
         m_instanceShadows.indices[i] = constants.cascadeShadowIndices[i];
         m_instanceShadows.splits[i] = constants.cascadeSplits[i];
@@ -1262,8 +1236,9 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
     if (dofPipeline != nullptr) {
         PIXBeginEvent(commandList, PIX_COLOR(120, 160, 220), "PreviewDepthOfField");
 
+        // 前段（雪煙）と同じ読み出し状態にそろえ、余計な遷移を挟まない。
         TransitionIfNeeded(commandList, m_depth,
-                           D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                           D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         TransitionIfNeeded(commandList, m_sceneColorDof, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
         DofConstants dofConstants = {};

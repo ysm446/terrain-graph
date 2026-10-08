@@ -21,6 +21,7 @@
 #include <ctime>
 #include <filesystem>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace tg {
@@ -429,7 +430,12 @@ int Application::Run() {
 
         // 環境マップやマテリアル解像度の作り直しは GPU 待機を伴うため、
         // フレームの外で処理する。
-        const graph::CompiledCloud compiledCloud = m_graph.CompileCloud();
+        // 雲のコンパイルはグラフの版が変わったときだけ（GraphCycleNodes と同じ）。結果は読むだけ。
+        if (m_compiledCloudRevision != m_graph.Revision()) {
+            m_compiledCloudRevision = m_graph.Revision();
+            m_compiledCloud = m_graph.CompileCloud();
+        }
+        const graph::CompiledCloud& compiledCloud = m_compiledCloud;
         if (!PrepareCloudMask(m_cloudMasks[0], compiledCloud.maskNode, compiledCloud.layer ? compiledCloud.maskPin : 0)) return 1;
         if (!PrepareCloudMask(m_cloudMasks[1], compiledCloud.typeMaskNode, compiledCloud.weather ? compiledCloud.typeMaskPin : 0)) return 1;
         PrepareSnowPlumes();
@@ -518,7 +524,6 @@ int Application::Run() {
                 // 読み込んだものを選択して一覧に見せる。
                 m_selectedTexture =
                     static_cast<int>(m_textureLibrary.Entries().size()) - 1;
-                m_scrollToSelectedTexture = true;
             }
             if (loaded) {
                 m_assetRefresh = true;
@@ -598,8 +603,8 @@ int Application::Run() {
         // だが、レンダラは AppSettings を知らないので、描く直前に毎フレーム渡す。
         m_renderer.ShowHeightGuide() = m_settings.Display().showHeightGuide;
 
-        // グラフをレイヤー列へコンパイルした結果で評価する。
-        SyncGraphStack();
+        // グラフをレイヤー列へコンパイルした結果で評価する（コンパイルは DrawUi 直後の SyncGraphStack。
+        // そこからここまでにグラフの版やプレビューの対象は変わらないので、ここでは呼び直さない）。
         for (auto& slot : m_cloudMasks) {
             if (slot.pin) slot.evaluator.Update(m_device, m_pipelineCache, commandList, slot.stack,
                                                 m_textureLibrary, m_materialLibrary, m_paintMasks);
@@ -864,7 +869,11 @@ void Application::PrepareWater() {
 }
 
 void Application::PrepareSnowPlumes() {
-    m_snowPlumes = m_graph.CompileSnowPlumes();
+    // グラフの版が変わったときだけコンパイルし直す。m_snowPlumes は以降読むだけ。
+    if (m_snowPlumesRevision != m_graph.Revision()) {
+        m_snowPlumesRevision = m_graph.Revision();
+        m_snowPlumes = m_graph.CompileSnowPlumes();
+    }
     for (const auto& plume : m_snowPlumes) {
         auto& slot = m_snowPlumeMasks[plume.node];
         if (!slot) slot = std::make_unique<SnowPlumeSlot>();
@@ -1059,26 +1068,31 @@ void Application::DrawUi() {
     // 変更後に気づく作りなので、積むのは「1 つ前に確定した状態」。
     // 掴んでいるウィジェットの ID を渡すことで、スライダーのドラッグが
     // 1 段に収まる（毎フレーム変更が来ても ID は変わらない）。
+    const auto activeWidget = static_cast<uint32_t>(ImGui::GetActiveID());
+    bool sceneDirtyRefreshed = false;
     if (m_documentDirty) {
         m_documentDirty = false;
         // 直前の編集の続き（ドラッグを離した時点の経路の計算し直しなど）は、
         // 直前の段の ID を渡して同じ段に畳む。
-        const uint32_t editId = m_documentJoinsEdit
-                                    ? m_undoHistory.LastEditId()
-                                    : static_cast<uint32_t>(ImGui::GetActiveID());
+        const uint32_t editId = m_documentJoinsEdit ? m_undoHistory.LastEditId() : activeWidget;
         m_documentJoinsEdit = false;
-        m_undoHistory.Push(m_committed, editId);
+        // 直後に写し直すので、控えは複製せずに履歴へ移す。
+        m_undoHistory.Push(std::move(m_committed), editId);
         m_committed = CaptureDocument();
         // 古い段が押し出されると、そこでしか参照されていなかったマスクが浮く。
         m_pendingPaintSweep = true;
-        RefreshSceneDirty();
+        // 未保存の判定はグラフの書き出しを通すので、スライダーのドラッグ中（毎フレーム変更が来る）は
+        // 見ない。離した時点は下の「掴んでいたものが離れた」で映す。
+        if (activeWidget == 0) {
+            RefreshSceneDirty();
+            sceneDirtyRefreshed = true;
+        }
     }
     // 掴んでいたものが離れたら、次の編集は別の段にする。
-    const auto activeWidget = static_cast<uint32_t>(ImGui::GetActiveID());
     if (activeWidget == 0) {
         m_undoHistory.EndEdit();
         // ノードの移動のように段を積まない編集も、離した時点で未保存の判定へ映す。
-        if (m_lastActiveWidget != 0) RefreshSceneDirty();
+        if (m_lastActiveWidget != 0 && !sceneDirtyRefreshed) RefreshSceneDirty();
     }
     m_lastActiveWidget = activeWidget;
 

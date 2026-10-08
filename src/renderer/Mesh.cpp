@@ -1,5 +1,7 @@
 #include "renderer/Mesh.h"
 
+#include <pix3.h>
+
 #include <cstring>
 
 using namespace DirectX;
@@ -41,6 +43,7 @@ bool Mesh::Create(rhi::Device& device, const MeshData& data, const wchar_t* debu
     staging.resource->Unmap(0, nullptr);
 
     const bool executed = device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {
+        PIXBeginEvent(commandList, PIX_COLOR(120, 180, 255), "MeshUpload");
         commandList->CopyBufferRegion(m_vertexBuffer.resource.Get(), 0, staging.resource.Get(), 0,
                                       vertexBytes);
         commandList->CopyBufferRegion(m_indexBuffer.resource.Get(), 0, staging.resource.Get(),
@@ -55,6 +58,7 @@ bool Mesh::Create(rhi::Device& device, const MeshData& data, const wchar_t* debu
                                                  D3D12_RESOURCE_STATE_INDEX_BUFFER),
         };
         commandList->ResourceBarrier(_countof(barriers), barriers);
+        PIXEndEvent(commandList);
     });
     if (!executed) {
         return false;

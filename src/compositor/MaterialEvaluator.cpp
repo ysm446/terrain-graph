@@ -47,8 +47,6 @@ constexpr uint32_t kFlagWrap = 0x10u;
 // 法線マップの緑を反転して読む（OpenGL 規約の素材）。
 constexpr uint32_t kFlagFlipNormalGreen = 0x20u;
 
-// レイヤー一覧に出すマスクサムネイルの一辺。行の高さに対して十分な細かさがあればよい。
-constexpr uint32_t kMaskThumbnailSize = 64;
 // ノードに出すマスクの op のサムネイル。ノード上では 64px で描くので同じ大きさ。
 constexpr uint32_t kMaskOpThumbnailSize = 64;
 // ノードに出す合成結果のサムネイル。同じ大きさ。
@@ -59,10 +57,6 @@ struct LayerThumbnailConstants {
     uint32_t indices[4];  // BaseColor の SRV, Height の SRV, 出力 UAV, 出力の一辺
     float params[4];      // 一辺（m）, 標高差（m）, 未使用 x2
 };
-// マスクは 1 チャンネルだが、R8 のまま ImGui へ渡すと赤一色で描かれる。
-// 灰色として見せたいので RGB へ同じ値を書く。
-constexpr DXGI_FORMAT kMaskThumbnailFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
-
 // GPU 側の LayerConstants と一致させること。
 struct LayerConstants {
     uint32_t outputIndices[4];
@@ -94,13 +88,13 @@ struct LayerConstants {
     float pathUvParams2[4];
     float mountain0[4]; // 有効、周波数、尾根、尖り
     float mountain1[4]; // 方向（rad）、伸長、うねり、細部
-    uint32_t mountain2[4]; // シード、未使用
+    uint32_t mountain2[4]; // シード、水の場の UAV、流れの場の UAV、Surface ごとの重みの UAV
     float liquid0[4];  // 浅瀬の色 rgb, 色の変わる深さ（m）
     float liquid1[4];  // 下地が透ける深さ（m）, ハイト 0〜1 の全幅（m）, 波の強さ, 未使用
     LayerMaterialGpu layerMaterial;
 };
 
-// GPU 側の SedimentConstants と一致させること。
+// GPU 側の CrumblingConstants と一致させること。
 struct CrumblingConstants {
     uint32_t indices0[4];  // 積む先 UAV, Height SRV, 発生マスク SRV, Height UAV
     uint32_t indices1[4];  // 合成解像度, 粒子の試行回数, 歩数, 岩片の形
@@ -308,6 +302,8 @@ uint64_t HashHeightState(uint64_t seed, const MaterialLayer& layer) {
     hash = HashBytes(hash, &layer.lake.referenceDetailScale, sizeof(layer.lake.referenceDetailScale));
     hash = HashBytes(hash, &layer.lake.areaMode, sizeof(layer.lake.areaMode));
     hash = HashBytes(hash, &layer.lake.areaDepthMeters, sizeof(layer.lake.areaDepthMeters));
+    // Lake の paintWater は水チャンネルを書き換え、Liquid のマスクの op がそれを読む。
+    hash = HashBytes(hash, &layer.liquid.paintWater, sizeof(layer.liquid.paintWater));
     hash = HashBytes(hash, &layer.snowCover.erodeDusting, sizeof(layer.snowCover.erodeDusting));
     hash = HashBytes(hash, &layer.snowCover.advectionLength, sizeof(layer.snowCover.advectionLength));
     hash = HashBytes(hash, &layer.snowCover.advectionVolume, sizeof(layer.snowCover.advectionVolume));
@@ -624,6 +620,8 @@ bool MaterialEvaluator::ReadbackHeight(rhi::Device& device, CpuHeightfield& out)
         const CD3DX12_TEXTURE_COPY_LOCATION destination(readback.resource.Get(), footprint);
         const CD3DX12_TEXTURE_COPY_LOCATION source(height.resource.Get(), 0);
         commandList->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+        // COPY_SOURCE のまま残さない（ReadbackMaskOp と同じ）。
+        TransitionIfNeeded(commandList, height, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         PIXEndEvent(commandList);
     });
     if (!executed) {
@@ -944,10 +942,7 @@ bool MaterialEvaluator::ApplyWindMask(rhi::Device& device, rhi::PipelineCache& p
     }
 
     const uint32_t groups = DispatchCount(resolution);
-    const auto barrier = [&]() {
-        const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-        commandList->ResourceBarrier(1, &uav);
-    };
+    const auto barrier = [&]() { rhi::UavBarrier(commandList); };
     const auto run = [&](ID3D12PipelineState* pipelineState) {
         commandList->SetPipelineState(pipelineState);
         commandList->Dispatch(groups, groups, layers);
@@ -977,6 +972,10 @@ bool MaterialEvaluator::ApplyWindMask(rhi::Device& device, rhi::PipelineCache& p
         barrier();
         RecordWindReadback(device, commandList, constants.wind[2]);
     }
+
+    // 下流の op と合成パスはマスクを SRV で読む。Height は次のレイヤーが書き換える（川筋と同じ）。
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
     PIXEndEvent(commandList);
     return true;
@@ -1356,9 +1355,7 @@ std::vector<TileRect> MaterialEvaluator::MakeTiles() const {
     return tiles;
 }
 
-// メッシュの描画から読めるようにする。Height は頂点 / ドメインシェーダ
-// （ディスプレイスメント）からも読まれるため、NON_PIXEL も含める。
-// 状態の食い違いを避けるため 4 枚とも同じ状態に揃える。
+// ノード用のサムネイルは ImGui（ピクセルシェーダ）が読む。合成結果と同じ状態に揃える。
 void MaterialEvaluator::TransitionThumbnailsForDisplay(
     ID3D12GraphicsCommandList* commandList, std::vector<MaskOpThumbnail>& thumbnails) {
     constexpr D3D12_RESOURCE_STATES kDisplayReadState =
@@ -1379,6 +1376,9 @@ void MaterialEvaluator::TransitionThumbnailsForDisplay(
     }
 }
 
+// メッシュの描画から読めるようにする。Height は頂点 / ドメインシェーダ
+// （ディスプレイスメント）からも読まれるため、NON_PIXEL も含める。
+// 状態の食い違いを避けるため全チャンネルを同じ状態に揃える。
 void MaterialEvaluator::TransitionForDisplay(ID3D12GraphicsCommandList* commandList,
                                              MaterialTextureSet& set) {
     constexpr D3D12_RESOURCE_STATES kDisplayReadState =
@@ -1392,6 +1392,12 @@ void MaterialEvaluator::TransitionForDisplay(ID3D12GraphicsCommandList* commandL
     TransitionIfNeeded(commandList, set.flow, kDisplayReadState);
     TransitionIfNeeded(commandList, set.layers, kDisplayReadState);
 }
+// op の heightSourceLayer が指すレイヤーが存在して有効か。
+static bool LayerEnabledAt(const MaterialStack& stack, int index) {
+    return index >= 0 && static_cast<size_t>(index) < stack.Layers().size() &&
+           stack.Layers()[static_cast<size_t>(index)].enabled;
+}
+
 // マスクの op を 1 つ焼く。入力（他の op の結果）は既に SRV になっている。
 bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                                   ID3D12GraphicsCommandList* commandList,
@@ -1435,43 +1441,31 @@ bool MaterialEvaluator::RunMaskOp(rhi::Device& device, rhi::PipelineCache& pipel
     if (op.kind == MaskOpKind::River) {
         return ApplyRiverMask(device, pipelineCache, commandList, op, stack, target);
     }
-    // 水滴侵食の流量 / 堆積も、直前に走った水滴侵食レイヤーの作業用テクスチャから焼く。
     if (op.kind == MaskOpKind::MeanderingRivers) {
-        const bool enabled = op.heightSourceLayer >= 0 &&
-            static_cast<size_t>(op.heightSourceLayer) < stack.Layers().size() &&
-            stack.Layers()[op.heightSourceLayer].enabled;
+        const bool enabled = LayerEnabledAt(stack, op.heightSourceLayer);
         return ApplyMeanderingRiversMask(device, pipelineCache, commandList, target, enabled);
     }
     if (op.kind == MaskOpKind::RoadGrading) {
-        const bool enabled = op.heightSourceLayer >= 0 &&
-            static_cast<size_t>(op.heightSourceLayer) < stack.Layers().size() &&
-            stack.Layers()[op.heightSourceLayer].enabled;
+        const bool enabled = LayerEnabledAt(stack, op.heightSourceLayer);
         return ApplyRoadGradingMask(device, pipelineCache, commandList, op, target, enabled);
     }
     if (op.kind == MaskOpKind::Liquid) {
-        const bool enabled = op.heightSourceLayer >= 0 &&
-            static_cast<size_t>(op.heightSourceLayer) < stack.Layers().size() &&
-            stack.Layers()[op.heightSourceLayer].enabled;
+        const bool enabled = LayerEnabledAt(stack, op.heightSourceLayer);
         return ApplyLiquidMask(device, pipelineCache, commandList, op, target, enabled);
     }
     if (op.kind == MaskOpKind::Lake) {
-        const bool enabled = op.heightSourceLayer >= 0 &&
-            static_cast<size_t>(op.heightSourceLayer) < stack.Layers().size() &&
-            stack.Layers()[op.heightSourceLayer].enabled;
+        const bool enabled = LayerEnabledAt(stack, op.heightSourceLayer);
         return ApplyLakeMask(device, pipelineCache, commandList, op, target, enabled);
     }
     if (op.kind == MaskOpKind::SnowCover) {
-        const bool enabled = op.heightSourceLayer >= 0 &&
-            static_cast<size_t>(op.heightSourceLayer) < stack.Layers().size() &&
-            stack.Layers()[op.heightSourceLayer].enabled;
+        const bool enabled = LayerEnabledAt(stack, op.heightSourceLayer);
         return ApplySnowCoverMask(device, pipelineCache, commandList, op, target, enabled);
     }
     if (op.kind == MaskOpKind::FluvialErosion) {
-        const bool enabled = op.heightSourceLayer >= 0 &&
-            static_cast<size_t>(op.heightSourceLayer) < stack.Layers().size() &&
-            stack.Layers()[op.heightSourceLayer].enabled;
+        const bool enabled = LayerEnabledAt(stack, op.heightSourceLayer);
         return ApplyFluvialErosionMask(device, pipelineCache, commandList, op, target, enabled);
     }
+    // 水滴侵食の流量 / 堆積も、直前に走った水滴侵食レイヤーの作業用テクスチャから焼く。
     if (op.kind == MaskOpKind::Droplet) {
         return ApplyDropletMask(device, pipelineCache, commandList, op, target);
     }
@@ -2220,8 +2214,7 @@ bool MaterialEvaluator::ApplyFlowlineMask(rhi::Device& device, rhi::PipelineCach
     const auto run = [&](int pass, uint32_t resolution) {
         commandList->SetPipelineState(passes[pass]);
         commandList->Dispatch(DispatchCount(resolution), DispatchCount(resolution), 1);
-        const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-        commandList->ResourceBarrier(1, &barrier);
+        rhi::UavBarrier(commandList);
     };
     run(0, n);
     run(1, particleSide);
@@ -2324,10 +2317,7 @@ bool MaterialEvaluator::ApplyFluvialMask(rhi::Device& device,
     TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
     const uint32_t groups = DispatchCount(resolution);
-    const auto barrier = [&]() {
-        const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-        commandList->ResourceBarrier(1, &uav);
-    };
+    const auto barrier = [&]() { rhi::UavBarrier(commandList); };
     const auto run = [&](ID3D12PipelineState* pipelineState, uint32_t groupCount) {
         commandList->SetPipelineState(pipelineState);
         commandList->Dispatch(groupCount, groupCount, 1);
@@ -2602,10 +2592,7 @@ bool MaterialEvaluator::ApplySediment(rhi::Device& device, rhi::PipelineCache& p
                        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 
     const uint32_t groups = DispatchCount(resolution);
-    const auto barrier = [&]() {
-        const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-        commandList->ResourceBarrier(1, &uav);
-    };
+    const auto barrier = [&]() { rhi::UavBarrier(commandList); };
     const auto run = [&](ID3D12PipelineState* pipelineState, uint32_t groupCount) {
         commandList->SetPipelineState(pipelineState);
         commandList->Dispatch(groupCount, groupCount, 1);
@@ -2721,10 +2708,7 @@ bool MaterialEvaluator::ApplySedimentMask(rhi::Device& device,
     TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
 
-    const auto barrier = [&]() {
-        const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-        commandList->ResourceBarrier(1, &uav);
-    };
+    const auto barrier = [&]() { rhi::UavBarrier(commandList); };
     // 実寸で正規化するなら最大値は要らない。集計のパスごと飛ばす。
     if (constants.params[3] <= 0.0f) {
         commandList->SetPipelineState(clearPass);
@@ -2924,10 +2908,7 @@ bool MaterialEvaluator::ApplySnow(rhi::Device& device, rhi::PipelineCache& pipel
                        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 
     const uint32_t groups = DispatchCount(resolution);
-    const auto barrier = [&]() {
-        const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-        commandList->ResourceBarrier(1, &uav);
-    };
+    const auto barrier = [&]() { rhi::UavBarrier(commandList); };
     const auto run = [&](ID3D12PipelineState* pipelineState, uint32_t groupCount) {
         commandList->SetPipelineState(pipelineState);
         commandList->Dispatch(groupCount, groupCount, 1);
@@ -3031,8 +3012,7 @@ bool MaterialEvaluator::ApplySnowMask(rhi::Device& device, rhi::PipelineCache& p
     commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
     commandList->SetPipelineState(maskPass);
     commandList->Dispatch(DispatchCount(m_resolution), DispatchCount(m_resolution), 1);
-    const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-    commandList->ResourceBarrier(1, &uav);
+    rhi::UavBarrier(commandList);
 
     // 次に使うときは書き込みへ戻す。
     TransitionIfNeeded(commandList, m_snow.thickness, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -3293,10 +3273,7 @@ bool MaterialEvaluator::ApplyRiver(rhi::Device& device, rhi::PipelineCache& pipe
                        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 
     const uint32_t groups = DispatchCount(resolution);
-    const auto barrier = [&]() {
-        const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-        commandList->ResourceBarrier(1, &uav);
-    };
+    const auto barrier = [&]() { rhi::UavBarrier(commandList); };
     const auto run = [&](ID3D12PipelineState* pipelineState, uint32_t groupCount) {
         commandList->SetPipelineState(pipelineState);
         commandList->Dispatch(groupCount, groupCount, 1);
@@ -3443,8 +3420,7 @@ bool MaterialEvaluator::ApplyRiverMask(rhi::Device& device, rhi::PipelineCache& 
     commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
     commandList->SetPipelineState(maskPass);
     commandList->Dispatch(DispatchCount(m_resolution), DispatchCount(m_resolution), 1);
-    const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-    commandList->ResourceBarrier(1, &uav);
+    rhi::UavBarrier(commandList);
 
     // 次に使うときは書き込みへ戻す。
     for (rhi::GpuTexture* texture : inputs) {
@@ -3615,8 +3591,9 @@ bool MaterialEvaluator::ApplyRoadGradingMask(rhi::Device& device, rhi::PipelineC
     commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
     commandList->SetPipelineState(pass);
     commandList->Dispatch(DispatchCount(target.width), DispatchCount(target.height), 1);
-    const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-    commandList->ResourceBarrier(1, &barrier);
+    rhi::UavBarrier(commandList);
+    // 下流の op と合成パスはマスクを SRV で読む（他のマスクの焼き手と揃える）。
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     PIXEndEvent(commandList);
     return true;
 }
@@ -3654,8 +3631,7 @@ bool MaterialEvaluator::ApplyWaterPaint(rhi::Device& device, rhi::PipelineCache&
     commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
     commandList->SetPipelineState(pass);
     commandList->Dispatch(DispatchCount(m_resolution), DispatchCount(m_resolution), 1);
-    const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-    commandList->ResourceBarrier(1, &barrier);
+    rhi::UavBarrier(commandList);
     PIXEndEvent(commandList);
     return true;
 }
@@ -3710,6 +3686,9 @@ bool MaterialEvaluator::ApplyWaterDistance(rhi::Device& device, rhi::PipelineCac
         read = 1 - read;
         if (step == 1) break;
     }
+    // 歩幅 1 をもう 1 回（JFA+1。取りこぼしを拾う。River / Road Grading と同じ）。
+    dispatch(jumpPass, m_waterWork[read].UavIndex(), m_waterWork[1 - read].UavIndex(), 1, work);
+    read = 1 - read;
     dispatch(resolvePass, m_waterWork[read].UavIndex(), 0, 0, m_resolution);
     PIXEndEvent(commandList);
     return complete;
@@ -3735,8 +3714,7 @@ bool MaterialEvaluator::ApplyFlattenBorders(rhi::Device& device, rhi::PipelineCa
     commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
     commandList->SetPipelineState(pass);
     commandList->Dispatch(DispatchCount(m_resolution), DispatchCount(m_resolution), 1);
-    const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-    commandList->ResourceBarrier(1, &barrier);
+    rhi::UavBarrier(commandList);
     RebuildNormalsFromHeight(device, normals, commandList, stack);
     PIXEndEvent(commandList);
     return true;
@@ -3876,8 +3854,7 @@ bool MaterialEvaluator::ApplyMeanderingRivers(rhi::Device& device, rhi::Pipeline
         const bool pointPass = pass <= 3 || pass == 5 || pass == 10;
         commandList->Dispatch(pointPass ? std::max(1u, (c.points[3] + 63) / 64) : DispatchCount(n),
             pointPass ? 1u : DispatchCount(n), 1);
-        const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-        commandList->ResourceBarrier(1, &barrier);
+        rhi::UavBarrier(commandList);
         return true;
     };
     const auto distanceField = [&]() {
@@ -3954,8 +3931,7 @@ bool MaterialEvaluator::ApplyMeanderingRiversMask(rhi::Device& device, rhi::Pipe
     commandList->SetComputeRootConstantBufferView(1, allocation.gpuAddress);
     commandList->SetPipelineState(pass);
     commandList->Dispatch(DispatchCount(target.width), DispatchCount(target.height), 1);
-    const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-    commandList->ResourceBarrier(1, &barrier);
+    rhi::UavBarrier(commandList);
     TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     PIXEndEvent(commandList);
     return true;
@@ -4033,8 +4009,7 @@ bool MaterialEvaluator::ApplyLake(rhi::Device& device, rhi::PipelineCache& cache
         commandList->SetComputeRootConstantBufferView(1, address);
         commandList->SetPipelineState(passes[pass]);
         commandList->Dispatch(DispatchCount(resolution), DispatchCount(resolution), 1);
-        const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-        commandList->ResourceBarrier(1, &barrier);
+        rhi::UavBarrier(commandList);
         return true;
     };
     uint32_t current = 0;
@@ -4146,8 +4121,9 @@ bool MaterialEvaluator::ApplyLiquidMask(rhi::Device& device, rhi::PipelineCache&
     commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
     commandList->SetPipelineState(pass);
     commandList->Dispatch(DispatchCount(target.width), DispatchCount(target.height), 1);
-    const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-    commandList->ResourceBarrier(1, &barrier);
+    rhi::UavBarrier(commandList);
+    // 下流の op と合成パスはマスクを SRV で読む（他のマスクの焼き手と揃える）。
+    TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     PIXEndEvent(commandList);
     return true;
 }
@@ -4169,8 +4145,7 @@ bool MaterialEvaluator::ApplyLakeMask(rhi::Device& device, rhi::PipelineCache& c
     commandList->SetComputeRootConstantBufferView(1, allocation.gpuAddress);
     commandList->SetPipelineState(pass);
     commandList->Dispatch(DispatchCount(target.width), DispatchCount(target.height), 1);
-    const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-    commandList->ResourceBarrier(1, &barrier);
+    rhi::UavBarrier(commandList);
     TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     PIXEndEvent(commandList);
     return true;
@@ -4250,8 +4225,7 @@ bool MaterialEvaluator::ApplySnowCover(rhi::Device& device, rhi::PipelineCache& 
         commandList->SetComputeRootConstantBufferView(1,address);
         commandList->SetPipelineState(passes[pass]);
         commandList->Dispatch(DispatchCount(resolution),DispatchCount(resolution),1);
-        const auto barrier=CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-        commandList->ResourceBarrier(1,&barrier);
+        rhi::UavBarrier(commandList);
         return true;
     };
     PIXBeginEvent(commandList,PIX_COLOR_DEFAULT,"SnowCover");
@@ -4319,7 +4293,7 @@ bool MaterialEvaluator::ApplySnowCoverMask(rhi::Device& device,rhi::PipelineCach
     TransitionIfNeeded(commandList,target,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     commandList->SetComputeRootConstantBufferView(1,cb.gpuAddress); commandList->SetPipelineState(pass);
     commandList->Dispatch(DispatchCount(target.width),DispatchCount(target.height),1);
-    const auto barrier=CD3DX12_RESOURCE_BARRIER::UAV(nullptr); commandList->ResourceBarrier(1,&barrier);
+    rhi::UavBarrier(commandList);
     TransitionIfNeeded(commandList,target,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     PIXEndEvent(commandList);
     return true;
@@ -4387,8 +4361,7 @@ bool MaterialEvaluator::ApplyFluvialErosion(rhi::Device& device, rhi::PipelineCa
         commandList->SetComputeRootConstantBufferView(1,cb.gpuAddress);
         commandList->SetPipelineState(passes[pass]);
         commandList->Dispatch(DispatchCount(resolution),DispatchCount(resolution),1);
-        const auto barrier=CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-        commandList->ResourceBarrier(1,&barrier);
+        rhi::UavBarrier(commandList);
         return true;
     };
     PIXBeginEvent(commandList,PIX_COLOR_DEFAULT,"FluvialErosion");
@@ -4450,7 +4423,7 @@ bool MaterialEvaluator::ApplyFluvialErosionMask(rhi::Device& device, rhi::Pipeli
     TransitionIfNeeded(commandList,target,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     commandList->SetComputeRootConstantBufferView(1,cb.gpuAddress); commandList->SetPipelineState(pass);
     commandList->Dispatch(DispatchCount(c.grid[2]),DispatchCount(c.grid[2]),1);
-    const auto barrier=CD3DX12_RESOURCE_BARRIER::UAV(nullptr); commandList->ResourceBarrier(1,&barrier);
+    rhi::UavBarrier(commandList);
     TransitionIfNeeded(commandList,target,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     PIXEndEvent(commandList);
     return true;
@@ -4539,8 +4512,7 @@ bool MaterialEvaluator::ApplyMultiScaleErosion(
         commandList->SetComputeRootConstantBufferView(1, address);
         commandList->SetPipelineState(passes[pass]);
         commandList->Dispatch(DispatchCount(n), DispatchCount(n), 1);
-        const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-        commandList->ResourceBarrier(1, &barrier);
+        rhi::UavBarrier(commandList);
     };
     PIXBeginEvent(commandList, PIX_COLOR(90, 150, 200), "MultiScaleErosion");
     TransitionIfNeeded(commandList, m_textures.height, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
@@ -4693,6 +4665,8 @@ bool MaterialEvaluator::ApplyMultiScaleErosion(
     return complete;
 }
 
+namespace {
+// GPU 側の DropletConstants と一致させること。
 struct DropletConstants {
     uint32_t indices0[4];
     uint32_t indices1[4];
@@ -4705,6 +4679,7 @@ struct DropletConstants {
     float params1[4];
     float params2[4];
 };
+}  // namespace
 
 void MaterialEvaluator::ReleaseDropletResources(rhi::Device& device) {
     device.DeferRelease(m_droplet.heights);
@@ -4840,10 +4815,7 @@ bool MaterialEvaluator::ApplyDroplet(rhi::Device& device, rhi::PipelineCache& pi
         outAddress = cb.gpuAddress;
         return true;
     };
-    const auto barrier = [&]() {
-        const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-        commandList->ResourceBarrier(1, &uav);
-    };
+    const auto barrier = [&]() { rhi::UavBarrier(commandList); };
     const auto run = [&](ID3D12PipelineState* pipelineState, uint32_t groupCount) {
         commandList->SetPipelineState(pipelineState);
         commandList->Dispatch(groupCount, groupCount, 1);
@@ -4992,10 +4964,7 @@ bool MaterialEvaluator::ApplyDropletMask(rhi::Device& device, rhi::PipelineCache
     TransitionIfNeeded(commandList, m_droplet.maxScratch, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     TransitionIfNeeded(commandList, target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
-    const auto barrier = [&]() {
-        const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-        commandList->ResourceBarrier(1, &uav);
-    };
+    const auto barrier = [&]() { rhi::UavBarrier(commandList); };
     commandList->SetPipelineState(clearPass);
     commandList->Dispatch(1, 1, 1);
     barrier();
@@ -5067,10 +5036,7 @@ bool MaterialEvaluator::FilterCrumblingPoints(rhi::Device& device, rhi::Pipeline
     TransitionIfNeeded(list, set.points, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     TransitionIfNeeded(list, set.grid, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     list->SetComputeRootConstantBufferView(1, cb.gpuAddress);
-    const auto barrier = [&]() {
-        const auto uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-        list->ResourceBarrier(1, &uav);
-    };
+    const auto barrier = [&]() { rhi::UavBarrier(list); };
     list->SetPipelineState(clear); list->Dispatch(262144/64,1,1); barrier();
     if (avoidOverlap) {
         list->SetPipelineState(build); list->Dispatch((set.count+63)/64,1,1); barrier();
@@ -5191,10 +5157,7 @@ bool MaterialEvaluator::ApplyCrumbling(rhi::Device& device, rhi::PipelineCache& 
 
     PIXBeginEvent(commandList, PIX_COLOR(150, 130, 110), "CompositeCrumbling");
     commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
-    const auto barrier = [&]() {
-        const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-        commandList->ResourceBarrier(1, &uav);
-    };
+    const auto barrier = [&]() { rhi::UavBarrier(commandList); };
 
     TransitionIfNeeded(commandList, m_crumbling.packed, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     commandList->SetPipelineState(clearPass);
@@ -5268,8 +5231,7 @@ bool MaterialEvaluator::ApplyCrumblingMask(rhi::Device& device,
     commandList->SetPipelineState(maskPass);
     commandList->Dispatch(DispatchCount(m_crumbling.resolution),
                           DispatchCount(m_crumbling.resolution), 1);
-    const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-    commandList->ResourceBarrier(1, &uav);
+    rhi::UavBarrier(commandList);
 
     // 次に使うときは書き込みへ戻す。
     TransitionIfNeeded(commandList, m_crumbling.packed, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -5357,20 +5319,23 @@ bool MaterialEvaluator::ApplyScatter(rhi::Device& device, rhi::PipelineCache& pi
         points.count = 0;
         points.activeCount = 0;
         points.countReady = false;
-        const double halfCells = std::ceil(double(sizeMeters) * 0.5 / density);
-        // 後段の64スレッドDispatchとテクスチャのハードウェア上限を超えない。
-        if (!std::isfinite(halfCells) || halfCells > 1023) {
-            TG_LOG_ERROR("Scatter Points: GPUの配置上限を超えています。間隔を広げるか地形範囲を狭めてください。");
-            return false;
-        }
-        const uint32_t side = static_cast<uint32_t>(halfCells) * 2;
         // 点の番号は「マス × （親 1 + 子の数）」。親が先頭で、子が続く。
         const uint64_t slots = 1 + clusterCount;
-        if (uint64_t(side) * side * slots > 8000000ull) {
-            TG_LOG_ERROR("Scatter Points: 点が多すぎます（マス %u × %u、群生 %u）。間隔を広げるか、群生の数を減らしてください。",
-                         side, side, clusterCount);
-            return false;
+        // 後段の 64 スレッドの Dispatch とテクスチャのハードウェア上限（半幅 1023 マス）、
+        // 点の総数（800 万）を超えない。超えたら予算に収まるまで半幅を縮めて続ける
+        // （Update は毎フレーム記録し直すので、失敗で返すと毎フレーム吐き続ける）。警告は 1 回だけ。
+        const double budgetHalfCells = std::floor(std::sqrt(8000000.0 / double(slots)) * 0.5);
+        const double maxHalfCells = std::min(1023.0, budgetHalfCells);
+        double halfCells = std::ceil(double(sizeMeters) * 0.5 / density);
+        if (!std::isfinite(halfCells) || halfCells > maxHalfCells) {
+            if (!m_scatterBudgetWarned) {
+                TG_LOG_WARN("Scatter Points: 点が GPU の上限を超えるので範囲を縮めます（半幅 %.0f → %.0f マス、群生 %u）。間隔を広げるか、群生の数を減らしてください。",
+                            std::isfinite(halfCells) ? halfCells : 0.0, maxHalfCells, clusterCount);
+                m_scatterBudgetWarned = true;
+            }
+            halfCells = maxHalfCells;
         }
+        const uint32_t side = static_cast<uint32_t>(halfCells) * 2;
         const uint32_t count = static_cast<uint32_t>(uint64_t(side) * side * slots);
         if (params.coverage <= 0 || count == 0) {
             points.countReady = true;
@@ -5426,10 +5391,7 @@ bool MaterialEvaluator::ApplyScatter(rhi::Device& device, rhi::PipelineCache& pi
 
     PIXBeginEvent(commandList, PIX_COLOR(120, 170, 110), "CompositeScatter");
     commandList->SetComputeRootConstantBufferView(1, cb.gpuAddress);
-    const auto barrier = [&]() {
-        const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-        commandList->ResourceBarrier(1, &uav);
-    };
+    const auto barrier = [&]() { rhi::UavBarrier(commandList); };
 
     // 形を決めるパスは Height を読むだけ。読み取り専用にしてから走らせる。
     TransitionIfNeeded(commandList, m_textures.height,
@@ -5491,8 +5453,7 @@ bool MaterialEvaluator::ApplyScatterMask(rhi::Device& device, rhi::PipelineCache
     commandList->SetPipelineState(maskPass);
     commandList->Dispatch(DispatchCount(m_scatter.resolution),
                           DispatchCount(m_scatter.resolution), 1);
-    const D3D12_RESOURCE_BARRIER uav = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
-    commandList->ResourceBarrier(1, &uav);
+    rhi::UavBarrier(commandList);
 
     // 次に使うときは書き込みへ戻す。
     TransitionIfNeeded(commandList, m_scatter.packed, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -5759,6 +5720,13 @@ bool MaterialEvaluator::Evaluate(rhi::Device& device, rhi::PipelineCache& pipeli
                 hash = HashBytes(hash, &heightSrv, sizeof(heightSrv));
                 hash = HashBytes(hash, &maskSrv, sizeof(maskSrv));
                 hash = HashBytes(hash, &pathMaskSrv, sizeof(pathMaskSrv));
+            }
+            // マテリアルのハイトマップも Height に効く。レイヤーが持つのは ID だけなので、
+            // 差し替えや繋ぎ直しで焼き直されるよう、いま実際に読む SRV とチャンネルを混ぜる。
+            if (const MaterialAsset* material = materials.Find(layer.material); material != nullptr) {
+                const uint32_t materialHeightSrv = textures.SrvIndex(material->height.texture, false);
+                hash = HashBytes(hash, &materialHeightSrv, sizeof(materialHeightSrv));
+                hash = HashBytes(hash, &material->height.channel, sizeof(material->height.channel));
             }
             heightStateHash[layerCount] = hash;
             heightStateDone[layerCount] = 1;
@@ -6400,13 +6368,16 @@ void MaterialEvaluator::Update(rhi::Device& device, rhi::PipelineCache& pipeline
         if (Evaluate(device, pipelineCache, commandList, stack, textures, materials, paintMasks,
                      tiles)) {
             m_evaluatedRevision = m_postprocessPending ? 0 : stack.Revision();
-            if (m_frontTextures.IsValid()) {
-                std::swap(m_textures, m_frontTextures);
-                std::swap(m_nearLayers, m_frontNearLayers);
-                std::swap(m_maskOpThumbnails, m_frontMaskOpThumbnails);
-                std::swap(m_layerThumbnails, m_frontLayerThumbnails);
+            // 後処理が残る間は途中の結果なので、表側へは入れ替えない（非同期の回収と同じ扱い）。
+            if (!m_postprocessPending) {
+                if (m_frontTextures.IsValid()) {
+                    std::swap(m_textures, m_frontTextures);
+                    std::swap(m_nearLayers, m_frontNearLayers);
+                    std::swap(m_maskOpThumbnails, m_frontMaskOpThumbnails);
+                    std::swap(m_layerThumbnails, m_frontLayerThumbnails);
+                }
+                m_hasResult = true;
             }
-            m_hasResult = true;
             TransitionForDisplay(commandList, m_frontTextures.IsValid() ? m_frontTextures
                                                                         : m_textures);
             TransitionThumbnailsForDisplay(commandList, m_frontTextures.IsValid()

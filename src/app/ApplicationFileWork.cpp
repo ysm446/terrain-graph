@@ -163,13 +163,14 @@ void Application::HandleShortcuts() {
         return;
     }
 
-    if (ImGui::IsKeyPressed(ImGuiKey_N, false)) {
+    // 新規 / 開くもテキスト入力中は効かせない（B / Z / Y と同じ）。
+    if (ImGui::IsKeyPressed(ImGuiKey_N, false) && !io.WantTextInput) {
         m_pendingProjectNew = true;
     } else if (ImGui::IsKeyPressed(ImGuiKey_B, false) && !io.WantTextInput) {
         // 下のパネルを畳む / 戻す（ウィンドウメニューと同じ）。
         m_settings.Display().showAssetBand = !m_settings.Display().showAssetBand;
         m_settings.Save();
-    } else if (ImGui::IsKeyPressed(ImGuiKey_O, false)) {
+    } else if (ImGui::IsKeyPressed(ImGuiKey_O, false) && !io.WantTextInput) {
         RequestOpenProject();
     } else if (ImGui::IsKeyPressed(ImGuiKey_S, false)) {
         // Ctrl + Shift + S は「名前を付けて保存」。
@@ -364,6 +365,8 @@ void Application::FinishComponentPreview(bool place) {
     if (place) MarkSceneSaved(previewed == 1 ? kDirtyCloud : kDirtyTerrain);
     else RefreshSceneDirty();
     m_compiledGraphRevision = 0; m_graphStack.MarkDirty();
+    // グラフを丸ごと入れ替えたので、版で控えた雲と雪煙のコンパイル結果も捨てる。
+    m_compiledCloudRevision = 0; m_snowPlumesRevision = 0;
     for (auto& slot : m_cloudMasks) slot.graphRevision = 0;
     const int component = m_editComponent;
     m_editComponent = -1; OpenComponentEditor(component);
@@ -389,6 +392,8 @@ void Application::ResetProject() {
     m_skyLibrary.Clear(m_device);
     m_skyLibrary.EnsureDefault();
     m_textureLibrary.Clear(m_device);
+    // 境界マテリアルの控えはテクスチャの ID を持つので、ライブラリと一緒に捨てる。
+    m_boundaries.clear();
 
     // グラフを既定（ベース → 出力）へ戻す。位置はエディタへ流し込み直す。
     // m_graphStack は代入で作り直さず MarkDirty で改版する（revision が戻ると
@@ -400,6 +405,8 @@ void Application::ResetProject() {
     m_hiddenOutputs.clear();
     m_referenceOutputs.clear();
     m_compiledGraphRevision = 0;
+    m_compiledCloudRevision = 0;
+    m_snowPlumesRevision = 0;
     for (auto& slot : m_cloudMasks) slot.graphRevision = 0;
     m_graphStack.MarkDirty();
     RequestGraphNodePlacement();
@@ -678,88 +685,6 @@ void Application::ProcessPendingFileWork() {
         if (id != compositor::kNoMaterialAsset) {
             m_selectedMaterial = static_cast<int>(m_materialLibrary.Entries().size()) - 1;
             m_pendingAssetsSave = true;
-        }
-    }
-
-    if (m_pendingTextureRemove != compositor::kNoTexture) {
-        const compositor::TextureId removed = m_pendingTextureRemove;
-        m_pendingTextureRemove = compositor::kNoTexture;
-
-        // 参照を先に外す。無効な ID を残すと、次に同じ番号が払い出されたときに
-        // 別の画像が割り当たってしまう。
-        const auto clearSlot = [removed](compositor::TextureId& slot) {
-            const bool hit = (slot == removed);
-            if (hit) {
-                slot = compositor::kNoTexture;
-            }
-            return hit;
-        };
-        const auto clearMap = [removed](compositor::MapSlot& slot) {
-            const bool hit = (slot.texture == removed);
-            if (hit) {
-                slot = compositor::MapSlot{};
-            }
-            return hit;
-        };
-
-        for (const compositor::MaterialAsset& entry : m_materialLibrary.Entries()) {
-            compositor::MaterialAsset* asset = m_materialLibrary.FindMutable(entry.id);
-            bool hit = clearSlot(asset->baseColor);
-            hit |= clearSlot(asset->normal);
-            hit |= clearMap(asset->roughness);
-            hit |= clearMap(asset->metallic);
-            hit |= clearMap(asset->ambientOcclusion);
-            hit |= clearMap(asset->height);
-            if (hit) {
-                asset->thumbnailDirty = true;
-            }
-        }
-        // グラフのノードが持つレイヤーから外す。
-        bool graphChanged = false;
-        for (graph::Node& node : m_graph.MutableNodes()) {
-            if (auto* settings = std::get_if<graph::LayerNodeSettings>(&node.settings)) {
-                graphChanged |= clearMap(settings->layer.mask.texture);
-                graphChanged |= clearMap(settings->layer.heightTexture);
-                graphChanged |= clearMap(settings->layer.pathUv.mask);
-            }
-        }
-        if (graphChanged) {
-            m_graph.MarkDirty();
-        }
-        clearSlot(m_ordTexture);
-
-        // 解放は DeferRelease でフレーム同期後に行われるため、GPU 待機は不要。
-        m_textureLibrary.Remove(m_device, removed);
-        m_graphStack.MarkDirty();
-    }
-
-    if (m_pendingMaterialRemove != compositor::kNoMaterialAsset) {
-        const compositor::MaterialAssetId removed = m_pendingMaterialRemove;
-        m_pendingMaterialRemove = compositor::kNoMaterialAsset;
-        for (const auto& entry : m_materialLibrary.Entries()) if (entry.layerMaterial) {
-            auto& material = *m_materialLibrary.FindMutable(entry.id)->layerMaterial;
-            const auto clear = [&](graph::PresetMaterial& layer) { if (layer.material == removed) layer.material = 0; };
-            for (auto& layer : material.materials) clear(layer);
-            if (material.materialGraph) for (auto& node : material.materialGraph->nodes) clear(node.settings);
-            m_materialLibrary.MarkThumbnailDirty(entry.id);
-        }
-
-        if (m_materialLibrary.Find(removed) != nullptr) {
-            m_materialLibrary.Remove(m_device, removed);
-            // 参照していたノードは「なし」へ戻す。無効な ID を残さない。
-            bool graphChanged = false;
-            for (graph::Node& node : m_graph.MutableNodes()) {
-                auto* settings = std::get_if<graph::LayerNodeSettings>(&node.settings);
-                if (settings != nullptr && settings->layer.material == removed) {
-                    settings->layer.material = compositor::kNoMaterialAsset;
-                    graphChanged = true;
-                }
-            }
-            if (graphChanged) {
-                m_graph.MarkDirty();
-            }
-            m_selectedMaterial = std::max(0, m_selectedMaterial - 1);
-            MarkDocumentChanged();
         }
     }
 

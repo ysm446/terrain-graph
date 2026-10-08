@@ -347,9 +347,9 @@ void CsWidth(uint3 dispatchThreadId : SV_DispatchThreadID)
     if (flow >= threshold && flow > 0.0f && flowMax > 0.0f)
     {
         const float ratio = saturate(flow / flowMax);
-        const float half = max(g_river.params1.y, g_river.params1.x * pow(ratio, g_river.params1.z));
-        width[cell] = half;
-        jfaA[cell] = float4(float2(cell), half, 1.0f);
+        const float halfWidth = max(g_river.params1.y, g_river.params1.x * pow(ratio, g_river.params1.z));
+        width[cell] = halfWidth;
+        jfaA[cell] = float4(float2(cell), halfWidth, 1.0f);
     }
     else
     {
@@ -433,21 +433,21 @@ void CsResolve(uint3 dispatchThreadId : SV_DispatchThreadID)
     const float cellMeters = g_river.params3.y;
 
     float dw = 1e6f;
-    float half = 0.0f;
+    float halfWidth = 0.0f;
     float riverLevel = filled;
     float carved = ground;
     if (seed.w > 0.0f)
     {
         const uint2 seedCell = uint2(seed.xy);
-        half = width[seedCell];
-        dw = length(float2(cell) - seed.xy) - half;
+        halfWidth = width[seedCell];
+        dw = length(float2(cell) - seed.xy) - halfWidth;
         riverLevel = surface[seedCell];
 
         const float bankWidth = g_river.params2.x;
         if (dw < 0.0f)
         {
             // 中心で 1、水際で 0。放物線ぎみの U 字（水際の勾配は 2 × 深さ / 半幅）。
-            const float u = saturate(-dw / max(half, 1e-3f));
+            const float u = saturate(-dw / max(halfWidth, 1e-3f));
             const float profile = 1.0f - (1.0f - u) * (1.0f - u);
             carved = min(ground, riverLevel - g_river.params1.w * profile);
         }
@@ -466,7 +466,7 @@ void CsResolve(uint3 dispatchThreadId : SV_DispatchThreadID)
     distanceOut[cell] = dw * cellMeters;
     groundOut[cell] = carved;
     lakeOut[cell] = lake;
-    halfWidthOut[cell] = half * cellMeters;
+    halfWidthOut[cell] = halfWidth * cellMeters;
 }
 
 // --- 合成解像度へ書き戻す ----------------------------------------------------------
@@ -597,8 +597,8 @@ void CsFlow(uint3 dispatchThreadId : SV_DispatchThreadID)
     float speed = min(20.0f * sqrt(slope), 4.0f);
     // 断面の速さ。水際（距離 0）で 0.35 倍、中央（距離 = −半幅）で 1 倍。
     const float dw = distance.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
-    const float half = max(halfWidth.SampleLevel(g_samplerLinearClamp, uv, 0.0f), 0.5f);
-    speed *= lerp(0.35f, 1.0f, sqrt(saturate(-dw / half)));
+    const float halfMeters = max(halfWidth.SampleLevel(g_samplerLinearClamp, uv, 0.0f), 0.5f);
+    speed *= lerp(0.35f, 1.0f, sqrt(saturate(-dw / halfMeters)));
 
     // 早瀬。水面の勾配が 3% を超える所から白波が立ち、20% で最大（山の沢はほとんどが数 % 以上ある）。
     const float rapids = smoothstep(0.03f, 0.20f, slope);
@@ -640,13 +640,13 @@ void CsMask(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     const float2 uv = (float2(texel) + 0.5f) / float(resolution);
     const float dw = distance.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
-    const float half = halfWidth.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
+    const float halfMeters = halfWidth.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
     const float level = waterLevel.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
     const float carved = ground.SampleLevel(g_samplerLinearClamp, uv, 0.0f);
 
     // 河原の広がりは流量で伸びる（半幅と同じ比）。源流の細い沢に主流と同じ河原は作らない。
     const float mainHalf = max(g_river.params4.y, 1e-3f);
-    const float shore = g_river.params2.z * saturate(half / mainHalf);
+    const float shore = g_river.params2.z * saturate(halfMeters / mainHalf);
     const float shoreHeight = g_river.params2.w;
     const float feather = saturate(g_river.params3.x);
     const float featherDistance = max(feather * shore, 1e-3f);

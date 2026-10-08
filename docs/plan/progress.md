@@ -1,7 +1,40 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-10-06 10:10
+更新日時: 2026-10-09 08:50
+
+## 全体のレビューと手直し（2026-10-09 08:50）
+
+ユーザー依頼「アプリをレビューして、直すべきところは直し、クリーンアップ・リファクタリング・最適化を」。サブシステムごとに 9 本のレビューを並列に走らせ、所見を実コードで確かめてから、8 本の修正を並列に当てた。87 ファイル、+1,500 / −1,840 行。ユーザー向けの変更は [changelog.md](../changelog.md) の「全体のレビューと手直し」に書いた。
+
+直した不具合（主なもの）:
+- rhi: 補助フェンスが 1 本しかなく、非同期の評価器が 2 つ以上（ビューポート + Road Path のスロット）走ると、先の仕事が読んでいるテクスチャを解放し得た。`DeletionQueue` / `Device` がフェンスごとに条件を持つ形にした。`ComputeQueue` の作りかけを有効扱いしない、`Allocate` のアライメント検査、Signal 失敗時にキューを止める。
+- compositor: `ApplyWindMask` / `ApplyLiquidMask` / `ApplyRoadGradingMask` の状態遷移漏れ、`ReadbackHeight` の COPY_SOURCE 残り、マテリアルのハイトマップと `liquid.paintWater` がマスクのハッシュに入っていなかった、同期評価が多段侵食の後処理待ちの途中結果を表に出していた、`ApplyWaterDistance` の JFA+1 抜け、Scatter の点の上限超えで毎フレーム失敗していた。`PaintMaskStore` が Restore の op を捨てるときにテクスチャを即時解放していた。
+- graph: `InsertPathPointOnEdge` の設定の引き継ぎ漏れ、`CompileRoadMeshes` の Mesh Output の重複（Road Mesh 単位にまとめる。**Mask Mesh は鎖の形が同じときだけ合流**し、Road Mesh に直接繋いだ Mask Mesh が路肩なしの足跡になる既存の仕様は維持。最初の修正案がこれを壊して `RoadPathTests` が落ちたので直した）、下地の無い鎖で `layerSources` が空、Scatter の Variation / Scale の splice、NaN のソート。
+- io: `value()` の型違いで投げる箇所（手書きグラフの `kind`、`paintResolution`、`lightingMode`、大気の `name`）を `io/JsonRead.h` の型検査付き読み取りへ、`--report` の `json_pointer` が `~` で投げる、ペイント PNG と `settings.json` の非アトミック書き込み、共有アセットの二重書き込み、`flipNormalGreen` が `maps` の無いマテリアルで読まれない、`FindIdenticalAsset` が種類の違うファイル（3 MB の地形）まで読む、`WriteLayer` が全種類のブロックを書く。`ReadScene` / `Expand` の無言の失敗にログを足した。
+- renderer: `Resize` の 3 回の GPU 待機を 1 回に、大気の作り直しの遷移だけの `ExecuteImmediate` を畳んだ、`ModelPreview` のパーツごとの文字列キーの PSO 検索を `Render` ごとの表に、`m_yaw` の発散、`_LOD` の桁の検査、雲のループ幅 0 で NaN。
+- app: グループがアンドゥのスナップショットに入っていなかった、書き出し名の `%`（printf の書式に渡していた）、ドラッグ中の毎フレーム `RefreshSceneDirty`、目のトグルと大気切替の幽霊アンドゥ、ID の再利用で古くなるキャッシュ、Ctrl+N / O の文字入力中、テクスチャの削除モーダルの ID 不一致、`m_boundaries` のパス付け替えと `ResetProject` での破棄、`Shoulder` の切替位置の毎フレームのソート、風向きの既定値がラジアンのまま。
+- shaders: `CompositeWaterPaint` が Surface のアルファ（1 − 水面）を書かず近景マテリアルが水面に重なる、Shape が水面のアルファを消す、`LocalCloudDensity` の 0 除算、`half` という変数名、`CompositeLayer` でパス UV のレイヤーと層付きマテリアルの無駄な評価（丸ごと捨てていた）、`ChannelPreview` の sRGB 往復、`CompositeFlattenBorders` の半テクセルのずれ。
+- core / ui: `ImGuiLayer` の初期化失敗時のリーク、SRV の即時解放、`DragQueryFileW` の終端書き込み、2 GB 超の画像、保存ダイアログのフォルダ、`TextureLibrary::FindByPath` の O(n²) の `weakly_canonical`。
+
+削除したもの: 到達不能だった `DrawMaterialLibraryPanel` / `DrawModelLibraryPanel` / `DrawTextureLibraryPanel` と、そこからしか立たなかったテクスチャ / マテリアルの削除の予約（`m_pendingTextureRemove` / `m_pendingMaterialRemove` とその処理）、未使用のアイコン・定数・アクセサ・関数（`ReversePathStrand`、`DeletePresetNode`、`TileSize`、`CurrentMesh`、`ResetCloudHistory` など）。
+
+整理したもの: バッファ生成 3 連 → `CreateBuffer`、ディスクリプタ走査 3 連 → `GpuTexture::ForEachDescriptor`、フェンス待ち 4 連 → `rhi::WaitForFence`、UAV バリアの各所の lambda → `rhi::UavBarrier`、`PipelineCache::GetCompute` のキー文字列の使い回し、`ProjectIo.cpp` の重複した enum 名の表、`JsonRead.h`。
+
+検証: Debug ビルド（警告 0）、CTest 6 件（`NodeGraphTests` に鎖の合流・`layerSources`・辺の分割の引き継ぎのテストを追加）、全シェーダの DXC 単体コンパイル（警告 0）。`--screenshot-ui` で木曽駒ヶ岳とアルブラ峠を開き、デバッグレイヤーのエラー・警告 0（`data/Test/review/ui_kiso.png`, `ui_albura.png`）。保存は、ワークスペースを `build/review-root` へ複製して `--root` で開き `--save-project` → 再読み込み → `--screenshot-ui` で、元と同じ描画（頂点数・インスタンス数が一致）になることを確認。地形ファイルは 1,194,499 → 991,554 バイト。
+**未確認**: Release ビルド、`--gpu-validation`（数分かかるので省略。`MaterialThumbnail` の件はコードに Discard の対策が入っているが再現確認はしていない）、水面のアルファ・`FlattenBorders` の半テクセル・`ChannelPreview` の見た目の差、`--report` が既存ファイルの種類違いのブロックを「知らないキー」として並べるようになった件の見え方。
+
+注意点: 検証用にシーンを複製するときは **`data/` の中に置かない**。ワークスペースの走査でアセット ID が重複し、本番のシーンまで開けなくなる（今回 `data/Test/review/` に置いて一度はまった）。`build/review-root` のように外へ置き、`--root` で指す。ジャンクションは走査されないので、テクスチャもコピーする。
+
+レビューで見つけたが今回は手を付けなかった所見（規模が大きい、または設計判断が要る）:
+- `Device::ExecuteImmediate` が補助フェンス（非同期の評価）の完了まで待つので、評価中の読み込みが UI を止める。描画キューだけ待つ版に分けるには、既存のテクスチャへ書き込む呼び出し側の競合を全部見る必要がある。
+- `MaterialEvaluator.cpp`（6,500 行）の 9 つの単発マスク焼きと定数アップロード・読み戻しの定型を共通化する（`RunMaskDispatch` / `UploadConstants` / `PendingReadback`）。多段侵食の後処理待ちの間、毎フレーム評価を記録し直している。`Flowline` が粒子数ごとにテクスチャを作り直す。`FluvialErosion` が反復ごとに定数を確保する。
+- `ApplicationGraphPanel.cpp`（4,000 行）の枠の幾何・ピンの行・雲のプロパティの重複、`GraphEditorState` などへの分割、グラフの配色を `ApplyTheme()` へ集める。
+- アセットの一覧のフォルダ木が毎フレーム `directory_iterator` を回す（`Application.h` にキャッシュのメンバを足す）。`CopyMaterialValues` が窓を開いている間毎フレーム深いコピーをする（`MaterialLibrary` に改版番号が要る）。道路の中心線が選択中に 1 フレーム 4 回作られる。
+- `ProjectIo.cpp` の書き読みの対（約 900 行）をフィールドの表にする。`ProjectWorkspace::Scan()` がサムネイルごとに全アセットを読む（mtime でのキャッシュ）。ペイントマスクが保存ごとに 2 回書かれて複製される。同じ名前の `.assets` フォルダの衝突。
+- シェーダの共通化: カスケード影の PCF が 5 か所、ガウスぼかしが 5 か所、河川と流水の方向の表、IBL の split-sum が 4 か所。`EvaluateLayerMaterial` の 5 回の基底評価。`CompositeThumbnail` の 6 回のボックスフィルタ。
+- `ModelAsset` の頂点の重複排除なし、`SkyLibrary` のサムネイルが輝度のつまみで HDR を読み直す、`Environment` ごとに BRDF LUT を焼く、`Atmosphere.h` の `union` による型のすり替え。
+- `PrefetchImages` が画像ごとにスレッドを作る、`SplitCaptionLines` の毎フレームの計測、Window のクラスの背景色が `ApplyTheme()` の外。
 
 ## 枠どうしの重なりを解く（2026-10-06 10:10）
 

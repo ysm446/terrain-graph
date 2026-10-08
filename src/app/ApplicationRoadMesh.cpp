@@ -980,9 +980,10 @@ bool Application::DrawShoulderSettings(graph::Node& node) {
     const float roadLength = statusFound != m_roadNodeStatus.end() && statusFound->second.lengthMeters > 0.0f
                                  ? statusFound->second.lengthMeters : 1000.0f;
     // 一覧は道のりの順に並べる（ドラッグ中は並べ替えない。掴んでいる行が入れ替わらないように）。
-    if (!ImGui::IsAnyItemActive())
-        std::stable_sort(shoulder.switches.begin(), shoulder.switches.end(),
-                         [](const graph::RoadShoulderSwitch& a, const graph::RoadShoulderSwitch& b) { return a.atMeters < b.atMeters; });
+    // 並びが崩れているときだけ触る。毎フレーム並べ替えると、変えていないのに設定を書き換えることになる。
+    const auto byDistance = [](const graph::RoadShoulderSwitch& a, const graph::RoadShoulderSwitch& b) { return a.atMeters < b.atMeters; };
+    if (!ImGui::IsAnyItemActive() && !std::is_sorted(shoulder.switches.begin(), shoulder.switches.end(), byDistance))
+        std::stable_sort(shoulder.switches.begin(), shoulder.switches.end(), byDistance);
     size_t removeIndex = shoulder.switches.size();
     for (size_t i = 0; i < shoulder.switches.size(); ++i) {
         graph::RoadShoulderSwitch& change = shoulder.switches[i];
@@ -1096,8 +1097,9 @@ bool Application::DrawBoundaryCombo(const char* label, std::string& path, std::s
             changed = true;
         }
         for (const auto& file : DropdownFiles(L".tgboundary")) {
-            if (!ui::ComboFilterPass(display(file))) continue;
-            if (ImGui::Selectable(display(file).c_str(), file == current)) {
+            const std::string name = display(file);  // 1 行につき 1 度だけ作る
+            if (!ui::ComboFilterPass(name)) continue;
+            if (ImGui::Selectable(name.c_str(), file == current)) {
                 const nlohmann::json reference = m_workspace.Reference(file);
                 path = io::ProjectWorkspace::String(reference, "path");
                 uid = io::ProjectWorkspace::String(reference, "uid");

@@ -2,6 +2,8 @@
 
 #include "core/Log.h"
 
+#include <algorithm>
+
 namespace tg::rhi {
 
 void TransitionIfNeeded(ID3D12GraphicsCommandList* commandList, GpuTexture& texture,
@@ -28,10 +30,17 @@ void TransitionIfNeeded(ID3D12GraphicsCommandList* commandList, GpuBuffer& buffe
 
 void TransitionMip(ID3D12GraphicsCommandList* commandList, const GpuTexture& texture,
                    uint32_t mip, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after) {
-    for (uint32_t slice = 0; slice < texture.arraySize; ++slice) {
-        const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(
-            texture.resource.Get(), before, after, texture.SubresourceIndex(mip, slice));
-        commandList->ResourceBarrier(1, &barrier);
+    // スライスごとに API を呼ばず、1 回の ResourceBarrier にまとめる（キューブは 6 枚）。
+    constexpr uint32_t kBatch = 16;
+    D3D12_RESOURCE_BARRIER barriers[kBatch];
+    for (uint32_t first = 0; first < texture.arraySize; first += kBatch) {
+        const uint32_t count = std::min(kBatch, texture.arraySize - first);
+        for (uint32_t i = 0; i < count; ++i) {
+            barriers[i] = CD3DX12_RESOURCE_BARRIER::Transition(
+                texture.resource.Get(), before, after,
+                texture.SubresourceIndex(mip, first + i));
+        }
+        commandList->ResourceBarrier(count, barriers);
     }
 }
 
@@ -68,6 +77,12 @@ void ResourceAllocator::Destroy() {
 }
 
 bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& outTexture) {
+    // ヒープは Create で必ず渡される。無いまま「成功」させるとビューの無いテクスチャが返り、
+    // シェーダ側で kInvalidDescriptorIndex を引いて黙って壊れる。
+    if (m_srvHeap == nullptr || m_rtvHeap == nullptr || m_dsvHeap == nullptr) {
+        TG_LOG_ERROR("ResourceAllocator にディスクリプタヒープが設定されていません");
+        return false;
+    }
     if (!m_allocator) {
         return false;
     }
@@ -150,12 +165,17 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
         outTexture.resource->SetName(desc.debugName);
     }
 
-    if (desc.createSrv && m_srvHeap != nullptr) {
+    // ビューの確保に失敗したら、ここまでに取ったぶんを返して空にする。
+    const auto failViews = [&]() {
+        ReleaseDescriptors(outTexture);
+        outTexture = GpuTexture{};
+        return false;
+    };
+
+    if (desc.createSrv) {
         outTexture.srv = m_srvHeap->Allocate();
         if (!outTexture.srv.IsValid()) {
-            ReleaseDescriptors(outTexture);
-            outTexture = GpuTexture{};
-            return false;
+            return failViews();
         }
         D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
         srvDesc.Format = (desc.srvFormat != DXGI_FORMAT_UNKNOWN) ? desc.srvFormat : desc.format;
@@ -174,7 +194,7 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
         m_device->CreateShaderResourceView(outTexture.resource.Get(), &srvDesc, outTexture.srv.cpu);
     }
 
-    if (desc.allowUnorderedAccess && m_srvHeap != nullptr) {
+    if (desc.allowUnorderedAccess) {
         // 配列・キューブは TEXTURE2DARRAY として書き込む。
         const bool asArray = (outTexture.arraySize > 1);
         const uint32_t uavMipCount = desc.createMipUavs ? desc.mipLevels : 1;
@@ -183,9 +203,7 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
         for (uint32_t mip = 0; mip < uavMipCount; ++mip) {
             DescriptorHandle handle = m_srvHeap->Allocate();
             if (!handle.IsValid()) {
-                ReleaseDescriptors(outTexture);
-                outTexture = GpuTexture{};
-                return false;
+                return failViews();
             }
 
             D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
@@ -205,14 +223,12 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
         outTexture.uav = outTexture.mipUavs[0];
     }
 
-    if (desc.createMipSrvs && m_srvHeap != nullptr) {
+    if (desc.createMipSrvs) {
         outTexture.mipSrvs.resize(desc.mipLevels);
         for (uint32_t mip = 0; mip < desc.mipLevels; ++mip) {
             DescriptorHandle handle = m_srvHeap->Allocate();
             if (!handle.IsValid()) {
-                ReleaseDescriptors(outTexture);
-                outTexture = GpuTexture{};
-                return false;
+                return failViews();
             }
 
             D3D12_SHADER_RESOURCE_VIEW_DESC mipSrvDesc = {};
@@ -238,22 +254,18 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
         }
     }
 
-    if (desc.allowRenderTarget && m_rtvHeap != nullptr) {
+    if (desc.allowRenderTarget) {
         outTexture.rtv = m_rtvHeap->Allocate();
         if (!outTexture.rtv.IsValid()) {
-            ReleaseDescriptors(outTexture);
-            outTexture = GpuTexture{};
-            return false;
+            return failViews();
         }
         m_device->CreateRenderTargetView(outTexture.resource.Get(), nullptr, outTexture.rtv.cpu);
     }
 
-    if (desc.allowDepthStencil && m_dsvHeap != nullptr) {
+    if (desc.allowDepthStencil) {
         outTexture.dsv = m_dsvHeap->Allocate();
         if (!outTexture.dsv.IsValid()) {
-            ReleaseDescriptors(outTexture);
-            outTexture = GpuTexture{};
-            return false;
+            return failViews();
         }
         D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
         dsvDesc.Format = (desc.dsvFormat != DXGI_FORMAT_UNKNOWN) ? desc.dsvFormat : desc.format;
@@ -264,9 +276,10 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
     return true;
 }
 
-bool ResourceAllocator::CreateDefaultBuffer(uint64_t sizeInBytes,
-                                            D3D12_RESOURCE_STATES initialState,
-                                            const wchar_t* debugName, GpuBuffer& outBuffer, bool allowUnorderedAccess) {
+bool ResourceAllocator::CreateBuffer(D3D12_HEAP_TYPE heapType, uint64_t sizeInBytes,
+                                     D3D12_RESOURCE_STATES initialState,
+                                     D3D12_RESOURCE_FLAGS flags, const wchar_t* debugName,
+                                     GpuBuffer& outBuffer) {
     if (!m_allocator || sizeInBytes == 0) {
         return false;
     }
@@ -280,10 +293,10 @@ bool ResourceAllocator::CreateDefaultBuffer(uint64_t sizeInBytes,
     resourceDesc.Format = DXGI_FORMAT_UNKNOWN;
     resourceDesc.SampleDesc.Count = 1;
     resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-    resourceDesc.Flags = allowUnorderedAccess ? D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS : D3D12_RESOURCE_FLAG_NONE;
+    resourceDesc.Flags = flags;
 
     D3D12MA::ALLOCATION_DESC allocDesc = {};
-    allocDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
+    allocDesc.HeapType = heapType;
 
     D3D12MA::Allocation* allocation = nullptr;
     ID3D12Resource* resource = nullptr;
@@ -303,132 +316,87 @@ bool ResourceAllocator::CreateDefaultBuffer(uint64_t sizeInBytes,
     return true;
 }
 
-bool ResourceAllocator::CreateUploadBuffer(uint64_t sizeInBytes, const wchar_t* debugName,
-                                           GpuBuffer& outBuffer) {
-    if (!m_allocator || sizeInBytes == 0) {
-        return false;
-    }
-
-    D3D12_RESOURCE_DESC resourceDesc = {};
-    resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    resourceDesc.Width = sizeInBytes;
-    resourceDesc.Height = 1;
-    resourceDesc.DepthOrArraySize = 1;
-    resourceDesc.MipLevels = 1;
-    resourceDesc.Format = DXGI_FORMAT_UNKNOWN;
-    resourceDesc.SampleDesc.Count = 1;
-    resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-    resourceDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
-
-    D3D12MA::ALLOCATION_DESC allocDesc = {};
-    allocDesc.HeapType = D3D12_HEAP_TYPE_UPLOAD;
-
-    D3D12MA::Allocation* allocation = nullptr;
-    ID3D12Resource* resource = nullptr;
-    if (!TG_CHECK_HR(m_allocator->CreateResource(&allocDesc, &resourceDesc,
-                                                 D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-                                                 &allocation, IID_PPV_ARGS(&resource)))) {
-        return false;
-    }
-
-    outBuffer = GpuBuffer{};
-    outBuffer.allocation.Attach(allocation);
-    outBuffer.resource.Attach(resource);
-    outBuffer.sizeInBytes = sizeInBytes;
-    outBuffer.state = D3D12_RESOURCE_STATE_GENERIC_READ;
-    if (debugName != nullptr) {
-        outBuffer.resource->SetName(debugName);
-    }
-    return true;
+bool ResourceAllocator::CreateDefaultBuffer(uint64_t sizeInBytes,
+                                            D3D12_RESOURCE_STATES initialState,
+                                            const wchar_t* debugName, GpuBuffer& outBuffer,
+                                            bool allowUnorderedAccess) {
+    const D3D12_RESOURCE_FLAGS flags = allowUnorderedAccess
+                                           ? D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS
+                                           : D3D12_RESOURCE_FLAG_NONE;
+    return CreateBuffer(D3D12_HEAP_TYPE_DEFAULT, sizeInBytes, initialState, flags, debugName,
+                        outBuffer);
 }
 
-bool ResourceAllocator::CreateStructuredBuffer(uint32_t count, uint32_t stride,
-                                                const wchar_t* debugName, GpuBuffer& outBuffer, bool allowUnorderedAccess) {
-    if (!count || !stride || !m_srvHeap) return false;
-    if (!CreateDefaultBuffer(uint64_t(count)*stride, allowUnorderedAccess ? D3D12_RESOURCE_STATE_COMMON : D3D12_RESOURCE_STATE_COPY_DEST, debugName, outBuffer, allowUnorderedAccess)) return false;
-    outBuffer.srv=m_srvHeap->Allocate();
-    if (!outBuffer.srv.IsValid()) { outBuffer={}; return false; }
-    D3D12_SHADER_RESOURCE_VIEW_DESC desc{};
-    desc.Format=DXGI_FORMAT_UNKNOWN;
-    desc.ViewDimension=D3D12_SRV_DIMENSION_BUFFER;
-    desc.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    desc.Buffer.NumElements=count;
-    desc.Buffer.StructureByteStride=stride;
-    m_device->CreateShaderResourceView(outBuffer.resource.Get(),&desc,outBuffer.srv.cpu);
-    if (allowUnorderedAccess) {
-        outBuffer.uav = m_srvHeap->Allocate();
-        if (!outBuffer.uav.IsValid()) { m_srvHeap->Free(outBuffer.srv); outBuffer = {}; return false; }
-        D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
-        uav.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
-        uav.Buffer.NumElements = count;
-        uav.Buffer.StructureByteStride = stride;
-        m_device->CreateUnorderedAccessView(outBuffer.resource.Get(), nullptr, &uav, outBuffer.uav.cpu);
-    }
-    return true;
+bool ResourceAllocator::CreateUploadBuffer(uint64_t sizeInBytes, const wchar_t* debugName,
+                                           GpuBuffer& outBuffer) {
+    return CreateBuffer(D3D12_HEAP_TYPE_UPLOAD, sizeInBytes, D3D12_RESOURCE_STATE_GENERIC_READ,
+                        D3D12_RESOURCE_FLAG_NONE, debugName, outBuffer);
 }
 
 bool ResourceAllocator::CreateReadbackBuffer(uint64_t sizeInBytes, const wchar_t* debugName,
-                                            GpuBuffer& outBuffer) {
-    if (!m_allocator || sizeInBytes == 0) {
+                                             GpuBuffer& outBuffer) {
+    return CreateBuffer(D3D12_HEAP_TYPE_READBACK, sizeInBytes, D3D12_RESOURCE_STATE_COPY_DEST,
+                        D3D12_RESOURCE_FLAG_NONE, debugName, outBuffer);
+}
+
+bool ResourceAllocator::CreateStructuredBuffer(uint32_t count, uint32_t stride,
+                                               const wchar_t* debugName, GpuBuffer& outBuffer,
+                                               bool allowUnorderedAccess) {
+    if (count == 0 || stride == 0 || m_srvHeap == nullptr) {
+        return false;
+    }
+    const D3D12_RESOURCE_STATES initialState = allowUnorderedAccess
+                                                   ? D3D12_RESOURCE_STATE_COMMON
+                                                   : D3D12_RESOURCE_STATE_COPY_DEST;
+    if (!CreateDefaultBuffer(static_cast<uint64_t>(count) * stride, initialState, debugName,
+                             outBuffer, allowUnorderedAccess)) {
         return false;
     }
 
-    D3D12_RESOURCE_DESC resourceDesc = {};
-    resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    resourceDesc.Width = sizeInBytes;
-    resourceDesc.Height = 1;
-    resourceDesc.DepthOrArraySize = 1;
-    resourceDesc.MipLevels = 1;
-    resourceDesc.Format = DXGI_FORMAT_UNKNOWN;
-    resourceDesc.SampleDesc.Count = 1;
-    resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-    resourceDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
-
-    D3D12MA::ALLOCATION_DESC allocDesc = {};
-    allocDesc.HeapType = D3D12_HEAP_TYPE_READBACK;
-
-    D3D12MA::Allocation* allocation = nullptr;
-    ID3D12Resource* resource = nullptr;
-    if (!TG_CHECK_HR(m_allocator->CreateResource(&allocDesc, &resourceDesc,
-                                                 D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
-                                                 &allocation, IID_PPV_ARGS(&resource)))) {
+    outBuffer.srv = m_srvHeap->Allocate();
+    if (!outBuffer.srv.IsValid()) {
+        outBuffer = GpuBuffer{};
         return false;
     }
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srvDesc.Buffer.NumElements = count;
+    srvDesc.Buffer.StructureByteStride = stride;
+    m_device->CreateShaderResourceView(outBuffer.resource.Get(), &srvDesc, outBuffer.srv.cpu);
 
-    outBuffer = GpuBuffer{};
-    outBuffer.allocation.Attach(allocation);
-    outBuffer.resource.Attach(resource);
-    outBuffer.sizeInBytes = sizeInBytes;
-    outBuffer.state = D3D12_RESOURCE_STATE_COPY_DEST;
-    if (debugName != nullptr) {
-        outBuffer.resource->SetName(debugName);
+    if (allowUnorderedAccess) {
+        outBuffer.uav = m_srvHeap->Allocate();
+        if (!outBuffer.uav.IsValid()) {
+            m_srvHeap->Free(outBuffer.srv);
+            outBuffer = GpuBuffer{};
+            return false;
+        }
+        D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+        uavDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+        uavDesc.Buffer.NumElements = count;
+        uavDesc.Buffer.StructureByteStride = stride;
+        m_device->CreateUnorderedAccessView(outBuffer.resource.Get(), nullptr, &uavDesc,
+                                            outBuffer.uav.cpu);
     }
     return true;
 }
 
 void ResourceAllocator::ReleaseDescriptors(GpuTexture& texture) {
-    if (m_srvHeap != nullptr) {
-        m_srvHeap->Free(texture.srv);
-        // uav は mipUavs[0] と同じハンドルなので、二重解放しないよう mipUavs だけ返す。
-        for (const DescriptorHandle& handle : texture.mipUavs) {
-            m_srvHeap->Free(handle);
+    texture.ForEachDescriptor([&](GpuTexture::DescriptorHeapKind kind,
+                                  const DescriptorHandle& handle) {
+        DescriptorHeap* heap = nullptr;
+        switch (kind) {
+            case GpuTexture::DescriptorHeapKind::Srv: heap = m_srvHeap; break;
+            case GpuTexture::DescriptorHeapKind::Rtv: heap = m_rtvHeap; break;
+            case GpuTexture::DescriptorHeapKind::Dsv: heap = m_dsvHeap; break;
         }
-        texture.mipUavs.clear();
-        for (const DescriptorHandle& handle : texture.mipSrvs) {
-            m_srvHeap->Free(handle);
+        if (heap != nullptr) {
+            heap->Free(handle);
         }
-        texture.mipSrvs.clear();
-    }
-    if (m_rtvHeap != nullptr) {
-        m_rtvHeap->Free(texture.rtv);
-    }
-    if (m_dsvHeap != nullptr) {
-        m_dsvHeap->Free(texture.dsv);
-    }
-    texture.srv = DescriptorHandle{};
-    texture.uav = DescriptorHandle{};
-    texture.rtv = DescriptorHandle{};
-    texture.dsv = DescriptorHandle{};
+    });
+    texture.ClearDescriptors();
 }
 
 }  // namespace tg::rhi

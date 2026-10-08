@@ -5,17 +5,54 @@
 namespace tg::rhi {
 
 void DeletionQueue::SetAuxiliaryFence(ComPtr<ID3D12Fence> fence, uint64_t value) {
-    m_guard.fence = std::move(fence);
-    m_guard.value = value;
+    if (!fence) {
+        return;
+    }
+    const auto it = std::find_if(m_guards.begin(), m_guards.end(),
+                                 [&](const Guard& guard) { return guard.fence == fence; });
+    if (it != m_guards.end()) {
+        it->value = std::max(it->value, value);
+    } else {
+        m_guards.push_back(Guard{std::move(fence), value});
+    }
+    m_currentGuards.reset();
+}
+
+void DeletionQueue::ClearAuxiliaryFences() {
+    m_guards.clear();
+    m_currentGuards.reset();
+}
+
+bool DeletionQueue::AllPassed(const GuardSetPtr& guards) {
+    if (!guards) {
+        return true;
+    }
+    return std::all_of(guards->begin(), guards->end(),
+                       [](const Guard& guard) { return guard.Passed(); });
+}
+
+DeletionQueue::GuardSetPtr DeletionQueue::CurrentGuards() {
+    // 既に完了している条件は付けない（フェンスの参照を無駄に持たない）。
+    const auto passed = std::remove_if(m_guards.begin(), m_guards.end(),
+                                       [](const Guard& guard) { return guard.Passed(); });
+    if (passed != m_guards.end()) {
+        m_guards.erase(passed, m_guards.end());
+        m_currentGuards.reset();
+    }
+    if (m_guards.empty()) {
+        return nullptr;
+    }
+    if (!m_currentGuards) {
+        m_currentGuards = std::make_shared<const GuardSet>(m_guards);
+    }
+    return m_currentGuards;
 }
 
 void DeletionQueue::Push(ComPtr<IUnknown> object, uint64_t fenceValue) {
     if (!object) {
         return;
     }
-    // 既に完了している条件は付けない（フェンスの参照を無駄に持たない）。
-    const Guard guard = m_guard.Passed() ? Guard{} : m_guard;
-    m_entries.push_back(Entry{fenceValue, guard, std::move(object)});
+    m_entries.push_back(Entry{fenceValue, CurrentGuards(), std::move(object)});
 }
 
 void DeletionQueue::Push(DescriptorHeap* heap, const DescriptorHandle& handle,
@@ -23,8 +60,7 @@ void DeletionQueue::Push(DescriptorHeap* heap, const DescriptorHandle& handle,
     if (heap == nullptr || !handle.IsValid()) {
         return;
     }
-    const Guard guard = m_guard.Passed() ? Guard{} : m_guard;
-    m_descriptorEntries.push_back(DescriptorEntry{fenceValue, guard, heap, handle});
+    m_descriptorEntries.push_back(DescriptorEntry{fenceValue, CurrentGuards(), heap, handle});
 }
 
 void DeletionQueue::Collect(uint64_t completedFenceValue) {
@@ -32,7 +68,7 @@ void DeletionQueue::Collect(uint64_t completedFenceValue) {
         const auto removed = std::remove_if(m_entries.begin(), m_entries.end(),
                                             [completedFenceValue](const Entry& entry) {
                                                 return entry.fenceValue <= completedFenceValue &&
-                                                       entry.guard.Passed();
+                                                       AllPassed(entry.guards);
                                             });
         m_entries.erase(removed, m_entries.end());
     }
@@ -40,7 +76,7 @@ void DeletionQueue::Collect(uint64_t completedFenceValue) {
         const auto removed = std::remove_if(
             m_descriptorEntries.begin(), m_descriptorEntries.end(),
             [completedFenceValue](const DescriptorEntry& entry) {
-                if (entry.fenceValue > completedFenceValue || !entry.guard.Passed()) {
+                if (entry.fenceValue > completedFenceValue || !AllPassed(entry.guards)) {
                     return false;
                 }
                 entry.heap->Free(entry.handle);

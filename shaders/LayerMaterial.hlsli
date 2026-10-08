@@ -27,12 +27,12 @@ float RoadBand(float x, float center, float width, float feather) {
 float RoadShapeMask(LayerMaterialData data, LayerMaterialSlot s, float2 meters) {
     const float width = data.road.x;
     if (width <= 0) return 0;
-    const float half = width * 0.5f;
-    const float lateral = half - meters.x;
+    const float halfWidth = width * 0.5f;
+    const float lateral = halfWidth - meters.x;
     if (s.mask.x == 1) {
-        float fromEdge = half - abs(lateral);
-        if (s.road1.y == 1) fromEdge = half - lateral;
-        if (s.road1.y == 2) fromEdge = half + lateral;
+        float fromEdge = halfWidth - abs(lateral);
+        if (s.road1.y == 1) fromEdge = halfWidth - lateral;
+        if (s.road1.y == 2) fromEdge = halfWidth + lateral;
         const float inner = fromEdge - s.road1.x;
         return s.road0.w <= 1e-5f ? (inner <= 0 ? 1.0f : 0.0f) : saturate(1.0f - inner / s.road0.w);
     }
@@ -49,7 +49,7 @@ float RoadShapeMask(LayerMaterialData data, LayerMaterialSlot s, float2 meters) 
             const bool onRight = i < rightSideCount;
             const bool laneForward = leftHand ? !onRight : onRight;
             if (!bothLanes && !laneForward) continue;
-            const float center = -half + laneWidth * (float(i) + 0.5f);
+            const float center = -halfWidth + laneWidth * (float(i) + 0.5f);
             value = max(value, RoadBand(lateral, center - s.road0.y * 0.5f, s.road0.z, s.road0.w));
             value = max(value, RoadBand(lateral, center + s.road0.y * 0.5f, s.road0.z, s.road0.w));
         }

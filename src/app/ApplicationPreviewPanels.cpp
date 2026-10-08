@@ -582,10 +582,11 @@ void Application::DrawLightingPanel() {
                         sky.animateClouds = animate ? 1u : 0u;
                     ui::PropertyFloat("風速", &sky.windSpeed, 0.0f, 1000.0f, defaults.windSpeed,
                                       "雲模様が進む速度。存在範囲の中心と半径は動きません。", "%.1f m/s");
-                    float windDegrees = sky.windDirection * 180.0f / 3.14159265f;
-                    if (ui::PropertyFloat("風向", &windDegrees, -180.0f, 180.0f, defaults.windDirection,
+                    // 既定値も度に直して渡す（欄は度で見せている）。
+                    float windDegrees = RadiansToDegrees(sky.windDirection);
+                    if (ui::PropertyFloat("風向", &windDegrees, -180.0f, 180.0f, RadiansToDegrees(defaults.windDirection),
                                           "雲が進む方向。0 度は +Z、90 度は +X です。", "%.0f deg"))
-                        sky.windDirection = windDegrees * 3.14159265f / 180.0f;
+                        sky.windDirection = DegreesToRadians(windDegrees);
                     int seed = static_cast<int>(sky.seed);
                     if (ui::PropertyInt("シード", &seed, 0, 10000, static_cast<int>(defaults.seed),
                                         "雲模様の乱数の種。値を変えると雲の形と配置が変わります。\n"

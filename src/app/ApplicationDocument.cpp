@@ -47,6 +47,7 @@ DocumentSnapshot Application::CaptureDocument() const {
     snapshot.models = m_models;
     snapshot.graphNodes = m_graph.Nodes();
     snapshot.graphLinks = m_graph.Links();
+    snapshot.graphGroups = m_graph.Groups();
     snapshot.selectedGraphNode = m_selectedGraphNode;
     snapshot.selectedMaterial = m_selectedMaterial;
 
@@ -208,7 +209,13 @@ void Application::ApplyDocument(const DocumentSnapshot& snapshot) {
         }
     }
     m_graph.Replace(std::move(nodes), snapshot.graphLinks);
+    // グループ（枠）は Replace で入れ替わらないので別に戻す。消えた枠を指す選択は外す。
+    m_graph.MutableGroups() = snapshot.graphGroups;
+    if (std::none_of(snapshot.graphGroups.begin(), snapshot.graphGroups.end(),
+                     [&](const graph::NodeGroup& group) { return group.id == m_selectedGraphGroup; }))
+        m_selectedGraphGroup = 0;
     // ノードの位置も一緒に戻すので、エディタへ流し込み直す。視点は動かさない。
+    // 枠の位置と大きさの同期も捨てるので、次の描画でエディタへ流し込み直される。
     RequestGraphNodePlacement(false);
 
     m_selectedGraphNode =

@@ -42,6 +42,7 @@ compositor::MaterialLayer* Application::CurrentPaintLayer() {
     return layer;
 }
 
+namespace {
 // ビューポートに重ねる描き込み（統計・凡例）の下地と文字。明るい素材の上でも読めるように暗く敷く。
 constexpr ImU32 kOverlayBackground = IM_COL32(8, 10, 12, 190);
 constexpr ImU32 kOverlayText = IM_COL32(235, 235, 235, 255);
@@ -54,6 +55,7 @@ std::string GroupDigits(uint64_t value) {
     }
     return digits;
 }
+}  // namespace
 
 // ビューポートに重ねる操作。表示モードの切り替えと、重ねる情報の切り替え。
 //

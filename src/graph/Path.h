@@ -256,8 +256,6 @@ float StrandClothoidRatio(const PathSettings& path, const PathStrand& strand);
 // sizeMeters（地形の一辺、m）を渡すと、鎖の蛇行を掛ける（0 なら掛けない）。
 std::vector<PathCurveSample> SamplePathStrand(const PathSettings& path, const PathStrand& strand,
                                               int samplesPerSpan, float sizeMeters = 0.0f);
-// 鎖のエッジを全部反転する。
-bool ReversePathStrand(PathSettings& path, const PathStrand& strand);
 
 // 評価用の線分列。座標は正規化 UV のまま（実寸への換算は評価器が一辺の長さで行う）。
 // 曲線の鎖は細かい直線に割って出す。エッジの無い孤立した点は、長さ 0 の線分（円）として出す。

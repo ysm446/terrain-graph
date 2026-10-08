@@ -206,15 +206,11 @@ void MissingBadge(const ImVec2& min, const ImVec2& max);
 // （マテリアルを割り当てていないレイヤーなど）の代わりに使う。
 void ColorSwatch(const ImVec4& color, float size);
 
-// 一覧の行に置くレイヤー種類のアイコン。マテリアルのサムネイルが意味を
-// 持たないレイヤーの代わりに使う。目のアイコンと同じく、字形が無いので
+// アセット種類のアイコン。目のアイコンと同じく、字形が無いので
 // 図形で描く（design-guide.md の「記号を使うとき」を参照）。
-void MountainIcon(float size);  // シェイプ（高さへの加算）: 山の稜線
 enum class AssetIcon { Atmosphere, Terrain, Cloud };
 // 既存サムネイル枠へ線画だけを重ねる。入力・レイアウトは変更しない。
 void DrawAssetIcon(AssetIcon icon, const ImVec2& min, const ImVec2& max);
-
-void WavesIcon(float size);     // 水面: 横に走る 2 本の波
 
 // --- 表示・非表示の目印 ---------------------------------------------------
 

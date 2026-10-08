@@ -34,7 +34,6 @@ public:
     // 監視対象のシェーダファイルに更新があれば true を返す。初回呼び出しは常に false。
     bool PollChanges();
 
-    const std::filesystem::path& Root() const { return m_root; }
 
 private:
     void ScanTimestamps(std::unordered_map<std::wstring, std::filesystem::file_time_type>& out) const;

@@ -13,44 +13,51 @@ bool ComputeQueue::Create(Device& device, uint64_t uploadBytes, const wchar_t* d
         return false;
     }
 
+    // 途中で失敗したら作りかけを残さない。残すと IsValid が true のまま
+    // null のアロケータやフェンスに触って落ちる。
+    const auto fail = [&]() {
+        Destroy(device);
+        return false;
+    };
+
     D3D12_COMMAND_QUEUE_DESC queueDesc = {};
     queueDesc.Type = D3D12_COMMAND_LIST_TYPE_COMPUTE;
     queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
     if (!TG_CHECK_HR(d3d->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&m_queue)))) {
-        return false;
+        return fail();
     }
     m_queue->SetName(debugName);
 
     if (!TG_CHECK_HR(d3d->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COMPUTE,
                                                  IID_PPV_ARGS(&m_allocator)))) {
-        return false;
+        return fail();
     }
     if (!TG_CHECK_HR(d3d->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_COMPUTE, m_allocator.Get(),
                                             nullptr, IID_PPV_ARGS(&m_commandList)))) {
-        return false;
+        return fail();
     }
     // 作った直後は記録状態。Reset で始める作法に揃えるため閉じておく。
     if (!TG_CHECK_HR(m_commandList->Close())) {
-        return false;
+        return fail();
     }
 
     if (!TG_CHECK_HR(d3d->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_fence)))) {
-        return false;
+        return fail();
     }
     m_fenceEvent = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (m_fenceEvent == nullptr) {
         TG_LOG_ERROR("コンピュートキューのフェンスイベントを作れませんでした");
-        return false;
+        return fail();
     }
 
     m_uploadBytes = AlignUp(uploadBytes, 256);
     if (!device.Allocator().CreateUploadBuffer(m_uploadBytes, debugName, m_upload)) {
-        return false;
+        return fail();
     }
     void* mapped = nullptr;
     const D3D12_RANGE readRange = {0, 0};
     if (!TG_CHECK_HR(m_upload.resource->Map(0, &readRange, &mapped))) {
-        return false;
+        return fail();
     }
     m_uploadMapped = static_cast<uint8_t*>(mapped);
     m_uploadOffset = 0;
@@ -79,6 +86,10 @@ void ComputeQueue::Destroy(Device& device) {
     m_uploadOffset = 0;
     m_uploadExhausted = false;
     m_submittedValue = 0;
+}
+
+bool ComputeQueue::IsValid() const {
+    return m_queue && m_allocator && m_commandList && m_fence && m_uploadMapped != nullptr;
 }
 
 ID3D12GraphicsCommandList* ComputeQueue::Begin(Device& device) {
@@ -119,11 +130,15 @@ bool ComputeQueue::Submit(Device& device) {
     ID3D12CommandList* lists[] = {m_commandList.Get()};
     m_queue->ExecuteCommandLists(1, lists);
 
-    const uint64_t value = m_submittedValue + 1;
-    if (!TG_CHECK_HR(m_queue->Signal(m_fence.Get(), value))) {
+    // 投入した以上は、Signal に失敗しても「走っている」扱いにする。
+    // 値を進めずに戻ると IsBusy が false のまま次の Begin がアロケータを Reset してしまう。
+    // Signal に失敗するのは実質デバイスロストだけなので、キューごと止める。
+    m_submittedValue += 1;
+    if (!TG_CHECK_HR(m_queue->Signal(m_fence.Get(), m_submittedValue))) {
+        TG_LOG_ERROR("コンピュートキューのフェンスの Signal に失敗しました。このキューを止めます");
+        m_queue.Reset();
         return false;
     }
-    m_submittedValue = value;
     return true;
 }
 
@@ -144,18 +159,20 @@ bool ComputeQueue::IsBusy() const {
 }
 
 void ComputeQueue::Wait() {
-    if (!IsBusy() || m_fenceEvent == nullptr) {
+    if (!IsBusy()) {
         return;
     }
-    if (!TG_CHECK_HR(m_fence->SetEventOnCompletion(m_submittedValue, m_fenceEvent))) {
-        return;
-    }
-    ::WaitForSingleObjectEx(m_fenceEvent, INFINITE, FALSE);
+    WaitForFence(m_fence.Get(), m_submittedValue, m_fenceEvent);
 }
 
 UploadAllocation ComputeQueue::Allocate(uint64_t size, uint64_t alignment) {
     UploadAllocation result;
     if (m_uploadMapped == nullptr || size == 0) {
+        return result;
+    }
+    if (!IsPowerOfTwo(alignment)) {
+        TG_LOG_ERROR("コンピュートキューのアライメント指定が不正です (%llu)",
+                     static_cast<unsigned long long>(alignment));
         return result;
     }
     const uint64_t offset = AlignUp(m_uploadOffset, alignment);

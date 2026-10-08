@@ -665,7 +665,7 @@ bool Application::HandleRoadProfileInput(graph::Node& node, bool itemHovered, co
     const ImVec2 mouse = io.MousePos;
 
     // カーソルに一番近い中心線上の道のり（画面上で測る。2 m ごとの標本を線分で結んで最寄りを取る）。
-    const auto nearestDistanceOnCenterline = [&]() {
+    const auto computeNearestDistanceOnCenterline = [&]() {
         const float step = std::max(2.0f, total / 4000.0f);
         float best = std::numeric_limits<float>::max();
         float bestDistance = 0.0f;
@@ -696,6 +696,16 @@ bool Application::HandleRoadProfileInput(graph::Node& node, bool itemHovered, co
             if (at >= total) break;
         }
         return bestDistance;
+    };
+    // 同じフレームでは結果が変わらない（カーソルも中心線も同じ）ので、2 度目からは最初の値を返す。
+    float nearestCache = 0.0f;
+    bool nearestCached = false;
+    const auto nearestDistanceOnCenterline = [&]() {
+        if (!nearestCached) {
+            nearestCache = computeNearestDistanceOnCenterline();
+            nearestCached = true;
+        }
+        return nearestCache;
     };
     // ポイントの真上を通る鉛直線の上で、カーソルのレイに一番近い高さ。真上から見ているときは偽。
     const auto heightUnderCursor = [&](const XMFLOAT3& at, float& outY) {

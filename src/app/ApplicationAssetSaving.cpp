@@ -96,15 +96,14 @@ void Application::ProcessSelectedAssetSave() {
         m_skyLibrary, m_renderer, m_graph, &m_models, &m_sceneComponents, -1, &m_sceneAtmosphere};
     refs.saveSharedAssets = false;
     size_t savedCount = 0, failedCount = 0;
+    // 保存できた共有アセット。指紋の控えは 1 件ごとではなく、ループのあとにまとめて採る。
+    std::vector<std::filesystem::path> savedShared;
     for (const auto& path : paths) {
         if (!m_workspace.Contains(path) || !IsAssetDirty(path)) continue;
         bool saved = false;
         if (m_assetStates.contains(path)) {
             saved = io::SaveSharedAssets(m_workspace, refs, &path);
-            if (saved) {
-                RememberAssetStates();
-                m_savedAssetStates[path] = m_assetStates.at(path);
-            }
+            if (saved) savedShared.push_back(path);
         } else {
             int component = -1;
             if (path == m_componentPreviewPath && m_componentPreview >= 0) component = m_componentPreview;
@@ -127,6 +126,12 @@ void Application::ProcessSelectedAssetSave() {
         }
         if (saved) ++savedCount;
         else { ++failedCount; TG_LOG_ERROR("アセットを保存できませんでした: %s", ToUtf8Display(path).c_str()); }
+    }
+    // RememberAssetStates はすべてのアセットの指紋を採り直すので、保存の回数だけ呼ばずに 1 度で済ます。
+    if (!savedShared.empty()) {
+        RememberAssetStates();
+        for (const auto& path : savedShared)
+            if (const auto state = m_assetStates.find(path); state != m_assetStates.end()) m_savedAssetStates[path] = state->second;
     }
     RefreshSceneDirty();
     m_assetRefresh = true;

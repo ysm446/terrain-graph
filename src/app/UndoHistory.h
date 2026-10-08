@@ -83,6 +83,8 @@ struct DocumentSnapshot {
     SceneAtmosphereSnapshot atmosphere;
     std::vector<graph::Node> graphNodes;
     std::vector<graph::Link> graphLinks;
+    // グループ（枠）。NodeGraph::Replace では入れ替わらないので、ここから別に戻す。
+    std::vector<graph::NodeGroup> graphGroups;
     std::vector<MaterialSnapshot> materials;
     std::vector<renderer::ModelAsset> models;
     graph::GraphId selectedGraphNode = 0;
@@ -102,6 +104,8 @@ public:
     // 1 回のドラッグが 1 段に収まる。ボタンのように掴みが無い操作は 0 が来るため、
     // 押すたびに 1 段積まれる。
     void Push(const DocumentSnapshot& before, uint32_t editId);
+    // 直後に捨てる写しは複製せずに移す。同じ段に畳まれて積まれなかった場合、before は元のまま残る。
+    void Push(DocumentSnapshot&& before, uint32_t editId);
 
     // 掴んでいたウィジェットが離れたことを伝える。
     // 同じスライダーをもう一度掴んだときに別の段になるようにするため。

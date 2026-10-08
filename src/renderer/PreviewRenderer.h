@@ -439,7 +439,6 @@ private:
     // 手続き的な空へ落とす（アセットの中身は書き換えない）。
     void ApplyActiveSky(rhi::Device& device, rhi::PipelineCache& pipelineCache);
 
-    const Mesh& CurrentMesh() const;
     // ライトから見たビュー×投影。プレビューの被写体を囲む平行投影。
     DirectX::XMMATRIX LightViewProjection() const;
     void ReleaseTargets(rhi::Device& device);

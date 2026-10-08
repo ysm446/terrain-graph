@@ -83,9 +83,11 @@ bool UploadAtlas(rhi::Device& device, rhi::GpuTexture& texture, const LdrImage& 
                     image.pixels.data() + size_t(row) * image.RowPitchInBytes(), size_t(rowBytes));
     staging.resource->Unmap(0, nullptr);
     const bool uploaded = device.ExecuteImmediate([&](ID3D12GraphicsCommandList* list) {
+        PIXBeginEvent(list, PIX_COLOR(200, 170, 90), "ImpostorAtlasUpload");
         const CD3DX12_TEXTURE_COPY_LOCATION destination(texture.resource.Get(), 0);
         const CD3DX12_TEXTURE_COPY_LOCATION source(staging.resource.Get(), footprint);
         list->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+        PIXEndEvent(list);
     });
     device.DeferRelease(staging);
     return uploaded;
@@ -102,11 +104,13 @@ bool SaveAtlas(rhi::Device& device, rhi::GpuTexture& texture, const std::filesys
     if (!device.Allocator().CreateReadbackBuffer(totalBytes, L"ImpostorReadback", readback)) return false;
     const auto readState = texture.state;
     const bool copied = device.ExecuteImmediate([&](ID3D12GraphicsCommandList* list) {
+        PIXBeginEvent(list, PIX_COLOR(200, 170, 90), "ImpostorAtlasReadback");
         rhi::TransitionIfNeeded(list, texture, D3D12_RESOURCE_STATE_COPY_SOURCE);
         const CD3DX12_TEXTURE_COPY_LOCATION destination(readback.resource.Get(), footprint);
         const CD3DX12_TEXTURE_COPY_LOCATION source(texture.resource.Get(), 0);
         list->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
         rhi::TransitionIfNeeded(list, texture, readState);
+        PIXEndEvent(list);
     });
     bool saved = false;
     void* mapped = nullptr;
@@ -307,7 +311,6 @@ bool ImpostorLibrary::Bake(rhi::Device& device, rhi::PipelineCache& cache, const
     const uint64_t drawCount = uint64_t(frames) * frames * parts.size();
     if (!device.Allocator().CreateUploadBuffer(drawCount * kStride, L"ImpostorBakeConstants", constantsBuffer))
         return fail("定数を用意できません");
-    std::vector<bool> drawable(parts.size());
     {
         void* mapped = nullptr;
         const D3D12_RANGE none{0, 0};
@@ -342,7 +345,6 @@ bool ImpostorLibrary::Bake(rhi::Device& device, rhi::PipelineCache& cache, const
             constants.flipNormalGreen = asset.flipNormalGreen ? 1u : 0u;
             // 色むらを持つマテリアルの画素だけが、描画のときに色むらを受ける。
             constants.variationWeight = asset.colorVariation.IsIdentity() ? 0.0f : 1.0f;
-            drawable[part] = meshes[part].IndexCount() > 0;
             for (uint32_t j = 0; j < frames; ++j)
                 for (uint32_t i = 0; i < frames; ++i) {
                     constants.frame[0] = i;
@@ -375,7 +377,6 @@ bool ImpostorLibrary::Bake(rhi::Device& device, rhi::PipelineCache& cache, const
                 list->RSSetViewports(1, &viewport);
                 list->RSSetScissorRects(1, &scissor);
                 for (size_t part = 0; part < parts.size(); ++part) {
-                    if (!drawable[part]) continue;
                     list->SetGraphicsRootConstantBufferView(
                         1, constantsBuffer.GpuAddress() + ((uint64_t(j) * frames + i) * parts.size() + part) * kStride);
                     meshes[part].Draw(list);
@@ -404,8 +405,9 @@ bool ImpostorLibrary::Bake(rhi::Device& device, rhi::PipelineCache& cache, const
         rhi::TransitionMip(list, entry.variation, 0, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
         PIXEndEvent(list);
     });
-    release();
+    // fail() も release() を呼ぶので、失敗時はそちらに任せて二重に返さない。
     if (!baked) return fail("焼き込みに失敗しました");
+    release();
     if (!FinishAtlas(device, cache, entry.color) || !FinishAtlas(device, cache, entry.normal) ||
         !FinishAtlas(device, cache, entry.variation))
         return fail("ミップを作れません");

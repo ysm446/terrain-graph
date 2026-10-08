@@ -2,6 +2,7 @@
 #include "io/LayerMaterialIo.h"
 #include "io/SceneComponents.h"
 #include "io/GraphJson.h"
+#include "io/JsonRead.h"
 #include <set>
 #include <map>
 
@@ -84,46 +85,8 @@ fs::path ResolvePath(const std::string& text, const fs::path& baseDir) {
 
 // --- JSON の読み書き（例外を投げない） ------------------------------------
 //
-// 型が食い違っていたら既定値に落とす。手で編集されたファイルでも落ちないようにする。
-
-const json* FindMember(const json& node, const char* key) {
-    const auto it = node.find(key);
-    return (it != node.end()) ? &(*it) : nullptr;
-}
-
-float ReadFloat(const json& node, const char* key, float fallback) {
-    const json* member = FindMember(node, key);
-    return (member != nullptr && member->is_number()) ? member->get<float>() : fallback;
-}
-
-double ReadDouble(const json& node, const char* key, double fallback) {
-    const json* member = FindMember(node, key);
-    return (member != nullptr && member->is_number()) ? member->get<double>() : fallback;
-}
-
-int ReadInt(const json& node, const char* key, int fallback) {
-    const json* member = FindMember(node, key);
-    return (member != nullptr && member->is_number_integer()) ? member->get<int>() : fallback;
-}
-
-uint32_t ReadUInt(const json& node, const char* key, uint32_t fallback) {
-    const json* member = FindMember(node, key);
-    if (member == nullptr || !member->is_number_integer()) {
-        return fallback;
-    }
-    const int64_t value = member->get<int64_t>();
-    return (value < 0) ? fallback : static_cast<uint32_t>(value);
-}
-
-bool ReadBool(const json& node, const char* key, bool fallback) {
-    const json* member = FindMember(node, key);
-    return (member != nullptr && member->is_boolean()) ? member->get<bool>() : fallback;
-}
-
-std::string ReadString(const json& node, const char* key, const std::string& fallback = {}) {
-    const json* member = FindMember(node, key);
-    return (member != nullptr && member->is_string()) ? member->get<std::string>() : fallback;
-}
+// 型で落とさない読み取り（FindMember / ReadFloat / ReadInt / ReadString など）は
+// io/JsonRead.h にあり、SceneComponents / GraphJson とも共有する。
 
 json WriteFloat3(const DirectX::XMFLOAT3& value) {
     return json::array({value.x, value.y, value.z});
@@ -206,6 +169,16 @@ const char* const kCloudNoiseNames[] = {"perlinFbm", "perlinWorley"};
 const char* const kCloudSpeciesNames[] = {"humilis", "mediocris", "congestus"};
 const char* const kProceduralCloudNoiseNames[] = {"perlin", "perlinFbm", "perlinWorley"};
 const char* const kApertureShapeNames[] = {"circle", "triangle", "hexagon", "octagon"};
+// マテリアルの不透明度の扱い。compositor::BlendMode の並びと一致させること。
+const char* const kBlendModeNames[] = {"opaque", "masked", "translucent"};
+// パスの辺の曲線 / 経路探索。graph::PathCurve / graph::PathRoute の並びと一致させること。
+const char* const kPathCurveNames[] = {"line", "quadratic", "cubic", "clothoid"};
+const char* const kPathRouteNames[] = {"none", "road", "flow", "trail"};
+// 路肩の側 / 形。graph::RoadShoulderSide / graph::RoadShoulderShape の並びと一致させること。
+const char* const kShoulderSideNames[] = {"both", "left", "right"};
+const char* const kShoulderShapeNames[] = {"slope", "section"};
+// 車線の線のキー。graph::RoadMarkingSettings::lines の並びと一致させること。
+const char* const kLineNames[] = {"center", "edge", "lane"};
 
 // ノードカタログ（NodeCatalog）を作る間だけ、EnumName に渡った名前の表を記録する。
 // 書いた値（chosen）と既定値の JSON の文字列を突き合わせて、どのキーがどの選択肢を取るかを出す。
@@ -396,7 +369,6 @@ json WriteMaterialBody(const compositor::MaterialAsset& asset, const TextureWrit
     node["metallic"] = asset.metallicValue;
     node["ambientOcclusion"] = asset.ambientOcclusionValue;
     // 不透明度。キーは road-material-editor の .tgmat と同じ。旧版の alphaCutoff は書かない。
-    static const char* const kBlendModeNames[] = {"opaque", "masked", "translucent"};
     node["blendMode"] = EnumName(kBlendModeNames, static_cast<uint32_t>(asset.blendMode));
     node["maskThreshold"] = asset.maskThreshold;
     node["opacity"] = asset.opacityValue;
@@ -444,7 +416,6 @@ void ReadMaterialBody(const json& node, compositor::MaterialAsset& asset,
     asset.ambientOcclusionValue =
         ReadFloat(node, "ambientOcclusion", defaults.ambientOcclusionValue);
     // 不透明度。blendMode が無い旧版は alphaCutoff（0 より大きければ切り抜き、値がしきい値）から読む。
-    static const char* const kBlendModeNames[] = {"opaque", "masked", "translucent"};
     if (FindMember(node, "blendMode") != nullptr) {
         asset.blendMode = static_cast<compositor::BlendMode>(
             EnumValue(kBlendModeNames, node, "blendMode", static_cast<uint32_t>(defaults.blendMode)));
@@ -469,13 +440,14 @@ void ReadMaterialBody(const json& node, compositor::MaterialAsset& asset,
         target.jitter = std::clamp(ReadFloat(*variation, "jitter", none.jitter), 0.0f, 0.5f);
     }
 
+    // 法線の規約はノード直下に書いてある。maps の無いマテリアルでも読む。
+    asset.flipNormalGreen = ReadBool(node, "flipNormalGreen", defaults.flipNormalGreen);
     const json* maps = FindMember(node, "maps");
     if (maps == nullptr || !maps->is_object()) {
         return;
     }
     const json* baseColor = FindMember(*maps, "baseColor");
     asset.baseColor = (baseColor != nullptr) ? readTexture(*baseColor) : compositor::kNoTexture;
-    asset.flipNormalGreen = ReadBool(node, "flipNormalGreen", defaults.flipNormalGreen);
     const json* normal = FindMember(*maps, "normal");
     asset.normal = (normal != nullptr) ? readTexture(*normal) : compositor::kNoTexture;
     asset.roughness = ReadMapSlot(*maps, "roughness", readTexture);
@@ -852,7 +824,6 @@ json WritePath(const graph::PathSettings& path) {
     }
     node["points"] = std::move(points);
     json edges = json::array();
-    static const char* const kPathCurveNames[] = {"line", "quadratic", "cubic", "clothoid"};
     for (const graph::PathEdge& edge : path.edges) {
         json item;
         item["id"] = edge.id;
@@ -874,7 +845,6 @@ json WritePath(const graph::PathSettings& path) {
         }
         // 経路探索。内部点は導出したものだが保存する（地形を評価しないと作れないため）。
         if (edge.route != graph::PathRoute::None) {
-            static const char* const kPathRouteNames[] = {"none", "road", "flow", "trail"};
             item["route"] = EnumName(kPathRouteNames, static_cast<uint32_t>(edge.route));
             item["maxGrade"] = edge.maxGradePercent;
             if (edge.route == graph::PathRoute::Trail) {
@@ -938,8 +908,6 @@ graph::PathSettings ReadPath(const json& parent, const char* key) {
             if (!item.is_object()) {
                 continue;
             }
-            static const char* const kPathCurveNames[] = {"line", "quadratic", "cubic",
-                                                          "clothoid"};
             graph::PathEdge edge;
             edge.id = ReadInt(item, "id", 0);
             edge.from = ReadInt(item, "from", 0);
@@ -958,7 +926,6 @@ graph::PathSettings ReadPath(const json& parent, const char* key) {
             edge.meanderMeters = std::clamp(ReadFloat(item, "meander", 0.0f), 0.0f, 100.0f);
             edge.meanderWavelengthMeters =
                 std::clamp(ReadFloat(item, "meanderWavelength", 20.0f), 1.0f, 1000.0f);
-            static const char* const kPathRouteNames[] = {"none", "road", "flow", "trail"};
             edge.route = static_cast<graph::PathRoute>(EnumValue(
                 kPathRouteNames, item, "route", static_cast<uint32_t>(graph::PathRoute::None)));
             edge.maxGradePercent = std::clamp(ReadFloat(item, "maxGrade", 10.0f), 0.1f, 100.0f);
@@ -1140,172 +1107,192 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     height["texture"] = WriteMapSlot(layer.heightTexture, writeTexture);
     node["height"] = std::move(height);
 
+    // 種類ごとの設定は、その種類のレイヤーだけに書く（全部書くと地形ファイルが数 MB になる）。
+    // 読む側（ReadLayer）は無い節を既定値にする。
     // 堆積（堆積レイヤーだけが使う）。
-    json sediment;
-    sediment["emission"] = layer.sediment.emissionMeters;
-    sediment["emissionTime"] = layer.sediment.emissionTime;
-    sediment["detail"] = layer.sediment.detailMeters;
-    sediment["iterations"] = layer.sediment.iterations;
-    sediment["stabilization"] = layer.sediment.stabilization;
-    sediment["viscosity"] = layer.sediment.viscosity;
-    sediment["convertTerrain"] = layer.sediment.convertTerrain;
-    sediment["resolution"] = layer.sediment.resolution;
-    sediment["maskContrast"] = layer.sediment.maskContrast;
-    sediment["maskThicknessMeters"] = layer.sediment.maskThicknessMeters;
-    node["sediment"] = std::move(sediment);
+    if (layer.kind == compositor::LayerKind::Sediment) {
+        json sediment;
+        sediment["emission"] = layer.sediment.emissionMeters;
+        sediment["emissionTime"] = layer.sediment.emissionTime;
+        sediment["detail"] = layer.sediment.detailMeters;
+        sediment["iterations"] = layer.sediment.iterations;
+        sediment["stabilization"] = layer.sediment.stabilization;
+        sediment["viscosity"] = layer.sediment.viscosity;
+        sediment["convertTerrain"] = layer.sediment.convertTerrain;
+        sediment["resolution"] = layer.sediment.resolution;
+        sediment["maskContrast"] = layer.sediment.maskContrast;
+        sediment["maskThicknessMeters"] = layer.sediment.maskThicknessMeters;
+        node["sediment"] = std::move(sediment);
+    }
 
     // 崩落（崩落レイヤーだけが使う）。
-    json crumbling;
-    crumbling["avoidPointOverlap"] = layer.crumbling.avoidPointOverlap;
-    crumbling["physicsCount"] = layer.crumbling.physicsCount;
-    crumbling["amount"] = layer.crumbling.amount;
-    crumbling["sizeMin"] = layer.crumbling.sizeMinMeters;
-    crumbling["sizeMax"] = layer.crumbling.sizeMaxMeters;
-    crumbling["style"] = EnumName(kRockStyleNames, static_cast<uint32_t>(layer.crumbling.style));
-    crumbling["gravity"] = layer.crumbling.gravity;
-    crumbling["spread"] = layer.crumbling.spread;
-    crumbling["seed"] = layer.crumbling.seed;
-    node["crumbling"] = std::move(crumbling);
-
-    // 積雪（積雪レイヤーだけが使う）。
-    node["meanderingRivers"] = {
-        {"iterations", layer.meanderingRivers.iterations},
-        {"riverWidth", layer.meanderingRivers.riverWidth},
-        {"meanderScale", layer.meanderingRivers.meanderScale},
-        {"intensity", layer.meanderingRivers.intensity},
-        {"heightInfluence", layer.meanderingRivers.heightInfluence},
-        {"smoothing", layer.meanderingRivers.smoothing},
-        {"riverDepth", layer.meanderingRivers.riverDepth},
-        {"basinWidth", layer.meanderingRivers.basinWidth},
-        {"basinDepth", layer.meanderingRivers.basinDepth},
-        {"bankNoise", layer.meanderingRivers.bankNoise},
-        {"seed", layer.meanderingRivers.seed},
-        {"basinEnabled", layer.meanderingRivers.basinEnabled},
-        {"flattenUphill", layer.meanderingRivers.flattenUphill}
-    };
-    node["lake"] = {{"optimizationSteps", layer.lake.optimizationSteps},
-                    {"waterAmount", layer.lake.waterAmount},
-                    {"allowOutflow", layer.lake.allowOutflow},
-                    {"referenceDetailScale", layer.lake.referenceDetailScale},
-                    {"areaMode", layer.lake.areaMode},
-                    {"areaDepthMeters", layer.lake.areaDepthMeters}};
-    json snowCover;
-    snowCover["erodeDusting"] = layer.snowCover.erodeDusting;
-    snowCover["advectionLength"] = layer.snowCover.advectionLength;
-    snowCover["advectionVolume"] = layer.snowCover.advectionVolume;
-    snowCover["advectionStrength"] = layer.snowCover.advectionStrength;
-    snowCover["valuePreservation"] = layer.snowCover.valuePreservation;
-
-    snowCover["deepSnow"] = layer.snowCover.deepSnow;
-    snowCover["featureSize"] = layer.snowCover.featureSize;
-    snowCover["settleIterations"] = layer.snowCover.settleIterations;
-    snowCover["snowfallDepth"] = layer.snowCover.snowfallDepth;
-    snowCover["flowVolume"] = layer.snowCover.flowVolume;
-    snowCover["maxSlope"] = layer.snowCover.maxSlope;
-    snowCover["melt"] = layer.snowCover.melt;
-    snowCover["multigrid"] = layer.snowCover.multigrid;
-    snowCover["referenceDetailScale"] = layer.snowCover.referenceDetailScale;
-    snowCover["snowLine"] = layer.snowCover.snowLine;
-    snowCover["snowLineStrength"] = layer.snowCover.snowLineStrength;
-    snowCover["snowLineHeight"] = layer.snowCover.snowLineHeight;
-    snowCover["snowLineFalloff"] = layer.snowCover.snowLineFalloff;
-    snowCover["wind"] = layer.snowCover.wind;
-    snowCover["windX"] = layer.snowCover.windX;
-    snowCover["windY"] = layer.snowCover.windY;
-    snowCover["windZ"] = layer.snowCover.windZ;
-    snowCover["windStrength"] = layer.snowCover.windStrength;
-    snowCover["blurWind"] = layer.snowCover.blurWind;
-    snowCover["windBlurRadius"] = layer.snowCover.windBlurRadius;
-    snowCover["dusting"] = layer.snowCover.dusting;
-    snowCover["dustingIntensity"] = layer.snowCover.dustingIntensity;
-    snowCover["slipoffAngle"] = layer.snowCover.slipoffAngle;
-    snowCover["slipoffFalloff"] = layer.snowCover.slipoffFalloff;
-    snowCover["curvatureInfluence"] = layer.snowCover.curvatureInfluence;
-    snowCover["noise"] = layer.snowCover.noise;
-    snowCover["noiseStrength"] = layer.snowCover.noiseStrength;
-    snowCover["noiseScale"] = layer.snowCover.noiseScale;
-    snowCover["noiseRoughness"] = layer.snowCover.noiseRoughness;
-    snowCover["noiseOctaves"] = layer.snowCover.noiseOctaves;
-    snowCover["ramp"] = json::array();
-    for (int i = 0; i < std::clamp(layer.snowCover.rampCount, 2, 8); ++i) {
-        const auto& point = layer.snowCover.ramp[i];
-        snowCover["ramp"].push_back({{"position", point.position}, {"value", point.value},
-                                      {"interpolation", point.interpolation}});
+    if (layer.kind == compositor::LayerKind::Crumbling) {
+        json crumbling;
+        crumbling["avoidPointOverlap"] = layer.crumbling.avoidPointOverlap;
+        crumbling["physicsCount"] = layer.crumbling.physicsCount;
+        crumbling["amount"] = layer.crumbling.amount;
+        crumbling["sizeMin"] = layer.crumbling.sizeMinMeters;
+        crumbling["sizeMax"] = layer.crumbling.sizeMaxMeters;
+        crumbling["style"] = EnumName(kRockStyleNames, static_cast<uint32_t>(layer.crumbling.style));
+        crumbling["gravity"] = layer.crumbling.gravity;
+        crumbling["spread"] = layer.crumbling.spread;
+        crumbling["seed"] = layer.crumbling.seed;
+        node["crumbling"] = std::move(crumbling);
     }
-    node["snowCover"] = std::move(snowCover);
-    json snow;
-    snow["emission"] = layer.snow.emissionMeters;
-    snow["emissionTime"] = layer.snow.emissionTime;
-    snow["iterations"] = layer.snow.iterations;
-    snow["settlingPasses"] = layer.snow.settlingPasses;
-    snow["motionSlopeDegrees"] = layer.snow.motionSlopeDegrees;
-    snow["transportRate"] = layer.snow.transportRate;
-    snow["surfaceSmoothing"] = layer.snow.surfaceSmoothing;
-    snow["detail"] = layer.snow.detailMeters;
-    snow["resolution"] = layer.snow.resolution;
-    snow["maskThresholdMeters"] = layer.snow.maskThresholdMeters;
-    snow["maskFeatherMeters"] = layer.snow.maskFeatherMeters;
-    node["snow"] = std::move(snow);
+
+    // 蛇行河川 / 湖 / 積雪（それぞれの種類のレイヤーだけが使う）。
+    if (layer.kind == compositor::LayerKind::MeanderingRivers) {
+        node["meanderingRivers"] = {
+            {"iterations", layer.meanderingRivers.iterations},
+            {"riverWidth", layer.meanderingRivers.riverWidth},
+            {"meanderScale", layer.meanderingRivers.meanderScale},
+            {"intensity", layer.meanderingRivers.intensity},
+            {"heightInfluence", layer.meanderingRivers.heightInfluence},
+            {"smoothing", layer.meanderingRivers.smoothing},
+            {"riverDepth", layer.meanderingRivers.riverDepth},
+            {"basinWidth", layer.meanderingRivers.basinWidth},
+            {"basinDepth", layer.meanderingRivers.basinDepth},
+            {"bankNoise", layer.meanderingRivers.bankNoise},
+            {"seed", layer.meanderingRivers.seed},
+            {"basinEnabled", layer.meanderingRivers.basinEnabled},
+            {"flattenUphill", layer.meanderingRivers.flattenUphill}
+        };
+    }
+    if (layer.kind == compositor::LayerKind::Lake) {
+        node["lake"] = {{"optimizationSteps", layer.lake.optimizationSteps},
+                        {"waterAmount", layer.lake.waterAmount},
+                        {"allowOutflow", layer.lake.allowOutflow},
+                        {"referenceDetailScale", layer.lake.referenceDetailScale},
+                        {"areaMode", layer.lake.areaMode},
+                        {"areaDepthMeters", layer.lake.areaDepthMeters}};
+    }
+    if (layer.kind == compositor::LayerKind::SnowCover) {
+        json snowCover;
+        snowCover["erodeDusting"] = layer.snowCover.erodeDusting;
+        snowCover["advectionLength"] = layer.snowCover.advectionLength;
+        snowCover["advectionVolume"] = layer.snowCover.advectionVolume;
+        snowCover["advectionStrength"] = layer.snowCover.advectionStrength;
+        snowCover["valuePreservation"] = layer.snowCover.valuePreservation;
+
+        snowCover["deepSnow"] = layer.snowCover.deepSnow;
+        snowCover["featureSize"] = layer.snowCover.featureSize;
+        snowCover["settleIterations"] = layer.snowCover.settleIterations;
+        snowCover["snowfallDepth"] = layer.snowCover.snowfallDepth;
+        snowCover["flowVolume"] = layer.snowCover.flowVolume;
+        snowCover["maxSlope"] = layer.snowCover.maxSlope;
+        snowCover["melt"] = layer.snowCover.melt;
+        snowCover["multigrid"] = layer.snowCover.multigrid;
+        snowCover["referenceDetailScale"] = layer.snowCover.referenceDetailScale;
+        snowCover["snowLine"] = layer.snowCover.snowLine;
+        snowCover["snowLineStrength"] = layer.snowCover.snowLineStrength;
+        snowCover["snowLineHeight"] = layer.snowCover.snowLineHeight;
+        snowCover["snowLineFalloff"] = layer.snowCover.snowLineFalloff;
+        snowCover["wind"] = layer.snowCover.wind;
+        snowCover["windX"] = layer.snowCover.windX;
+        snowCover["windY"] = layer.snowCover.windY;
+        snowCover["windZ"] = layer.snowCover.windZ;
+        snowCover["windStrength"] = layer.snowCover.windStrength;
+        snowCover["blurWind"] = layer.snowCover.blurWind;
+        snowCover["windBlurRadius"] = layer.snowCover.windBlurRadius;
+        snowCover["dusting"] = layer.snowCover.dusting;
+        snowCover["dustingIntensity"] = layer.snowCover.dustingIntensity;
+        snowCover["slipoffAngle"] = layer.snowCover.slipoffAngle;
+        snowCover["slipoffFalloff"] = layer.snowCover.slipoffFalloff;
+        snowCover["curvatureInfluence"] = layer.snowCover.curvatureInfluence;
+        snowCover["noise"] = layer.snowCover.noise;
+        snowCover["noiseStrength"] = layer.snowCover.noiseStrength;
+        snowCover["noiseScale"] = layer.snowCover.noiseScale;
+        snowCover["noiseRoughness"] = layer.snowCover.noiseRoughness;
+        snowCover["noiseOctaves"] = layer.snowCover.noiseOctaves;
+        snowCover["ramp"] = json::array();
+        for (int i = 0; i < std::clamp(layer.snowCover.rampCount, 2, 8); ++i) {
+            const auto& point = layer.snowCover.ramp[i];
+            snowCover["ramp"].push_back({{"position", point.position}, {"value", point.value},
+                                          {"interpolation", point.interpolation}});
+        }
+        node["snowCover"] = std::move(snowCover);
+    }
+    if (layer.kind == compositor::LayerKind::Snow) {
+        json snow;
+        snow["emission"] = layer.snow.emissionMeters;
+        snow["emissionTime"] = layer.snow.emissionTime;
+        snow["iterations"] = layer.snow.iterations;
+        snow["settlingPasses"] = layer.snow.settlingPasses;
+        snow["motionSlopeDegrees"] = layer.snow.motionSlopeDegrees;
+        snow["transportRate"] = layer.snow.transportRate;
+        snow["surfaceSmoothing"] = layer.snow.surfaceSmoothing;
+        snow["detail"] = layer.snow.detailMeters;
+        snow["resolution"] = layer.snow.resolution;
+        snow["maskThresholdMeters"] = layer.snow.maskThresholdMeters;
+        snow["maskFeatherMeters"] = layer.snow.maskFeatherMeters;
+        node["snow"] = std::move(snow);
+    }
 
     // 河川（河川レイヤーだけが使う）。
-    json river;
-    river["threshold"] = layer.river.threshold;
-    river["detail"] = layer.river.detailMeters;
-    river["concentration"] = layer.river.concentration;
-    river["resolution"] = layer.river.resolution;
-    river["mainWidth"] = layer.river.mainWidthMeters;
-    river["minWidth"] = layer.river.minWidthMeters;
-    river["widthExponent"] = layer.river.widthExponent;
-    river["bedDepth"] = layer.river.bedDepthMeters;
-    river["bankWidth"] = layer.river.bankWidthMeters;
-    river["bankHardness"] = layer.river.bankHardness;
-    river["fillWater"] = layer.river.fillWater;
-    river["minSlope"] = layer.river.minSlope;
-    river["shoreWidth"] = layer.river.shoreWidthMeters;
-    river["shoreHeight"] = layer.river.shoreHeightMeters;
-    river["shoreFeather"] = layer.river.shoreFeather;
-    river["flowWaveStrength"] = layer.river.flowWaveStrength;
-    river["flowWaveScale"] = layer.river.flowWaveScaleMeters;
-    river["flowSpeed"] = layer.river.flowSpeed;
-    river["flowFoam"] = layer.river.flowFoam;
-    node["river"] = std::move(river);
+    if (layer.kind == compositor::LayerKind::River) {
+        json river;
+        river["threshold"] = layer.river.threshold;
+        river["detail"] = layer.river.detailMeters;
+        river["concentration"] = layer.river.concentration;
+        river["resolution"] = layer.river.resolution;
+        river["mainWidth"] = layer.river.mainWidthMeters;
+        river["minWidth"] = layer.river.minWidthMeters;
+        river["widthExponent"] = layer.river.widthExponent;
+        river["bedDepth"] = layer.river.bedDepthMeters;
+        river["bankWidth"] = layer.river.bankWidthMeters;
+        river["bankHardness"] = layer.river.bankHardness;
+        river["fillWater"] = layer.river.fillWater;
+        river["minSlope"] = layer.river.minSlope;
+        river["shoreWidth"] = layer.river.shoreWidthMeters;
+        river["shoreHeight"] = layer.river.shoreHeightMeters;
+        river["shoreFeather"] = layer.river.shoreFeather;
+        river["flowWaveStrength"] = layer.river.flowWaveStrength;
+        river["flowWaveScale"] = layer.river.flowWaveScaleMeters;
+        river["flowSpeed"] = layer.river.flowSpeed;
+        river["flowFoam"] = layer.river.flowFoam;
+        node["river"] = std::move(river);
+    }
 
     // 水滴侵食（水滴侵食レイヤーだけが使う）。
-    json fluvialErosion;
-    fluvialErosion["resolution"] = layer.fluvialErosion.resolution;
-    fluvialErosion["iterations"] = layer.fluvialErosion.iterations;
-    fluvialErosion["featureSize"] = layer.fluvialErosion.featureSize;
-    fluvialErosion["geologicalAge"] = layer.fluvialErosion.geologicalAge;
-    fluvialErosion["channelLength"] = layer.fluvialErosion.channelLength;
-    fluvialErosion["strength"] = layer.fluvialErosion.strength;
-    fluvialErosion["channeling"] = layer.fluvialErosion.channeling;
-    fluvialErosion["friction"] = layer.fluvialErosion.friction;
-    fluvialErosion["wearAngle"] = layer.fluvialErosion.wearAngle;
-    fluvialErosion["depositAngle"] = layer.fluvialErosion.depositAngle;
-    fluvialErosion["maxAngle"] = layer.fluvialErosion.maxAngle;
-    fluvialErosion["granularity"] = layer.fluvialErosion.granularity;
-    fluvialErosion["flowVolume"] = layer.fluvialErosion.flowVolume;
-    fluvialErosion["smallChannels"] = layer.fluvialErosion.smallChannels;
-    fluvialErosion["velocity"] = layer.fluvialErosion.velocity;
-    fluvialErosion["detailMeters"] = layer.fluvialErosion.detailMeters;
-    fluvialErosion["detailSmoothing"] = layer.fluvialErosion.detailSmoothing;
-    fluvialErosion["forceX"] = layer.fluvialErosion.forceX;
-    fluvialErosion["forceZ"] = layer.fluvialErosion.forceZ;
-    fluvialErosion["shearX"] = layer.fluvialErosion.shearX;
-    fluvialErosion["shearZ"] = layer.fluvialErosion.shearZ;
-    fluvialErosion["hardness"] = layer.fluvialErosion.hardness;
-    node["fluvialErosion"] = std::move(fluvialErosion);
+    if (layer.kind == compositor::LayerKind::FluvialErosion) {
+        json fluvialErosion;
+        fluvialErosion["resolution"] = layer.fluvialErosion.resolution;
+        fluvialErosion["iterations"] = layer.fluvialErosion.iterations;
+        fluvialErosion["featureSize"] = layer.fluvialErosion.featureSize;
+        fluvialErosion["geologicalAge"] = layer.fluvialErosion.geologicalAge;
+        fluvialErosion["channelLength"] = layer.fluvialErosion.channelLength;
+        fluvialErosion["strength"] = layer.fluvialErosion.strength;
+        fluvialErosion["channeling"] = layer.fluvialErosion.channeling;
+        fluvialErosion["friction"] = layer.fluvialErosion.friction;
+        fluvialErosion["wearAngle"] = layer.fluvialErosion.wearAngle;
+        fluvialErosion["depositAngle"] = layer.fluvialErosion.depositAngle;
+        fluvialErosion["maxAngle"] = layer.fluvialErosion.maxAngle;
+        fluvialErosion["granularity"] = layer.fluvialErosion.granularity;
+        fluvialErosion["flowVolume"] = layer.fluvialErosion.flowVolume;
+        fluvialErosion["smallChannels"] = layer.fluvialErosion.smallChannels;
+        fluvialErosion["velocity"] = layer.fluvialErosion.velocity;
+        fluvialErosion["detailMeters"] = layer.fluvialErosion.detailMeters;
+        fluvialErosion["detailSmoothing"] = layer.fluvialErosion.detailSmoothing;
+        fluvialErosion["forceX"] = layer.fluvialErosion.forceX;
+        fluvialErosion["forceZ"] = layer.fluvialErosion.forceZ;
+        fluvialErosion["shearX"] = layer.fluvialErosion.shearX;
+        fluvialErosion["shearZ"] = layer.fluvialErosion.shearZ;
+        fluvialErosion["hardness"] = layer.fluvialErosion.hardness;
+        node["fluvialErosion"] = std::move(fluvialErosion);
+    }
 
-    json flattenBorders;
-    flattenBorders["falloffMeters"] = layer.flattenBorders.falloffMeters;
-    flattenBorders["elevationMeters"] = layer.flattenBorders.elevationMeters;
-    flattenBorders["liftMeters"] = layer.flattenBorders.liftMeters;
-    flattenBorders["strength"] = layer.flattenBorders.strength;
-    flattenBorders["lowerX"] = layer.flattenBorders.lowerX;
-    flattenBorders["upperX"] = layer.flattenBorders.upperX;
-    flattenBorders["lowerZ"] = layer.flattenBorders.lowerZ;
-    flattenBorders["upperZ"] = layer.flattenBorders.upperZ;
-    node["flattenBorders"] = std::move(flattenBorders);
+    if (layer.kind == compositor::LayerKind::FlattenBorders) {
+        json flattenBorders;
+        flattenBorders["falloffMeters"] = layer.flattenBorders.falloffMeters;
+        flattenBorders["elevationMeters"] = layer.flattenBorders.elevationMeters;
+        flattenBorders["liftMeters"] = layer.flattenBorders.liftMeters;
+        flattenBorders["strength"] = layer.flattenBorders.strength;
+        flattenBorders["lowerX"] = layer.flattenBorders.lowerX;
+        flattenBorders["upperX"] = layer.flattenBorders.upperX;
+        flattenBorders["lowerZ"] = layer.flattenBorders.lowerZ;
+        flattenBorders["upperZ"] = layer.flattenBorders.upperZ;
+        node["flattenBorders"] = std::move(flattenBorders);
+    }
 
     // 道路の均しの設定も、その種類のレイヤーだけに書く。
     if (layer.kind == compositor::LayerKind::RoadGrading) {
@@ -1332,73 +1319,81 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
         node["heightLevels"] = std::move(heightLevels);
     }
 
-    json multiScaleErosion;
-    multiScaleErosion["resolution"] = layer.multiScaleErosion.resolution;
-    multiScaleErosion["baseResolution"] = layer.multiScaleErosion.baseResolution;
-    multiScaleErosion["erosionIterations"] = layer.multiScaleErosion.erosionIterations;
-    multiScaleErosion["thermalIterations"] = layer.multiScaleErosion.thermalIterations;
-    multiScaleErosion["depositionIterations"] = layer.multiScaleErosion.depositionIterations;
-    multiScaleErosion["coarseDepthMeters"] = layer.multiScaleErosion.coarseDepthMeters;
-    multiScaleErosion["detailDecay"] = layer.multiScaleErosion.detailDecay;
-    multiScaleErosion["flowExponent"] = layer.multiScaleErosion.flowExponent;
-    multiScaleErosion["slopeExponent"] = layer.multiScaleErosion.slopeExponent;
-    multiScaleErosion["drainageExponent"] = layer.multiScaleErosion.drainageExponent;
-    multiScaleErosion["maximumSlope"] = layer.multiScaleErosion.maximumSlope;
-    multiScaleErosion["maximumDrainageArea"] = layer.multiScaleErosion.maximumDrainageArea;
-    multiScaleErosion["talusDegrees"] = layer.multiScaleErosion.talusDegrees;
-    multiScaleErosion["thermalStepMeters"] = layer.multiScaleErosion.thermalStepMeters;
-    multiScaleErosion["sedimentCreation"] = layer.multiScaleErosion.sedimentCreation;
-    multiScaleErosion["depositionRate"] = layer.multiScaleErosion.depositionRate;
-    multiScaleErosion["sedimentHeightScale"] = layer.multiScaleErosion.sedimentHeightScale;
-    multiScaleErosion["ridgeRestoration"] = layer.multiScaleErosion.ridgeRestoration;
-    multiScaleErosion["ridgeAreaThreshold"] = layer.multiScaleErosion.ridgeAreaThreshold;
-    multiScaleErosion["restorationIterations"] = layer.multiScaleErosion.restorationIterations;
-    multiScaleErosion["drainageCorrection"] = layer.multiScaleErosion.drainageCorrection;
-    multiScaleErosion["breachingRadius"] = layer.multiScaleErosion.breachingRadius;
-    node["multiScaleErosion"] = std::move(multiScaleErosion);
+    if (layer.kind == compositor::LayerKind::MultiScaleErosion) {
+        json multiScaleErosion;
+        multiScaleErosion["resolution"] = layer.multiScaleErosion.resolution;
+        multiScaleErosion["baseResolution"] = layer.multiScaleErosion.baseResolution;
+        multiScaleErosion["erosionIterations"] = layer.multiScaleErosion.erosionIterations;
+        multiScaleErosion["thermalIterations"] = layer.multiScaleErosion.thermalIterations;
+        multiScaleErosion["depositionIterations"] = layer.multiScaleErosion.depositionIterations;
+        multiScaleErosion["coarseDepthMeters"] = layer.multiScaleErosion.coarseDepthMeters;
+        multiScaleErosion["detailDecay"] = layer.multiScaleErosion.detailDecay;
+        multiScaleErosion["flowExponent"] = layer.multiScaleErosion.flowExponent;
+        multiScaleErosion["slopeExponent"] = layer.multiScaleErosion.slopeExponent;
+        multiScaleErosion["drainageExponent"] = layer.multiScaleErosion.drainageExponent;
+        multiScaleErosion["maximumSlope"] = layer.multiScaleErosion.maximumSlope;
+        multiScaleErosion["maximumDrainageArea"] = layer.multiScaleErosion.maximumDrainageArea;
+        multiScaleErosion["talusDegrees"] = layer.multiScaleErosion.talusDegrees;
+        multiScaleErosion["thermalStepMeters"] = layer.multiScaleErosion.thermalStepMeters;
+        multiScaleErosion["sedimentCreation"] = layer.multiScaleErosion.sedimentCreation;
+        multiScaleErosion["depositionRate"] = layer.multiScaleErosion.depositionRate;
+        multiScaleErosion["sedimentHeightScale"] = layer.multiScaleErosion.sedimentHeightScale;
+        multiScaleErosion["ridgeRestoration"] = layer.multiScaleErosion.ridgeRestoration;
+        multiScaleErosion["ridgeAreaThreshold"] = layer.multiScaleErosion.ridgeAreaThreshold;
+        multiScaleErosion["restorationIterations"] = layer.multiScaleErosion.restorationIterations;
+        multiScaleErosion["drainageCorrection"] = layer.multiScaleErosion.drainageCorrection;
+        multiScaleErosion["breachingRadius"] = layer.multiScaleErosion.breachingRadius;
+        node["multiScaleErosion"] = std::move(multiScaleErosion);
+    }
 
-    json droplet;
-    droplet["density"] = layer.droplet.dropletDensity;
-    droplet["travel"] = layer.droplet.travelMeters;
-    droplet["erosion"] = layer.droplet.erosionStrength;
-    droplet["deposition"] = layer.droplet.depositionStrength;
-    droplet["inertia"] = layer.droplet.inertia;
-    droplet["minSlope"] = layer.droplet.minSlope;
-    droplet["capacity"] = layer.droplet.sedimentCapacity;
-    droplet["evaporation"] = layer.droplet.evaporationPerMeter;
-    droplet["gravity"] = layer.droplet.gravity;
-    droplet["multigrid"] = layer.droplet.multigrid;
-    droplet["iterations"] = layer.droplet.iterations;
-    droplet["seed"] = layer.droplet.seed;
-    droplet["resolution"] = layer.droplet.resolution;
-    node["droplet"] = std::move(droplet);
+    if (layer.kind == compositor::LayerKind::Droplet) {
+        json droplet;
+        droplet["density"] = layer.droplet.dropletDensity;
+        droplet["travel"] = layer.droplet.travelMeters;
+        droplet["erosion"] = layer.droplet.erosionStrength;
+        droplet["deposition"] = layer.droplet.depositionStrength;
+        droplet["inertia"] = layer.droplet.inertia;
+        droplet["minSlope"] = layer.droplet.minSlope;
+        droplet["capacity"] = layer.droplet.sedimentCapacity;
+        droplet["evaporation"] = layer.droplet.evaporationPerMeter;
+        droplet["gravity"] = layer.droplet.gravity;
+        droplet["multigrid"] = layer.droplet.multigrid;
+        droplet["iterations"] = layer.droplet.iterations;
+        droplet["seed"] = layer.droplet.seed;
+        droplet["resolution"] = layer.droplet.resolution;
+        node["droplet"] = std::move(droplet);
+    }
 
     // 散布（散布レイヤーだけが使う）。
-    json scatter;
-    scatter["shape"] = EnumName(kScatterShapeNames, static_cast<uint32_t>(layer.scatter.shape));
-    scatter["orientation"] =
-        EnumName(kScatterOrientationNames, static_cast<uint32_t>(layer.scatter.orientation));
-    scatter["seed"] = layer.scatter.seed;
-    scatter["density"] = layer.scatter.densityMeters;
-    scatter["coverage"] = layer.scatter.coverage;
-    scatter["sizeMin"] = layer.scatter.sizeMinMeters;
-    scatter["sizeMax"] = layer.scatter.sizeMaxMeters;
-    scatter["height"] = layer.scatter.heightMeters;
-    scatter["heightJitter"] = layer.scatter.heightJitter;
-    scatter["rotationVariation"] = layer.scatter.rotationVariation;
-    scatter["aspectVariation"] = layer.scatter.aspectVariation;
-    scatter["smoothness"] = layer.scatter.smoothness;
-    scatter["clusterCount"] = layer.scatter.clusterCount;
-    scatter["clusterRadius"] = layer.scatter.clusterRadiusMeters;
-    scatter["clusterScale"] = layer.scatter.clusterScale;
-    node["scatter"] = std::move(scatter);
+    if (layer.kind == compositor::LayerKind::Scatter) {
+        json scatter;
+        scatter["shape"] = EnumName(kScatterShapeNames, static_cast<uint32_t>(layer.scatter.shape));
+        scatter["orientation"] =
+            EnumName(kScatterOrientationNames, static_cast<uint32_t>(layer.scatter.orientation));
+        scatter["seed"] = layer.scatter.seed;
+        scatter["density"] = layer.scatter.densityMeters;
+        scatter["coverage"] = layer.scatter.coverage;
+        scatter["sizeMin"] = layer.scatter.sizeMinMeters;
+        scatter["sizeMax"] = layer.scatter.sizeMaxMeters;
+        scatter["height"] = layer.scatter.heightMeters;
+        scatter["heightJitter"] = layer.scatter.heightJitter;
+        scatter["rotationVariation"] = layer.scatter.rotationVariation;
+        scatter["aspectVariation"] = layer.scatter.aspectVariation;
+        scatter["smoothness"] = layer.scatter.smoothness;
+        scatter["clusterCount"] = layer.scatter.clusterCount;
+        scatter["clusterRadius"] = layer.scatter.clusterRadiusMeters;
+        scatter["clusterScale"] = layer.scatter.clusterScale;
+        node["scatter"] = std::move(scatter);
+    }
 
     // ぼかし（ブラーレイヤーだけが使う）。
-    json blur;
-    blur["radius"] = layer.blur.radiusMeters;
-    blur["strength"] = layer.blur.strength;
-    blur["iterations"] = layer.blur.iterations;
-    node["blur"] = std::move(blur);
+    if (layer.kind == compositor::LayerKind::Blur) {
+        json blur;
+        blur["radius"] = layer.blur.radiusMeters;
+        blur["strength"] = layer.blur.strength;
+        blur["iterations"] = layer.blur.iterations;
+        node["blur"] = std::move(blur);
+    }
 
     // 水の見た目と水チャンネル（Liquid / Lake / River が使う）。
     if (layer.kind == compositor::LayerKind::Liquid || layer.kind == compositor::LayerKind::Lake ||
@@ -1431,18 +1426,20 @@ json WriteLayer(const compositor::MaterialLayer& layer, const TextureWriter& wri
     // 換算できなかった古い値は、そのまま書き戻す（次に開いたときに換算をやり直せる）。
     if (layer.legacyUvScale > 0.0f) node["uvScale"] = layer.legacyUvScale;
     // パス UV（Surface の UV Path）。線分列はグラフから決まるので書かない。
-    json pathUv;
-    pathUv["repeatMeters"] = layer.pathUv.repeatMeters;
-    pathUv["widthRepeat"] = layer.pathUv.widthRepeat;
-    pathUv["offsetMeters"] = layer.pathUv.offsetMeters;
-    pathUv["alongU"] = layer.pathUv.alongU;
-    pathUv["edgeGamma"] = layer.pathUv.edgeGamma;
-    pathUv["mask"] = WriteMapSlot(layer.pathUv.mask, writeTexture);
-    pathUv["maskRepeatMeters"] = layer.pathUv.maskRepeatMeters;
-    pathUv["maskWidthRepeat"] = layer.pathUv.maskWidthRepeat;
-    pathUv["maskInvert"] = layer.pathUv.maskInvert;
-    pathUv["usePointIntensity"] = layer.pathUv.usePointIntensity;
-    node["pathUv"] = std::move(pathUv);
+    if (layer.kind == compositor::LayerKind::Surface) {
+        json pathUv;
+        pathUv["repeatMeters"] = layer.pathUv.repeatMeters;
+        pathUv["widthRepeat"] = layer.pathUv.widthRepeat;
+        pathUv["offsetMeters"] = layer.pathUv.offsetMeters;
+        pathUv["alongU"] = layer.pathUv.alongU;
+        pathUv["edgeGamma"] = layer.pathUv.edgeGamma;
+        pathUv["mask"] = WriteMapSlot(layer.pathUv.mask, writeTexture);
+        pathUv["maskRepeatMeters"] = layer.pathUv.maskRepeatMeters;
+        pathUv["maskWidthRepeat"] = layer.pathUv.maskWidthRepeat;
+        pathUv["maskInvert"] = layer.pathUv.maskInvert;
+        pathUv["usePointIntensity"] = layer.pathUv.usePointIntensity;
+        node["pathUv"] = std::move(pathUv);
+    }
     return node;
 }
 
@@ -2069,14 +2066,12 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             item["roadProfile"] = WriteRoadProfile(roadPath->road);
         } else if (const auto* shoulder = std::get_if<graph::ShoulderNodeSettings>(&node.settings)) {
             const graph::RoadShoulderSettings& m = shoulder->shoulder;
-            static const char* const kShoulderSideNames[] = {"both", "left", "right"};
             item["shoulder"] = {{"side", EnumName(kShoulderSideNames, static_cast<uint32_t>(m.side))},
                                 {"width", m.widthMeters}, {"crossSlope", m.crossSlopePercent},
                                 {"stepHeight", m.stepHeightMeters}, {"stepWidth", m.stepWidthMeters},
                                 {"uvRepeat", m.uvRepeatMeters}, {"material", writeMaterial(m.material)}};
             if (!m.boundaryPath.empty() || !m.boundaryUid.empty())
                 item["shoulder"]["boundary"] = {{"path", m.boundaryPath}, {"uid", m.boundaryUid}};
-            static const char* const kShoulderShapeNames[] = {"slope", "section"};
             item["shoulder"]["shape"] = EnumName(kShoulderShapeNames, static_cast<uint32_t>(m.shape));
             // 断面の点は勾配の形のときも残す（形を切り替えても失わない）。
             if (!m.section.empty()) {
@@ -2098,7 +2093,6 @@ json WriteGraph(const graph::NodeGraph& graphData, const TextureWriter& writeTex
             }
         } else if (const auto* marking = std::get_if<graph::LaneMarkingNodeSettings>(&node.settings)) {
             const graph::RoadMarkingSettings& m = marking->marking;
-            static const char* const kLineNames[] = {"center", "edge", "lane"};
             json values = {{"edgeInset", m.edgeInsetMeters}, {"dashLength", m.dashLengthMeters},
                            {"dashGap", m.dashGapMeters},     {"lift", m.liftMeters},
                            {"uvRepeat", m.uvRepeatMeters},   {"uvAlongU", m.uvAlongU}};
@@ -2620,7 +2614,6 @@ bool ReadGraph(const json& source, graph::NodeGraph& graphData, const TextureRea
                 graph::RoadShoulderSettings& m = settings.shoulder;
                 if (const json* values = FindMember(item, "shoulder"); values != nullptr && values->is_object()) {
                     const graph::RoadShoulderSettings d;
-                    static const char* const kShoulderSideNames[] = {"both", "left", "right"};
                     m.side = static_cast<graph::RoadShoulderSide>(
                         EnumValue(kShoulderSideNames, *values, "side", static_cast<uint32_t>(d.side)));
                     m.widthMeters = std::clamp(ReadFloat(*values, "width", d.widthMeters), graph::kShoulderMinWidthMeters,
@@ -2635,7 +2628,6 @@ bool ReadGraph(const json& source, graph::NodeGraph& graphData, const TextureRea
                         m.boundaryPath = ReadString(*boundary, "path", "");
                         m.boundaryUid = ReadString(*boundary, "uid", "");
                     }
-                    static const char* const kShoulderShapeNames[] = {"slope", "section"};
                     m.shape = static_cast<graph::RoadShoulderShape>(
                         EnumValue(kShoulderShapeNames, *values, "shape", static_cast<uint32_t>(d.shape)));
                     if (const json* section = FindMember(*values, "section"); section != nullptr && section->is_array()) {
@@ -2677,7 +2669,6 @@ bool ReadGraph(const json& source, graph::NodeGraph& graphData, const TextureRea
                 graph::RoadMarkingSettings& m = settings.marking;
                 if (const json* values = FindMember(item, "laneMarking"); values != nullptr && values->is_object()) {
                     const graph::RoadMarkingSettings d;
-                    static const char* const kLineNames[] = {"center", "edge", "lane"};
                     for (size_t i = 0; i < m.lines.size(); ++i) {
                         const json* line = FindMember(*values, kLineNames[i]);
                         if (line == nullptr || !line->is_object()) continue;
@@ -2823,9 +2814,16 @@ bool ReadGraph(const json& source, graph::NodeGraph& graphData, const TextureRea
             // 例: scale.baseElevation は 0 なら書かない）。値を変えて読み直し、結果が変わるなら読んでいる。
             std::erase_if(issues, [&](const GraphReadIssue& issue) {
                 if (issue.message != kUnknownKeyMessage) return false;
-                std::string pointer = "/" + issue.path;
-                std::replace(pointer.begin(), pointer.end(), '.', '/');
-                const json::json_pointer at(pointer);
+                // キーは入力ファイルのもの。'~' や '/' を含んでいても壊れないよう、区切りごとに
+                // operator/= で足す（エスケープしてくれる。文字列から作ると '~' で例外になる）。
+                // キー自身に '.' が入っていると分けられないが、その場合は contains が外れて issue を残すだけ。
+                json::json_pointer at;
+                for (size_t begin = 0; begin <= issue.path.size();) {
+                    const size_t end = issue.path.find('.', begin);
+                    const size_t stop = (end == std::string::npos) ? issue.path.size() : end;
+                    at /= issue.path.substr(begin, stop - begin);
+                    begin = stop + 1;
+                }
                 json changed = *found->second;
                 if (!changed.contains(at)) return false;
                 json& value = changed[at];
@@ -3830,7 +3828,9 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
         if (refs.componentOnly >= 0) document["_componentOnly"] = refs.componentOnly;
         document["_componentWrite"] = refs.componentWrite;
         if (refs.atmosphereAsset) document["_atmosphereAsset"] = *refs.atmosphereAsset;
-        if (!workspace->SaveScene(savePath, document, refs.saveSharedAssets)) return false;
+        // 共有アセット（マテリアル / モデル / 天球）は上の SaveSharedAssets で書き終えている。
+        // ここで書き直さない（uid の無い＝まだファイルを持たないものだけ SaveScene が作る）。
+        if (!workspace->SaveScene(savePath, document, false)) return false;
         if (refs.components && refs.componentOnly < 0 && document.contains("components")) *refs.components = document["components"];
         if (refs.atmosphereAsset && refs.componentOnly < 0 && document.contains("atmosphere")) *refs.atmosphereAsset = document["atmosphere"];
         RemoveStalePaintMasks(paintDir, writtenPaintFiles);
@@ -4192,7 +4192,7 @@ bool SaveAtmosphereAsset(ProjectWorkspace& workspace, const ProjectRefs& refs, c
         path = workspace.Resolve(*refs.atmosphereAsset);
         json existing;
         if (path.empty() || !workspace.ReadAsset(path, "atmosphere-sky", existing)) return false;
-        body["uid"] = ReadString(existing, "uid"); body["name"] = existing.value("name", "大気散乱スカイ");
+        body["uid"] = ReadString(existing, "uid"); body["name"] = ReadString(existing, "name", "大気散乱スカイ");
     } else path = workspace.UniquePath(directory, "大気散乱スカイ", ".tgatmosphere");
     if (!workspace.SaveAsset(path, "atmosphere-sky", body)) return false;
     *refs.atmosphereAsset = workspace.Reference(path);

@@ -52,11 +52,14 @@ void DrawFolderIcon(const ImVec2& min, const ImVec2& max) {
 }
 }
 bool Application::IsAssetLoaded(const fs::path& path) const {
+    // 問い合わせたパスの正規化は 1 度だけ（ライブラリの項目ごとに繰り返さない。毎フレーム呼ばれる）。
+    std::error_code eb;
+    const auto b = fs::weakly_canonical(path, eb);
     const auto matches = [&](const fs::path& candidate) {
-        if (candidate.empty()) return false;
-        std::error_code ea, eb;
-        const auto a = fs::weakly_canonical(candidate, ea), b = fs::weakly_canonical(path, eb);
-        return !ea && !eb && _wcsicmp(a.c_str(), b.c_str()) == 0;
+        if (eb || candidate.empty()) return false;
+        std::error_code ea;
+        const auto a = fs::weakly_canonical(candidate, ea);
+        return !ea && _wcsicmp(a.c_str(), b.c_str()) == 0;
     };
     if (!m_sceneAtmosphere.is_null() && matches(m_workspace.Resolve(m_sceneAtmosphere))) return true;
     if (matches(m_projectPath) || matches(m_componentPreviewPath)) return true;
@@ -506,6 +509,14 @@ void Application::RelinkAssetPaths(const fs::path& from, const fs::path& to) {
     remap(m_assetDirectory);
     remap(m_componentPreviewPath);
     remap(m_referenceCenter);
+    // 境界マテリアルの控え（m_boundaries）も絶対パスを持つ。uid で引けるものはパスを付け替え、
+    // パス文字列を鍵にしているものは動くと鍵が合わなくなるので捨てる（次に使うときに引き直す）。
+    for (auto it = m_boundaries.begin(); it != m_boundaries.end();) {
+        const auto previous = it->second.path;
+        remap(it->second.path);
+        if (it->second.uid.empty() && it->second.path != previous) it = m_boundaries.erase(it);
+        else ++it;
+    }
     m_referenceIndexDirty = true;
     m_assetThumbnails.Invalidate();
 }

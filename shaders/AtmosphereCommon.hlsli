@@ -115,7 +115,7 @@ float CloudBottomFade(float h, float shape, float detail) {
 float LocalCloudDensity(float3 position, AtmosphericParameters p, uint noiseIndex) {
     float3 offset = position - LocalCloudCenter(p);
     float3 q = offset / LocalCloudRadii(p);
-    float h = (position.y-p.cloudBottom)/p.cloudThickness;
+    float h = (position.y-p.cloudBottom)/max(p.cloudThickness,1.0f); // 厚さ 0 の 0 割りを避ける。
     if (p.flatCloudBottom != 0) {
         if (h <= 0 || h >= 1) return 0;
         // 雲底を半楕円体の底面に置く。下部ノイズは高さを固定し、底の凹凸を抑える。
@@ -129,7 +129,7 @@ float LocalCloudDensity(float3 position, AtmosphericParameters p, uint noiseInde
     float shape = CloudShapeNoise(uvw,p,noiseIndex);
     float detail = CloudDetailNoise(uvw*3.1+0.173,p,noiseIndex);
     // 輪郭は交差区間の内側だけを削る。
-    float density = saturate((edge - p.shapeStrength*(1-shape)*0.65) / p.edgeSoftness);
+    float density = saturate((edge - p.shapeStrength*(1-shape)*0.65) / max(p.edgeSoftness,0.01)); // ほかの層と同じ下限で 0 割りを避ける。
     density = saturate(density - p.detailStrength*(1-detail)*(1-density));
     return density * (p.flatCloudBottom != 0 ? CloudBottomFade(h/max(p.flatCloudBottom,1e-5),shape,detail) : 1);
 }

@@ -155,15 +155,8 @@ PathElementId InsertPathPointOnEdge(PathSettings& path, PathElementId edgeId, fl
     tail.id = path.nextId++;
     tail.from = point.id;
     tail.to = to;
-    tail.curve = head->curve;
-    tail.rounding = head->rounding;
-    tail.clothoidRatio = head->clothoidRatio;
-    tail.route = head->route;
-    tail.maxGradePercent = head->maxGradePercent;
-    tail.overrideValues = head->overrideValues;
-    tail.widthMeters = head->widthMeters;
-    tail.featherMeters = head->featherMeters;
-    tail.intensity = head->intensity;
+    // 設定はまとめて写す（稜線の好み / Avoid の重み / 蛇行も含めて落とさない）。
+    ApplyPathEdgeStyle(tail, GetPathEdgeStyle(*head));
     // 経路の内部点は挿入した所で前後に分ける（control[1 + i] が waypoints[i]。
     // seg 番目の線分より前の内部点が head に残る）。内部点が無かったなら、
     // 両方とも未計算にしておく（経路が古かったなら、そのまま作り直される）。
@@ -540,10 +533,6 @@ size_t CountStalePathRoutes(const PathSettings& path) {
 
 namespace {
 
-PathElementId OtherEndOf(const PathEdge& edge, PathElementId pointId) {
-    return (edge.from == pointId) ? edge.to : edge.from;
-}
-
 // 点ごとの付いているエッジ（path.edges の並び順）。鎖を辿るたびに全エッジを
 // 見て回らないよう、先に 1 回だけ作る。
 using PathAdjacency = std::unordered_map<PathElementId, std::vector<const PathEdge*>>;
@@ -588,7 +577,7 @@ PathStrand WalkStrand(const PathAdjacency& adjacency, PathElementId start, const
     while (edge != nullptr) {
         visited.insert(edge->id);
         strand.edges.push_back(edge->id);
-        current = OtherEndOf(*edge, current);
+        current = OtherEnd(*edge, current);
         strand.points.push_back(current);
         if (current == start) {
             strand.closed = true;
@@ -814,14 +803,6 @@ float StrandClothoidRatio(const PathSettings& path, const PathStrand& strand) {
         }
     }
     return 0.5f;
-}
-
-bool ReversePathStrand(PathSettings& path, const PathStrand& strand) {
-    bool any = false;
-    for (const PathElementId edgeId : strand.edges) {
-        any |= ReversePathEdge(path, edgeId);
-    }
-    return any;
 }
 
 namespace {
@@ -1262,9 +1243,16 @@ std::vector<compositor::PathSegment> BuildPathSegments(const PathSettings& path,
             segments.push_back(segment);
         }
     }
-    // 孤立した点は円として出す（長さ 0 の線分）。
+    // 孤立した点は円として出す（長さ 0 の線分）。エッジの付いた点を先に 1 回で集める
+    // （点ごとに全エッジを数えると点 × エッジで重い）。
+    std::unordered_set<PathElementId> connected;
+    connected.reserve(path.edges.size() * 2);
+    for (const PathEdge& edge : path.edges) {
+        connected.insert(edge.from);
+        connected.insert(edge.to);
+    }
     for (const PathPoint& point : path.points) {
-        if (path.EdgeCount(point.id) != 0) {
+        if (connected.contains(point.id)) {
             continue;
         }
         compositor::PathSegment segment;

@@ -48,8 +48,8 @@ PathSegmentData LoadSegment(ByteAddressBuffer buffer, uint index, float sizeMete
 // 中心線からの距離 → 0〜1。幅の半分までは 1、その外側をフェザーで 0 へ。
 float PathDistanceValue(float distance, float width, float feather)
 {
-    const float half = max(width, 0.0f) * 0.5f;
-    if (distance <= half)
+    const float halfWidth = max(width, 0.0f) * 0.5f;
+    if (distance <= halfWidth)
     {
         return 1.0f;
     }
@@ -57,7 +57,7 @@ float PathDistanceValue(float distance, float width, float feather)
     {
         return 0.0f;
     }
-    return saturate(1.0f - (distance - half) / feather);
+    return saturate(1.0f - (distance - halfWidth) / feather);
 }
 
 // 最寄りの線分から見たパス座標（帯の座標系）。

@@ -1,5 +1,7 @@
 #include "app/UndoHistory.h"
 
+#include <utility>
+
 namespace tg {
 
 void UndoHistory::Push(const DocumentSnapshot& before, uint32_t editId) {
@@ -8,9 +10,16 @@ void UndoHistory::Push(const DocumentSnapshot& before, uint32_t editId) {
     if (editId != 0 && editId == m_lastEditId) {
         return;
     }
+    Push(DocumentSnapshot(before), editId);
+}
+
+void UndoHistory::Push(DocumentSnapshot&& before, uint32_t editId) {
+    if (editId != 0 && editId == m_lastEditId) {
+        return;
+    }
     m_lastEditId = editId;
 
-    m_undo.push_back(before);
+    m_undo.push_back(std::move(before));
     if (m_undo.size() > kMaxDepth) {
         // 古い段から捨てる。
         m_undo.pop_front();
