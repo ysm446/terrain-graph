@@ -37,7 +37,7 @@ constexpr ImVec4 kHeaderBg = Gray(0.196f);      // #323232
 constexpr ImVec4 kHeaderHovered = Gray(0.235f); // #3C3C3C
 constexpr ImVec4 kHeaderActive = Gray(0.290f);  // #4A4A4A
 constexpr ImVec4 kBorder = Gray(0.204f);        // #343434
-// タブ。**矩形で、明度の 3 段（帯 < 非選択 < 選択）だけで状態を表す。**
+// タブ。**明度の 3 段（帯 < 非選択 < 選択）だけで状態を表す。**
 // 帯（タブを並べる下地）を一番暗くすることで、タブが板として浮いて見える。
 constexpr ImVec4 kTab = Gray(0.169f);           // #2B2B2B 非選択
 constexpr ImVec4 kTabHovered = Gray(0.212f);    // #363636
@@ -499,16 +499,15 @@ void ApplyTheme(float dpiScale) {
     ImGui::StyleColorsDark();
     ImGuiStyle& style = ImGui::GetStyle();
 
-    // 角丸は控えめに。面の階層は明度で作り、形では作らない。
+    // 角丸は部品にだけ付ける。面の階層は明度で作り、形では作らない。
     style.WindowRounding = 0.0f;
-    style.ChildRounding = 2.0f;
-    style.FrameRounding = 2.0f;
-    style.PopupRounding = 3.0f;
-    style.GrabRounding = 2.0f;
-    // **タブだけは角を丸めない。** 帯の上に板が並んでいるように見せたいので、
-    // 隣とのあいだに丸みの隙間を作らない。
-    style.TabRounding = 0.0f;
-    style.ScrollbarRounding = 2.0f;
+    style.ChildRounding = 4.0f;
+    style.FrameRounding = 4.0f;
+    style.PopupRounding = 6.0f;
+    style.GrabRounding = 3.0f;
+    // タブはフレームと同じ丸み。丸まるのは上の 2 つの角だけなので、帯の上に板が並ぶ見え方は保てる。
+    style.TabRounding = 4.0f;
+    style.ScrollbarRounding = 6.0f;
 
     style.WindowBorderSize = 1.0f;
     style.ChildBorderSize = 1.0f;
