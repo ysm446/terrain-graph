@@ -108,6 +108,12 @@ struct StartupOptions {
     int channelPreview = -1;
     // 開発用。読み込んだシーンの全項目を未保存扱いにし、階層の印と保存ボタンを画像で確認する。
     bool showUnsaved = false;
+    // 開発用。固定 ID（`###` の後ろ。Lighting、PreviewSettings など）のウィンドウを前面にする（--screenshot-ui で確かめる）。
+    std::string focusWindow;
+    // 開発用。設定ウィンドウを開いた状態で始める（--screenshot-ui で見た目を確かめる）。
+    bool showSettings = false;
+    // 開発用。UI の言語をこの起動だけ切り替える（"ja" / "en"。設定には書かない）。空なら設定のまま。
+    std::string language;
 };
 
 // アプリ本体。ウィンドウ、デバイス、UI の生存期間とフレームループを持つ。
@@ -443,6 +449,8 @@ private:
     uint32_t DefaultClientHeight() const;
     // 設定に合わせて拡大率とウィンドウの大きさを反映する。フレームの外で呼ぶこと。
     void ApplyUiScale();
+    // 設定の言語を UI へ反映する（ui::SetLanguage）。ウィンドウのタイトルも書き直す。
+    void ApplyUiLanguage();
     // ファイルメニュー。要求を積むだけで、読み書きはフレームの外で行う。
     void DrawFileMenu();
     // キーボードショートカット（Ctrl+N / O / S / Shift+S）。メニューと同じ入口を通す。

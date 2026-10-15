@@ -27,7 +27,7 @@ namespace tg {
 // 作業用IBL表示中だけ、その環境を球へ描く。
 void Application::DrawSkyPreviewWindow() {
     m_skyPreviewVisible = false;
-    if (!m_showSkyPreview || HiddenWithAssetBand("作業用IBL")) {
+    if (!m_showSkyPreview || HiddenWithAssetBand("###WorkIbl")) {
         return;
     }
 
@@ -35,7 +35,7 @@ void Application::DrawSkyPreviewWindow() {
     // **窓そのものはスクロールさせない。** スクロールするのは下の区画だけ。
     ImGui::SetNextWindowSize(ImVec2(ui::Scaled(420.0f), ui::Scaled(620.0f)),
                              ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("作業用IBL", &m_showSkyPreview,
+    if (!ImGui::Begin(ui::Tr("作業用IBL###WorkIbl", "Work IBL###WorkIbl"), &m_showSkyPreview,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         ImGui::End();
         return;
@@ -49,7 +49,7 @@ void Application::DrawSkyPreviewWindow() {
     }
     // 球は**適用中の環境キューブ**から毎フレーム描く（フレームの中で走る）。
     m_skyPreviewVisible = !m_renderer.AtmosphericMode();
-    if (m_renderer.AtmosphericMode() && ui::Button("作業用IBLで表示", ui::kWideButtonWidth)) {
+    if (m_renderer.AtmosphericMode() && ui::Button(ui::Tr("作業用IBLで表示", "Use Work IBL"), ui::kWideButtonWidth)) {
         m_renderer.AtmosphericMode() = false; m_pendingWorkEnvironmentSave = true;
         m_skyPreviewVisible = true;
     }
@@ -93,23 +93,26 @@ void Application::DrawSkyPreviewWindow() {
     ImGui::Separator();
 
     ImGui::BeginChild("skyPropertyPane", ImVec2(0.0f, 0.0f));
-    ui::HintText("ドラッグで回す / ホイールで寄る。露出はビューポートと同じ");
-    if (ui::Button("視点を戻す", ui::kWideButtonWidth)) {
+    ui::HintText("%s", ui::Tr("ドラッグで回す / ホイールで寄る。露出はビューポートと同じ",
+                              "Drag to rotate / wheel to zoom. Exposure matches the viewport"));
+    if (ui::Button(ui::Tr("視点を戻す", "Reset View"), ui::kWideButtonWidth)) {
         m_skySphere.ResetView();
     }
-    ui::HintText("地形・マテリアル確認用のIBLです。シーンの大気散乱スカイとは別に保存します");
+    ui::HintText("%s", ui::Tr("地形・マテリアル確認用のIBLです。シーンの大気散乱スカイとは別に保存します",
+                              "IBL for checking terrain and materials. Saved separately from the scene's Atmospheric Sky"));
 
     renderer::SkyDefinition& sky = active->sky;
     const renderer::SkyDefinition kDefaultSkyDefinition;
     // 見た目に関わる変更。サムネイルを作り直す（環境本体はレンダラが判断する）。
     bool changed = false;
 
-    ui::SectionHeader("基本");
+    ui::SectionHeader(ui::Tr("基本", "General"));
     if (ui::BeginPropertyTable("skyBasicRows")) {
         char nameBuffer[128] = {};
         std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", active->name.c_str());
-        if (ui::PropertyTextInput("名前", nameBuffer, sizeof(nameBuffer),
-                                  "ファイル名（拡張子なし）と同じ。変えるとファイルも改名する")) {
+        if (ui::PropertyTextInput(ui::Tr("名前", "Name"), nameBuffer, sizeof(nameBuffer),
+                                  ui::Tr("ファイル名（拡張子なし）と同じ。変えるとファイルも改名する",
+                                         "Same as the file name (without extension). Changing it renames the file too"))) {
             if (active->assetPath.empty()) {
                 active->name = nameBuffer; m_pendingWorkEnvironmentSave = true; m_pendingWorkSkySave = true;
             } else {
@@ -117,35 +120,37 @@ void Application::DrawSkyPreviewWindow() {
             }
         }
         // 選択中の作業用IBLのファイルと、差し替えの入口を表示する。
-        DrawAssetPathRow("ファイル", active->assetPath, m_pendingAssetReveal);
+        DrawAssetPathRow(ui::Tr("ファイル", "File"), active->assetPath, m_pendingAssetReveal);
         ui::PropertyLabelEmpty("skyPick");
-        if (ui::Button("差し替える…", ui::kWideButtonWidth)) {
+        if (ui::Button(ui::Tr("差し替える…", "Replace…"), ui::kWideButtonWidth)) {
             OpenSkyPicker();
         }
         ui::PropertyEnd();
 
-        static const char* const kSourceLabels[] = {"手続き的な空", "HDRI"};
+        static const ui::LocalizedText kSourceLabels[] = {{"手続き的な空", "Procedural Sky"}, {"HDRI", "HDRI"}};
         int source = static_cast<int>(sky.source);
-        if (ui::PropertyCombo("ソース", &source, kSourceLabels, IM_ARRAYSIZE(kSourceLabels),
+        if (ui::PropertyCombo(ui::Tr("ソース", "Source"), &source, ui::Tr(kSourceLabels).data(), IM_ARRAYSIZE(kSourceLabels),
                               static_cast<int>(kDefaultSkyDefinition.source),
-                              "空を式で作るか、HDRI の画像を使うか")) {
+                              ui::Tr("空を式で作るか、HDRI の画像を使うか",
+                                     "Whether to build the sky from a formula or use an HDRI image"))) {
             sky.source = static_cast<renderer::SkySource>(source);
             changed = true;
         }
 
-        changed |= ui::PropertyFloat("環境光の強さ", &sky.iblIntensity, 0.0f, 4.0f,
+        changed |= ui::PropertyFloat(ui::Tr("環境光の強さ", "IBL Intensity"), &sky.iblIntensity, 0.0f, 4.0f,
                                      kDefaultSkyDefinition.iblIntensity,
-                                     "物理量ではなく、見た目を整えるための倍率", "%.2f");
+                                     ui::Tr("物理量ではなく、見た目を整えるための倍率",
+                                            "A multiplier for tuning the look, not a physical quantity"), "%.2f");
         ui::EndPropertyTable();
     }
 
     if (sky.source == renderer::SkySource::Hdri) {
         ui::SectionHeader("HDRI");
         if (ui::BeginPropertyTable("skyHdriRows")) {
-            DrawAssetPathRow("ファイル", sky.hdriPath, m_pendingAssetReveal);
+            DrawAssetPathRow(ui::Tr("ファイル", "File"), sky.hdriPath, m_pendingAssetReveal);
 
             ui::PropertyLabelEmpty("hdrPick");
-            if (ui::Button("HDRI を選ぶ…", ui::kWideButtonWidth)) {
+            if (ui::Button(ui::Tr("HDRI を選ぶ…", "Choose HDRI…"), ui::kWideButtonWidth)) {
                 const std::filesystem::path path =
                     ShowOpenFileDialog(L"HDRI を選ぶ", HdriFileFilters());
                 if (!path.empty()) {
@@ -158,28 +163,33 @@ void Application::DrawSkyPreviewWindow() {
             // **較正値は天球ごとに持つ。** HDRI は絶対輝度で較正されていないので、
             // どのファイルでも同じ意味になる「空を何 cd/m2 とみなすか」で与える。
             changed |= ui::PropertyFloat(
-                "空の輝度", &sky.skyLuminance, 100.0f, 100000.0f,
+                ui::Tr("空の輝度", "Sky Luminance"), &sky.skyLuminance, 100.0f, 100000.0f,
                 kDefaultSkyDefinition.skyLuminance,
-                "この HDRI の空を何 cd/m2 とみなすか。"
-                "HDRI は絶対輝度で較正されていないため、基準をここで与える。"
-                "晴天でおよそ 4000〜15000、曇天で 1000〜3000",
+                ui::Tr("この HDRI の空を何 cd/m2 とみなすか。"
+                       "HDRI は絶対輝度で較正されていないため、基準をここで与える。"
+                       "晴天でおよそ 4000〜15000、曇天で 1000〜3000",
+                       "How many cd/m2 the sky of this HDRI is taken to be. "
+                       "HDRIs are not calibrated to absolute luminance, so the reference is given here. "
+                       "Roughly 4000-15000 on a clear day, 1000-3000 when overcast"),
                 "%.0f cd/m2", ImGuiSliderFlags_Logarithmic);
             ui::EndPropertyTable();
         }
-        ui::HintText("エクスプローラから .hdr を落としても、選択中の天球に入る");
+        ui::HintText("%s", ui::Tr("エクスプローラから .hdr を落としても、選択中の天球に入る",
+                                  "Dropping a .hdr from Explorer also loads it into the selected sky"));
     } else {
-        ui::SectionHeader("手続き的な空");
+        ui::SectionHeader(ui::Tr("手続き的な空", "Procedural Sky"));
         if (ui::BeginPropertyTable("skyProceduralRows")) {
             renderer::SkySettings& procedural = sky.procedural;
-            changed |= ui::PropertyColorLinear("天頂色", &procedural.zenithColor.x,
+            changed |= ui::PropertyColorLinear(ui::Tr("天頂色", "Zenith Color"), &procedural.zenithColor.x,
                                                &kDefaultSky.zenithColor.x);
-            changed |= ui::PropertyColorLinear("地平色", &procedural.horizonColor.x,
+            changed |= ui::PropertyColorLinear(ui::Tr("地平色", "Horizon Color"), &procedural.horizonColor.x,
                                                &kDefaultSky.horizonColor.x);
-            changed |= ui::PropertyColorLinear("地面色", &procedural.groundColor.x,
+            changed |= ui::PropertyColorLinear(ui::Tr("地面色", "Ground Color"), &procedural.groundColor.x,
                                                &kDefaultSky.groundColor.x);
-            changed |= ui::PropertyFloat("輝度", &procedural.intensity, 0.0f, 100000.0f,
+            changed |= ui::PropertyFloat(ui::Tr("輝度", "Luminance"), &procedural.intensity, 0.0f, 100000.0f,
                                          kDefaultSky.intensity,
-                                         "cd/m2。晴天の空はおよそ 4000〜15000", "%.0f");
+                                         ui::Tr("cd/m2。晴天の空はおよそ 4000〜15000",
+                                                "cd/m2. A clear sky is roughly 4000-15000"), "%.0f");
             ui::EndPropertyTable();
         }
     }

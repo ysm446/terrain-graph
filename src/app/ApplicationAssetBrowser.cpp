@@ -113,8 +113,8 @@ ImTextureID Application::AssetThumbnailHandle(const fs::path& path) {
 
 // 未保存のアセットを、保存されている内容へ戻す確認。
 void Application::DrawAssetRevertDialog() {
-    const char* title = "変更前に戻す";
-    if (m_assetRevertDialog && !ImGui::IsPopupOpen(title)) ImGui::OpenPopup(title);
+    const char* title = ui::Tr("変更前に戻す###AssetRevert", "Revert Changes###AssetRevert");
+    if (m_assetRevertDialog && !ImGui::IsPopupOpen("###AssetRevert")) ImGui::OpenPopup("###AssetRevert");
     if (!ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
     const auto& path = m_assetRevertTarget;
     const float thumb = ui::Scaled(64);
@@ -122,15 +122,16 @@ void Application::DrawAssetRevertDialog() {
     ImGui::SameLine();
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (thumb - ImGui::GetTextLineHeight()) * 0.5f);
     ImGui::TextUnformatted(ToUtf8Display(path.lexically_relative(m_workspace.Root())).c_str());
-    ui::HintText("このアセットの未保存の変更を捨て、保存されている内容へ戻します。");
+    ui::HintText("%s", ui::Tr("このアセットの未保存の変更を捨て、保存されている内容へ戻します。",
+                              "Discards the unsaved changes to this asset and restores the saved contents."));
     ImGui::Separator();
     const bool dirty = IsAssetDirty(path);
     ImGui::BeginDisabled(!dirty);
-    if (ImGui::Button("戻す")) {
+    if (ImGui::Button(ui::Tr("戻す", "Revert"))) {
         m_pendingAssetRevert = path; m_assetRevertDialog = false; ImGui::CloseCurrentPopup();
     }
     ImGui::EndDisabled(); ImGui::SameLine();
-    if (ImGui::Button("キャンセル") || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+    if (ImGui::Button(ui::Tr("キャンセル", "Cancel")) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
         m_assetRevertDialog = false; ImGui::CloseCurrentPopup();
     }
     ImGui::EndPopup();
@@ -138,23 +139,26 @@ void Application::DrawAssetRevertDialog() {
 
 // シーンを部品ごと複製する。新しい名前はフォルダ名とファイル名の頭になる。
 void Application::DrawSceneDuplicateDialog() {
-    const char* title = "シーンの複製";
-    if (m_sceneDuplicateDialog && !ImGui::IsPopupOpen(title)) ImGui::OpenPopup(title);
+    const char* title = ui::Tr("シーンの複製###SceneDuplicate", "Duplicate Scene###SceneDuplicate");
+    if (m_sceneDuplicateDialog && !ImGui::IsPopupOpen("###SceneDuplicate")) ImGui::OpenPopup("###SceneDuplicate");
     if (!ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
     const auto& source = m_sceneDuplicateSource;
     ImGui::TextUnformatted(ToUtf8Display(source.lexically_relative(m_workspace.Root())).c_str());
     if (ui::BeginPropertyTable("sceneDuplicateRows")) {
-        ui::PropertyTextInput("新しい名前", m_sceneDuplicateName, sizeof(m_sceneDuplicateName),
-                              "フォルダ名になり、ファイル名の元のシーン名の部分もこの名前に置き換える");
+        ui::PropertyTextInput(ui::Tr("新しい名前", "New Name"), m_sceneDuplicateName, sizeof(m_sceneDuplicateName),
+                              ui::Tr("フォルダ名になり、ファイル名の元のシーン名の部分もこの名前に置き換える",
+                                     "Used as the folder name, and replaces the original scene name in the file names"));
         ui::EndPropertyTable();
     }
     const auto sceneDirectory = source.parent_path();
     std::error_code error;
     const bool atRoot = std::filesystem::equivalent(sceneDirectory, m_workspace.Root(), error) && !error;
     const auto folder = (atRoot ? sceneDirectory : sceneDirectory.parent_path()) / FromUtf8(m_sceneDuplicateName);
-    ui::HintText("作成先: %s", ToUtf8Display(folder.lexically_relative(m_workspace.Root())).c_str());
-    ui::HintText("シーンと同じフォルダにある地形・雲・空（とペイント）をコピーし、ID を振り直す。");
-    ui::HintText("別のフォルダの部品、マテリアル・モデル・テクスチャは共有のまま。");
+    ui::HintText(ui::Tr("作成先: %s", "Destination: %s"), ToUtf8Display(folder.lexically_relative(m_workspace.Root())).c_str());
+    ui::HintText("%s", ui::Tr("シーンと同じフォルダにある地形・雲・空（とペイント）をコピーし、ID を振り直す。",
+                              "Copies the terrain, clouds and sky (and paint) in the scene's folder, with new IDs."));
+    ui::HintText("%s", ui::Tr("別のフォルダの部品、マテリアル・モデル・テクスチャは共有のまま。",
+                              "Parts in other folders, materials, models and textures stay shared."));
     if (!m_sceneDuplicateError.empty()) {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::WarnColor());
         ImGui::TextUnformatted(m_sceneDuplicateError.c_str());
@@ -162,7 +166,7 @@ void Application::DrawSceneDuplicateDialog() {
     }
     ImGui::Separator();
     ImGui::BeginDisabled(m_sceneDuplicateName[0] == '\0');
-    if (ImGui::Button("複製") || (ImGui::IsKeyPressed(ImGuiKey_Enter, false) && m_sceneDuplicateName[0] != '\0')) {
+    if (ImGui::Button(ui::Tr("複製", "Duplicate")) || (ImGui::IsKeyPressed(ImGuiKey_Enter, false) && m_sceneDuplicateName[0] != '\0')) {
         std::string reason;
         const auto created = io::DuplicateScene(m_workspace, source, m_sceneDuplicateName, reason);
         if (created.empty()) {
@@ -176,7 +180,7 @@ void Application::DrawSceneDuplicateDialog() {
         }
     }
     ImGui::EndDisabled(); ImGui::SameLine();
-    if (ImGui::Button("キャンセル") || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+    if (ImGui::Button(ui::Tr("キャンセル", "Cancel")) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
         m_sceneDuplicateDialog = false; ImGui::CloseCurrentPopup();
     }
     ImGui::EndPopup();
@@ -190,7 +194,7 @@ bool Application::DrawAssetRow(const fs::path& path, float size, bool fullPath) 
     if (!AssetThumbnailCache::Supports(path) || m_assetThumbnails.Failed(path)) {
         const auto min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
         std::error_code error;
-        const char* type = fs::is_directory(path, error) ? "フォルダ" : path.extension() == L".meta" ? "meta" : "ファイル";
+        const char* type = fs::is_directory(path, error) ? ui::Tr("フォルダ", "Folder") : path.extension() == L".meta" ? "meta" : ui::Tr("ファイル", "File");
         const auto text = ImGui::CalcTextSize(type);
         if (text.x < size - ui::Scaled(4))
             ImGui::GetWindowDrawList()->AddText(ImVec2((min.x + max.x - text.x) * 0.5f, (min.y + max.y - text.y) * 0.5f),
@@ -208,12 +212,14 @@ bool Application::DrawAssetRow(const fs::path& path, float size, bool fullPath) 
 }
 
 void Application::DrawAssetDeleteDialog() {
-    if (m_assetDeleteDialog && !ImGui::IsPopupOpen("アセットファイルの削除")) ImGui::OpenPopup("アセットファイルの削除");
-    if (!ImGui::BeginPopupModal("アセットファイルの削除", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    if (m_assetDeleteDialog && !ImGui::IsPopupOpen("###AssetDelete")) ImGui::OpenPopup("###AssetDelete");
+    if (!ImGui::BeginPopupModal(ui::Tr("アセットファイルの削除###AssetDelete", "Delete Asset File###AssetDelete"), nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize)) return;
     const auto& report = m_assetDeleteRelations;
     const auto row = [&](const fs::path& path, float size, bool fullPath) { DrawAssetRow(path, size, fullPath); };
     row(report.target, ui::Scaled(64), true);
-    ui::HintText("元ファイルと付随する.metaを、ルート内の退避フォルダへ移します。");
+    ui::HintText("%s", ui::Tr("元ファイルと付随する.metaを、ルート内の退避フォルダへ移します。",
+                              "Moves the file and its .meta to the retired folder inside the root."));
     const auto list = [&](const char* title, const std::vector<fs::path>& paths) {
         if (paths.empty()) return;
         ImGui::Separator(); ImGui::TextUnformatted(title);
@@ -223,40 +229,44 @@ void Application::DrawAssetDeleteDialog() {
             for (const auto& path : paths) row(path, thumb, false);
         ImGui::EndChild();
     };
-    list("一緒に退避するファイル", report.companions);
-    list("直接の参照元（削除すると参照切れになります）", report.referencers);
+    list(ui::Tr("一緒に退避するファイル", "Files Moved Together"), report.companions);
+    list(ui::Tr("直接の参照元（削除すると参照切れになります）", "Referenced By (deleting breaks these references)"), report.referencers);
     if (!report.referencers.empty() && io::KindOfAsset(report.target) != io::AssetKind::Other) {
         // 参照切れにしない道。同じ種類のアセットを選ぶと、参照元を書き換えてから退避する。
-        ImGui::TextUnformatted("代わりに割り当てる");
+        ImGui::TextUnformatted(ui::Tr("代わりに割り当てる", "Assign Instead"));
         if (m_assetReplacement.empty()) {
-            ImGui::TextDisabled("割り当てない（参照切れのまま）");
+            ImGui::TextDisabled("%s", ui::Tr("割り当てない（参照切れのまま）", "None (references stay broken)"));
         } else {
             row(m_assetReplacement, ui::Scaled(36), false);
         }
-        if (ui::Button("選ぶ…")) {
+        if (ui::Button(ui::Tr("選ぶ…", "Choose…"))) {
             m_assetPickerPurpose = AssetPickerPurpose::Replacement;
             OpenAssetPicker(io::KindOfAsset(report.target), report.target.parent_path(), report.target);
             m_assetPickerSelection = m_assetReplacement;
         }
         if (!m_assetReplacement.empty()) {
             ImGui::SameLine();
-            if (ui::Button("解除")) m_assetReplacement.clear();
+            if (ui::Button(ui::Tr("解除", "Clear"))) m_assetReplacement.clear();
         }
         if (m_assetPickerPurpose == AssetPickerPurpose::Replacement) DrawAssetPicker();
     }
-    list("関連ファイル（削除せず残します）", report.related);
+    list(ui::Tr("関連ファイル（削除せず残します）", "Related Files (kept)"), report.related);
     const bool loaded = IsAssetLoaded(report.target);
-    if (!report.complete) ui::HintText("参照関係をすべて確認できませんでした。読めないファイルやリンクを確認してください。");
-    if (loaded) ui::HintText("現在のシーンに読み込まれています。新規シーンなどへ切り替えてから削除してください。");
+    if (!report.complete)
+        ui::HintText("%s", ui::Tr("参照関係をすべて確認できませんでした。読めないファイルやリンクを確認してください。",
+                                  "Could not check all references. Check for unreadable files or links."));
+    if (loaded)
+        ui::HintText("%s", ui::Tr("現在のシーンに読み込まれています。新規シーンなどへ切り替えてから削除してください。",
+                                  "Loaded in the current scene. Switch to another scene (such as a new one) before deleting."));
     if (!m_assetDeleteQueue.empty())
-        ImGui::TextDisabled("このあと %zu 件を続けて確認します", m_assetDeleteQueue.size());
+        ImGui::TextDisabled(ui::Tr("このあと %zu 件を続けて確認します", "%zu more to review after this"), m_assetDeleteQueue.size());
     ImGui::Separator();
     ImGui::BeginDisabled(!report.complete || loaded);
-    if (ImGui::Button("削除する")) {
+    if (ImGui::Button(ui::Tr("削除する", "Delete"))) {
         m_pendingAssetDelete = true; m_assetDeleteDialog = false; ImGui::CloseCurrentPopup();
     }
     ImGui::EndDisabled(); ImGui::SameLine();
-    const char* skipLabel = m_assetDeleteQueue.empty() ? "キャンセル" : "スキップ";
+    const char* skipLabel = m_assetDeleteQueue.empty() ? ui::Tr("キャンセル", "Cancel") : ui::Tr("スキップ", "Skip");
     // ピッカーを重ねている間の Esc はピッカーが受ける。
     const bool escape = !m_assetPickerOpen && ImGui::IsKeyPressed(ImGuiKey_Escape, false);
     if (ImGui::Button(skipLabel) || escape) {
@@ -322,15 +332,22 @@ void Application::CollectAssetPickerCandidates() {
 
 void Application::DrawAssetPicker() {
     const bool sceneSky = (m_assetPickerPurpose == AssetPickerPurpose::SceneSky);
-    const char* title = sceneSky ? "作業用IBLを選ぶ" : "代わりのアセットを選ぶ";
-    if (m_assetPickerOpen && !ImGui::IsPopupOpen(title)) ImGui::OpenPopup(title);
+    const char* id = sceneSky ? "###WorkIblPicker" : "###ReplacementPicker";
+    const char* title = sceneSky ? ui::Tr("作業用IBLを選ぶ###WorkIblPicker", "Choose Work IBL###WorkIblPicker")
+                                 : ui::Tr("代わりのアセットを選ぶ###ReplacementPicker", "Choose Replacement###ReplacementPicker");
+    if (m_assetPickerOpen && !ImGui::IsPopupOpen(id)) ImGui::OpenPopup(id);
     if (!ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
-    if (sceneSky) ui::HintText("作業用IBLを選択します。シーンの大気散乱スカイは変更しません");
+    if (sceneSky)
+        ui::HintText("%s", ui::Tr("作業用IBLを選択します。シーンの大気散乱スカイは変更しません",
+                                  "Chooses the work IBL. The scene's atmospheric sky is not changed"));
     if (m_assetPickerRefresh) CollectAssetPickerCandidates();
     if (ui::BeginPropertyTable("assetPickerRows")) {
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
-        ui::PropertyTextInput("名前で絞る", m_assetPickerFilter, sizeof(m_assetPickerFilter), "部分一致。大文字と小文字は区別しません");
-        if (ui::PropertyBool("同じフォルダだけ", &m_assetPickerSameFolder, true, "外すとルート全体から探します")) m_assetPickerRefresh = true;
+        ui::PropertyTextInput(ui::Tr("名前で絞る", "Filter by Name"), m_assetPickerFilter, sizeof(m_assetPickerFilter),
+                              ui::Tr("部分一致。大文字と小文字は区別しません", "Partial match, case-insensitive"));
+        if (ui::PropertyBool(ui::Tr("同じフォルダだけ", "Same Folder Only"), &m_assetPickerSameFolder, true,
+                             ui::Tr("外すとルート全体から探します", "Uncheck to search the whole root")))
+            m_assetPickerRefresh = true;
         ui::EndPropertyTable();
     }
     // 絞り込みは小文字にして部分一致。
@@ -348,7 +365,9 @@ void Application::DrawAssetPicker() {
     const float width = columns * (size + spacing) + ui::Scaled(16);
     bool chosen = false;
     if (ImGui::BeginChild("candidates", ImVec2(width, ui::Scaled(3.0f) * (size + ImGui::GetTextLineHeightWithSpacing() * 2.0f)), ImGuiChildFlags_Borders)) {
-        if (shown.empty()) ui::HintText(m_assetPickerCandidates.empty() ? "同じ種類のアセットがありません" : "一致するものがありません");
+        if (shown.empty())
+            ui::HintText("%s", m_assetPickerCandidates.empty() ? ui::Tr("同じ種類のアセットがありません", "No assets of the same kind")
+                                                               : ui::Tr("一致するものがありません", "No matches"));
         int index = 0;
         for (const auto* pathPtr : shown) {
             const auto& path = *pathPtr;
@@ -365,16 +384,16 @@ void Application::DrawAssetPicker() {
         }
     }
     ImGui::EndChild();
-    ImGui::TextDisabled("%zu 件", shown.size());
+    ImGui::TextDisabled(ui::Tr("%zu 件", "%zu items"), shown.size());
     ImGui::Separator();
     ImGui::BeginDisabled(m_assetPickerSelection.empty());
-    if (ui::Button("決定") || chosen) {
+    if (ui::Button(ui::Tr("決定", "OK")) || chosen) {
         if (sceneSky) m_pendingAssetOpen = m_assetPickerSelection;  // 開く＝差し替え
         else m_assetReplacement = m_assetPickerSelection;
         m_assetPickerOpen = false; ImGui::CloseCurrentPopup();
     }
     ImGui::EndDisabled(); ImGui::SameLine();
-    if (ui::Button("キャンセル") || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+    if (ui::Button(ui::Tr("キャンセル", "Cancel")) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
         m_assetPickerOpen = false; ImGui::CloseCurrentPopup();
     }
     ImGui::EndPopup();
@@ -537,16 +556,20 @@ void Application::ResumeSceneSwitch() {
 }
 // 未保存の変更があるときだけ出す。切り替えと終了の両方で使う。
 void Application::DrawSceneSwitchDialog() {
-    const char* title = m_deferredExit ? "終了の確認" : "シーンの切り替え";
-    if (m_sceneSwitchDialog && !ImGui::IsPopupOpen(title)) ImGui::OpenPopup(title);
+    const char* id = m_deferredExit ? "###ExitConfirm" : "###SceneSwitch";
+    const char* title = m_deferredExit ? ui::Tr("終了の確認###ExitConfirm", "Confirm Exit###ExitConfirm")
+                                       : ui::Tr("シーンの切り替え###SceneSwitch", "Switch Scene###SceneSwitch");
+    if (m_sceneSwitchDialog && !ImGui::IsPopupOpen(id)) ImGui::OpenPopup(id);
     if (!ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
-    ui::HintText(m_deferredExit ? "未保存の変更があります。保存してから終了しますか？"
-                                : "未保存の変更があります。保存してから切り替えますか？");
+    ui::HintText("%s", m_deferredExit ? ui::Tr("未保存の変更があります。保存してから終了しますか？",
+                                               "There are unsaved changes. Save before exiting?")
+                                      : ui::Tr("未保存の変更があります。保存してから切り替えますか？",
+                                               "There are unsaved changes. Save before switching?"));
     if (ui::BeginPropertyTable("unsavedItems")) {
-        ui::PropertyValue("未保存", "%s", UnsavedItemNames().c_str());
+        ui::PropertyValue(ui::Tr("未保存", "Unsaved"), "%s", UnsavedItemNames().c_str());
         ui::EndPropertyTable();
     }
-    if (ImGui::Button(m_deferredExit ? "保存して終了" : "保存して切り替え")) {
+    if (ImGui::Button(m_deferredExit ? ui::Tr("保存して終了", "Save and Exit") : ui::Tr("保存して切り替え", "Save and Switch"))) {
         RequestSaveProject(false);
         if (!m_pendingProjectSave.empty()) {
             m_saveThenSwitch = true;
@@ -555,9 +578,11 @@ void Application::DrawSceneSwitchDialog() {
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button(m_deferredExit ? "保存せず終了" : "保存せず切り替え")) { ResumeSceneSwitch(); ImGui::CloseCurrentPopup(); }
+    if (ImGui::Button(m_deferredExit ? ui::Tr("保存せず終了", "Exit Without Saving") : ui::Tr("保存せず切り替え", "Switch Without Saving"))) {
+        ResumeSceneSwitch(); ImGui::CloseCurrentPopup();
+    }
     ImGui::SameLine();
-    if (ImGui::Button("キャンセル")) {
+    if (ImGui::Button(ui::Tr("キャンセル", "Cancel"))) {
         m_sceneSwitchDialog = false; m_deferredRoot.clear(); m_deferredScene.clear(); m_deferredNew = false; m_pendingSceneCreate.clear();
         m_deferredExit = false;
         ImGui::CloseCurrentPopup();
@@ -990,10 +1015,10 @@ void Application::AssetFolderDropTarget(const fs::path& directory) {
 
 void Application::DrawAssetBrowser() {
     if (!m_assetRevealTarget.empty()) { ImGui::SetNextWindowCollapsed(false); ImGui::SetNextWindowFocus(); }
-    if (!ImGui::Begin("アセット")) { ImGui::End(); return; }
-    if (ImGui::Button("ルートを開く…")) RequestOpenProject();
+    if (!ImGui::Begin(ui::Tr("アセット###Assets", "Assets###Assets"))) { ImGui::End(); return; }
+    if (ImGui::Button(ui::Tr("ルートを開く…", "Open Root…"))) RequestOpenProject();
     ImGui::SameLine();
-    if (ImGui::Button("更新")) { m_assetRefresh = true; m_workspace.Scan(); m_assetThumbnails.Invalidate(); }
+    if (ImGui::Button(ui::Tr("更新", "Refresh"))) { m_assetRefresh = true; m_workspace.Scan(); m_assetThumbnails.Invalidate(); }
     ImGui::SameLine();
     ImGui::TextDisabled("%s", ToUtf8Display(m_assetDirectory).c_str());
 
@@ -1033,17 +1058,18 @@ void Application::DrawAssetBrowser() {
             AssetFolderDropTarget(directory);
             // 一覧のフォルダと同じ右クリックメニュー。ルートは改名・削除できない。
             if (ImGui::BeginPopupContextItem("folderMenu")) {
-                if (ImGui::MenuItem("開く")) { m_assetDirectory = directory; m_assetRefresh = true; }
-                if (ImGui::MenuItem("エクスプローラで表示")) RevealFileInExplorer(directory);
+                if (ImGui::MenuItem(ui::Tr("開く", "Open"))) { m_assetDirectory = directory; m_assetRefresh = true; }
+                if (ImGui::MenuItem(ui::Tr("エクスプローラで表示", "Show in Explorer"))) RevealFileInExplorer(directory);
                 if (!root) {
-                    if (ImGui::MenuItem("名前を変更…")) { OpenAssetRename(directory); m_assetRenameInTree = true; }
+                    if (ImGui::MenuItem(ui::Tr("名前を変更…", "Rename…"))) { OpenAssetRename(directory); m_assetRenameInTree = true; }
                     std::error_code folderError;
                     const bool empty = fs::is_empty(directory, folderError) && !folderError;
-                    if (ImGui::MenuItem("空のフォルダを削除", nullptr, false, empty && !IsAssetLoaded(directory))) {
+                    if (ImGui::MenuItem(ui::Tr("空のフォルダを削除", "Delete Empty Folder"), nullptr, false, empty && !IsAssetLoaded(directory))) {
                         m_selectedAssets.assign(1, directory); QueueAssetDelete();
                     }
                     if (!empty && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                        ImGui::SetTooltip("ファイルやサブフォルダがあるため削除できません");
+                        ImGui::SetTooltip("%s", ui::Tr("ファイルやサブフォルダがあるため削除できません",
+                                                       "Cannot delete: contains files or subfolders"));
                 }
                 ImGui::EndPopup();
             }
@@ -1072,10 +1098,12 @@ void Application::DrawAssetBrowser() {
     if (released) m_settings.Save();
     ImGui::SameLine(0.0f, margin);
     if (ImGui::BeginChild("contents", ImVec2(0, 0), ImGuiChildFlags_Borders)) {
-        if (m_assetDirectory != m_workspace.Root() && ImGui::Button("上のフォルダ")) {
+        if (m_assetDirectory != m_workspace.Root() && ImGui::Button(ui::Tr("上のフォルダ", "Up"))) {
             m_assetDirectory = m_assetDirectory.parent_path(); m_assetRefresh = true;
         }
-        if (m_assetEntries.empty()) ui::HintText("右クリックでアセットを作成、またはファイルを読み込みます");
+        if (m_assetEntries.empty())
+            ui::HintText("%s", ui::Tr("右クリックでアセットを作成、またはファイルを読み込みます",
+                                      "Right-click to create an asset or import files"));
         // 一覧にフォーカスがあるときのキー操作。テキスト入力中やダイアログ表示中は効かせない。
         if ((ImGui::IsWindowFocused() || ImGui::IsWindowHovered()) && !ImGui::GetIO().WantTextInput &&
             !m_assetDeleteDialog && m_assetRenameTarget.empty() && !m_selectedAssets.empty()) {
@@ -1159,8 +1187,8 @@ void Application::DrawAssetBrowser() {
                                   ext == ".tgterrain" ? ui::AssetIcon::Terrain : ui::AssetIcon::Cloud;
                 ui::DrawAssetIcon(icon, tileMin, tileMax);
             } else if (!handle) {
-                const char* type = ext == ".tgterrain" ? "地形グラフ" : ext == ".tgatmosphere" ? "大気散乱" : ext == ".tgcloud" ? "雲グラフ" : ext == ".tgscene" ? "シーン" : ext == ".tglayer" ? "レイヤーマテリアル" : ext == ".tgmat" ? "マテリアル" : ext == ".tgboundary" ? "境界マテリアル" :
-                    ext == ".tgsky" ? "作業用IBL" : ext == ".tgmodel" || ext == ".fbx" ? "モデル" : IsImage(ext) ? "画像" : "ファイル";
+                const char* type = ext == ".tgterrain" ? ui::Tr("地形グラフ", "Terrain Graph") : ext == ".tgatmosphere" ? ui::Tr("大気散乱", "Atmosphere") : ext == ".tgcloud" ? ui::Tr("雲グラフ", "Cloud Graph") : ext == ".tgscene" ? ui::Tr("シーン", "Scene") : ext == ".tglayer" ? ui::Tr("レイヤーマテリアル", "Layered Material") : ext == ".tgmat" ? ui::Tr("マテリアル", "Material") : ext == ".tgboundary" ? ui::Tr("境界マテリアル", "Boundary Material") :
+                    ext == ".tgsky" ? ui::Tr("作業用IBL", "Work IBL") : ext == ".tgmodel" || ext == ".fbx" ? ui::Tr("モデル", "Model") : IsImage(ext) ? ui::Tr("画像", "Image") : ui::Tr("ファイル", "File");
                 const auto min = tileMin, max = tileMax;
                 const auto text = ImGui::CalcTextSize(type);
                 ImGui::GetWindowDrawList()->AddText(ImVec2((min.x + max.x - text.x) * 0.5f, (min.y + max.y - text.y) * 0.5f),
@@ -1207,7 +1235,7 @@ void Application::DrawAssetBrowser() {
                     std::string utf8;
                     for (const auto& selected : dragged) utf8 += ToUtf8Portable(selected) + "\n";
                     ImGui::SetDragDropPayload(kAssetPathDragDropType, utf8.data(), utf8.size());
-                    ImGui::Text("%zu 件", dragged.size());
+                    ImGui::Text(ui::Tr("%zu 件", "%zu items"), dragged.size());
                 } else {
                     if (materialId) ImGui::SetDragDropPayload(kMaterialDragDropType, &materialId, sizeof(materialId));
                     else if (textureId) ImGui::SetDragDropPayload(kTextureDragDropType, &textureId, sizeof(textureId));
@@ -1222,24 +1250,30 @@ void Application::DrawAssetBrowser() {
             if (folder) AssetFolderDropTarget(path);
             // ドラッグ中は移動先を示すツールチップの邪魔になるので出さない。
             if (thumb.hovered && ImGui::GetDragDropPayload() == nullptr)
-                ImGui::SetTooltip("%s\n%s\nダブルクリックで開く\n選択中の名前をクリックで名前を変更\nCtrl / Shift + クリックで複数選択%s", ToUtf8Display(path).c_str(), IsAssetDirty(path) ? "未保存の変更あり（選択して Ctrl+S で保存）" : "選択して Ctrl+S で保存",
-                                  m_assetThumbnails.Stale(path) ? "\nサムネイルは前に作ったもの（中身が変わっている。クリックで作り直す）" : "");
+                ImGui::SetTooltip(ui::Tr("%s\n%s\nダブルクリックで開く\n選択中の名前をクリックで名前を変更\nCtrl / Shift + クリックで複数選択%s",
+                                         "%s\n%s\nDouble-click to open\nClick the selected name to rename\nCtrl / Shift + click to select multiple%s"),
+                                  ToUtf8Display(path).c_str(),
+                                  IsAssetDirty(path) ? ui::Tr("未保存の変更あり（選択して Ctrl+S で保存）", "Unsaved changes (select and press Ctrl+S to save)")
+                                                     : ui::Tr("選択して Ctrl+S で保存", "Select and press Ctrl+S to save"),
+                                  m_assetThumbnails.Stale(path) ? ui::Tr("\nサムネイルは前に作ったもの（中身が変わっている。クリックで作り直す）",
+                                                                         "\nThumbnail is out of date (contents changed; click to rebuild)") : "");
             if (ImGui::BeginPopupContextItem("assetMenu")) {
                 if (!IsAssetSelected(path)) SelectAsset(path, false, false);
-                if (ImGui::MenuItem("開く")) {
+                if (ImGui::MenuItem(ui::Tr("開く", "Open"))) {
                     if (folder) { m_assetDirectory = path; m_assetRefresh = true; }
                     else m_pendingAssetOpen = path;
                 }
-                if (!folder && ImGui::MenuItem("保存", "Ctrl+S", false, IsAssetDirty(path))) RequestSaveSelection();
+                if (!folder && ImGui::MenuItem(ui::Tr("保存", "Save"), "Ctrl+S", false, IsAssetDirty(path))) RequestSaveSelection();
                 // 未保存の編集を捨ててファイルの内容へ戻す。捨てるものがあるので確認を挟む。
-                if (!folder && ImGui::MenuItem("変更前に戻す", nullptr, false, IsAssetDirty(path))) {
+                if (!folder && ImGui::MenuItem(ui::Tr("変更前に戻す", "Revert Changes"), nullptr, false, IsAssetDirty(path))) {
                     m_assetRevertTarget = path; m_assetRevertDialog = true;
                 }
                 if ((ext == ".tgterrain" || ext == ".tgcloud" || ext == ".tgatmosphere") &&
-                    ImGui::MenuItem(ext == ".tgatmosphere" ? "シーンの空に設定" : "シーンに配置（入れ替え）"))
+                    ImGui::MenuItem(ext == ".tgatmosphere" ? ui::Tr("シーンの空に設定", "Set as Scene Sky")
+                                                           : ui::Tr("シーンに配置（入れ替え）", "Place in Scene (Replace)")))
                     m_pendingComponentPlace = path;
                 // 複製は同じフォルダに「名前 コピー」で作る。ID は新しく振り直し、元のアセットは触らない。
-                if ((ext == ".tgterrain" || ext == ".tgcloud" || ext == ".tgatmosphere" || ext == ".tgmat" || ext == ".tglayer") && ImGui::MenuItem("複製")) {
+                if ((ext == ".tgterrain" || ext == ".tgcloud" || ext == ".tgatmosphere" || ext == ".tgmat" || ext == ".tglayer") && ImGui::MenuItem(ui::Tr("複製", "Duplicate"))) {
                     nlohmann::json body;
                     const char* kind = ext == ".tgatmosphere" ? "atmosphere-sky" : ext == ".tgcloud" ? "cloud-graph" :
                                        ext == ".tglayer" ? "layer-material-asset" : ext == ".tgmat" ? "material-asset" : "terrain-graph";
@@ -1257,24 +1291,25 @@ void Application::DrawAssetBrowser() {
                     } else TG_LOG_ERROR("複製できない形式です: %s", ToUtf8Display(path.filename()).c_str());
                 }
                 // シーンは部品（地形・雲・空）ごと、新しい名前のフォルダへ複製する。
-                if (ext == ".tgscene" && ImGui::MenuItem("シーンを複製…")) {
+                if (ext == ".tgscene" && ImGui::MenuItem(ui::Tr("シーンを複製…", "Duplicate Scene…"))) {
                     m_sceneDuplicateSource = path;
                     const std::string initial = ToUtf8Display(path.stem()) + "_copy";
                     std::snprintf(m_sceneDuplicateName, sizeof(m_sceneDuplicateName), "%s", initial.c_str());
                     m_sceneDuplicateError.clear();
                     m_sceneDuplicateDialog = true;
                 }
-                if (ImGui::MenuItem("エクスプローラで表示")) RevealFileInExplorer(path);
-                if (!folder && path.filename() != L"project.tgproj" && ImGui::MenuItem("関連を表示…"))
+                if (ImGui::MenuItem(ui::Tr("エクスプローラで表示", "Show in Explorer"))) RevealFileInExplorer(path);
+                if (!folder && path.filename() != L"project.tgproj" && ImGui::MenuItem(ui::Tr("関連を表示…", "Show References…")))
                     OpenReferenceViewer(path);
-                if (path.filename() != L"project.tgproj" && ImGui::MenuItem("名前を変更…", "F2")) OpenAssetRename(path);
+                if (path.filename() != L"project.tgproj" && ImGui::MenuItem(ui::Tr("名前を変更…", "Rename…"), "F2")) OpenAssetRename(path);
                 if (folder) {
                     std::error_code folderError;
                     const bool empty = fs::is_empty(path, folderError) && !folderError;
-                    if (ImGui::MenuItem("空のフォルダを削除", "Del", false, empty && !IsAssetLoaded(path))) QueueAssetDelete();
+                    if (ImGui::MenuItem(ui::Tr("空のフォルダを削除", "Delete Empty Folder"), "Del", false, empty && !IsAssetLoaded(path))) QueueAssetDelete();
                     if (!empty && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                        ImGui::SetTooltip("ファイルやサブフォルダがあるため削除できません");
-                } else if (path.filename() != L"project.tgproj" && ImGui::MenuItem("削除…", "Del")) QueueAssetDelete();
+                        ImGui::SetTooltip("%s", ui::Tr("ファイルやサブフォルダがあるため削除できません",
+                                                       "Cannot delete: contains files or subfolders"));
+                } else if (path.filename() != L"project.tgproj" && ImGui::MenuItem(ui::Tr("削除…", "Delete…"), "Del")) QueueAssetDelete();
                 ImGui::EndPopup();
             }
             if (renaming) {
@@ -1296,7 +1331,7 @@ void Application::DrawAssetBrowser() {
             m_selectedAssets.clear(); m_assetSelectionAnchor.clear();
         }
         if (ImGui::BeginPopupContextWindow("createAsset", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
-            if (ImGui::MenuItem("フォルダを作成")) {
+            if (ImGui::MenuItem(ui::Tr("フォルダを作成", "New Folder"))) {
                 const auto path = m_workspace.UniquePath(m_assetDirectory, "NewFolder", "");
                 std::error_code error;
                 if (!path.empty()) fs::create_directory(path, error);
@@ -1312,19 +1347,19 @@ void Application::DrawAssetBrowser() {
                 m_assetRefresh = true;
             }
             // 空のシーンを作って開く。地形・雲グラフと大気散乱スカイも同じフォルダに一緒に作る。
-            if (ImGui::MenuItem("シーンを作成")) {
+            if (ImGui::MenuItem(ui::Tr("シーンを作成", "New Scene"))) {
                 const auto path = m_workspace.UniquePath(m_assetDirectory, "新規シーン", ".tgscene");
                 if (path.empty()) TG_LOG_ERROR("シーンを作成できませんでした");
                 else { m_pendingSceneCreate = path; m_pendingProjectNew = true; }
             }
             for (const bool cloud : {false, true}) {
-                if (ImGui::MenuItem(cloud ? "雲グラフを作成" : "地形グラフを作成")) {
+                if (ImGui::MenuItem(cloud ? ui::Tr("雲グラフを作成", "New Cloud Graph") : ui::Tr("地形グラフを作成", "New Terrain Graph"))) {
                     const auto path = io::CreateGraphAsset(m_workspace, m_assetDirectory, cloud);
                     if (path.empty()) TG_LOG_ERROR("グラフを作成できませんでした");
                     else { m_pendingAssetReveal = path; m_assetRefresh = true; }
                 }
             }
-            if (ImGui::MenuItem("レイヤーマテリアルを作成")) {
+            if (ImGui::MenuItem(ui::Tr("レイヤーマテリアルを作成", "New Layered Material"))) {
                 const auto id = m_materialLibrary.Add("新規レイヤーマテリアル");
                 auto* asset = m_materialLibrary.FindMutable(id);
                 asset->layerMaterial.emplace(); asset->layerMaterial->name = asset->name;
@@ -1333,21 +1368,21 @@ void Application::DrawAssetBrowser() {
                 m_selectedMaterial = static_cast<int>(m_materialLibrary.Entries().size()) - 1;
                 m_showMaterialSphere = true; m_pendingAssetsSave = true; MarkDocumentChanged();
             }
-            if (ImGui::MenuItem("マテリアルを作成")) {
+            if (ImGui::MenuItem(ui::Tr("マテリアルを作成", "New Material"))) {
                 const auto id = m_materialLibrary.Add("新規マテリアル");
                 auto* asset = m_materialLibrary.FindMutable(id);
                 asset->assetPath = m_workspace.UniquePath(m_assetDirectory, asset->name, ".tgmat");
                 m_selectedMaterial = static_cast<int>(m_materialLibrary.Entries().size()) - 1;
                 m_showMaterialSphere = true; m_pendingAssetsSave = true; MarkDocumentChanged();
             }
-            if (ImGui::MenuItem("大気散乱スカイを作成")) {
+            if (ImGui::MenuItem(ui::Tr("大気散乱スカイを作成", "New Atmospheric Sky"))) {
                 auto path = m_workspace.UniquePath(m_assetDirectory, "大気散乱スカイ", ".tgatmosphere");
                 auto body = io::AtmosphereAssetBody(nlohmann::json::object(), "大気散乱スカイ");
                 if (!path.empty() && m_workspace.SaveAsset(path, "atmosphere-sky", body)) {
                     m_pendingAssetReveal = path; m_assetRefresh = true;
                 } else TG_LOG_ERROR("大気散乱スカイを作成できませんでした");
             }
-            if (ImGui::MenuItem("作業用IBLを作成")) {
+            if (ImGui::MenuItem(ui::Tr("作業用IBLを作成", "New Work IBL"))) {
                 // 作業用IBLを差し替える。以前のアセットは残す。
                 const auto id = m_skyLibrary.Add("新規作業用IBL");
                 auto* asset = m_skyLibrary.FindMutable(id);
@@ -1355,7 +1390,7 @@ void Application::DrawAssetBrowser() {
                 m_skyLibrary.SetActive(id); m_pendingSkyKeepOnly = true;
                 m_showSkyPreview = true; m_pendingAssetsSave = true; m_renderer.AtmosphericMode() = false;
             }
-            if (ImGui::MenuItem("ファイルを読み込む…")) {
+            if (ImGui::MenuItem(ui::Tr("ファイルを読み込む…", "Import Files…"))) {
                 const auto paths = ShowOpenFilesDialog(L"アセットを読み込む", {{L"画像 / モデル / マテリアル", L"*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.exr;*.hdr;*.fbx;*.tgmat;*.tglayer"}});
                 HandleDroppedFiles(paths);
             }

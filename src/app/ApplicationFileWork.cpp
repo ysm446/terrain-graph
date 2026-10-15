@@ -113,19 +113,19 @@ void Application::MarkSceneSaved(unsigned mask) {
 std::string Application::UnsavedItemNames() const {
     std::string names;
     const auto add = [&names](const char* name) {
-        if (!names.empty()) names += "、";
+        if (!names.empty()) names += ui::Tr("、", ", ");
         names += name;
     };
     // 旧形式のシーンは全部が 1 つのファイルなので、シーンとしてまとめる。
     if (!m_sceneComponents.is_array()) {
-        if (m_sceneDirty & ~kDirtyShared) add("シーン");
+        if (m_sceneDirty & ~kDirtyShared) add(ui::Tr("シーン", "Scene"));
     } else {
-        if (m_sceneDirty & kDirtyScene) add("シーン");
-        if (m_sceneDirty & kDirtyTerrain) add("地形グラフ");
-        if (m_sceneDirty & kDirtyCloud) add("雲グラフ");
-        if (m_sceneDirty & kDirtyAtmosphere) add("大気散乱スカイ");
+        if (m_sceneDirty & kDirtyScene) add(ui::Tr("シーン", "Scene"));
+        if (m_sceneDirty & kDirtyTerrain) add(ui::Tr("地形グラフ", "Terrain Graph"));
+        if (m_sceneDirty & kDirtyCloud) add(ui::Tr("雲グラフ", "Cloud Graph"));
+        if (m_sceneDirty & kDirtyAtmosphere) add(ui::Tr("大気散乱スカイ", "Atmospheric Sky"));
     }
-    if (m_sceneDirty & kDirtyShared) add("マテリアル・モデル・作業用IBL");
+    if (m_sceneDirty & kDirtyShared) add(ui::Tr("マテリアル・モデル・作業用IBL", "Materials / Models / Work IBL"));
     return names;
 }
 
@@ -200,14 +200,14 @@ void Application::HandleShortcuts() {
 // 同じ名前のシーンが別の場所にあっても見分けられるようにするため。
 void Application::DrawRecentMenu() {
     const auto& roots = m_recentProjects.Roots();
-    if (ImGui::BeginMenu("最近使ったルートフォルダ", !roots.empty())) {
+    if (ImGui::BeginMenu(ui::Tr("最近使ったルートフォルダ", "Recent Root Folders"), !roots.empty())) {
         for (size_t i = 0; i < roots.size(); ++i) {
             const auto& root = roots[i];
             ImGui::PushID(static_cast<int>(i));
             if (ImGui::BeginMenu(ToUtf8Display(root.path).c_str())) {
-                if (ImGui::MenuItem("このルートを開く")) m_pendingRoot = root.path;
+                if (ImGui::MenuItem(ui::Tr("このルートを開く", "Open This Root"))) m_pendingRoot = root.path;
                 ImGui::Separator();
-                if (root.scenes.empty()) ImGui::MenuItem("最近使ったシーンはありません", nullptr, false, false);
+                if (root.scenes.empty()) ImGui::MenuItem(ui::Tr("最近使ったシーンはありません", "No recent scenes"), nullptr, false, false);
                 for (const auto& scene : root.scenes) {
                     ImGui::PushID(ToUtf8Portable(scene).c_str());
                     if (ImGui::MenuItem(ToUtf8Display(scene.filename()).c_str(), ToUtf8Display(scene.parent_path()).c_str())) {
@@ -221,11 +221,11 @@ void Application::DrawRecentMenu() {
             ImGui::PopID();
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("ルートとシーンの履歴を消す")) m_recentProjects.ClearRoots();
+        if (ImGui::MenuItem(ui::Tr("ルートとシーンの履歴を消す", "Clear Root and Scene History"))) m_recentProjects.ClearRoots();
         ImGui::EndMenu();
     }
     const std::vector<std::filesystem::path>& entries = m_recentProjects.Entries(m_workspace.Root());
-    if (!ImGui::BeginMenu("最近使ったシーン", !entries.empty())) {
+    if (!ImGui::BeginMenu(ui::Tr("最近使ったシーン", "Recent Scenes"), !entries.empty())) {
         return;
     }
 
@@ -246,43 +246,43 @@ void Application::DrawRecentMenu() {
     }
 
     ImGui::Separator();
-    if (ImGui::MenuItem("履歴を消す")) {
+    if (ImGui::MenuItem(ui::Tr("履歴を消す", "Clear History"))) {
         m_recentProjects.Clear(m_workspace.Root());
     }
     ImGui::EndMenu();
 }
 
 void Application::DrawFileMenu() {
-    if (!ImGui::BeginMenu("ファイル")) {
+    if (!ImGui::BeginMenu(ui::Tr("ファイル", "File"))) {
         return;
     }
 
-    if (ImGui::MenuItem("新規シーン", "Ctrl+N")) {
+    if (ImGui::MenuItem(ui::Tr("新規シーン", "New Scene"), "Ctrl+N")) {
         m_pendingProjectNew = true;
     }
-    if (ImGui::MenuItem("ルートフォルダを開く…", "Ctrl+O")) {
+    if (ImGui::MenuItem(ui::Tr("ルートフォルダを開く…", "Open Root Folder…"), "Ctrl+O")) {
         RequestOpenProject();
     }
-    if (ImGui::MenuItem("シーンを開く…")) {
+    if (ImGui::MenuItem(ui::Tr("シーンを開く…", "Open Scene…"))) {
         m_pendingProjectOpen = ShowOpenFileDialog(L"シーンを開く", {{L"シーン / 旧プロジェクト", L"*.tgscene;*.tgproj;*.mmproj"}});
     }
     DrawRecentMenu();
-    if (ImGui::MenuItem("保存済みシーンを部品に分離…", nullptr, false,
+    if (ImGui::MenuItem(ui::Tr("保存済みシーンを部品に分離…", "Split Saved Scene into Components…"), nullptr, false,
                         m_projectPath.extension() == L".tgscene" && !m_sceneComponents.is_array()))
         m_pendingComponentMigration = true;
-    if (ImGui::MenuItem("保存", "Ctrl+S")) {
+    if (ImGui::MenuItem(ui::Tr("保存", "Save"), "Ctrl+S")) {
         RequestSaveSelection();
     }
-    if (ImGui::MenuItem("名前を付けて保存…", "Ctrl+Shift+S")) {
+    if (ImGui::MenuItem(ui::Tr("名前を付けて保存…", "Save As…"), "Ctrl+Shift+S")) {
         RequestSaveProject(true);
     }
     // 未保存のプロジェクトには場所が無いので、項目は出したまま無効にする。
-    if (ImGui::MenuItem("ファイルの場所を開く", nullptr, false, !m_projectPath.empty())) {
+    if (ImGui::MenuItem(ui::Tr("ファイルの場所を開く", "Show in Explorer"), nullptr, false, !m_projectPath.empty())) {
         RevealFileInExplorer(m_projectPath);
     }
 
     ImGui::Separator();
-    if (ImGui::MenuItem("テクスチャを書き出す…")) {
+    if (ImGui::MenuItem(ui::Tr("テクスチャを書き出す…", "Export Textures…"))) {
         // 書き出し先が未設定なら、プロジェクトの隣を初期値にする。
         if (m_exportSettings.directory.empty() && !m_projectPath.empty()) {
             m_exportSettings.directory = m_projectPath.parent_path();
@@ -294,7 +294,7 @@ void Application::DrawFileMenu() {
     }
 
     ImGui::Separator();
-    if (ImGui::MenuItem("終了")) {
+    if (ImGui::MenuItem(ui::Tr("終了", "Exit"))) {
         m_window.RequestClose();
     }
     ImGui::EndMenu();
@@ -443,7 +443,7 @@ void Application::UpdateWindowTitle() {
         if (m_sceneDirty != 0) title += L"*";
         title += L" - ";
     } else if (m_sceneDirty != 0) {
-        title = L"新規シーン* - ";
+        title = (ui::CurrentLanguage() == ui::Language::English) ? L"New Scene* - " : L"新規シーン* - ";
     }
     title += L"Terrain Graph";
     m_window.SetTitle(title.c_str());

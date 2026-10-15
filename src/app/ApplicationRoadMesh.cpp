@@ -137,7 +137,8 @@ bool Application::SurfaceMaterialGpu(compositor::MaterialAssetId material, float
     if (asset == nullptr) return false;
     if (asset->layerMaterial) {
         if (!asset->layerError.empty() || asset->layerGpu.count == 0) {
-            if (error) *error = asset->layerError.empty() ? "Layered Material に層がありません" : asset->layerError;
+            if (error) *error = asset->layerError.empty() ? ui::Tr("Layered Material に層がありません", "Layered Material has no layers")
+                                                : asset->layerError;
             return false;
         }
         out = asset->layerGpu;
@@ -153,7 +154,7 @@ bool Application::SurfaceMaterialGpu(compositor::MaterialAssetId material, float
     std::string message;
     out = m_materialLibrary.CompileLayerMaterial(single, m_textureLibrary, message);
     if (!message.empty() || out.count == 0) {
-        if (error) *error = message.empty() ? "材質を組み立てられません" : message;
+        if (error) *error = message.empty() ? ui::Tr("材質を組み立てられません", "Cannot build the material") : message;
         return false;
     }
     return true;
@@ -383,7 +384,8 @@ void Application::PrepareRoadMeshes() {
                         if (slot.hasMaterial) SetShoulderContext(slot.gpu, stripWidth);
                         item.track.materials.push_back(slot);
                     } else {
-                        status.error = "区間の材質は 4 種類まで（繰り返し長の違いも別の種類に数える）";
+                        status.error = ui::Tr("区間の材質は 4 種類まで（繰り返し長の違いも別の種類に数える）",
+                                              "Up to 4 span materials (a different repeat length counts as another)");
                     }
                     if (!span.boundaryPath.empty() || !span.boundaryUid.empty()) {
                         const std::string boundaryKey = span.boundaryUid + "|" + span.boundaryPath;
@@ -391,7 +393,7 @@ void Application::PrepareRoadMeshes() {
                         if (foundBoundary != boundaryKeys.end()) {
                             out.boundary = static_cast<uint32_t>(foundBoundary - boundaryKeys.begin());
                         } else if (boundaryKeys.size() >= graph::kShoulderMaxSpanBoundaries) {
-                            status.error = "区間の境界マテリアルは 4 種類まで";
+                            status.error = ui::Tr("区間の境界マテリアルは 4 種類まで", "Up to 4 span boundary materials");
                         } else if (const BoundaryAsset* boundary = AcquireBoundary(span.boundaryPath, span.boundaryUid)) {
                             if (!boundary->error.empty()) {
                                 status.materialError = boundary->error;
@@ -510,50 +512,63 @@ bool Application::DrawRoadMeshSettings(graph::Node& node) {
     const graph::RoadMeshSettings defaults;
     bool changed = false;
 
-    ui::SectionHeader("路面");
+    ui::SectionHeader(ui::Tr("路面", "Road Surface"));
     if (ui::BeginPropertyTable("roadMeshShapeRows")) {
-        changed |= ui::PropertyFloat("幅", &mesh.widthMeters, graph::kRoadMinWidthMeters, graph::kRoadMaxWidthMeters,
-                                     defaults.widthMeters, "路面の全幅（m）。幅方向は約 1 m ごとに割る", "%.1f m");
-        changed |= ui::PropertyInt("車線数（進行方向）", &mesh.lanesForward, 1, 8, defaults.lanesForward,
-                                   "進行方向（Road Path の向き）の車線の数");
-        changed |= ui::PropertyInt("車線数（対向）", &mesh.lanesBackward, 0, 8, defaults.lanesBackward,
-                                   "対向の車線の数。0 で一方通行");
+        changed |= ui::PropertyFloat(ui::Tr("幅", "Width"), &mesh.widthMeters, graph::kRoadMinWidthMeters, graph::kRoadMaxWidthMeters,
+                                     defaults.widthMeters,
+                                     ui::Tr("路面の全幅（m）。幅方向は約 1 m ごとに割る",
+                                            "Full width of the road surface (m). Split about every 1 m across"),
+                                     "%.1f m");
+        changed |= ui::PropertyInt(ui::Tr("車線数（進行方向）", "Lanes (Forward)"), &mesh.lanesForward, 1, 8, defaults.lanesForward,
+                                   ui::Tr("進行方向（Road Path の向き）の車線の数",
+                                          "Number of lanes in the forward direction (along the Road Path)"));
+        changed |= ui::PropertyInt(ui::Tr("車線数（対向）", "Lanes (Oncoming)"), &mesh.lanesBackward, 0, 8, defaults.lanesBackward,
+                                   ui::Tr("対向の車線の数。0 で一方通行", "Number of oncoming lanes. 0 for one-way"));
         const int lanes = std::max(1, mesh.lanesForward + mesh.lanesBackward);
-        ui::PropertyValue("車線幅", "%.2f m", mesh.widthMeters / static_cast<float>(lanes));
-        static const char* const kTrafficSides[] = {"左側通行", "右側通行"};
+        ui::PropertyValue(ui::Tr("車線幅", "Lane Width"), "%.2f m", mesh.widthMeters / static_cast<float>(lanes));
+        static const ui::LocalizedText kTrafficSides[] = {{"左側通行", "Left-Hand Traffic"}, {"右側通行", "Right-Hand Traffic"}};
         int side = mesh.leftHandTraffic ? 0 : 1;
-        if (ui::PropertyCombo("走行側", &side, kTrafficSides, 2, 0,
-                              "進行方向の車線が道路のどちら側に並ぶか。轍のマスクを車線に合わせるときに使う")) {
+        if (ui::PropertyCombo(ui::Tr("走行側", "Driving Side"), &side, ui::Tr(kTrafficSides).data(), 2, 0,
+                              ui::Tr("進行方向の車線が道路のどちら側に並ぶか。轍のマスクを車線に合わせるときに使う",
+                                     "Which side of the road the forward lanes are on. Used to align rut masks with lanes"))) {
             mesh.leftHandTraffic = side == 0;
             changed = true;
         }
-        changed |= ui::PropertyFloat("路面の持ち上げ", &mesh.surfaceOffsetMeters, 0.0f, 2.0f, defaults.surfaceOffsetMeters,
-                                     "路面を中心線からどれだけ上げるか（m）。地形の均し（切土・盛土）が入るまで、"
-                                     "地形と重なって路面が欠けるのを抑える",
+        changed |= ui::PropertyFloat(ui::Tr("路面の持ち上げ", "Surface Lift"), &mesh.surfaceOffsetMeters, 0.0f, 2.0f,
+                                     defaults.surfaceOffsetMeters,
+                                     ui::Tr("路面を中心線からどれだけ上げるか（m）。地形の均し（切土・盛土）が入るまで、"
+                                            "地形と重なって路面が欠けるのを抑える",
+                                            "How far to raise the surface above the centerline (m). Until terrain grading "
+                                            "(cut / fill) is in place, keeps the terrain from poking through the road"),
                                      "%.2f m");
         ui::EndPropertyTable();
     }
 
-    ui::SectionHeader("材質");
+    ui::SectionHeader(ui::Tr("材質", "Material"));
     if (ui::BeginPropertyTable("roadMeshMaterialRows")) {
-        changed |= DrawMaterialSlotRow("材質", mesh.material, m_materialLibrary, m_pendingAssetReveal, true, true);
+        changed |= DrawMaterialSlotRow(ui::Tr("材質", "Material"), mesh.material, m_materialLibrary, m_pendingAssetReveal, true, true);
         const compositor::MaterialAsset* asset = m_materialLibrary.Find(mesh.material);
         if (asset == nullptr || !asset->layerMaterial) {
-            changed |= ui::PropertyFloat("繰り返し長", &mesh.uvRepeatMeters, 0.1f, 100.0f, defaults.uvRepeatMeters,
-                                         "模様が 1 周する長さ（m）。幅方向と進行方向で同じ", "%.2f m",
+            changed |= ui::PropertyFloat(ui::Tr("繰り返し長", "Repeat Length"), &mesh.uvRepeatMeters, 0.1f, 100.0f, defaults.uvRepeatMeters,
+                                         ui::Tr("模様が 1 周する長さ（m）。幅方向と進行方向で同じ",
+                                                "Length of one pattern repeat (m). Same across and along the road"),
+                                         "%.2f m",
                                          ImGuiSliderFlags_Logarithmic);
         }
         ui::EndPropertyTable();
     }
-    ui::HintText("Material か Layered Material を選ぶ。路面の座標（左端からの横位置、始点からの道のり）で貼る。"
-                 "Layered Material は層ごとの繰り返し長を使う。なしなら灰色で塗る");
+    ui::HintText("%s", ui::Tr("Material か Layered Material を選ぶ。路面の座標（左端からの横位置、始点からの道のり）で貼る。"
+                               "Layered Material は層ごとの繰り返し長を使う。なしなら灰色で塗る",
+                               "Choose a Material or Layered Material. Mapped by road coordinates (offset from the left edge, "
+                               "distance from the start). Layered Material uses each layer's repeat length. None paints gray"));
 
-    DrawRoadNodeStatus(node.id, "Road Path を繋ぎ、Mesh Output へ繋ぐと描く");
+    DrawRoadNodeStatus(node.id, ui::Tr("Road Path を繋ぎ、Mesh Output へ繋ぐと描く",
+                                       "Connect a Road Path and connect to Mesh Output to draw"));
     return changed;
 }
 
 void Application::DrawRoadNodeStatus(graph::GraphId nodeId, const char* disconnectedHint) {
-    ui::SectionHeader("状態");
+    ui::SectionHeader(ui::Tr("状態", "Status"));
     const auto found = m_roadNodeStatus.find(nodeId);
     if (found == m_roadNodeStatus.end()) {
         ui::HintText("%s", disconnectedHint);
@@ -564,8 +579,9 @@ void Application::DrawRoadNodeStatus(graph::GraphId nodeId, const char* disconne
     if (!status.error.empty()) ImGui::TextColored(warn, "%s", status.error.c_str());
     if (!status.materialError.empty()) ImGui::TextColored(warn, "%s", status.materialError.c_str());
     if (ui::BeginPropertyTable("roadNodeStatusRows")) {
-        ui::PropertyValue("延長", "%.0f m", status.lengthMeters);
-        ui::PropertyValue("メッシュ", "頂点 %zu / 三角形 %zu", status.vertices, status.triangles);
+        ui::PropertyValue(ui::Tr("延長", "Length"), "%.0f m", status.lengthMeters);
+        ui::PropertyValue(ui::Tr("メッシュ", "Mesh"), ui::Tr("頂点 %zu / 三角形 %zu", "%zu verts / %zu tris"), status.vertices,
+                          status.triangles);
         ui::EndPropertyTable();
     }
 }
@@ -579,7 +595,7 @@ Application::BoundaryAsset* Application::AcquireBoundary(const std::string& path
     asset.path = m_workspace.Resolve(nlohmann::json{{"path", path}, {"uid", uid}});
     nlohmann::json body;
     if (asset.path.empty() || !m_workspace.ReadAsset(asset.path, "boundary-material-asset", body)) {
-        asset.error = "境界マテリアルを読めません: " + path;
+        asset.error = ui::Tr("境界マテリアルを読めません: ", "Cannot read boundary material: ") + path;
         TG_LOG_WARN("%s", asset.error.c_str());
         return &asset;
     }
@@ -606,7 +622,7 @@ Application::BoundaryAsset* Application::AcquireBoundary(const std::string& path
     asset.mask = texture("mask");
     asset.height = texture("height");
     if (asset.mask == compositor::kNoTexture) {
-        asset.error = "境界マテリアルのマスク画像を読めません: " + asset.name;
+        asset.error = ui::Tr("境界マテリアルのマスク画像を読めません: ", "Cannot read the boundary material mask: ") + asset.name;
         TG_LOG_WARN("%s", asset.error.c_str());
     }
     return &asset;
@@ -635,28 +651,35 @@ bool Application::SaveBoundary(BoundaryAsset& asset) {
 void Application::DrawBoundaryAssetRows(BoundaryAsset& boundary) {
     const BoundaryAsset defaults;
     bool edited = false;
-    edited |= DrawTextureSlotRow("マスク", boundary.mask, m_textureLibrary, m_pendingAssetReveal);
-    edited |= DrawTextureSlotRow("ハイト", boundary.height, m_textureLibrary, m_pendingAssetReveal);
-    edited |= ui::PropertyFloat("境界の幅", &boundary.widthMeters, 0.01f, 20.0f, defaults.widthMeters,
-                                "内側の端から、境目の模様を置く幅（m）。路肩の幅より広くはしない", "%.2f m");
-    edited |= ui::PropertyFloat("繰り返し長", &boundary.repeatMeters, 0.01f, 100.0f, defaults.repeatMeters,
-                                "道に沿って模様が 1 周する長さ（m）", "%.2f m", ImGuiSliderFlags_Logarithmic);
-    edited |= ui::PropertyFloat("深さ", &boundary.depthMeters, 0.0f, 0.5f, defaults.depthMeters,
-                                "ハイトの凹凸の深さ（m）。(ハイト - 基準) × 2 × 深さ。今は陰影だけに効く", "%.3f m");
-    edited |= ui::PropertyFloat("基準の高さ", &boundary.heightCenter, 0.0f, 1.0f, defaults.heightCenter,
-                                "ハイト画像の平らな所の値", "%.2f");
-    static const char* const kAxes[] = {"V（道に沿う向き）", "U（横切る向き）"};
+    edited |= DrawTextureSlotRow(ui::Tr("マスク", "Mask"), boundary.mask, m_textureLibrary, m_pendingAssetReveal);
+    edited |= DrawTextureSlotRow(ui::Tr("ハイト", "Height"), boundary.height, m_textureLibrary, m_pendingAssetReveal);
+    edited |= ui::PropertyFloat(ui::Tr("境界の幅", "Boundary Width"), &boundary.widthMeters, 0.01f, 20.0f, defaults.widthMeters,
+                                ui::Tr("内側の端から、境目の模様を置く幅（m）。路肩の幅より広くはしない",
+                                       "Width of the boundary pattern from the inner edge (m). Never wider than the shoulder"),
+                                "%.2f m");
+    edited |= ui::PropertyFloat(ui::Tr("繰り返し長", "Repeat Length"), &boundary.repeatMeters, 0.01f, 100.0f, defaults.repeatMeters,
+                                ui::Tr("道に沿って模様が 1 周する長さ（m）", "Length of one pattern repeat along the road (m)"),
+                                "%.2f m", ImGuiSliderFlags_Logarithmic);
+    edited |= ui::PropertyFloat(ui::Tr("深さ", "Depth"), &boundary.depthMeters, 0.0f, 0.5f, defaults.depthMeters,
+                                ui::Tr("ハイトの凹凸の深さ（m）。(ハイト - 基準) × 2 × 深さ。今は陰影だけに効く",
+                                       "Depth of the height relief (m). (height - reference) × 2 × depth. Affects shading only for now"),
+                                "%.3f m");
+    edited |= ui::PropertyFloat(ui::Tr("基準の高さ", "Reference Height"), &boundary.heightCenter, 0.0f, 1.0f, defaults.heightCenter,
+                                ui::Tr("ハイト画像の平らな所の値", "Value of the flat areas in the height image"), "%.2f");
+    static const ui::LocalizedText kAxes[] = {{"V（道に沿う向き）", "V (Along Road)"}, {"U（横切る向き）", "U (Across Road)"}};
     int axis = boundary.alongU ? 1 : 0;
-    if (ui::PropertyCombo("繰り返しの向き", &axis, kAxes, 2, 0, "画像のどちらの向きを道に沿って繰り返すか")) {
+    if (ui::PropertyCombo(ui::Tr("繰り返しの向き", "Repeat Direction"), &axis, ui::Tr(kAxes).data(), 2, 0,
+                          ui::Tr("画像のどちらの向きを道に沿って繰り返すか", "Which image direction repeats along the road"))) {
         boundary.alongU = axis == 1;
         edited = true;
     }
-    edited |= ui::PropertyBool("マスクを反転", &boundary.invertMask, defaults.invertMask,
-                               "マスクは白が内側の帯（路面）、黒が路肩。逆の画像のときに入れる");
+    edited |= ui::PropertyBool(ui::Tr("マスクを反転", "Invert Mask"), &boundary.invertMask, defaults.invertMask,
+                               ui::Tr("マスクは白が内側の帯（路面）、黒が路肩。逆の画像のときに入れる",
+                                      "White in the mask is the inner strip (road), black the shoulder. Turn on for reversed images"));
     if (edited) boundary.dirty = true;
     ui::PropertyLabelEmpty("boundarySave");
     ImGui::BeginDisabled(!boundary.dirty);
-    if (ui::Button("ファイルへ保存", ui::kWideButtonWidth)) SaveBoundary(boundary);
+    if (ui::Button(ui::Tr("ファイルへ保存", "Save to File"), ui::kWideButtonWidth)) SaveBoundary(boundary);
     ImGui::EndDisabled();
     ui::PropertyEnd();
 }
@@ -671,9 +694,9 @@ void Application::OpenBoundaryPreview(const std::filesystem::path& file) {
 // 境界マテリアルの窓。上にマスクとハイトの画像、下に設定（路肩のプロパティと同じ行）。
 // 開くのはアセットブラウザのダブルクリックか、路肩のプロパティのボタン。
 void Application::DrawBoundaryPreviewWindow() {
-    if (!m_showBoundaryPreview || HiddenWithAssetBand("境界マテリアル")) return;
+    if (!m_showBoundaryPreview || HiddenWithAssetBand("###BoundaryMaterial")) return;
     ImGui::SetNextWindowSize(ImVec2(ui::Scaled(460.0f), ui::Scaled(640.0f)), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("境界マテリアル", &m_showBoundaryPreview,
+    if (!ImGui::Begin(ui::Tr("境界マテリアル###BoundaryMaterial", "Boundary Material###BoundaryMaterial"), &m_showBoundaryPreview,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         ImGui::End();
         return;
@@ -682,7 +705,8 @@ void Application::DrawBoundaryPreviewWindow() {
                                   ? nullptr
                                   : AcquireBoundary(m_boundaryPreviewPath, m_boundaryPreviewUid);
     if (boundary == nullptr) {
-        ui::HintText("アセットブラウザで .tgboundary をダブルクリックすると開く");
+        ui::HintText("%s", ui::Tr("アセットブラウザで .tgboundary をダブルクリックすると開く",
+                                   "Double-click a .tgboundary in the asset browser to open it"));
         ImGui::End();
         return;
     }
@@ -711,29 +735,33 @@ void Application::DrawBoundaryPreviewWindow() {
             }
             ImGui::EndGroup();
         };
-        image("マスク（R）", boundary->mask);
+        image(ui::Tr("マスク（R）", "Mask (R)"), boundary->mask);
         ImGui::SameLine();
-        image("ハイト（R）", boundary->height);
+        image(ui::Tr("ハイト（R）", "Height (R)"), boundary->height);
     }
     ImGui::EndChild();
     ImGui::Separator();
 
     // --- 下: 設定 ---
     ImGui::BeginChild("boundaryPropertyPane", ImVec2(0.0f, 0.0f));
-    ui::SectionHeader("境界マテリアル");
+    ui::SectionHeader(ui::Tr("境界マテリアル", "Boundary Material"));
     if (!boundary->error.empty()) {
         ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(ui::WarnColor()), "%s", boundary->error.c_str());
-    } else if (ui::BeginPropertyTable("boundaryWindowRows", "繰り返しの向き")) {
-        ui::PropertyValue("名前", "%s", boundary->name.c_str());
-        DrawAssetPathRow("場所", boundary->path, m_pendingAssetReveal);
+    } else if (ui::BeginPropertyTable("boundaryWindowRows", ui::Tr("繰り返しの向き", "Reference Height"))) {
+        ui::PropertyValue(ui::Tr("名前", "Name"), "%s", boundary->name.c_str());
+        DrawAssetPathRow(ui::Tr("場所", "Location"), boundary->path, m_pendingAssetReveal);
         DrawBoundaryAssetRows(*boundary);
         ui::EndPropertyTable();
     }
-    ui::HintText(boundary->alongU
-                     ? "画像の V が内側（路面）から外へ横切る向き、U が道に沿って繰り返す向き"
-                     : "画像の U（左 → 右）が内側（路面）から外へ横切る向き、V が道に沿って繰り返す向き");
-    ui::HintText("マスクの白が内側の帯（路面）、黒が路肩。設定はこのファイルを使うすべての路肩に効き、"
-                 "「ファイルへ保存」でファイルへ書く");
+    ui::HintText("%s", boundary->alongU
+                           ? ui::Tr("画像の V が内側（路面）から外へ横切る向き、U が道に沿って繰り返す向き",
+                                    "Image V runs across from the inner side (road) outward; U repeats along the road")
+                           : ui::Tr("画像の U（左 → 右）が内側（路面）から外へ横切る向き、V が道に沿って繰り返す向き",
+                                    "Image U (left to right) runs across from the inner side (road) outward; V repeats along the road"));
+    ui::HintText("%s", ui::Tr("マスクの白が内側の帯（路面）、黒が路肩。設定はこのファイルを使うすべての路肩に効き、"
+                               "「ファイルへ保存」でファイルへ書く",
+                               "White in the mask is the inner strip (road), black the shoulder. Settings affect every shoulder "
+                               "using this file; \"Save to File\" writes them"));
     ImGui::EndChild();
     ImGui::End();
 }
@@ -789,7 +817,7 @@ bool Application::DrawShoulderSection(graph::RoadShoulderSettings& shoulder) {
         std::snprintf(text, sizeof(text), "%.2f m", right);
         drawList->AddText(ImVec2(max.x - pad - ImGui::CalcTextSize(text).x, max.y - pad * 0.5f - ImGui::GetTextLineHeight()),
                           ImGui::GetColorU32(ImGuiCol_TextDisabled), text);
-        std::snprintf(text, sizeof(text), "高さ %+.2f 〜 %+.2f m", low, high);
+        std::snprintf(text, sizeof(text), ui::Tr("高さ %+.2f 〜 %+.2f m", "Height %+.2f to %+.2f m"), low, high);
         drawList->AddText(ImVec2(min.x + pad * 0.5f, min.y + pad * 0.3f), ImGui::GetColorU32(ImGuiCol_TextDisabled), text);
         drawList->PopClipRect();
     }
@@ -802,18 +830,21 @@ bool Application::DrawShoulderSection(graph::RoadShoulderSettings& shoulder) {
     for (size_t i = 0; i < section.size(); ++i) {
         graph::RoadSectionPoint& point = section[i];
         ImGui::PushID(static_cast<int>(i));
-        ImGui::TextDisabled("断面の点 %zu", i + 1);
+        ImGui::TextDisabled(ui::Tr("断面の点 %zu", "Section Point %zu"), i + 1);
         if (ui::BeginPropertyTable("shoulderSectionPoint")) {
-            changed |= ui::PropertyFloat("外への距離", &point.acrossMeters, 0.0f, graph::kShoulderMaxWidthMeters,
+            changed |= ui::PropertyFloat(ui::Tr("外への距離", "Outward Distance"), &point.acrossMeters, 0.0f, graph::kShoulderMaxWidthMeters,
                                          i > 0 ? section[i - 1].acrossMeters : 0.0f,
-                                         "内側の端から外への水平の距離（m）。前の点より小さくはしない。同じなら縦の面",
+                                         ui::Tr("内側の端から外への水平の距離（m）。前の点より小さくはしない。同じなら縦の面",
+                                                "Horizontal distance outward from the inner edge (m). Not less than the previous "
+                                                "point; equal makes a vertical face"),
                                          "%.3f m");
-            changed |= ui::PropertyFloat("高さ", &point.heightMeters, -graph::kShoulderMaxSectionHeight,
+            changed |= ui::PropertyFloat(ui::Tr("高さ", "Height"), &point.heightMeters, -graph::kShoulderMaxSectionHeight,
                                          graph::kShoulderMaxSectionHeight, i > 0 ? section[i - 1].heightMeters : 0.0f,
-                                         "内側の端からの高さ（m）。正なら上", "%+.3f m");
+                                         ui::Tr("内側の端からの高さ（m）。正なら上", "Height from the inner edge (m). Positive is up"),
+                                         "%+.3f m");
             if (section.size() > 1) {
                 ui::PropertyLabelEmpty("shoulderSectionPointDelete");
-                if (ui::Button("削除")) removeIndex = i;
+                if (ui::Button(ui::Tr("削除", "Delete"))) removeIndex = i;
                 ui::PropertyEnd();
             }
             ui::EndPropertyTable();
@@ -825,14 +856,16 @@ bool Application::DrawShoulderSection(graph::RoadShoulderSettings& shoulder) {
         changed = true;
     }
     ImGui::BeginDisabled(section.size() >= graph::kShoulderMaxSectionPoints);
-    if (ui::Button("断面の点を追加", ui::kWideButtonWidth)) {
+    if (ui::Button(ui::Tr("断面の点を追加", "Add Section Point"), ui::kWideButtonWidth)) {
         const graph::RoadSectionPoint last = section.empty() ? graph::RoadSectionPoint{} : section.back();
         section.push_back({std::min(last.acrossMeters + 1.0f, graph::kShoulderMaxWidthMeters), last.heightMeters});
         changed = true;
     }
     ImGui::EndDisabled();
-    ui::HintText("内側の端 (0, 0) から外へ向かう順に並べる。向きが大きく変わる点は稜線を立て、"
-                 "区間は約 1 m ごとに割る。材質は断面に沿った長さで貼る");
+    ui::HintText("%s", ui::Tr("内側の端 (0, 0) から外へ向かう順に並べる。向きが大きく変わる点は稜線を立て、"
+                               "区間は約 1 m ごとに割る。材質は断面に沿った長さで貼る",
+                               "Order points outward from the inner edge (0, 0). Sharp turns get hard edges, "
+                               "segments are split about every 1 m. Materials map by length along the section"));
     return changed;
 }
 
@@ -844,52 +877,66 @@ bool Application::DrawLaneMarkingSettings(graph::Node& node) {
     bool changed = false;
 
     // 線の種類ごと（中央線・外側線・車線境界線）。
-    static const char* const kTitles[] = {"中央線", "外側線", "車線境界線"};
-    static const char* const kHints[] = {
-        "進行方向と対向の車線の境に引く。対向の車線が無い道路（Road Mesh の対向の車線数が 0）では出ない",
-        "左右の端から「外側線の位置」だけ内側に引く",
-        "同じ向きの車線どうしの境に引く（片側 2 車線以上のとき）",
+    static const ui::LocalizedText kTitles[] = {{"中央線", "Center Line"}, {"外側線", "Edge Line"}, {"車線境界線", "Lane Line"}};
+    static const ui::LocalizedText kHints[] = {
+        {"進行方向と対向の車線の境に引く。対向の車線が無い道路（Road Mesh の対向の車線数が 0）では出ない",
+         "Drawn between forward and oncoming lanes. Not drawn without oncoming lanes (Road Mesh oncoming lanes 0)"},
+        {"左右の端から「外側線の位置」だけ内側に引く", "Drawn inside each edge by \"Edge Line Inset\""},
+        {"同じ向きの車線どうしの境に引く（片側 2 車線以上のとき）",
+         "Drawn between lanes in the same direction (with 2 or more lanes per direction)"},
     };
     for (size_t kind = 0; kind < graph::kRoadMarkingKindCount; ++kind) {
         graph::RoadMarkingLine& line = marking.lines[kind];
         const graph::RoadMarkingLine& lineDefaults = defaults.lines[kind];
         ImGui::PushID(static_cast<int>(kind));
-        ui::SectionHeader(kTitles[kind]);
+        ui::SectionHeader(kTitles[kind].Get());
         if (ui::BeginPropertyTable("laneMarkingLineRows")) {
-            changed |= ui::PropertyBool("引く", &line.enabled, lineDefaults.enabled, kHints[kind]);
+            changed |= ui::PropertyBool(ui::Tr("引く", "Draw"), &line.enabled, lineDefaults.enabled, kHints[kind].Get());
             if (line.enabled) {
-                changed |= ui::PropertyBool("破線", &line.dashed, lineDefaults.dashed,
-                                            "破線にする。線と間隔の長さは下の「破線」で決める");
-                changed |= ui::PropertyFloat("幅", &line.widthMeters, 0.05f, 1.0f, lineDefaults.widthMeters,
-                                             "線の幅（m）", "%.2f m");
-                changed |= DrawMaterialSlotRow("材質", line.material, m_materialLibrary, m_pendingAssetReveal, true, true);
+                changed |= ui::PropertyBool(ui::Tr("破線", "Dashed"), &line.dashed, lineDefaults.dashed,
+                                            ui::Tr("破線にする。線と間隔の長さは下の「破線」で決める",
+                                                   "Makes the line dashed. Dash and gap lengths are set below"));
+                changed |= ui::PropertyFloat(ui::Tr("幅", "Width"), &line.widthMeters, 0.05f, 1.0f, lineDefaults.widthMeters,
+                                             ui::Tr("線の幅（m）", "Line width (m)"), "%.2f m");
+                changed |= DrawMaterialSlotRow(ui::Tr("材質", "Material"), line.material, m_materialLibrary, m_pendingAssetReveal, true, true);
             }
             ui::EndPropertyTable();
         }
         ImGui::PopID();
     }
 
-    ui::SectionHeader("共通");
-    if (ui::BeginPropertyTable("laneMarkingCommonRows", "長さの向きを U に")) {
-        changed |= ui::PropertyFloat("外側線の位置", &marking.edgeInsetMeters, 0.0f, 5.0f, defaults.edgeInsetMeters,
-                                     "外側線の中心の、路面の端からの距離（m）", "%.2f m");
-        changed |= ui::PropertyFloat("破線の線", &marking.dashLengthMeters, 0.1f, 50.0f, defaults.dashLengthMeters,
-                                     "破線の 1 本の長さ（m）", "%.1f m");
-        changed |= ui::PropertyFloat("破線の間隔", &marking.dashGapMeters, 0.0f, 50.0f, defaults.dashGapMeters,
-                                     "破線の線と線の間（m）", "%.1f m");
-        changed |= ui::PropertyFloat("浮かせる量", &marking.liftMeters, 0.0f, 0.1f, defaults.liftMeters,
-                                     "路面から浮かせる高さ（m）。描画でも手前へずらすので、ごく小さくてよい", "%.3f m");
-        changed |= ui::PropertyFloat("繰り返し長", &marking.uvRepeatMeters, 0.1f, 100.0f, defaults.uvRepeatMeters,
-                                     "線の長さの向きに模様が 1 周する長さ（m）。横は線の幅いっぱいで 1 周", "%.2f m",
+    ui::SectionHeader(ui::Tr("共通", "Common"));
+    if (ui::BeginPropertyTable("laneMarkingCommonRows", ui::Tr("長さの向きを U に", "Edge Line Inset"))) {
+        changed |= ui::PropertyFloat(ui::Tr("外側線の位置", "Edge Line Inset"), &marking.edgeInsetMeters, 0.0f, 5.0f, defaults.edgeInsetMeters,
+                                     ui::Tr("外側線の中心の、路面の端からの距離（m）",
+                                            "Distance of the edge line center from the road edge (m)"),
+                                     "%.2f m");
+        changed |= ui::PropertyFloat(ui::Tr("破線の線", "Dash Length"), &marking.dashLengthMeters, 0.1f, 50.0f, defaults.dashLengthMeters,
+                                     ui::Tr("破線の 1 本の長さ（m）", "Length of each dash (m)"), "%.1f m");
+        changed |= ui::PropertyFloat(ui::Tr("破線の間隔", "Dash Gap"), &marking.dashGapMeters, 0.0f, 50.0f, defaults.dashGapMeters,
+                                     ui::Tr("破線の線と線の間（m）", "Gap between dashes (m)"), "%.1f m");
+        changed |= ui::PropertyFloat(ui::Tr("浮かせる量", "Lift"), &marking.liftMeters, 0.0f, 0.1f, defaults.liftMeters,
+                                     ui::Tr("路面から浮かせる高さ（m）。描画でも手前へずらすので、ごく小さくてよい",
+                                            "Height above the road surface (m). Rendering also biases it forward, so keep it tiny"),
+                                     "%.3f m");
+        changed |= ui::PropertyFloat(ui::Tr("繰り返し長", "Repeat Length"), &marking.uvRepeatMeters, 0.1f, 100.0f, defaults.uvRepeatMeters,
+                                     ui::Tr("線の長さの向きに模様が 1 周する長さ（m）。横は線の幅いっぱいで 1 周",
+                                            "Length of one pattern repeat along the line (m). Across, one repeat spans the line width"),
+                                     "%.2f m",
                                      ImGuiSliderFlags_Logarithmic);
-        changed |= ui::PropertyBool("長さの向きを U に", &marking.uvAlongU, defaults.uvAlongU,
-                                    "画像の U（横）を線の長さの向きにする。横長の白線の画像（2048×256 など）向け");
+        changed |= ui::PropertyBool(ui::Tr("長さの向きを U に", "Length Along U"), &marking.uvAlongU, defaults.uvAlongU,
+                                    ui::Tr("画像の U（横）を線の長さの向きにする。横長の白線の画像（2048×256 など）向け",
+                                           "Runs image U (horizontal) along the line. For wide line images (such as 2048×256)"));
         ui::EndPropertyTable();
     }
-    ui::HintText("材質が無ければ白で塗る。不透明度（切り抜き・半透明）の Material なら、かすれた所を抜く"
-                 "（半透明もいまは切り抜きで描く）。車線の並びは Road Mesh の車線数と走行側で決まる");
+    ui::HintText("%s", ui::Tr("材質が無ければ白で塗る。不透明度（切り抜き・半透明）の Material なら、かすれた所を抜く"
+                               "（半透明もいまは切り抜きで描く）。車線の並びは Road Mesh の車線数と走行側で決まる",
+                               "Without a material, paints white. A Material with opacity (cutout / translucent) cuts out "
+                               "worn areas (translucent is drawn as cutout for now). Lane layout follows the Road Mesh "
+                               "lanes and driving side"));
 
-    DrawRoadNodeStatus(node.id, "Road Mesh（か、その先の Shoulder）を繋ぎ、Mesh Output へ繋ぐと描く");
+    DrawRoadNodeStatus(node.id, ui::Tr("Road Mesh（か、その先の Shoulder）を繋ぎ、Mesh Output へ繋ぐと描く",
+                                       "Connect a Road Mesh (or a Shoulder beyond it) and connect to Mesh Output to draw"));
     return changed;
 }
 
@@ -900,20 +947,24 @@ bool Application::DrawShoulderSettings(graph::Node& node) {
     const graph::RoadShoulderSettings defaults;
     bool changed = false;
 
-    ui::SectionHeader("路肩");
+    ui::SectionHeader(ui::Tr("路肩", "Shoulder"));
     if (ui::BeginPropertyTable("shoulderShapeRows")) {
-        static const char* const kSides[] = {"左右", "左", "右"};
+        static const ui::LocalizedText kSides[] = {{"左右", "Both"}, {"左", "Left"}, {"右", "Right"}};
         int side = static_cast<int>(shoulder.side);
-        if (ui::PropertyCombo("側", &side, kSides, 3, 0,
-                              "どちらの端に張り出すか（進行方向に向かって）。左右で材質や幅を変えるときは、"
-                              "左と右の Shoulder を続けて繋ぐ")) {
+        if (ui::PropertyCombo(ui::Tr("側", "Side"), &side, ui::Tr(kSides).data(), 3, 0,
+                              ui::Tr("どちらの端に張り出すか（進行方向に向かって）。左右で材質や幅を変えるときは、"
+                                     "左と右の Shoulder を続けて繋ぐ",
+                                     "Which edge to extend from (facing forward). To vary material or width per side, "
+                                     "chain a left and a right Shoulder"))) {
             shoulder.side = static_cast<graph::RoadShoulderSide>(side);
             changed = true;
         }
-        static const char* const kShapes[] = {"勾配", "断面の点"};
+        static const ui::LocalizedText kShapes[] = {{"勾配", "Slope"}, {"断面の点", "Section Points"}};
         int shape = static_cast<int>(shoulder.shape);
-        if (ui::PropertyCombo("形", &shape, kShapes, 2, 0,
-                              "勾配: 幅・横断勾配・段差で決める。断面の点: 縁石や側溝のような横断の形を点で決める")) {
+        if (ui::PropertyCombo(ui::Tr("形", "Shape"), &shape, ui::Tr(kShapes).data(), 2, 0,
+                              ui::Tr("勾配: 幅・横断勾配・段差で決める。断面の点: 縁石や側溝のような横断の形を点で決める",
+                                     "Slope: set by width, cross slope and step. Section Points: shape the cross section "
+                                     "(curbs, gutters) with points"))) {
             // 断面の点が無ければ、今の勾配の形から作る（切り替えても形が変わらない）。
             if (shape == 1 && shoulder.section.empty()) {
                 const std::vector<graph::RoadSectionPoint> points = graph::ShoulderSectionPoints(shoulder);
@@ -923,24 +974,36 @@ bool Application::DrawShoulderSettings(graph::Node& node) {
             changed = true;
         }
         if (shoulder.shape == graph::RoadShoulderShape::Slope) {
-            changed |= ui::PropertyFloat("幅", &shoulder.widthMeters, graph::kShoulderMinWidthMeters,
+            changed |= ui::PropertyFloat(ui::Tr("幅", "Width"), &shoulder.widthMeters, graph::kShoulderMinWidthMeters,
                                          graph::kShoulderMaxWidthMeters, defaults.widthMeters,
-                                         "路肩の幅（m）。幅方向は約 1 m ごとに割る", "%.2f m");
-            changed |= ui::PropertyFloat("横断勾配", &shoulder.crossSlopePercent, -50.0f, 50.0f,
-                                         defaults.crossSlopePercent, "外側へ向かって下がる勾配（%）。負なら上がる",
+                                         ui::Tr("路肩の幅（m）。幅方向は約 1 m ごとに割る",
+                                                "Shoulder width (m). Split about every 1 m across"),
+                                         "%.2f m");
+            changed |= ui::PropertyFloat(ui::Tr("横断勾配", "Cross Slope"), &shoulder.crossSlopePercent, -50.0f, 50.0f,
+                                         defaults.crossSlopePercent,
+                                         ui::Tr("外側へ向かって下がる勾配（%）。負なら上がる",
+                                                "Downward slope toward the outside (%). Negative rises"),
                                          "%.1f %%");
-            changed |= ui::PropertyFloat("段差", &shoulder.stepHeightMeters, 0.0f, 0.5f, defaults.stepHeightMeters,
-                                         "内側の端で下げる高さ（m）。舗装の端や縁石の段。0 で段差なし", "%.3f m");
+            changed |= ui::PropertyFloat(ui::Tr("段差", "Step"), &shoulder.stepHeightMeters, 0.0f, 0.5f, defaults.stepHeightMeters,
+                                         ui::Tr("内側の端で下げる高さ（m）。舗装の端や縁石の段。0 で段差なし",
+                                                "Drop at the inner edge (m), like a pavement edge or curb. 0 for none"),
+                                         "%.3f m");
             if (shoulder.stepHeightMeters > 0.0f) {
-                changed |= ui::PropertyFloat("段差の幅", &shoulder.stepWidthMeters, 0.005f, 1.0f,
-                                             defaults.stepWidthMeters, "段差を下りきるまでの水平の幅（m）", "%.3f m");
+                changed |= ui::PropertyFloat(ui::Tr("段差の幅", "Step Width"), &shoulder.stepWidthMeters, 0.005f, 1.0f,
+                                             defaults.stepWidthMeters,
+                                             ui::Tr("段差を下りきるまでの水平の幅（m）", "Horizontal width of the step drop (m)"),
+                                             "%.3f m");
             }
         } else {
-            static const char* const kTemplates[] = {"選ぶ…", "歩道（縁石）", "側溝（U 字）", "土の路肩"};
+            static const ui::LocalizedText kTemplates[] = {
+                {"選ぶ…", "Choose…"}, {"歩道（縁石）", "Sidewalk (Curb)"}, {"側溝（U 字）", "Gutter (U-Shaped)"}, {"土の路肩", "Dirt Shoulder"}};
             int chosen = 0;
-            if (ui::PropertyCombo("ひな形", &chosen, kTemplates, 4, 0,
-                                  "断面の点をひな形で置き換える。歩道: 縁石 15 cm と幅 2 m の歩道。"
-                                  "側溝: 幅 30 cm・深さ 30 cm の U 字溝と土の路肩。土の路肩: 平らな 50 cm と外の下り") &&
+            if (ui::PropertyCombo(ui::Tr("ひな形", "Template"), &chosen, ui::Tr(kTemplates).data(), 4, 0,
+                                  ui::Tr("断面の点をひな形で置き換える。歩道: 縁石 15 cm と幅 2 m の歩道。"
+                                         "側溝: 幅 30 cm・深さ 30 cm の U 字溝と土の路肩。土の路肩: 平らな 50 cm と外の下り",
+                                         "Replaces the section points with a template. Sidewalk: 15 cm curb and 2 m sidewalk. "
+                                         "Gutter: 30 cm wide, 30 cm deep U-gutter and dirt shoulder. Dirt Shoulder: flat 50 cm "
+                                         "then a downslope")) &&
                 chosen > 0) {
                 shoulder.section = graph::ShoulderSectionTemplate(static_cast<graph::RoadSectionTemplate>(chosen - 1));
                 changed = true;
@@ -950,24 +1013,27 @@ bool Application::DrawShoulderSettings(graph::Node& node) {
     }
     if (shoulder.shape == graph::RoadShoulderShape::Section) changed |= DrawShoulderSection(shoulder);
 
-    ui::SectionHeader("材質");
+    ui::SectionHeader(ui::Tr("材質", "Material"));
     if (ui::BeginPropertyTable("shoulderMaterialRows")) {
-        changed |= DrawMaterialSlotRow("材質", shoulder.material, m_materialLibrary, m_pendingAssetReveal, true, true);
+        changed |= DrawMaterialSlotRow(ui::Tr("材質", "Material"), shoulder.material, m_materialLibrary, m_pendingAssetReveal, true, true);
         const compositor::MaterialAsset* asset = m_materialLibrary.Find(shoulder.material);
         if (asset == nullptr || !asset->layerMaterial) {
-            changed |= ui::PropertyFloat("繰り返し長", &shoulder.uvRepeatMeters, 0.1f, 100.0f, defaults.uvRepeatMeters,
-                                         "模様が 1 周する長さ（m）", "%.2f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat(ui::Tr("繰り返し長", "Repeat Length"), &shoulder.uvRepeatMeters, 0.1f, 100.0f, defaults.uvRepeatMeters,
+                                         ui::Tr("模様が 1 周する長さ（m）", "Length of one pattern repeat (m)"), "%.2f m",
+                                         ImGuiSliderFlags_Logarithmic);
         }
         ui::EndPropertyTable();
     }
-    ui::HintText("路肩の座標（内側の端から断面に沿った長さ、始点からの道のり）で貼る。なしなら砂利色の灰色で塗る");
+    ui::HintText("%s", ui::Tr("路肩の座標（内側の端から断面に沿った長さ、始点からの道のり）で貼る。なしなら砂利色の灰色で塗る",
+                               "Mapped by shoulder coordinates (length along the section from the inner edge, distance "
+                               "from the start). None paints gravel gray"));
 
     // --- 内側の境界（境界マテリアル） ---
-    ui::SectionHeader("内側の境界");
+    ui::SectionHeader(ui::Tr("内側の境界", "Inner Boundary"));
     // 境界マテリアルの中身（マスク・ハイト・幅など）は .tgboundary のもの。ここでは選ぶだけで、
     // 中身は読むだけの要約で見せる（編集は境界マテリアルの窓で。同じファイルを使うすべての路肩に効くため）。
-    if (ui::BeginPropertyTable("shoulderBoundaryRows", "境界マテリアル")) {
-        changed |= DrawBoundaryCombo("境界マテリアル", shoulder.boundaryPath, shoulder.boundaryUid);
+    if (ui::BeginPropertyTable("shoulderBoundaryRows", ui::Tr("境界マテリアル", "Boundary Material"))) {
+        changed |= DrawBoundaryCombo(ui::Tr("境界マテリアル", "Boundary Material"), shoulder.boundaryPath, shoulder.boundaryUid);
         DrawBoundarySummary("shoulderBoundarySummary", shoulder.boundaryPath, shoulder.boundaryUid);
         ui::EndPropertyTable();
     }
@@ -975,7 +1041,7 @@ bool Application::DrawShoulderSettings(graph::Node& node) {
     // --- 区間（道のりで材質・境界を切り替える） ---
     // 上の材質・内側の境界は最初の区間。切替位置から先を別の材質・境界にし、切替位置を中心に
     // 移行距離の幅でなめらかにつなぐ（SurfaceLayout の区間の移植）。
-    ui::SectionHeader("区間");
+    ui::SectionHeader(ui::Tr("区間", "Spans"));
     const auto statusFound = m_roadNodeStatus.find(node.id);
     const float roadLength = statusFound != m_roadNodeStatus.end() && statusFound->second.lengthMeters > 0.0f
                                  ? statusFound->second.lengthMeters : 1000.0f;
@@ -988,25 +1054,30 @@ bool Application::DrawShoulderSettings(graph::Node& node) {
     for (size_t i = 0; i < shoulder.switches.size(); ++i) {
         graph::RoadShoulderSwitch& change = shoulder.switches[i];
         ImGui::PushID(static_cast<int>(i));
-        ImGui::TextDisabled("区間 %zu（%.1f m から）", i + 2, change.atMeters);
-        if (ui::BeginPropertyTable("shoulderSwitch", "境界マテリアル")) {
-            changed |= ui::PropertyFloat("切替位置", &change.atMeters, 0.0f, roadLength, std::min(10.0f, roadLength),
-                                         "この区間が始まる道のり（m）。始点から測る", "%.1f m");
-            changed |= ui::PropertyFloat("移行距離", &change.transitionMeters, 0.0f, graph::kShoulderMaxTransitionMeters,
-                                         2.0f,
-                                         "切替位置を中心に、前の区間からなめらかに移る幅（m）。0 でその位置で替わる。"
-                                         "前後の区間の長さより長くはならない",
+        ImGui::TextDisabled(ui::Tr("区間 %zu（%.1f m から）", "Span %zu (from %.1f m)"), i + 2, change.atMeters);
+        if (ui::BeginPropertyTable("shoulderSwitch", ui::Tr("境界マテリアル", "Boundary Material"))) {
+            changed |= ui::PropertyFloat(ui::Tr("切替位置", "Switch At"), &change.atMeters, 0.0f, roadLength, std::min(10.0f, roadLength),
+                                         ui::Tr("この区間が始まる道のり（m）。始点から測る",
+                                                "Distance where this span starts (m), measured from the start"),
                                          "%.1f m");
-            changed |= DrawMaterialSlotRow("材質", change.material, m_materialLibrary, m_pendingAssetReveal, true, true);
+            changed |= ui::PropertyFloat(ui::Tr("移行距離", "Transition"), &change.transitionMeters, 0.0f, graph::kShoulderMaxTransitionMeters,
+                                         2.0f,
+                                         ui::Tr("切替位置を中心に、前の区間からなめらかに移る幅（m）。0 でその位置で替わる。"
+                                                "前後の区間の長さより長くはならない",
+                                                "Width of the smooth blend from the previous span, centered on the switch (m). "
+                                                "0 switches right there. Never longer than the neighboring spans"),
+                                         "%.1f m");
+            changed |= DrawMaterialSlotRow(ui::Tr("材質", "Material"), change.material, m_materialLibrary, m_pendingAssetReveal, true, true);
             const compositor::MaterialAsset* asset = m_materialLibrary.Find(change.material);
             if (asset == nullptr || !asset->layerMaterial) {
-                changed |= ui::PropertyFloat("繰り返し長", &change.uvRepeatMeters, 0.1f, 100.0f, 2.0f,
-                                             "模様が 1 周する長さ（m）", "%.2f m", ImGuiSliderFlags_Logarithmic);
+                changed |= ui::PropertyFloat(ui::Tr("繰り返し長", "Repeat Length"), &change.uvRepeatMeters, 0.1f, 100.0f, 2.0f,
+                                             ui::Tr("模様が 1 周する長さ（m）", "Length of one pattern repeat (m)"), "%.2f m",
+                                             ImGuiSliderFlags_Logarithmic);
             }
-            changed |= DrawBoundaryCombo("境界マテリアル", change.boundaryPath, change.boundaryUid);
+            changed |= DrawBoundaryCombo(ui::Tr("境界マテリアル", "Boundary Material"), change.boundaryPath, change.boundaryUid);
             DrawBoundarySummary("shoulderSwitchBoundary", change.boundaryPath, change.boundaryUid);
             ui::PropertyLabelEmpty("shoulderSwitchDelete");
-            if (ui::Button("削除")) removeIndex = i;
+            if (ui::Button(ui::Tr("削除", "Delete"))) removeIndex = i;
             ui::PropertyEnd();
             ui::EndPropertyTable();
         }
@@ -1017,7 +1088,7 @@ bool Application::DrawShoulderSettings(graph::Node& node) {
         changed = true;
     }
     ImGui::BeginDisabled(shoulder.switches.size() >= graph::kShoulderMaxSwitches);
-    if (ui::Button("区間を追加", ui::kWideButtonWidth)) {
+    if (ui::Button(ui::Tr("区間を追加", "Add Span"), ui::kWideButtonWidth)) {
         // 一番長い区間の真ん中で切り、その区間の材質・境界を引き継ぐ（見た目を変えずに足す）。
         const std::vector<graph::RoadShoulderSpan> spans = graph::ShoulderSpans(shoulder, roadLength);
         size_t longest = 0;
@@ -1037,10 +1108,13 @@ bool Application::DrawShoulderSettings(graph::Node& node) {
         changed = true;
     }
     ImGui::EndDisabled();
-    ui::HintText("区間 1 は上の材質と内側の境界。区間を足すと、切替位置から先を別の材質・境界にする。"
-                 "材質と境界マテリアルは 1 本の路肩でそれぞれ 4 種類まで");
+    ui::HintText("%s", ui::Tr("区間 1 は上の材質と内側の境界。区間を足すと、切替位置から先を別の材質・境界にする。"
+                               "材質と境界マテリアルは 1 本の路肩でそれぞれ 4 種類まで",
+                               "Span 1 uses the material and inner boundary above. Added spans switch to another material "
+                               "or boundary from their switch point. Up to 4 materials and 4 boundary materials per shoulder"));
 
-    DrawRoadNodeStatus(node.id, "Road Mesh（か内側の Shoulder）を繋ぎ、Mesh Output へ繋ぐと描く");
+    DrawRoadNodeStatus(node.id, ui::Tr("Road Mesh（か内側の Shoulder）を繋ぎ、Mesh Output へ繋ぐと描く",
+                                       "Connect a Road Mesh (or an inner Shoulder) and connect to Mesh Output to draw"));
     return changed;
 }
 
@@ -1060,16 +1134,19 @@ void Application::DrawBoundarySummary(const char* id, const std::string& path, c
     const float size = ui::Scaled(40.0f);
     ui::ThumbnailImage(AssetThumbnailHandle(boundary->path), size);
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-        ImGui::SetTooltip("境目を真上から見た目安（左が路面、右が路肩。色は固定の目安）");
+        ImGui::SetTooltip("%s", ui::Tr("境目を真上から見た目安（左が路面、右が路肩。色は固定の目安）",
+                                        "Rough top view of the boundary (road on the left, shoulder on the right; fixed colors)"));
     ImGui::SameLine();
     ImGui::BeginGroup();
-    ImGui::TextDisabled("幅 %.2f m・繰り返し %.2f m%s", boundary->widthMeters, boundary->repeatMeters,
-                        boundary->dirty ? "（未保存の変更あり）" : "");
+    ImGui::TextDisabled(ui::Tr("幅 %.2f m・繰り返し %.2f m%s", "Width %.2f m, repeat %.2f m%s"), boundary->widthMeters,
+                        boundary->repeatMeters, boundary->dirty ? ui::Tr("（未保存の変更あり）", " (unsaved changes)") : "");
     ImGui::PushID(id);
-    if (ui::Button("窓で開く")) OpenBoundaryPreview(boundary->path);
+    if (ui::Button(ui::Tr("窓で開く", "Open"))) OpenBoundaryPreview(boundary->path);
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-        ImGui::SetTooltip("境界マテリアルの窓で開く。マスク・ハイト・幅などはそこで確かめて編集する"
-                          "（このファイルを使うすべての路肩に効く）");
+        ImGui::SetTooltip("%s", ui::Tr("境界マテリアルの窓で開く。マスク・ハイト・幅などはそこで確かめて編集する"
+                                        "（このファイルを使うすべての路肩に効く）",
+                                        "Opens the Boundary Material window to check and edit mask, height, width and more "
+                                        "(affects every shoulder using this file)"));
     ImGui::PopID();
     ImGui::EndGroup();
     ui::PropertyEnd();
@@ -1086,12 +1163,14 @@ bool Application::DrawBoundaryCombo(const char* label, std::string& path, std::s
         const auto text = p.stem().u8string();
         return std::string(reinterpret_cast<const char*>(text.c_str()));
     };
-    const std::string preview = current.empty() ? (path.empty() ? "なし" : "（見つからない）") : display(current);
-    ui::PropertyLabel(label, "内側の帯（路面か内側の路肩）との境目の形。ルート内の .tgboundary から選ぶ");
+    const std::string preview =
+        current.empty() ? (path.empty() ? ui::Tr("なし", "None") : ui::Tr("（見つからない）", "(Not Found)")) : display(current);
+    ui::PropertyLabel(label, ui::Tr("内側の帯（路面か内側の路肩）との境目の形。ルート内の .tgboundary から選ぶ",
+                                    "Shape of the boundary with the inner strip (road or inner shoulder). Pick a .tgboundary in the root"));
     ImGui::SetNextItemWidth(std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x));
     if (ImGui::BeginCombo("##boundary", preview.c_str())) {
         ui::ComboFilterInput();
-        if (!ui::ComboFilterActive() && ImGui::Selectable("なし", current.empty())) {
+        if (!ui::ComboFilterActive() && ImGui::Selectable(ui::Tr("なし", "None"), current.empty())) {
             path.clear();
             uid.clear();
             changed = true;

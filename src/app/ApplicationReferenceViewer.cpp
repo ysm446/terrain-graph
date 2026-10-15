@@ -122,7 +122,7 @@ void Application::DrawReferenceViewer() {
     if (!m_showReferenceViewer) return;
     ImGui::SetNextWindowSize(ImVec2(ui::Scaled(960.0f), ui::Scaled(560.0f)), ImGuiCond_FirstUseEver);
     if (std::exchange(m_referenceFocus, false)) ImGui::SetNextWindowFocus();
-    if (!ImGui::Begin("参照ビューア", &m_showReferenceViewer)) {
+    if (!ImGui::Begin(ui::Tr("参照ビューア###ReferenceViewer", "Reference Viewer###ReferenceViewer"), &m_showReferenceViewer)) {
         ImGui::End();
         return;
     }
@@ -138,28 +138,35 @@ void Application::DrawReferenceViewer() {
     }
 
     // --- 上の設定 -----------------------------------------------------------
-    if (ui::BeginPropertyTable("referenceViewer", "参照元の深さ")) {
-        m_referenceLayoutDirty |= ui::PropertyInt("参照元の深さ", &m_referenceDepthIn, 0, 5, 2,
-                                                  "中心を使っているもの（左）を何段までたどるか");
-        m_referenceLayoutDirty |= ui::PropertyInt("参照先の深さ", &m_referenceDepthOut, 0, 5, 2,
-                                                  "中心が使っているもの（右）を何段までたどるか");
-        ui::PropertyBool("選択に追従", &m_referenceFollowSelection, false,
-                         "アセットブラウザで選んだファイルを中心にする");
+    if (ui::BeginPropertyTable("referenceViewer", ui::Tr("参照元の深さ", "Dependency Depth"))) {
+        m_referenceLayoutDirty |= ui::PropertyInt(ui::Tr("参照元の深さ", "Referrer Depth"), &m_referenceDepthIn, 0, 5, 2,
+                                                  ui::Tr("中心を使っているもの（左）を何段までたどるか",
+                                                         "How many levels of files using the center (left) to follow"));
+        m_referenceLayoutDirty |= ui::PropertyInt(ui::Tr("参照先の深さ", "Dependency Depth"), &m_referenceDepthOut, 0, 5, 2,
+                                                  ui::Tr("中心が使っているもの（右）を何段までたどるか",
+                                                         "How many levels of files the center uses (right) to follow"));
+        ui::PropertyBool(ui::Tr("選択に追従", "Follow Selection"), &m_referenceFollowSelection, false,
+                         ui::Tr("アセットブラウザで選んだファイルを中心にする",
+                                "Centers the file selected in the asset browser"));
         ui::EndPropertyTable();
     }
-    if (ui::Button("更新")) m_referenceIndexDirty = true;
+    if (ui::Button(ui::Tr("更新", "Refresh"))) m_referenceIndexDirty = true;
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-        ImGui::SetTooltip("ワークスペースの文書を読み直して参照の関係を作り直す（保存やファイルの移動のあと）");
+        ImGui::SetTooltip("%s", ui::Tr("ワークスペースの文書を読み直して参照の関係を作り直す（保存やファイルの移動のあと）",
+                                        "Rereads the workspace documents and rebuilds the references (after saving or moving files)"));
     ImGui::SameLine();
     if (m_referenceCenter.empty()) {
-        ImGui::TextDisabled("アセットの右クリックの「関連を表示…」で中心を選ぶ");
+        ImGui::TextDisabled("%s", ui::Tr("アセットの右クリックの「関連を表示…」で中心を選ぶ",
+                                          "Pick a center with \"Show References…\" in an asset's context menu"));
     } else {
         ImGui::TextDisabled("%s", ToUtf8Display(m_referenceCenter.lexically_relative(m_workspace.Root())).c_str());
     }
     if (!m_referenceIndex.complete && !m_referenceIndexDirty)
-        ui::HintText("参照関係をすべて確認できませんでした。読めないファイルやリンクを確認してください。");
+        ui::HintText("%s", ui::Tr("参照関係をすべて確認できませんでした。読めないファイルやリンクを確認してください。",
+                                   "Could not check all references. Look for unreadable files or links."));
     if (m_referenceHidden > 0)
-        ui::HintText(("箱が多すぎるため " + std::to_string(m_referenceHidden) + " 件を省きました。深さを下げてください。").c_str());
+        ui::HintText("%s", (ui::Tr("箱が多すぎるため ", "Too many boxes; omitted ") + std::to_string(m_referenceHidden) +
+                            ui::Tr(" 件を省きました。深さを下げてください。", ". Lower the depth.")).c_str());
 
     // --- キャンバス -----------------------------------------------------------
     if (m_referenceEditor == nullptr) {
@@ -258,15 +265,15 @@ void Application::DrawReferenceViewer() {
     if (ImGui::BeginPopup("referenceViewerNodeMenu")) {
         if (contextNode < m_referenceNodes.size()) {
             const fs::path path = m_referenceNodes[contextNode].path;
-            if (ImGui::MenuItem("中心にする", nullptr, false, contextNode != 0)) recenter = path;
-            if (ImGui::MenuItem("アセットブラウザで表示")) m_pendingAssetReveal = path;
-            if (ImGui::MenuItem("エクスプローラで表示")) RevealFileInExplorer(path);
+            if (ImGui::MenuItem(ui::Tr("中心にする", "Set as Center"), nullptr, false, contextNode != 0)) recenter = path;
+            if (ImGui::MenuItem(ui::Tr("アセットブラウザで表示", "Show in Asset Browser"))) m_pendingAssetReveal = path;
+            if (ImGui::MenuItem(ui::Tr("エクスプローラで表示", "Show in Explorer"))) RevealFileInExplorer(path);
         }
         ImGui::EndPopup();
     }
     // 長いパスは箱では省略しているので、カーソルを載せたら全体を出す。
     if (hovered && IndexOfNode(hovered) < m_referenceNodes.size() && !ImGui::IsPopupOpen("referenceViewerNodeMenu"))
-        ImGui::SetTooltip("%s\nダブルクリックで中心にする", ToUtf8Display(m_referenceNodes[IndexOfNode(hovered)].path).c_str());
+        ImGui::SetTooltip(ui::Tr("%s\nダブルクリックで中心にする", "%s\nDouble-click to set as center"), ToUtf8Display(m_referenceNodes[IndexOfNode(hovered)].path).c_str());
     ed::Resume();
     ed::End();
     ed::PopStyleColor(2);

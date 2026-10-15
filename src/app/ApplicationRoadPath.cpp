@@ -166,13 +166,13 @@ bool Application::BuildRoadCenterline(const graph::Node& node, graph::RoadProfil
     if (pending) *pending = false;
     const auto* settings = std::get_if<graph::RoadPathNodeSettings>(&node.settings);
     if (settings == nullptr) {
-        if (error) *error = "Road Path ではありません";
+        if (error) *error = ui::Tr("Road Path ではありません", "Not a Road Path");
         return false;
     }
     const compositor::CpuHeightfield* heightfield = RoadBaseHeightfield(node.id);
     if (heightfield == nullptr) {
         if (pending) *pending = true;
-        if (error) *error = "Base の地形を評価中";
+        if (error) *error = ui::Tr("Base の地形を評価中", "Evaluating the Base terrain");
         return false;
     }
     const float scale = m_renderer.DisplacementScale();
@@ -210,15 +210,20 @@ bool Application::DrawRoadPathSettings(graph::Node& node) {
         scale != nullptr ? scale->baseElevationMeters + 0.5f * m_renderer.DisplacementScale() : 0.0f;
 
     // --- 縦断 -----------------------------------------------------------------
-    ui::SectionHeader("縦断");
+    ui::SectionHeader(ui::Tr("縦断", "Profile"));
     if (!valid) {
-        ui::HintText("縦断とバンク角は、分岐・閉ループ・孤立点のない 1 本の線で求める（%s）",
+        ui::HintText(ui::Tr("縦断とバンク角は、分岐・閉ループ・孤立点のない 1 本の線で求める（%s）",
+                            "Profile and superelevation need a single line with no branches, "
+                            "closed loops, or isolated points (%s)"),
                      error.c_str());
     }
     // 中心線は Base に繋いだ地形に沿う（最終出力ではない）。繋いでいなければ平らな板の上。
     if (!RoadBaseConnected(node)) {
-        ui::HintText("Base が繋がっていないので、中心線は変位 0 の平面に沿う。"
-                     "均す前の地形を Base に繋ぐと、その地形に沿う");
+        ui::HintText("%s", ui::Tr("Base が繋がっていないので、中心線は変位 0 の平面に沿う。"
+                                  "均す前の地形を Base に繋ぐと、その地形に沿う",
+                                  "Base is not connected, so the centerline follows a flat plane "
+                                  "with no displacement. Connect the terrain before grading to Base "
+                                  "to follow it"));
     }
     if (valid && ui::BeginPropertyTable("roadProfileRows")) {
         float low = centerline.points.front().y;
@@ -227,11 +232,13 @@ bool Application::DrawRoadPathSettings(graph::Node& node) {
             low = std::min(low, p.y);
             high = std::max(high, p.y);
         }
-        ui::PropertyValue("延長", "%.0f m", total);
-        ui::PropertyValue(scale != nullptr ? "標高" : "高さ", "%.0f 〜 %.0f m", low + elevationOffset,
+        ui::PropertyValue(ui::Tr("延長", "Length"), "%.0f m", total);
+        ui::PropertyValue(scale != nullptr ? ui::Tr("標高", "Elevation") : ui::Tr("高さ", "Height"),
+                          ui::Tr("%.0f 〜 %.0f m", "%.0f to %.0f m"), low + elevationOffset,
                           high + elevationOffset);
-        ui::PropertyValue("最大勾配", "%.1f %%（地形のまま %.1f %%）", MaxGradePercent(centerline),
-                          MaxGradePercent(base));
+        ui::PropertyValue(ui::Tr("最大勾配", "Max Grade"),
+                          ui::Tr("%.1f %%（地形のまま %.1f %%）", "%.1f %% (%.1f %% on raw terrain)"),
+                          MaxGradePercent(centerline), MaxGradePercent(base));
         ui::EndPropertyTable();
     }
 
@@ -437,10 +444,13 @@ bool Application::DrawRoadPathSettings(graph::Node& node) {
         if (shown != 0) {
             const graph::RoadVerticalPoint* point = graph::FindVerticalPoint(road, shown);
             const float d = std::clamp(point->u, 0.0f, 1.0f) * total;
-            ImGui::SetTooltip("縦断ポイント\n%.0f m\n交点の%s %.1f m\n地形との差 %+.1f m\n"
-                              "ドラッグで位置と高さ、Delete で削除",
-                              d, scale != nullptr ? "標高" : "高さ", handleHeight(*point) + elevationOffset,
-                              point->offsetMeters);
+            ImGui::SetTooltip(ui::Tr("縦断ポイント\n%.0f m\n交点の%s %.1f m\n地形との差 %+.1f m\n"
+                                     "ドラッグで位置と高さ、Delete で削除",
+                                     "Profile point\n%.0f m\nIntersection %s %.1f m\n"
+                                     "Diff from terrain %+.1f m\n"
+                                     "Drag to move position and height, Delete to remove"),
+                              d, scale != nullptr ? ui::Tr("標高", "elevation") : ui::Tr("高さ", "height"),
+                              handleHeight(*point) + elevationOffset, point->offsetMeters);
         } else if (hovered) {
             const float d = std::clamp(mouseDistance, 0.0f, total);
             drawList->AddLine(ImVec2(mouse.x, min.y), ImVec2(mouse.x, max.y), ImGui::GetColorU32(ImGuiCol_Border));
@@ -451,10 +461,13 @@ bool Application::DrawRoadPathSettings(graph::Node& node) {
             const XMFLOAT3 b = design.At(std::min(total, d + half));
             const float run = std::hypot(b.x - a.x, b.z - a.z);
             const float grade = run > 1e-3f ? (b.y - a.y) / run * 100.0f : 0.0f;
-            ImGui::SetTooltip("%.0f m\n%s %.1f m\n地形との差 %+.1f m（%s）\n勾配 %+.1f %%\n"
-                              "クリックで縦断ポイントを追加",
-                              d, scale != nullptr ? "標高" : "高さ", value + elevationOffset, value - terrain,
-                              value >= terrain ? "盛土" : "切土", grade);
+            ImGui::SetTooltip(ui::Tr("%.0f m\n%s %.1f m\n地形との差 %+.1f m（%s）\n勾配 %+.1f %%\n"
+                                     "クリックで縦断ポイントを追加",
+                                     "%.0f m\n%s %.1f m\nDiff from terrain %+.1f m (%s)\n"
+                                     "Grade %+.1f %%\nClick to add a profile point"),
+                              d, scale != nullptr ? ui::Tr("標高", "Elevation") : ui::Tr("高さ", "Height"),
+                              value + elevationOffset, value - terrain,
+                              value >= terrain ? ui::Tr("盛土", "fill") : ui::Tr("切土", "cut"), grade);
         }
         drawList->PopClipRect();
     }
@@ -467,26 +480,34 @@ bool Application::DrawRoadPathSettings(graph::Node& node) {
             if (road.verticalPoints[order[n]].id == point->id) number = n + 1;
         }
         ImGui::PushID(point->id);
-        ImGui::TextDisabled("縦断ポイント %zu / %zu", number, order.size());
-        if (ui::BeginPropertyTable("roadVerticalPoint")) {
-            changed |= PropertyAlong("位置", &point->u, total, "始点からの道のり");
-            changed |= ui::PropertyFloat("縦断曲線長", &point->vclMeters, 0.0f, 500.0f, 50.0f,
-                                         "前後の勾配を放物線でつなぐ長さ（m）。0 で折れ線のまま。"
-                                         "隣のポイントとの間より長くはならない",
+        ImGui::TextDisabled(ui::Tr("縦断ポイント %zu / %zu", "Profile Point %zu / %zu"), number, order.size());
+        if (ui::BeginPropertyTable("roadVerticalPoint", ui::Tr("縦断曲線長", "Vertical Curve Length"))) {
+            changed |= PropertyAlong(ui::Tr("位置", "Position"), &point->u, total,
+                                     ui::Tr("始点からの道のり", "Distance along the road from the start"));
+            changed |= ui::PropertyFloat(ui::Tr("縦断曲線長", "Vertical Curve Length"), &point->vclMeters, 0.0f, 500.0f, 50.0f,
+                                         ui::Tr("前後の勾配を放物線でつなぐ長さ（m）。0 で折れ線のまま。"
+                                                "隣のポイントとの間より長くはならない",
+                                                "Length (m) of the parabola joining the grades before "
+                                                "and after. 0 keeps a sharp break. Never longer than "
+                                                "the gap to the neighboring points"),
                                          "%.0f m");
-            changed |= ui::PropertyFloat("高さのずれ", &point->offsetMeters, -100.0f, 100.0f, 0.0f,
-                                         "この位置の設計の高さ（交点）を、地形（+ 点のずれ）からどれだけ上げ下げするか（m）",
+            changed |= ui::PropertyFloat(ui::Tr("高さのずれ", "Height Offset"), &point->offsetMeters, -100.0f, 100.0f, 0.0f,
+                                         ui::Tr("この位置の設計の高さ（交点）を、地形（+ 点のずれ）からどれだけ上げ下げするか（m）",
+                                                "How far (m) to raise or lower the design height "
+                                                "(intersection) here from the terrain (+ point offsets)"),
                                          "%+.1f m");
             ui::PropertyLabelEmpty("roadVerticalPointDelete");
-            if (ui::Button("削除")) removeId = point->id;
+            if (ui::Button(ui::Tr("削除", "Delete"))) removeId = point->id;
             ui::PropertyEnd();
             ui::EndPropertyTable();
         }
         ImGui::PopID();
     } else if (!road.verticalPoints.empty()) {
-        ImGui::TextDisabled("縦断ポイント %zu 個（図の菱形をクリックで選ぶ）", road.verticalPoints.size());
+        ImGui::TextDisabled(ui::Tr("縦断ポイント %zu 個（図の菱形をクリックで選ぶ）",
+                                   "%zu profile points (click a diamond in the chart to select)"),
+                            road.verticalPoints.size());
     }
-    if (ui::Button("縦断ポイントを追加", ui::kWideButtonWidth)) {
+    if (ui::Button(ui::Tr("縦断ポイントを追加", "Add Profile Point"), ui::kWideButtonWidth)) {
         std::vector<float> taken;
         for (const graph::RoadVerticalPoint& point : road.verticalPoints) taken.push_back(point.u);
         edit.selected = graph::AddVerticalPoint(road, NextProfilePointU(taken));
@@ -495,26 +516,34 @@ bool Application::DrawRoadPathSettings(graph::Node& node) {
     }
 
     // 自動で作成。地形の縦断をならして単純化し、特徴点を縦断ポイントにする（今のポイントは置き換える）。
-    if (valid && ui::BeginPropertyTable("roadVerticalAuto", "縦断曲線長")) {
+    if (valid && ui::BeginPropertyTable("roadVerticalAuto", ui::Tr("縦断曲線長", "Vertical Curve Length"))) {
         graph::RoadVerticalAutoParams& p = edit.autoParams;
         const graph::RoadVerticalAutoParams d;
-        ui::PropertyFloat("許容差", &p.toleranceMeters, 0.5f, 50.0f, d.toleranceMeters,
-                          "交点を結ぶ折れ線が、ならした地形から離れてよい量（m）。小さいほど地形に沿い、"
-                          "大きいほど均した道になる（切土・盛土の目安）",
+        ui::PropertyFloat(ui::Tr("許容差", "Tolerance"), &p.toleranceMeters, 0.5f, 50.0f, d.toleranceMeters,
+                          ui::Tr("交点を結ぶ折れ線が、ならした地形から離れてよい量（m）。小さいほど地形に沿い、"
+                                 "大きいほど均した道になる（切土・盛土の目安）",
+                                 "How far (m) the polyline joining intersections may stray from "
+                                 "the smoothed terrain. Smaller follows the terrain, larger gives "
+                                 "a more graded road (a guide for cut and fill)"),
                           "%.1f m");
-        ui::PropertyFloat("最大勾配", &p.maxGradePercent, 1.0f, 30.0f, d.maxGradePercent,
-                          "交点を結ぶ勾配の上限（%）。超える所は交点の高さを動かして収める。"
-                          "両端の高さの差が急すぎると収まりきらない",
+        ui::PropertyFloat(ui::Tr("最大勾配", "Max Grade"), &p.maxGradePercent, 1.0f, 30.0f, d.maxGradePercent,
+                          ui::Tr("交点を結ぶ勾配の上限（%）。超える所は交点の高さを動かして収める。"
+                                 "両端の高さの差が急すぎると収まりきらない",
+                                 "Upper limit (%) of the grade between intersections. Intersections "
+                                 "are raised or lowered to stay within it. Cannot fit if the ends "
+                                 "differ too steeply in height"),
                           "%.1f %%");
-        if (ui::PropertyFloat("縦断曲線長", &p.vclMeters, 0.0f, 500.0f, d.vclMeters,
-                              "作る縦断ポイントの縦断曲線長（m）。点どうしの間隔もこれ以上空ける",
+        if (ui::PropertyFloat(ui::Tr("縦断曲線長", "Vertical Curve Length"), &p.vclMeters, 0.0f, 500.0f, d.vclMeters,
+                              ui::Tr("作る縦断ポイントの縦断曲線長（m）。点どうしの間隔もこれ以上空ける",
+                                     "Vertical curve length (m) of the created profile points. "
+                                     "Points are also spaced at least this far apart"),
                               "%.0f m")) {
             p.minSpacingMeters = p.vclMeters;
         }
         ui::EndPropertyTable();
     }
     ImGui::BeginDisabled(!valid);
-    if (ui::Button("縦断ポイントを自動で作成", ui::kWideButtonWidth)) {
+    if (ui::Button(ui::Tr("縦断ポイントを自動で作成", "Auto Profile Points"), ui::kWideButtonWidth)) {
         edit.autoParams.minSpacingMeters = std::max(edit.autoParams.vclMeters, 1.0f);
         const std::vector<graph::RoadVerticalPoint> generated = graph::GenerateVerticalPoints(base, edit.autoParams);
         graph::ReplaceVerticalPoints(road, generated);
@@ -531,41 +560,58 @@ bool Application::DrawRoadPathSettings(graph::Node& node) {
         }
         design = graph::BuildRoadProfileCurve(design.points);
         char report[160] = {};
-        std::snprintf(report, sizeof(report), "%zu 点を作成。最大勾配 %.1f %%、盛土 最大 %.1f m、切土 最大 %.1f m",
+        std::snprintf(report, sizeof(report), ui::Tr("%zu 点を作成。最大勾配 %.1f %%、盛土 最大 %.1f m、切土 最大 %.1f m",
+                                                     "Created %zu points. Max grade %.1f %%, "
+                                                     "max fill %.1f m, max cut %.1f m"),
                       generated.size(), MaxGradePercent(design), largestFill, largestCut);
         edit.autoReport = report;
         changed = true;
     }
     ImGui::EndDisabled();
     if (!edit.autoReport.empty()) ui::HintText("%s", edit.autoReport.c_str());
-    ui::HintText("図の空いた所をクリックで縦断ポイントを追加、菱形をクリックで選び、ドラッグで位置と高さを"
-                 "動かす（Delete で削除、Esc で選択を外す）。ポイントが無ければ道路の高さは地形に沿う。"
-                 "置くと、両端とポイントの間の勾配を縦断曲線でつなぐ（地形との差が切土・盛土になる）");
+    ui::HintText("%s", ui::Tr("図の空いた所をクリックで縦断ポイントを追加、菱形をクリックで選び、ドラッグで位置と高さを"
+                              "動かす（Delete で削除、Esc で選択を外す）。ポイントが無ければ道路の高さは地形に沿う。"
+                              "置くと、両端とポイントの間の勾配を縦断曲線でつなぐ（地形との差が切土・盛土になる）",
+                              "Click an empty spot in the chart to add a profile point. Click a diamond "
+                              "to select it and drag to move its position and height (Delete removes, "
+                              "Esc deselects). Without points the road height follows the terrain. "
+                              "With points, the grades between the ends and the points are joined by "
+                              "vertical curves (the difference from the terrain becomes cut and fill)"));
 
     // --- バンク角 --------------------------------------------------------------
-    ui::SectionHeader("バンク角");
+    ui::SectionHeader(ui::Tr("バンク角", "Superelevation"));
     if (ui::BeginPropertyTable("roadBankRows")) {
-        changed |= ui::PropertyBool("バンク角を付ける", &road.bankEnabled, defaults.bankEnabled,
-                                    "カーブで路面を内側へ傾ける。切ると手動のポイントがあっても水平のまま");
+        changed |= ui::PropertyBool(ui::Tr("バンク角を付ける", "Bank Curves"), &road.bankEnabled, defaults.bankEnabled,
+                                    ui::Tr("カーブで路面を内側へ傾ける。切ると手動のポイントがあっても水平のまま",
+                                           "Tilts the road surface inward on curves. When off, it stays level "
+                                           "even with manual points"));
         ImGui::BeginDisabled(!road.bankEnabled);
-        changed |= ui::PropertyFloat("設計速度", &road.designSpeedKmh, 10.0f, 150.0f, defaults.designSpeedKmh,
-                                     "ポイントの無い所の設計速度（km/h）。速いほど同じカーブで大きく傾く",
+        changed |= ui::PropertyFloat(ui::Tr("設計速度", "Design Speed"), &road.designSpeedKmh, 10.0f, 150.0f,
+                                     defaults.designSpeedKmh,
+                                     ui::Tr("ポイントの無い所の設計速度（km/h）。速いほど同じカーブで大きく傾く",
+                                            "Design speed (km/h) where there are no points. Faster tilts more "
+                                            "on the same curve"),
                                      "%.0f km/h");
-        changed |= ui::PropertyFloat("摩擦係数", &road.frictionCoefficient, 0.0f, 0.5f,
+        changed |= ui::PropertyFloat(ui::Tr("摩擦係数", "Friction"), &road.frictionCoefficient, 0.0f, 0.5f,
                                      defaults.frictionCoefficient,
-                                     "横方向の摩擦係数。大きいほど、傾けずに済む分が増える", "%.2f");
-        changed |= ui::PropertyBool("なめらかにする", &road.smoothBank, defaults.smoothBank,
-                                    "距離方向にぼかし、傾きの変わり目を緩やかにする");
+                                     ui::Tr("横方向の摩擦係数。大きいほど、傾けずに済む分が増える",
+                                            "Lateral friction coefficient. Higher means more of the curve "
+                                            "is handled without tilting"),
+                                     "%.2f");
+        changed |= ui::PropertyBool(ui::Tr("なめらかにする", "Smooth"), &road.smoothBank, defaults.smoothBank,
+                                    ui::Tr("距離方向にぼかし、傾きの変わり目を緩やかにする",
+                                           "Blurs along the road to soften changes in tilt"));
         if (road.smoothBank) {
-            changed |= ui::PropertyFloat("なめらかにする距離", &road.bankSmoothMeters, 1.0f, 200.0f,
-                                         defaults.bankSmoothMeters, "ぼかす範囲（m）", "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("なめらかにする距離", "Smoothing Distance"), &road.bankSmoothMeters,
+                                         1.0f, 200.0f,
+                                         defaults.bankSmoothMeters, ui::Tr("ぼかす範囲（m）", "Blur range (m)"), "%.0f m");
         }
         if (valid && road.bankEnabled) {
             float largest = 0.0f;
             for (float d = 0.0f; d <= total; d += std::max(1.0f, total / 200.0f)) {
                 largest = std::max(largest, std::abs(graph::EvaluateBankAngleRadians(road, centerline, d)));
             }
-            ui::PropertyValue("最大", "%.1f°", XMConvertToDegrees(largest));
+            ui::PropertyValue(ui::Tr("最大", "Max"), "%.1f°", XMConvertToDegrees(largest));
         }
         ImGui::EndDisabled();
         ui::EndPropertyTable();
@@ -579,33 +625,44 @@ bool Application::DrawRoadPathSettings(graph::Node& node) {
     for (size_t n = 0; n < bankOrder.size(); ++n) {
         graph::RoadBankPoint& point = road.bankPoints[bankOrder[n]];
         ImGui::PushID(point.id);
-        ImGui::TextDisabled("バンクポイント %zu", n + 1);
+        ImGui::TextDisabled(ui::Tr("バンクポイント %zu", "Bank Point %zu"), n + 1);
         if (ui::BeginPropertyTable("roadBankPoint")) {
-            changed |= PropertyAlong("位置", &point.u, total, "始点からの道のり");
-            changed |= ui::PropertyFloat("設計速度", &point.designSpeedKmh, 10.0f, 150.0f, road.designSpeedKmh,
-                                         "この位置の設計速度（km/h）。自動の傾きはポイントの間で速度を補間して求める",
+            changed |= PropertyAlong(ui::Tr("位置", "Position"), &point.u, total,
+                                     ui::Tr("始点からの道のり", "Distance along the road from the start"));
+            changed |= ui::PropertyFloat(ui::Tr("設計速度", "Design Speed"), &point.designSpeedKmh, 10.0f, 150.0f,
+                                         road.designSpeedKmh,
+                                         ui::Tr("この位置の設計速度（km/h）。自動の傾きはポイントの間で速度を補間して求める",
+                                                "Design speed (km/h) here. The automatic tilt interpolates "
+                                                "the speed between points"),
                                          "%.0f km/h");
-            changed |= ui::PropertyBool("手動", &point.manual, false,
-                                        "傾きを直接決める。手動のポイントの間は角度を直線で補間する");
+            changed |= ui::PropertyBool(ui::Tr("手動", "Manual"), &point.manual, false,
+                                        ui::Tr("傾きを直接決める。手動のポイントの間は角度を直線で補間する",
+                                               "Sets the tilt directly. The angle is interpolated linearly "
+                                               "between manual points"));
             if (point.manual) {
-                changed |= ui::PropertyFloat("角度", &point.angleDegrees, -30.0f, 30.0f, 0.0f,
-                                             "正で進行方向に向かって左側が上がる（°）", "%+.1f°");
+                changed |= ui::PropertyFloat(ui::Tr("角度", "Angle"), &point.angleDegrees, -30.0f, 30.0f, 0.0f,
+                                             ui::Tr("正で進行方向に向かって左側が上がる（°）",
+                                                    "Positive raises the left side, facing the direction "
+                                                    "of travel (°)"),
+                                             "%+.1f°");
             }
             ui::PropertyLabelEmpty("roadBankPointDelete");
-            if (ui::Button("削除")) removeId = point.id;
+            if (ui::Button(ui::Tr("削除", "Delete"))) removeId = point.id;
             ui::PropertyEnd();
             ui::EndPropertyTable();
         }
         ImGui::PopID();
     }
-    if (ui::Button("バンクポイントを追加", ui::kWideButtonWidth)) {
+    if (ui::Button(ui::Tr("バンクポイントを追加", "Add Bank Point"), ui::kWideButtonWidth)) {
         std::vector<float> taken;
         for (const graph::RoadBankPoint& point : road.bankPoints) taken.push_back(point.u);
         graph::AddBankPoint(road, NextProfilePointU(taken));
         changed = true;
     }
     ImGui::EndDisabled();
-    ui::HintText("ポイントが無ければ、傾きは曲率・設計速度・摩擦係数から自動で決まる");
+    ui::HintText("%s", ui::Tr("ポイントが無ければ、傾きは曲率・設計速度・摩擦係数から自動で決まる",
+                              "Without points, the tilt is set automatically from curvature, "
+                              "design speed, and friction"));
 
     if (removeId != 0 && graph::DeleteRoadProfilePoint(road, removeId)) {
         changed = true;
@@ -831,11 +888,16 @@ bool Application::HandleRoadProfileInput(graph::Node& node, bool itemHovered, co
             const float distance = handleAt(*point);
             const float terrain = base.At(distance).y;
             const float design = terrain + point->offsetMeters;
-            ImGui::SetTooltip("縦断ポイント\n%.0f m\n交点の高さ %.1f m\n地形との差 %+.1f m（%s）\n%s", distance,
-                              design, point->offsetMeters, point->offsetMeters >= 0.0f ? "盛土" : "切土",
+            ImGui::SetTooltip(ui::Tr("縦断ポイント\n%.0f m\n交点の高さ %.1f m\n地形との差 %+.1f m（%s）\n%s",
+                                     "Profile point\n%.0f m\nIntersection height %.1f m\n"
+                                     "Diff from terrain %+.1f m (%s)\n%s"),
+                              distance, design, point->offsetMeters,
+                              point->offsetMeters >= 0.0f ? ui::Tr("盛土", "fill") : ui::Tr("切土", "cut"),
                               edit.viewportDrag != 0
-                                  ? (edit.viewportDragHeight ? "離すと高さを確定" : "離すと位置を確定")
-                                  : "ドラッグで道なりに動かす / Shift + ドラッグで高さ");
+                                  ? (edit.viewportDragHeight ? ui::Tr("離すと高さを確定", "Release to set the height")
+                                                             : ui::Tr("離すと位置を確定", "Release to set the position"))
+                                  : ui::Tr("ドラッグで道なりに動かす / Shift + ドラッグで高さ",
+                                           "Drag to move along the road / Shift + drag for height"));
         }
         ImGui::SetMouseCursor(edit.viewportDrag != 0 ? ImGuiMouseCursor_ResizeAll : ImGuiMouseCursor_Hand);
     }

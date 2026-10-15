@@ -1046,10 +1046,10 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
     if (ImGui::BeginPopup("##pathContextMenu")) {
         if (state.menuPoint != 0 && path.FindPoint(state.menuPoint) != nullptr) {
             const graph::PathElementId pointId = state.menuPoint;
-            ImGui::TextDisabled("点");
+            ImGui::TextDisabled("%s", ui::Tr("点", "Point"));
             ImGui::Separator();
             ImGui::BeginDisabled(path.EdgeCount(pointId) < 2);
-            if (ImGui::MenuItem("分離")) {
+            if (ImGui::MenuItem(ui::Tr("分離", "Split"))) {
                 // エッジの本数ぶんに分ける。離した点をまとめて選択しておく。
                 std::vector<graph::PathElementId> created;
                 if (graph::SplitPathPoint(path, pointId, detachOffsetUv(pointId), &created)) {
@@ -1059,22 +1059,22 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
             }
             ImGui::EndDisabled();
             ImGui::BeginDisabled(path.EdgeCount(pointId) == 0);
-            if (ImGui::MenuItem("向きを反転")) {
+            if (ImGui::MenuItem(ui::Tr("向きを反転", "Reverse"))) {
                 changed |= graph::ReversePathEdgesAt(path, pointId);
             }
             ImGui::EndDisabled();
-            if (ImGui::MenuItem("コピー", "Ctrl+C")) {
+            if (ImGui::MenuItem(ui::Tr("コピー", "Copy"), "Ctrl+C")) {
                 copySelection();
             }
-            if (ImGui::MenuItem("削除")) {
+            if (ImGui::MenuItem(ui::Tr("削除", "Delete"))) {
                 changed |= graph::DeletePathPoint(path, pointId);
                 selectOnly(0);
             }
         } else if (state.menuEdge != 0 && path.FindEdge(state.menuEdge) != nullptr) {
             const graph::PathElementId edgeId = state.menuEdge;
-            ImGui::TextDisabled("エッジ");
+            ImGui::TextDisabled("%s", ui::Tr("エッジ", "Edge"));
             ImGui::Separator();
-            if (ImGui::MenuItem("点を挿入")) {
+            if (ImGui::MenuItem(ui::Tr("点を挿入", "Insert Point"))) {
                 const graph::PathElementId inserted =
                     graph::InsertPathPointOnEdge(path, edgeId, state.menuEdgeT);
                 if (inserted != 0) {
@@ -1082,7 +1082,7 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
                     changed = true;
                 }
             }
-            if (ImGui::MenuItem("近いほうの点から切り離す")) {
+            if (ImGui::MenuItem(ui::Tr("近いほうの点から切り離す", "Detach from Nearer Point"))) {
                 const graph::PathEdge* edge = path.FindEdge(edgeId);
                 if (edge != nullptr) {
                     const graph::PathElementId end =
@@ -1096,22 +1096,22 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
                 }
             }
             // 向きは鎖の性質。1 本だけ反転すると鎖の中で食い違うので、鎖ごと反転する。
-            if (ImGui::MenuItem("鎖の向きを反転")) {
+            if (ImGui::MenuItem(ui::Tr("鎖の向きを反転", "Reverse Chain"))) {
                 for (const graph::PathElementId id : state.selectedEdges) {
                     changed |= graph::ReversePathEdge(path, id);
                 }
             }
-            if (ImGui::MenuItem("鎖をコピー", "Ctrl+C")) {
+            if (ImGui::MenuItem(ui::Tr("鎖をコピー", "Copy Chain"), "Ctrl+C")) {
                 copySelection();
             }
             // 設定だけを写す（形はそのまま）。貼った先の経路は下で計算し直す。
-            if (ImGui::MenuItem("鎖の設定をコピー")) {
+            if (ImGui::MenuItem(ui::Tr("鎖の設定をコピー", "Copy Chain Settings"))) {
                 if (const graph::PathEdge* edge = path.FindEdge(edgeId)) {
                     m_pathStyleClipboard = graph::GetPathEdgeStyle(*edge);
                 }
             }
             ImGui::BeginDisabled(!m_pathStyleClipboard.has_value());
-            if (ImGui::MenuItem("鎖の設定を貼り付け")) {
+            if (ImGui::MenuItem(ui::Tr("鎖の設定を貼り付け", "Paste Chain Settings"))) {
                 for (graph::PathEdge& edge : path.edges) {
                     if (std::find(state.selectedEdges.begin(), state.selectedEdges.end(),
                                   edge.id) != state.selectedEdges.end()) {
@@ -1127,21 +1127,21 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
                                       strand->points.size() >= 3 &&
                                       strand->points.front() != strand->points.back();
                 ImGui::BeginDisabled(!canClose);
-                if (ImGui::MenuItem("閉じる（末尾を先頭へ繋ぐ）")) {
+                if (ImGui::MenuItem(ui::Tr("閉じる（末尾を先頭へ繋ぐ）", "Close (Connect End to Start)"))) {
                     changed |= graph::ConnectPathPoints(path, strand->points.back(),
                                                         strand->points.front());
                 }
                 ImGui::EndDisabled();
             }
-            if (ImGui::MenuItem("このエッジを消す（ここで切る）")) {
+            if (ImGui::MenuItem(ui::Tr("このエッジを消す（ここで切る）", "Delete This Edge (Cut Here)"))) {
                 changed |= graph::DeletePathEdge(path, edgeId);
                 selectOnly(0);
             }
         } else {
-            ImGui::TextDisabled("パス");
+            ImGui::TextDisabled("%s", ui::Tr("パス", "Path"));
             ImGui::Separator();
             ImGui::BeginDisabled(!state.menuOnTerrain);
-            if (ImGui::MenuItem("ここに線を始める")) {
+            if (ImGui::MenuItem(ui::Tr("ここに線を始める", "Start Line Here"))) {
                 const graph::PathElementId added =
                     graph::AddPathPoint(path, state.menuU, state.menuV, 0);
                 if (added != 0) {
@@ -1151,12 +1151,12 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
             }
             ImGui::EndDisabled();
             ImGui::BeginDisabled(m_pathClipboard.points.empty());
-            if (ImGui::MenuItem("ここに貼り付け", "Ctrl+V")) {
+            if (ImGui::MenuItem(ui::Tr("ここに貼り付け", "Paste Here"), "Ctrl+V")) {
                 pasteClipboard(state.menuOnTerrain, state.menuU, state.menuV);
             }
             ImGui::EndDisabled();
             ImGui::BeginDisabled(state.selected.empty() && state.selectedEdges.empty());
-            if (ImGui::MenuItem("選択を外す")) {
+            if (ImGui::MenuItem(ui::Tr("選択を外す", "Deselect"))) {
                 selectOnly(0);
             }
             ImGui::EndDisabled();
@@ -1457,56 +1457,65 @@ void Application::DrawPathOverlay(const graph::Node& node, const ImVec2& viewpor
                              m_roadProfileEdit.viewportInsertArmed);
     if (profileHot) {
         if (m_roadProfileEdit.viewportInsertArmed) {
-            rows = {{"V を離す", "印の所に縦断ポイントを挿入"}, {"Esc", "やめる"}};
+            rows = {{ui::Tr("V を離す", "Release V"),
+                     ui::Tr("印の所に縦断ポイントを挿入", "Insert a profile point at the mark")},
+                    {"Esc", ui::Tr("やめる", "Cancel")}};
         } else if (m_roadProfileEdit.viewportDrag != 0) {
-            rows = {{"離す", m_roadProfileEdit.viewportDragHeight ? "高さを確定" : "位置を確定"}};
+            rows = {{ui::Tr("離す", "Release"), m_roadProfileEdit.viewportDragHeight
+                                                    ? ui::Tr("高さを確定", "Set height")
+                                                    : ui::Tr("位置を確定", "Set position")}};
         } else {
-            rows = {{"ドラッグ", "縦断ポイントを道なりに動かす"},
-                    {"Shift + ドラッグ", "高さを動かす"},
-                    {"Delete / Esc", "消す / 選択を外す"}};
+            rows = {{ui::Tr("ドラッグ", "Drag"), ui::Tr("縦断ポイントを道なりに動かす", "Move the profile point along the road")},
+                    {ui::Tr("Shift + ドラッグ", "Shift + Drag"), ui::Tr("高さを動かす", "Move height")},
+                    {"Delete / Esc", ui::Tr("消す / 選択を外す", "Delete / deselect")}};
         }
     } else if (io.KeyCtrl) {
         if (anchor != 0) {
-            rows = {{"クリック", "点を置いて伸ばす"},
-                    {"点をクリック", "繋ぐ"},
-                    {"線をクリック", "点を挿入して繋ぐ"},
-                    {"Ctrl を離す", "戻る"}};
+            rows = {{ui::Tr("クリック", "Click"), ui::Tr("点を置いて伸ばす", "Place a point and extend")},
+                    {ui::Tr("点をクリック", "Click point"), ui::Tr("繋ぐ", "Connect")},
+                    {ui::Tr("線をクリック", "Click line"), ui::Tr("点を挿入して繋ぐ", "Insert a point and connect")},
+                    {ui::Tr("Ctrl を離す", "Release Ctrl"), ui::Tr("戻る", "Back")}};
         } else {
-            rows = {{"クリック", "線を始める"},
-                    {"線をクリック", "点を挿入"},
-                    {"Ctrl を離す", "戻る"}};
+            rows = {{ui::Tr("クリック", "Click"), ui::Tr("線を始める", "Start a line")},
+                    {ui::Tr("線をクリック", "Click line"), ui::Tr("点を挿入", "Insert a point")},
+                    {ui::Tr("Ctrl を離す", "Release Ctrl"), ui::Tr("戻る", "Back")}};
         }
     } else if (state.dragging) {
-        rows = {{"点 / 線に重ねる", "繋ぐ"}, {"Shift", "吸着しない"}};
+        rows = {{ui::Tr("点 / 線に重ねる", "Over point / line"), ui::Tr("繋ぐ", "Connect")},
+                {"Shift", ui::Tr("吸着しない", "No snapping")}};
     } else if (state.gizmoDragging) {
-        rows = {{"離す", "確定（経路は作り直す）"}};
+        rows = {{ui::Tr("離す", "Release"), ui::Tr("確定（経路は作り直す）", "Confirm (routes are rebuilt)")}};
     } else if (!state.selectedEdges.empty()) {
-        rows = {{"プロパティ", "曲線の種類 / 丸め / 向き"},
-                {"ギズモをドラッグ", "鎖を動かす（軸 / 中央で平面）"},
-                {"Ctrl + 線をクリック", "点を挿入"},
-                {"右クリック", "挿入 / 切り離し / ここで切る"},
-                {"Ctrl+C / Ctrl+V", "鎖をコピー / カーソルへ貼る"},
-                {"Delete / R", "鎖を消す / 向きを反転"},
-                {"F / Esc", "鎖へ視点 / 選択を外す"}};
+        rows = {{ui::Tr("プロパティ", "Properties"),
+                 ui::Tr("曲線の種類 / 丸め / 向き", "Curve type / rounding / direction")},
+                {ui::Tr("ギズモをドラッグ", "Drag gizmo"),
+                 ui::Tr("鎖を動かす（軸 / 中央で平面）", "Move the chain (axis / center for plane)")},
+                {ui::Tr("Ctrl + 線をクリック", "Ctrl + Click line"), ui::Tr("点を挿入", "Insert a point")},
+                {ui::Tr("右クリック", "Right-click"), ui::Tr("挿入 / 切り離し / ここで切る", "Insert / detach / cut here")},
+                {"Ctrl+C / Ctrl+V", ui::Tr("鎖をコピー / カーソルへ貼る", "Copy chain / paste at cursor")},
+                {"Delete / R", ui::Tr("鎖を消す / 向きを反転", "Delete chain / reverse")},
+                {"F / Esc", ui::Tr("鎖へ視点 / 選択を外す", "Frame chain / deselect")}};
     } else if (!state.selected.empty()) {
-        rows = {{"Ctrl + クリック", "伸ばす（点や線の上で繋ぐ）"},
-                {"ドラッグ", "動かす"},
-                {"ギズモをドラッグ", "選択をまとめて動かす"},
-                {"右クリック", "分離 / 反転 / 削除"},
-                {"Ctrl+C / Ctrl+V", "コピー / カーソルへ貼る"},
-                {"Delete / R", "消す / 向きを反転"},
-                {"F / Esc", "点へ視点 / 選択を外す"}};
+        rows = {{ui::Tr("Ctrl + クリック", "Ctrl + Click"),
+                 ui::Tr("伸ばす（点や線の上で繋ぐ）", "Extend (connects on points or lines)")},
+                {ui::Tr("ドラッグ", "Drag"), ui::Tr("動かす", "Move")},
+                {ui::Tr("ギズモをドラッグ", "Drag gizmo"), ui::Tr("選択をまとめて動かす", "Move the selection")},
+                {ui::Tr("右クリック", "Right-click"), ui::Tr("分離 / 反転 / 削除", "Split / reverse / delete")},
+                {"Ctrl+C / Ctrl+V", ui::Tr("コピー / カーソルへ貼る", "Copy / paste at cursor")},
+                {"Delete / R", ui::Tr("消す / 向きを反転", "Delete / reverse")},
+                {"F / Esc", ui::Tr("点へ視点 / 選択を外す", "Frame point / deselect")}};
     } else {
-        rows = {{"クリック", "点や線（鎖）を選ぶ"},
-                {"Ctrl + クリック", "線を始める"},
-                {"Ctrl + 線をクリック", "点を挿入"},
-                {"Ctrl+V", "コピーしたパスをカーソルへ貼る"},
-                {"Alt + ドラッグ", "視点"}};
+        rows = {{ui::Tr("クリック", "Click"), ui::Tr("点や線（鎖）を選ぶ", "Select points or lines (chains)")},
+                {ui::Tr("Ctrl + クリック", "Ctrl + Click"), ui::Tr("線を始める", "Start a line")},
+                {ui::Tr("Ctrl + 線をクリック", "Ctrl + Click line"), ui::Tr("点を挿入", "Insert a point")},
+                {"Ctrl+V", ui::Tr("コピーしたパスをカーソルへ貼る", "Paste the copied path at cursor")},
+                {ui::Tr("Alt + ドラッグ", "Alt + Drag"), ui::Tr("視点", "Camera")}};
     }
     // Road Path は、パスの操作の下に縦断ポイントの挿入を足す（HandleRoadProfileInput が受ける）。
     if (node.kind == graph::NodeKind::RoadPath && !profileHot && !io.KeyCtrl && !state.dragging &&
         !state.gizmoDragging) {
-        rows.push_back({"V を押す / 離す", "縦断ポイントの入る位置を表示 / 挿入"});
+        rows.push_back({ui::Tr("V を押す / 離す", "Hold / release V"),
+                        ui::Tr("縦断ポイントの入る位置を表示 / 挿入", "Show / insert profile point position")});
     }
     {
         float keyWidth = 0.0f;
@@ -1555,27 +1564,35 @@ bool Application::DrawPathSettings(graph::Node& node) {
     const bool road = node.kind == graph::NodeKind::RoadPath;
     bool changed = false;
 
-    ui::SectionHeader("パス");
+    ui::SectionHeader(ui::Tr("パス", "Path"));
     if (ui::BeginPropertyTable("graphPathRows")) {
-        ui::PropertyValue("要素", "点 %zu / エッジ %zu", path.points.size(), path.edges.size());
+        ui::PropertyValue(ui::Tr("要素", "Elements"), ui::Tr("点 %zu / エッジ %zu", "Points %zu / Edges %zu"),
+                          path.points.size(), path.edges.size());
         // ここは**新しく置く点の初期値**。既にある点には効かない（点ごとの値か、鎖の上書きで決める）。
-        changed |= ui::PropertyFloat("幅（初期値）", &path.defaultWidthMeters, 0.5f, 2000.0f,
+        changed |= ui::PropertyFloat(ui::Tr("幅（初期値）", "Default Width"), &path.defaultWidthMeters, 0.5f, 2000.0f,
                                      defaults.defaultWidthMeters,
-                                     "新しく置く点の幅（m）。既にある点には効かない。"
-                                     "マスクではこの幅の内側が 1 になる",
+                                     ui::Tr("新しく置く点の幅（m）。既にある点には効かない。"
+                                            "マスクではこの幅の内側が 1 になる",
+                                            "Width (m) for newly placed points. Existing points are "
+                                            "not affected. In masks, the inside of this width is 1"),
                                      "%.1f m", ImGuiSliderFlags_Logarithmic);
-        changed |= ui::PropertyFloat("フェザー（初期値）", &path.defaultFeatherMeters, 0.0f,
+        changed |= ui::PropertyFloat(ui::Tr("フェザー（初期値）", "Default Feather"), &path.defaultFeatherMeters, 0.0f,
                                      2000.0f, defaults.defaultFeatherMeters,
-                                     "新しく置く点のフェザー（m）。既にある点には効かない。"
-                                     "幅の外側をこの距離で 0 へ落とす",
+                                     ui::Tr("新しく置く点のフェザー（m）。既にある点には効かない。"
+                                            "幅の外側をこの距離で 0 へ落とす",
+                                            "Feather (m) for newly placed points. Existing points are "
+                                            "not affected. Falls off to 0 over this distance outside "
+                                            "the width"),
                                      "%.1f m", ImGuiSliderFlags_Logarithmic);
-        changed |= ui::PropertyFloat("強さ（初期値）", &path.defaultIntensity, 0.0f, 1.0f,
+        changed |= ui::PropertyFloat(ui::Tr("強さ（初期値）", "Default Strength"), &path.defaultIntensity, 0.0f, 1.0f,
                                      defaults.defaultIntensity,
-                                     "新しく置く点のマスクの強さ。既にある点には効かない",
+                                     ui::Tr("新しく置く点のマスクの強さ。既にある点には効かない",
+                                            "Mask strength for newly placed points. Existing points "
+                                            "are not affected"),
                                      "%.2f");
         ui::PropertyLabelEmpty("pathClear");
         ImGui::BeginDisabled(path.points.empty());
-        if (ui::Button("全部消す", ui::kWideButtonWidth)) {
+        if (ui::Button(ui::Tr("全部消す", "Clear All"), ui::kWideButtonWidth)) {
             path.points.clear();
             path.edges.clear();
             m_pathEdit = PathEditState{};
@@ -1592,10 +1609,11 @@ bool Application::DrawPathSettings(graph::Node& node) {
             }
         }
         if (routedEdges > 0) {
-            ui::PropertyValue("経路探索", "エッジ %zu 本（古い %zu 本）", routedEdges,
+            ui::PropertyValue(ui::Tr("経路探索", "Routing"),
+                              ui::Tr("エッジ %zu 本（古い %zu 本）", "%zu edges (%zu stale)"), routedEdges,
                               graph::CountStalePathRoutes(path));
             ui::PropertyLabelEmpty("pathRouteAll");
-            if (ui::Button("経路をすべて再計算", ui::kWideButtonWidth)) {
+            if (ui::Button(ui::Tr("経路をすべて再計算", "Recompute All Routes"), ui::kWideButtonWidth)) {
                 RecomputePathRoutes(node, true, nullptr);
             }
             ui::PropertyEnd();
@@ -1613,23 +1631,28 @@ bool Application::DrawPathSettings(graph::Node& node) {
         }
     }
     if (!selectedPoints.empty()) {
-        ui::SectionHeader(selectedPoints.size() == 1 ? "選択した点" : "選択した点（複数）");
+        ui::SectionHeader(selectedPoints.size() == 1 ? ui::Tr("選択した点", "Selected Point")
+                                                     : ui::Tr("選択した点（複数）", "Selected Points"));
         graph::PathPoint edit = *selectedPoints.front();
         bool pointChanged = false;
         if (ui::BeginPropertyTable("graphPathPointRows")) {
-            pointChanged |= ui::PropertyFloat("幅", &edit.widthMeters, 0.5f, 2000.0f,
-                                              path.defaultWidthMeters, "この点での幅（m）",
+            pointChanged |= ui::PropertyFloat(ui::Tr("幅", "Width"), &edit.widthMeters, 0.5f, 2000.0f,
+                                              path.defaultWidthMeters,
+                                              ui::Tr("この点での幅（m）", "Width at this point (m)"),
                                               "%.1f m", ImGuiSliderFlags_Logarithmic);
-            pointChanged |= ui::PropertyFloat("フェザー", &edit.featherMeters, 0.0f, 2000.0f,
+            pointChanged |= ui::PropertyFloat(ui::Tr("フェザー", "Feather"), &edit.featherMeters, 0.0f, 2000.0f,
                                               path.defaultFeatherMeters,
-                                              "この点でのフェザー（m）", "%.1f m",
+                                              ui::Tr("この点でのフェザー（m）", "Feather at this point (m)"), "%.1f m",
                                               ImGuiSliderFlags_Logarithmic);
-            pointChanged |= ui::PropertyFloat("強さ", &edit.intensity, 0.0f, 1.0f,
-                                              path.defaultIntensity, "この点でのマスクの強さ",
+            pointChanged |= ui::PropertyFloat(ui::Tr("強さ", "Strength"), &edit.intensity, 0.0f, 1.0f,
+                                              path.defaultIntensity,
+                                              ui::Tr("この点でのマスクの強さ", "Mask strength at this point"),
                                               "%.2f");
             pointChanged |= ui::PropertyFloat(
-                "高さのずれ", &edit.heightOffsetMeters, -200.0f, 200.0f, 0.0f,
-                "地形からの高さのずれ（m）。表示と、高さを読むノードが使う。Mask Path は見ない",
+                ui::Tr("高さのずれ", "Height Offset"), &edit.heightOffsetMeters, -200.0f, 200.0f, 0.0f,
+                ui::Tr("地形からの高さのずれ（m）。表示と、高さを読むノードが使う。Mask Path は見ない",
+                       "Height offset from the terrain (m). Used for display and by nodes that read "
+                       "height. Mask Path ignores it"),
                 "%.1f m");
             ui::EndPropertyTable();
         }
@@ -1654,7 +1677,7 @@ bool Application::DrawPathSettings(graph::Node& node) {
             }
         }
         if (!edges.empty()) {
-            ui::SectionHeader("選択した鎖");
+            ui::SectionHeader(ui::Tr("選択した鎖", "Selected Chain"));
             // 曲線の種類と丸め。鎖なら全エッジに同じ値を入れる（表示は先頭。混在なら注記）。
             graph::PathCurve curve = edges.front()->curve;
             float rounding = edges.front()->rounding;
@@ -1686,26 +1709,39 @@ bool Application::DrawPathSettings(graph::Node& node) {
                 }
             }
             if (ui::BeginPropertyTable("graphPathEdgeRows")) {
-                ui::PropertyValue("エッジ", "%zu 本（点 %d → 点 %d）", edges.size(),
+                ui::PropertyValue(ui::Tr("エッジ", "Edges"), ui::Tr("%zu 本（点 %d → 点 %d）",
+                                                                 "%zu (point %d → point %d)"), edges.size(),
                                   edges.front()->from, edges.back()->to);
-                static const char* const kCurveLabels[] = {"直線", "2 次ベジェ",
-                                                           "3 次 B スプライン", "クロソイド"};
+                static const ui::LocalizedText kCurveLabels[] = {{"直線", "Straight"},
+                                                                {"2 次ベジェ", "Quadratic Bezier"},
+                                                                {"3 次 B スプライン", "Cubic B-Spline"},
+                                                                {"クロソイド", "Clothoid"}};
                 int curveIndex = static_cast<int>(curve);
                 bool curveChanged = ui::PropertyCombo(
-                    "曲線", &curveIndex, kCurveLabels, IM_ARRAYSIZE(kCurveLabels), 0,
-                    "折れ線をガイドにして、その内側に描く曲線。点は通らない。"
-                    "2 次は角ごとに丸めて両端だけ通る。3 次はさらに滑らかだが折れ線からより離れる。"
-                    "クロソイドは角ごとに緩和曲線 → 円弧 → 緩和曲線で、曲率が 0 から連続的に"
-                    "立ち上がる（道路 / 鉄道の線形）");
+                    ui::Tr("曲線", "Curve"), &curveIndex, ui::Tr(kCurveLabels).data(), IM_ARRAYSIZE(kCurveLabels), 0,
+                    ui::Tr("折れ線をガイドにして、その内側に描く曲線。点は通らない。"
+                           "2 次は角ごとに丸めて両端だけ通る。3 次はさらに滑らかだが折れ線からより離れる。"
+                           "クロソイドは角ごとに緩和曲線 → 円弧 → 緩和曲線で、曲率が 0 から連続的に"
+                           "立ち上がる（道路 / 鉄道の線形）",
+                           "A curve drawn inside the polyline, used as a guide. It does not pass through "
+                           "the points. Quadratic rounds each corner and passes only through the ends. "
+                           "Cubic is smoother but strays further from the polyline. Clothoid uses "
+                           "transition curve → arc → transition curve at each corner, so curvature rises "
+                           "continuously from 0 (road / railway alignment)"));
                 curve = static_cast<graph::PathCurve>(curveIndex);
                 curveChanged |= ui::PropertyFloat(
-                    "丸め", &rounding, 0.0f, 1.0f, 1.0f,
-                    "どれだけ角を取るか。0 で折れ線のまま、1 で最大（線分の中点まで）", "%.2f");
+                    ui::Tr("丸め", "Rounding"), &rounding, 0.0f, 1.0f, 1.0f,
+                    ui::Tr("どれだけ角を取るか。0 で折れ線のまま、1 で最大（線分の中点まで）",
+                           "How much to round the corners. 0 keeps the polyline, 1 is the maximum "
+                           "(up to the segment midpoints)"),
+                    "%.2f");
                 if (curve == graph::PathCurve::Clothoid) {
                     curveChanged |= ui::PropertyFloat(
-                        "クロソイド比", &clothoidRatio, 0.0f, 1.0f, 0.5f,
-                        "交角のうち緩和曲線 2 本が受け持つ割合。0 で純粋な円弧、"
-                        "1 で円弧なし（緩和曲線だけ）",
+                        ui::Tr("クロソイド比", "Clothoid Ratio"), &clothoidRatio, 0.0f, 1.0f, 0.5f,
+                        ui::Tr("交角のうち緩和曲線 2 本が受け持つ割合。0 で純粋な円弧、"
+                               "1 で円弧なし（緩和曲線だけ）",
+                               "Share of the deflection angle taken by the two transition curves. "
+                               "0 is a pure arc, 1 has no arc (transition curves only)"),
                         "%.2f");
                 }
                 if (curveChanged) {
@@ -1718,21 +1754,28 @@ bool Application::DrawPathSettings(graph::Node& node) {
                 }
                 // 幅の上書き。入れると鎖の上では点の値を補間せず、ここの値で一定になる。
                 bool valuesChanged = ui::PropertyBool(
-                    "幅を鎖で決める", &overrideValues, false,
-                    "この鎖の上では点の幅 / フェザー / 強さを使わず、下の値で一定にする。"
-                    "点の値は残るので、切れば戻る。高さのずれは点ごとのまま");
+                    ui::Tr("幅を鎖で決める", "Override Width"), &overrideValues, false,
+                    ui::Tr("この鎖の上では点の幅 / フェザー / 強さを使わず、下の値で一定にする。"
+                           "点の値は残るので、切れば戻る。高さのずれは点ごとのまま",
+                           "On this chain, uses the constant values below instead of the point width / "
+                           "feather / strength. Point values are kept, so turning this off restores them. "
+                           "Height offsets stay per point"));
                 if (overrideValues) {
                     valuesChanged |= ui::PropertyFloat(
-                        "幅", &edgeWidth, 0.5f, 2000.0f, path.defaultWidthMeters,
-                        "この鎖の幅（m）。マスクではこの幅の内側が 1 になる", "%.1f m",
+                        ui::Tr("幅", "Width"), &edgeWidth, 0.5f, 2000.0f, path.defaultWidthMeters,
+                        ui::Tr("この鎖の幅（m）。マスクではこの幅の内側が 1 になる",
+                               "Width of this chain (m). In masks, the inside of this width is 1"),
+                        "%.1f m",
                         ImGuiSliderFlags_Logarithmic);
                     valuesChanged |= ui::PropertyFloat(
-                        "フェザー", &edgeFeather, 0.0f, 2000.0f, path.defaultFeatherMeters,
-                        "この鎖のフェザー（m）。幅の外側をこの距離で 0 へ落とす", "%.1f m",
+                        ui::Tr("フェザー", "Feather"), &edgeFeather, 0.0f, 2000.0f, path.defaultFeatherMeters,
+                        ui::Tr("この鎖のフェザー（m）。幅の外側をこの距離で 0 へ落とす",
+                               "Feather of this chain (m). Falls off to 0 over this distance outside the width"),
+                        "%.1f m",
                         ImGuiSliderFlags_Logarithmic);
-                    valuesChanged |= ui::PropertyFloat("強さ", &edgeIntensity, 0.0f, 1.0f,
+                    valuesChanged |= ui::PropertyFloat(ui::Tr("強さ", "Strength"), &edgeIntensity, 0.0f, 1.0f,
                                                        path.defaultIntensity,
-                                                       "この鎖のマスクの強さ", "%.2f");
+                                                       ui::Tr("この鎖のマスクの強さ", "Mask strength of this chain"), "%.2f");
                 }
                 if (valuesChanged) {
                     for (graph::PathEdge* edge : edges) {
@@ -1746,14 +1789,18 @@ bool Application::DrawPathSettings(graph::Node& node) {
                 // 蛇行。引いた線を進む向きと直角に小刻みに振る（経路探索とは別に掛かる）。
                 bool meanderChanged = false;
                 if (!road) meanderChanged = ui::PropertyFloat(
-                    "蛇行", &meander, 0.0f, 20.0f, 0.0f,
-                    "線を進む向きと直角に、なめらかなノイズで振る幅（m）。登山道が岩や藪を"
-                    "避けて小刻みに振れる感じ。0 で振らない。鎖の両端では 0 へ絞る",
+                    ui::Tr("蛇行", "Meander"), &meander, 0.0f, 20.0f, 0.0f,
+                    ui::Tr("線を進む向きと直角に、なめらかなノイズで振る幅（m）。登山道が岩や藪を"
+                           "避けて小刻みに振れる感じ。0 で振らない。鎖の両端では 0 へ絞る",
+                           "Width (m) of a smooth noise sway across the line. Like a trail weaving "
+                           "around rocks and brush. 0 disables it. Tapers to 0 at the chain ends"),
                     "%.1f m");
                 if (!road && meander > 0.0f) {
                     meanderChanged |= ui::PropertyFloat(
-                        "蛇行の波長", &meanderWavelength, 2.0f, 200.0f, 20.0f,
-                        "1 回振れる長さ（m）。短いほど細かく振れる", "%.1f m",
+                        ui::Tr("蛇行の波長", "Meander Wavelength"), &meanderWavelength, 2.0f, 200.0f, 20.0f,
+                        ui::Tr("1 回振れる長さ（m）。短いほど細かく振れる",
+                               "Length of one sway (m). Shorter sways more finely"),
+                        "%.1f m",
                         ImGuiSliderFlags_Logarithmic);
                 }
                 if (meanderChanged) {
@@ -1764,21 +1811,31 @@ bool Application::DrawPathSettings(graph::Node& node) {
                     changed = true;
                 }
                 // 経路探索。鎖のエッジ全部に同じ設定を入れ、変えたらすぐ計算し直す。
-                static const char* const kRouteLabels[] = {"なし", "道路（許容勾配で探す）",
-                                                           "流れ（下る。川 / 氷河）",
-                                                           "登山道（稜線を通り、避ける所を避ける）"};
+                static const ui::LocalizedText kRouteLabels[] = {
+                    {"なし", "None"},
+                    {"道路（許容勾配で探す）", "Road (within grade limit)"},
+                    {"流れ（下る。川 / 氷河）", "Flow (downhill: river / glacier)"},
+                    {"登山道（稜線を通り、避ける所を避ける）", "Trail (follows ridges, avoids areas)"}};
                 int routeIndex = static_cast<int>(route);
                 // Road Path は「なし / 道路」の 2 つだけを出す（貼り付けで別の探し方が入っていたら「なし」と見せる）。
                 const int routeCount = road ? 2 : IM_ARRAYSIZE(kRouteLabels);
                 if (routeIndex >= routeCount) routeIndex = 0;
                 bool routeChanged = ui::PropertyCombo(
-                    "経路探索", &routeIndex, kRouteLabels, routeCount, 0,
-                    "両端の点の間の経路を Base に繋いだ地形から探し、内部の点を自動で打つ。"
-                    "置いた点は動かない。点を動かすと作り直す。上流の地形を変えたときは"
-                    "再計算のボタンで。道路は許容勾配を超えた分をペナルティにし、上りも下りも"
-                    "同じ扱い。流れは向き（from → to）に下り、上りを嫌って低い所（谷底）を好む。"
-                    "登山道は道路より急な勾配を許し、稜線を好み、急な斜面の横切りと"
-                    "Avoid に繋いだマスク（岩場・崖・水流など）を嫌う");
+                    ui::Tr("経路探索", "Routing"), &routeIndex, ui::Tr(kRouteLabels).data(), routeCount, 0,
+                    ui::Tr("両端の点の間の経路を Base に繋いだ地形から探し、内部の点を自動で打つ。"
+                           "置いた点は動かない。点を動かすと作り直す。上流の地形を変えたときは"
+                           "再計算のボタンで。道路は許容勾配を超えた分をペナルティにし、上りも下りも"
+                           "同じ扱い。流れは向き（from → to）に下り、上りを嫌って低い所（谷底）を好む。"
+                           "登山道は道路より急な勾配を許し、稜線を好み、急な斜面の横切りと"
+                           "Avoid に繋いだマスク（岩場・崖・水流など）を嫌う",
+                           "Finds a route between the end points on the terrain connected to Base and "
+                           "places the interior points automatically. Placed points stay put. Moving a "
+                           "point rebuilds the route. After changing upstream terrain, use the recompute "
+                           "button. Road penalizes grades above the grade limit, uphill and downhill alike. "
+                           "Flow descends along its direction (from → to), avoids climbing, and prefers "
+                           "low ground (valley floors). Trail allows steeper grades than Road, prefers "
+                           "ridges, and avoids crossing steep slopes and the mask connected to Avoid "
+                           "(rocks, cliffs, streams, etc.)"));
                 const graph::PathRoute previousRoute = route;
                 route = static_cast<graph::PathRoute>(routeIndex);
                 // 登山道へ切り替えたら、許容勾配を登山道の目安へ（道路の 10% では直登を嫌いすぎる）。
@@ -1787,21 +1844,28 @@ bool Application::DrawPathSettings(graph::Node& node) {
                 }
                 if (route == graph::PathRoute::Road || route == graph::PathRoute::Trail) {
                     routeChanged |= ui::PropertyFloat(
-                        "許容勾配", &maxGrade, 0.5f, 100.0f,
+                        ui::Tr("許容勾配", "Grade Limit"), &maxGrade, 0.5f, 100.0f,
                         route == graph::PathRoute::Trail ? 25.0f : 10.0f,
-                        "これを超える勾配にペナルティ（%）。超えるほど遠回り（つづら折れ）を選ぶ",
+                        ui::Tr("これを超える勾配にペナルティ（%）。超えるほど遠回り（つづら折れ）を選ぶ",
+                               "Grades above this (%) are penalized. The further above, the more "
+                               "it detours (switchbacks)"),
                         "%.1f %%", ImGuiSliderFlags_Logarithmic);
                 }
                 if (route == graph::PathRoute::Trail) {
                     routeChanged |= ui::PropertyFloat(
-                        "稜線の好み", &ridgeWeight, 0.0f, 10.0f, 1.0f,
-                        "周り（半径 40 m）より低い谷や窪みほど通りにくくする強さ。"
-                        "上げるほど稜線を通る。0 で地形の凹凸を気にしない",
+                        ui::Tr("稜線の好み", "Ridge Preference"), &ridgeWeight, 0.0f, 10.0f, 1.0f,
+                        ui::Tr("周り（半径 40 m）より低い谷や窪みほど通りにくくする強さ。"
+                               "上げるほど稜線を通る。0 で地形の凹凸を気にしない",
+                               "How strongly valleys and hollows lower than their surroundings "
+                               "(40 m radius) are avoided. Higher follows ridges more. 0 ignores "
+                               "the terrain relief"),
                         "%.2f");
                     routeChanged |= ui::PropertyFloat(
-                        "避ける強さ", &avoidWeight, 0.0f, 100.0f, 4.0f,
-                        "Avoid に繋いだマスクが 1 の所を、何倍通りにくくするか。"
-                        "マスクが繋がっていなければ効かない",
+                        ui::Tr("避ける強さ", "Avoid Strength"), &avoidWeight, 0.0f, 100.0f, 4.0f,
+                        ui::Tr("Avoid に繋いだマスクが 1 の所を、何倍通りにくくするか。"
+                               "マスクが繋がっていなければ効かない",
+                               "How many times harder it is to pass where the Avoid mask is 1. "
+                               "No effect when no mask is connected"),
                         "%.1f", ImGuiSliderFlags_Logarithmic);
                 }
                 if (routeChanged) {
@@ -1820,7 +1884,7 @@ bool Application::DrawPathSettings(graph::Node& node) {
                 }
                 if (route != graph::PathRoute::None) {
                     ui::PropertyLabelEmpty("pathRouteStrand");
-                    if (ui::Button("この鎖を再計算", ui::kWideButtonWidth)) {
+                    if (ui::Button(ui::Tr("この鎖を再計算", "Recompute Chain"), ui::kWideButtonWidth)) {
                         RecomputePathRoutes(node, true, &m_pathEdit.selectedEdges);
                     }
                     ui::PropertyEnd();
@@ -1831,13 +1895,16 @@ bool Application::DrawPathSettings(graph::Node& node) {
                     const std::vector<graph::PathStrand> strands = graph::BuildPathStrands(path);
                     const graph::PathStrand* strand = graph::FindStrandOfEdge(strands, edges.front()->id);
                     const bool fittable = strand != nullptr && !strand->closed && strand->points.size() >= 3;
-                    ui::PropertyFloat("変換の許容誤差", &m_pathFitToleranceMeters, 0.1f, 20.0f, 2.0f,
-                                      "下の変換で、元の折れ線からのずれをここまで許す。"
-                                      "小さいほど制御点が増えて元の形に近づく",
+                    ui::PropertyFloat(ui::Tr("変換の許容誤差", "Fit Tolerance"), &m_pathFitToleranceMeters, 0.1f, 20.0f, 2.0f,
+                                      ui::Tr("下の変換で、元の折れ線からのずれをここまで許す。"
+                                             "小さいほど制御点が増えて元の形に近づく",
+                                             "Deviation from the original polyline allowed by the "
+                                             "conversion below. Smaller adds control points and stays "
+                                             "closer to the original shape"),
                                       "%.1f m");
                     ui::PropertyLabelEmpty("pathFitClothoid");
                     ImGui::BeginDisabled(!fittable);
-                    if (ui::Button("クロソイドの制御点に変換", ui::kWideButtonWidth)) {
+                    if (ui::Button(ui::Tr("クロソイドの制御点に変換", "Convert to Clothoid"), ui::kWideButtonWidth)) {
                         graph::PathClothoidFitOptions options;
                         options.toleranceMeters = m_pathFitToleranceMeters;
                         options.clothoidRatio = clothoidRatio;
@@ -1848,32 +1915,44 @@ bool Application::DrawPathSettings(graph::Node& node) {
                             m_pathEdit.selectedEdges = result.edges;
                             m_pathEdit.selectedStrandInterior = result.interiorPoints;
                             char detail[128];
-                            std::snprintf(detail, sizeof(detail), "点 %zu → %zu（元の線からのずれ 最大 %.1f m）",
+                            std::snprintf(detail, sizeof(detail), ui::Tr("点 %zu → %zu（元の線からのずれ 最大 %.1f m）",
+                                                                         "Points %zu → %zu (max deviation "
+                                                                         "from the original %.1f m)"),
                                           result.pointsBefore, result.pointsAfter, result.maxErrorMeters);
-                            m_toasts.Push("鎖をクロソイドの制御点に置き換えました", detail);
+                            m_toasts.Push(ui::Tr("鎖をクロソイドの制御点に置き換えました",
+                                                 "Replaced the chain with clothoid control points"), detail);
                             changed = true;
                         } else {
-                            m_toasts.Push("鎖を置き換えられませんでした", "開いた鎖で、点が 3 つ以上のときだけ");
+                            m_toasts.Push(ui::Tr("鎖を置き換えられませんでした", "Could not replace the chain"),
+                                          ui::Tr("開いた鎖で、点が 3 つ以上のときだけ",
+                                                 "Only open chains with 3 or more points"));
                         }
                     }
                     ImGui::EndDisabled();
                     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                        ImGui::SetTooltip("鎖の点を間引き、直線の交点を制御点にしてクロソイド（丸め 1.0）で引き直す。"
-                                          "取り込んだ 10 m おきの点列を、設計の線形に戻すためのもの。\n"
-                                          "両端の点は残り、幅・高さのずれは元の最寄りの点から引き継ぐ。"
-                                          "経路探索は「なし」になる。アンドゥで戻せる。\n"
-                                          "閉じた輪と 2 点の鎖には使えない");
+                        ImGui::SetTooltip("%s", ui::Tr("鎖の点を間引き、直線の交点を制御点にしてクロソイド（丸め 1.0）で引き直す。"
+                                                       "取り込んだ 10 m おきの点列を、設計の線形に戻すためのもの。\n"
+                                                       "両端の点は残り、幅・高さのずれは元の最寄りの点から引き継ぐ。"
+                                                       "経路探索は「なし」になる。アンドゥで戻せる。\n"
+                                                       "閉じた輪と 2 点の鎖には使えない",
+                                                       "Thins out the chain's points and redraws it as a clothoid "
+                                                       "(rounding 1.0) with the line intersections as control points. "
+                                                       "Turns imported points spaced every 10 m back into a design "
+                                                       "alignment.\nThe end points are kept, and width and height "
+                                                       "offsets come from the nearest original point. Routing "
+                                                       "becomes None. Can be undone.\n"
+                                                       "Not available for closed loops or 2-point chains"));
                     }
                     ui::PropertyEnd();
                 }
                 // 鎖の設定（曲線 / 幅 / 蛇行 / 経路探索）を別の鎖へ写す。形と向きは写さない。
                 ui::PropertyLabelEmpty("pathEdgeStyle");
-                if (ui::Button("設定をコピー")) {
+                if (ui::Button(ui::Tr("設定をコピー", "Copy Style"))) {
                     m_pathStyleClipboard = graph::GetPathEdgeStyle(*edges.front());
                 }
                 ImGui::SameLine();
                 ImGui::BeginDisabled(!m_pathStyleClipboard.has_value());
-                if (ui::Button("設定を貼り付け")) {
+                if (ui::Button(ui::Tr("設定を貼り付け", "Paste Style"))) {
                     bool pasted = false;
                     for (graph::PathEdge* edge : edges) {
                         pasted |= graph::ApplyPathEdgeStyle(*edge, *m_pathStyleClipboard);
@@ -1886,13 +1965,13 @@ bool Application::DrawPathSettings(graph::Node& node) {
                 ImGui::EndDisabled();
                 ui::PropertyEnd();
                 ui::PropertyLabelEmpty("pathEdgeButtons");
-                if (ui::Button("向きを反転")) {
+                if (ui::Button(ui::Tr("向きを反転", "Reverse"))) {
                     for (graph::PathEdge* edge : edges) {
                         changed |= graph::ReversePathEdge(path, edge->id);
                     }
                 }
                 ImGui::SameLine();
-                if (ui::Button("削除")) {
+                if (ui::Button(ui::Tr("削除", "Delete"))) {
                     for (const graph::PathElementId id : m_pathEdit.selectedEdges) {
                         changed |= graph::DeletePathEdge(path, id);
                     }
@@ -1908,14 +1987,19 @@ bool Application::DrawPathSettings(graph::Node& node) {
                 ui::EndPropertyTable();
             }
             if (mixed) {
-                ui::HintText("鎖の中で曲線 / 幅 / 経路探索の設定が混在している。変えると全部に入る");
+                ui::HintText("%s", ui::Tr("鎖の中で曲線 / 幅 / 経路探索の設定が混在している。変えると全部に入る",
+                                          "Curve / width / routing settings are mixed in this chain. "
+                                          "Changing one applies it to all"));
             }
         }
     }
 
-    ui::HintText("ビューポートで編集する（操作はビューポートの下に出る）。"
-                 "地形はプレビュー中のものに沿う。Base に繋いだ地形を見るには、"
-                 "このノードをダブルクリック");
+    ui::HintText("%s", ui::Tr("ビューポートで編集する（操作はビューポートの下に出る）。"
+                              "地形はプレビュー中のものに沿う。Base に繋いだ地形を見るには、"
+                              "このノードをダブルクリック",
+                              "Edit in the viewport (the controls are shown at its bottom). "
+                              "Points follow the previewed terrain. To see the terrain connected "
+                              "to Base, double-click this node"));
     return changed;
 }
 

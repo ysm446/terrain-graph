@@ -9,8 +9,15 @@ namespace tg::io {
 // 環境変数が引けないときは作業ディレクトリを返す。
 std::filesystem::path AppDataDirectory();
 
+// UI の表示言語。ui::Language と並びを合わせること。保存は "ja" / "en"。
+enum class UiLanguage {
+    Japanese,
+    English,
+};
+
 // UI の見た目に関する設定。プロジェクトではなくアプリに紐づく。
 struct UiSettings {
+    UiLanguage language = UiLanguage::Japanese;
     // Windows の表示スケール（DPI）に合わせて UI を拡大するか。
     //
     // 既定は**合わせない**。クライアント領域を実ピクセルで固定しているので、

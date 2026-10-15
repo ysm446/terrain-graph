@@ -100,6 +100,15 @@ tg::StartupOptions ParseCommandLine() {
             options.revealAsset = argv[++i];
         } else if (argument == L"--show-unsaved") {
             options.showUnsaved = true;
+        } else if (argument == L"--focus-window" && (i + 1) < argc) {
+            const std::wstring window = argv[++i];
+            // 固定 ID は ASCII なので、そのまま 1 文字ずつ移す。
+            for (const wchar_t c : window) options.focusWindow += static_cast<char>(c);
+        } else if (argument == L"--show-settings") {
+            options.showSettings = true;
+        } else if (argument == L"--language" && (i + 1) < argc) {
+            const std::wstring language = argv[++i];
+            if (language == L"ja" || language == L"en") options.language = (language == L"en") ? "en" : "ja";
         } else if (argument == L"--resolve-graph-overlaps" && (i + 1) < argc) {
             options.resolveGraphOverlapsFrame = ::_wtoi(argv[++i]);
         } else if (argument == L"--select-node" && (i + 1) < argc) {

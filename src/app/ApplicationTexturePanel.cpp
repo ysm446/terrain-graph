@@ -160,7 +160,7 @@ void Application::ProcessPendingTextureRelinks() {
 // **映すのは一覧で選んでいるテクスチャ。** マテリアルの窓と同じ作法で、
 // 窓の側に別の選択を持たせない。
 void Application::DrawTexturePreviewWindow() {
-    if (!m_showTexturePreview || HiddenWithAssetBand("テクスチャプレビュー")) {
+    if (!m_showTexturePreview || HiddenWithAssetBand("###TexturePreview")) {
         return;
     }
 
@@ -169,7 +169,7 @@ void Application::DrawTexturePreviewWindow() {
     // スクロールするのは下（詳細）だけ。
     ImGui::SetNextWindowSize(ImVec2(ui::Scaled(420.0f), ui::Scaled(620.0f)),
                              ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("テクスチャプレビュー", &m_showTexturePreview,
+    if (!ImGui::Begin(ui::Tr("テクスチャプレビュー###TexturePreview", "Texture Preview###TexturePreview"), &m_showTexturePreview,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         ImGui::End();
         return;
@@ -177,7 +177,8 @@ void Application::DrawTexturePreviewWindow() {
 
     const std::vector<compositor::LibraryTexture>& entries = m_textureLibrary.Entries();
     if (entries.empty()) {
-        ui::HintText("テクスチャがない。「テクスチャ」パネルの右クリックから読み込む");
+        ui::HintText("%s", ui::Tr("テクスチャがない。「テクスチャ」パネルの右クリックから読み込む",
+                                   "No textures. Load one from the context menu of the Textures panel"));
         ImGui::End();
         return;
     }
@@ -215,20 +216,23 @@ void Application::DrawTexturePreviewWindow() {
     ImGui::Separator();
 
     ImGui::BeginChild("texturePropertyPane", ImVec2(0.0f, 0.0f));
-    ui::SectionHeader("選択中");
+    ui::SectionHeader(ui::Tr("選択中", "Selected"));
     if (ui::BeginPropertyTable("textureRows")) {
         // ORD のように 1 枚へ複数のマップを詰めたテクスチャは、RGB のまま見ても
         // 意味が読めない。チャンネルを分けて確かめられるようにする。
         static const char* const kPreviewChannelLabels[] = {"RGB", "R", "G", "B", "A"};
-        ui::PropertyCombo("チャンネル", &m_previewChannel, kPreviewChannelLabels,
+        ui::PropertyCombo(ui::Tr("チャンネル", "Channel"), &m_previewChannel, kPreviewChannelLabels,
                           IM_ARRAYSIZE(kPreviewChannelLabels), 0,
-                          "1 枚に複数のマップを詰めたテクスチャ（ORD など）の中身を確かめる。"
-                          "R / G / B を選ぶとそのチャンネルだけを灰色で出す");
+                          ui::Tr("1 枚に複数のマップを詰めたテクスチャ（ORD など）の中身を確かめる。"
+                                 "R / G / B を選ぶとそのチャンネルだけを灰色で出す",
+                                 "Inspects textures that pack several maps into one (such as ORD). "
+                                 "Choosing R / G / B shows only that channel in gray"));
 
         char nameBuffer[128] = {};
         std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", selected.name.c_str());
-        if (ui::PropertyTextInput("名前", nameBuffer, sizeof(nameBuffer),
-                                  "一覧とマップ欄に出る名前。画像ファイルの名前は変わらない")) {
+        if (ui::PropertyTextInput(ui::Tr("名前", "Name"), nameBuffer, sizeof(nameBuffer),
+                                  ui::Tr("一覧とマップ欄に出る名前。画像ファイルの名前は変わらない",
+                                         "Name shown in the list and map slots. The image file name does not change"))) {
             if (compositor::LibraryTexture* mutableEntry =
                     m_textureLibrary.FindMutable(selected.id);
                 mutableEntry != nullptr) {
@@ -237,32 +241,35 @@ void Application::DrawTexturePreviewWindow() {
         }
         if (selected.missing) {
             // 中身が無いので解像度などは出せない。代わりに状態と、繋ぎ直す入口を置く。
-            ui::PropertyLabel("状態", "読み込み元のファイルが見つからない。"
-                                      "参照は保ってあるので、繋ぎ直せば元どおりになる");
+            ui::PropertyLabel(ui::Tr("状態", "Status"), ui::Tr("読み込み元のファイルが見つからない。"
+                                                         "参照は保ってあるので、繋ぎ直せば元どおりになる",
+                                                         "The source file was not found. "
+                                                         "References are kept, so relinking restores it"));
             ImGui::PushStyleColor(ImGuiCol_Text, ui::WarnColor());
-            ImGui::TextUnformatted("リンク切れ");
+            ImGui::TextUnformatted(ui::Tr("リンク切れ", "Missing"));
             ImGui::PopStyleColor();
             ui::PropertyEnd();
         } else {
-            ui::PropertyValue("解像度", "%u x %u", selected.texture.width,
+            ui::PropertyValue(ui::Tr("解像度", "Resolution"), "%u x %u", selected.texture.width,
                               selected.texture.height);
-            ui::PropertyValue("ミップ", "%u 段", selected.texture.mipLevels);
-            ui::PropertyValue("形式", "%s", TextureFormatLabel(selected));
+            ui::PropertyValue(ui::Tr("ミップ", "Mips"), ui::Tr("%u 段", "%u levels"), selected.texture.mipLevels);
+            ui::PropertyValue(ui::Tr("形式", "Format"), "%s", TextureFormatLabel(selected));
         }
-        ui::PropertyValue("参照", "%zu か所", CountTextureUsers(selected.id));
+        ui::PropertyValue(ui::Tr("参照", "Used By"), ui::Tr("%zu か所", "%zu places"), CountTextureUsers(selected.id));
 
-        DrawAssetPathRow("場所", selected.path, m_pendingAssetReveal);
+        DrawAssetPathRow(ui::Tr("場所", "Location"), selected.path, m_pendingAssetReveal);
 
         if (selected.missing) {
             ui::PropertyLabelEmpty("relink");
-            if (ui::Button("繋ぎ直す…", ui::kWideButtonWidth)) {
+            if (ui::Button(ui::Tr("繋ぎ直す…", "Relink…"), ui::kWideButtonWidth)) {
                 RequestTextureRelink(selected.id);
             }
             ui::PropertyEnd();
         }
         ui::EndPropertyTable();
     }
-    ui::HintText("一覧のサムネイルをマテリアルのマップ欄へドラッグすると割り当てられる");
+    ui::HintText("%s", ui::Tr("一覧のサムネイルをマテリアルのマップ欄へドラッグすると割り当てられる",
+                               "Drag a thumbnail from the list onto a material map slot to assign it"));
     ImGui::EndChild();
 
     ImGui::End();

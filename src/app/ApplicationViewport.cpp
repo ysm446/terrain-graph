@@ -66,7 +66,7 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
     ImGui::SetCursorScreenPos(ImVec2(viewportMin.x + margin, viewportMin.y + margin));
 
     renderer::DebugView& current = m_renderer.Debug();
-    const char* label = kDebugViewLabels[static_cast<size_t>(current)];
+    const char* label = kDebugViewLabels[static_cast<size_t>(current)].Get();
 
     // 既定以外の表示は見落としやすいので、ボタンの文字を強調する。
     const bool highlighted = (current != renderer::DebugView::Shaded);
@@ -80,13 +80,13 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
         ImGui::PopStyleColor();
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("ビューポートに何を表示するか");
+        ImGui::SetTooltip("%s", ui::Tr("ビューポートに何を表示するか", "What the viewport shows"));
     }
 
     if (ImGui::BeginPopup("##viewportViewMenu")) {
         for (int i = 0; i < IM_ARRAYSIZE(kDebugViewLabels); ++i) {
             const auto view = static_cast<renderer::DebugView>(i);
-            if (ImGui::Selectable(kDebugViewLabels[i], current == view)) {
+            if (ImGui::Selectable(kDebugViewLabels[i].Get(), current == view)) {
                 current = view;
             }
         }
@@ -97,14 +97,14 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
     // FPS / 統計 / ハイトの範囲。どれもビューポートに重ねて出すものなので、
     // トップメニューではなくここに置く。切り替えたその場で設定に覚える。
     // 出口ノードの表示フラグで隠しているものがあれば、ボタンの文字を強調して隠したまま忘れないようにし、
-    // メニューに「Show All」を出す。フラグは作業中だけの切り替えで、シーンにもアプリの設定にも保存しない。
+    // メニューに「すべて表示」を出す。フラグは作業中だけの切り替えで、シーンにもアプリの設定にも保存しない。
     const size_t hiddenOutputs = HiddenOutputCount();
     ImGui::SameLine();
     const bool hiding = hiddenOutputs > 0;
     if (hiding) {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::WarnColor());
     }
-    if (ImGui::Button("Display")) {
+    if (ImGui::Button(ui::Tr("表示", "Display"))) {
         ImGui::OpenPopup("##viewportDisplayMenu");
     }
     if (hiding) {
@@ -112,28 +112,32 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
     }
     if (ImGui::IsItemHovered()) {
         if (hiding) {
-            ImGui::SetTooltip("ビューポートに重ねる情報と、出口の表示。\nいま %zu 個の出口ノードを表示フラグで隠しています",
+            ImGui::SetTooltip(ui::Tr("ビューポートに重ねる情報と、出口の表示。\nいま %zu 個の出口ノードを表示フラグで隠しています",
+                                     "Overlays on the viewport and output display.\n%zu output nodes are hidden by their display flags"),
                               hiddenOutputs);
         } else {
-            ImGui::SetTooltip("ビューポートに重ねる情報と、出口の表示");
+            ImGui::SetTooltip("%s", ui::Tr("ビューポートに重ねる情報と、出口の表示", "Overlays on the viewport and output display"));
         }
     }
     if (ImGui::BeginPopup("##viewportDisplayMenu")) {
         io::DisplaySettings& settings = m_settings.Display();
         bool changed = false;
         changed |= ImGui::MenuItem("FPS", nullptr, &settings.showFps);
-        changed |= ImGui::MenuItem("Stats", nullptr, &settings.showStats);
-        changed |= ImGui::MenuItem("Height Range", nullptr, &settings.showHeightGuide);
+        changed |= ImGui::MenuItem(ui::Tr("統計", "Stats"), nullptr, &settings.showStats);
+        changed |= ImGui::MenuItem(ui::Tr("ハイトの範囲", "Height Range"), nullptr, &settings.showHeightGuide);
         if (changed) {
             m_settings.Save();
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Show All", nullptr, false, hiding)) {
+        if (ImGui::MenuItem(ui::Tr("すべて表示", "Show All"), nullptr, false, hiding)) {
             m_hiddenOutputs.clear();
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort | ImGuiHoveredFlags_AllowWhenDisabled)) {
-            ImGui::SetTooltip("出口ノード（Output / Mesh Output / Model Output / Snow Plume / Cloud Output）の\n"
-                              "表示フラグを全部上げる。フラグはノードの見出しの目で切り替える");
+            ImGui::SetTooltip("%s", ui::Tr("出口ノード（Output / Mesh Output / Model Output / Snow Plume / Cloud Output）の\n"
+                                           "表示フラグを全部上げる。フラグはシーン階層の目で切り替える",
+                                           "Turn on the display flags of all output nodes\n"
+                                           "(Output / Mesh Output / Model Output / Snow Plume / Cloud Output).\n"
+                                           "Each flag is toggled by its eye in the Scene Hierarchy"));
         }
         ImGui::EndPopup();
     }
@@ -194,26 +198,26 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
         char text[96] = {};
         const double gpuMilliseconds = m_device.GpuFrameMilliseconds();
         if (gpuMilliseconds >= 0.0) {
-            std::snprintf(text, sizeof(text), "GPU %.2f ms", gpuMilliseconds);
+            std::snprintf(text, sizeof(text), ui::Tr("GPU 処理 %.2f ms", "GPU %.2f ms"), gpuMilliseconds);
         } else {
-            std::snprintf(text, sizeof(text), "GPU -- ms");
+            std::snprintf(text, sizeof(text), "%s", ui::Tr("GPU 処理 -- ms", "GPU -- ms"));
         }
         lines.emplace_back(text);
         // 描画解像度（ビューポートの画素数）。GPU 時間はこの画素数に対するものなので、
         // 並べて出す。ウィンドウの大きさで変わるため、比べるときの前提になる。
-        std::snprintf(text, sizeof(text), "Resolution %u x %u", m_renderer.Width(), m_renderer.Height());
+        std::snprintf(text, sizeof(text), ui::Tr("解像度 %u x %u", "Resolution %u x %u"), m_renderer.Width(), m_renderer.Height());
         lines.emplace_back(text);
-        std::snprintf(text, sizeof(text), "Draw calls %u", stats.drawCalls);
+        std::snprintf(text, sizeof(text), ui::Tr("ドローコール %u", "Draw calls %u"), stats.drawCalls);
         lines.emplace_back(text);
-        std::snprintf(text, sizeof(text), "Vertices %s", GroupDigits(stats.vertices).c_str());
+        std::snprintf(text, sizeof(text), ui::Tr("頂点 %s", "Vertices %s"), GroupDigits(stats.vertices).c_str());
         lines.emplace_back(text);
         // テセレーション中は、三角形はドメインシェーダが決めるので CPU では分からない。
         // **数えられないものを数えたふりをしない。** 投入したパッチ数と上限を出す。
         if (stats.tessellation) {
-            std::snprintf(text, sizeof(text), "Patches %s (up to x%.0f)",
+            std::snprintf(text, sizeof(text), ui::Tr("パッチ %s（x%.0f まで）", "Patches %s (up to x%.0f)"),
                           GroupDigits(stats.patches).c_str(), stats.tessellationFactor);
         } else {
-            std::snprintf(text, sizeof(text), "Triangles %s", GroupDigits(stats.triangles).c_str());
+            std::snprintf(text, sizeof(text), ui::Tr("三角形 %s", "Triangles %s"), GroupDigits(stats.triangles).c_str());
         }
         lines.emplace_back(text);
         // 配置モデルの株数（本描画）を段ごとに。使っていない末尾の段は出さない。
@@ -225,7 +229,7 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
             for (size_t lod = 0; lod < levels; ++lod) {
                 total += stats.instancesPerLod[lod];
             }
-            lines.emplace_back("Instances " + GroupDigits(total));
+            lines.emplace_back(ui::Tr("インスタンス ", "Instances ") + GroupDigits(total));
             for (size_t lod = 0; lod < levels; ++lod) {
                 lines.emplace_back("LOD" + std::to_string(lod) + " " + GroupDigits(stats.instancesPerLod[lod]));
             }
@@ -524,7 +528,8 @@ void Application::DrawCloudShapeGizmo(const ImVec2& viewportMin, const ImVec2& v
             if (candidate->IsValid()) { field=candidate; break; }
         }
         if (settings && field) {
-            const char* legend="空中の風（最後の評価）\n根元：取得位置 / 向き：風向 / 長さ：風速（上限あり）";
+            const char* legend=ui::Tr("空中の風（最後の評価）\n根元：取得位置 / 向き：風向 / 長さ：風速（上限あり）",
+                                     "Wind aloft (last evaluation)\nBase: sample point / Direction: wind direction / Length: wind speed (capped)");
             const ImVec2 legendMin(viewportMin.x+ui::Scaled(12.0f),
                                    viewportMin.y+ImGui::GetFrameHeight()+ui::Scaled(20.0f));
             const ImVec2 legendSize=ImGui::CalcTextSize(legend);
@@ -748,11 +753,11 @@ void Application::DrawLightGizmo(const ImVec2& viewportMin, const ImVec2& viewpo
     if (m_renderer.AtmosphericMode() && m_renderer.Celestial().mode == 1) {
         const auto& c = m_renderer.Celestial();
         const int minutes = static_cast<int>(std::lround(c.hour * 60.0f));
-        std::snprintf(text, sizeof(text), "%d/%d %02d:%02d   方位角 %.0f 度   仰角 %.0f 度",
+        std::snprintf(text, sizeof(text), ui::Tr("%d/%d %02d:%02d   方位角 %.0f 度   仰角 %.0f 度", "%d/%d %02d:%02d   Azimuth %.0f°   Elevation %.0f°"),
                       c.month, c.day, (minutes / 60) % 24, minutes % 60,
                       RadiansToDegrees(light.azimuth), RadiansToDegrees(light.elevation));
     } else {
-        std::snprintf(text, sizeof(text), "方位角 %.0f 度   仰角 %.0f 度",
+        std::snprintf(text, sizeof(text), ui::Tr("方位角 %.0f 度   仰角 %.0f 度", "Azimuth %.0f°   Elevation %.0f°"),
                       RadiansToDegrees(light.azimuth), RadiansToDegrees(light.elevation));
     }
     // 左上には表示モードのボタンがあるので、その下へ置く。
@@ -945,7 +950,7 @@ void Application::HandlePaintInput(compositor::MaterialLayer& layer, bool itemAc
 void Application::DrawViewportPanel() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     // ホイールでウィンドウがスクロールしないようにする（ズームに使うため）。
-    const bool open = ImGui::Begin("ビューポート", nullptr,
+    const bool open = ImGui::Begin(ui::Tr("ビューポート###Viewport", "Viewport###Viewport"), nullptr,
                                    ImGuiWindowFlags_NoScrollbar |
                                        ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
@@ -1080,7 +1085,8 @@ void Application::DrawViewportPanel() {
             if (ImGui::GetTime() < m_fly.speedShownUntil) {
                 char text[64] = {};
                 const float speed = FlySpeed();
-                std::snprintf(text, sizeof(text), speed < 10.0f ? "フライの速さ %.1f m/s" : "フライの速さ %.0f m/s", speed);
+                std::snprintf(text, sizeof(text), speed < 10.0f ? ui::Tr("フライの速さ %.1f m/s", "Fly speed %.1f m/s")
+                                                                 : ui::Tr("フライの速さ %.0f m/s", "Fly speed %.0f m/s"), speed);
                 const ImVec2 size = ImGui::CalcTextSize(text);
                 const float pad = ui::Scaled(6.0f);
                 const ImVec2 min((imageOrigin.x + imageMax.x - size.x) * 0.5f - pad,

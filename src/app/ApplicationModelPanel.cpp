@@ -559,9 +559,9 @@ void Application::RenderModelPreviews(ID3D12GraphicsCommandList* commandList) {
 }
 void Application::DrawModelPreviewWindow() {
     m_modelPreviewVisible = false;
-    if (!m_showModelPreview || HiddenWithAssetBand("モデルプレビュー")) return;
+    if (!m_showModelPreview || HiddenWithAssetBand("###ModelPreview")) return;
     ImGui::SetNextWindowSize(ImVec2(ui::Scaled(440), ui::Scaled(740)), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("モデルプレビュー", &m_showModelPreview,
+    if (!ImGui::Begin(ui::Tr("モデルプレビュー###ModelPreview", "Model Preview###ModelPreview"), &m_showModelPreview,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         ImGui::End();
         return;
@@ -569,7 +569,7 @@ void Application::DrawModelPreviewWindow() {
     auto found = std::find_if(m_models.begin(), m_models.end(),
                               [&](const auto& a) { return a.id == m_selectedModel; });
     if (found == m_models.end()) {
-        ui::HintText("モデルを選択してください");
+        ui::HintText("%s", ui::Tr("モデルを選択してください", "Select a model"));
         ImGui::End();
         return;
     }
@@ -615,15 +615,18 @@ void Application::DrawModelPreviewWindow() {
     ImGui::EndChild();
     ImGui::Separator();
     ImGui::BeginChild("modelProperties", ImVec2(0, 0));
-    ui::HintText("左ドラッグ: 回転 / 中・Shift+左ドラッグ: パン / ホイール: ズーム");
-    ui::HintText("プレビュー上で F: 中央へフォーカス / A: 全体表示。寸法の単位はm");
-    if (preview && ui::Button("視点を戻す", ui::kWideButtonWidth)) preview->ResetView();
+    ui::HintText("%s", ui::Tr("左ドラッグ: 回転 / 中・Shift+左ドラッグ: パン / ホイール: ズーム",
+                               "Left-drag: orbit / Middle or Shift+left-drag: pan / Wheel: zoom"));
+    ui::HintText("%s", ui::Tr("プレビュー上で F: 中央へフォーカス / A: 全体表示。寸法の単位はm",
+                               "Over the preview, F: focus center / A: frame all. Dimensions are in m"));
+    if (preview && ui::Button(ui::Tr("視点を戻す", "Reset View"), ui::kWideButtonWidth)) preview->ResetView();
     bool changed = false;
     if (ui::BeginPropertyTable("modelBasic")) {
         char name[256];
         std::snprintf(name, sizeof(name), "%s", asset.name.c_str());
-        if (ui::PropertyTextInput("名前", name, sizeof(name),
-                                  "ファイル名（拡張子なし）と同じ。変えるとファイルも改名する")) {
+        if (ui::PropertyTextInput(ui::Tr("名前", "Name"), name, sizeof(name),
+                                  ui::Tr("ファイル名（拡張子なし）と同じ。変えるとファイルも改名する",
+                                         "Same as the file name (without extension). Changing it renames the file"))) {
             if (asset.assetPath.empty()) {
                 asset.name = name;
                 changed = true;
@@ -631,16 +634,17 @@ void Application::DrawModelPreviewWindow() {
                 RequestAssetRename(asset.assetPath, name);
             }
         }
-        DrawAssetPathRow("ファイル", asset.path, m_pendingAssetReveal);
+        DrawAssetPathRow(ui::Tr("ファイル", "File"), asset.path, m_pendingAssetReveal);
         if (asset.geometry) {
             const auto& geo = *asset.geometry;
-            ui::PropertyValue("寸法 X / Y / Z", "%.4f / %.4f / %.4f m",
+            ui::PropertyValue(ui::Tr("寸法 X / Y / Z", "Size X / Y / Z"), "%.4f / %.4f / %.4f m",
                               geo.maximum.x - geo.minimum.x, geo.maximum.y - geo.minimum.y,
                               geo.maximum.z - geo.minimum.z);
             m_modelLod = std::clamp(m_modelLod, 0, int(geo.lods.size()) - 1);
-            ui::PropertyInt("表示LOD", &m_modelLod, 0, int(geo.lods.size()) - 1, 0,
-                            "0が最も詳細です。FBXに含まれるLODから選びます");
-            ui::PropertyValue("三角形数", "%u", geo.lods[m_modelLod].triangles);
+            ui::PropertyInt(ui::Tr("表示LOD", "Display LOD"), &m_modelLod, 0, int(geo.lods.size()) - 1, 0,
+                            ui::Tr("0が最も詳細です。FBXに含まれるLODから選びます",
+                                   "0 is the most detailed. Picks from the LODs in the FBX"));
+            ui::PropertyValue(ui::Tr("三角形数", "Triangles"), "%u", geo.lods[m_modelLod].triangles);
         }
         ui::EndPropertyTable();
     }
@@ -649,7 +653,7 @@ void Application::DrawModelPreviewWindow() {
     if (asset.geometry && (asset.geometry->lods.size() > 1 || asset.impostor.baked)) {
         const size_t count = asset.geometry->lods.size() + (asset.impostor.baked ? 1 : 0);
         ui::SectionHeader("LOD");
-        if (ui::BeginPropertyTable("modelLods", "インポスターの画面サイズ")) {
+        if (ui::BeginPropertyTable("modelLods", ui::Tr("インポスターの画面サイズ", "Impostor Screen Size"))) {
             renderer::ModelAsset defaults;
             defaults.geometry = asset.geometry;
             for (size_t lod = 1; lod < count; ++lod) {
@@ -657,11 +661,14 @@ void Application::DrawModelPreviewWindow() {
                 // 画面の高さに対する割合を % で見せる。
                 float value = renderer::LodScreenSize(asset, lod) * 100.0f;
                 const bool impostorLevel = asset.impostor.baked && lod + 1 == count;
-                const std::string label = impostorLevel ? "インポスターの画面サイズ" : "LOD" + std::to_string(lod) + " の画面サイズ";
+                const std::string label = impostorLevel ? ui::Tr("インポスターの画面サイズ", "Impostor Screen Size")
+                                                         : "LOD" + std::to_string(lod) + ui::Tr(" の画面サイズ", " Screen Size");
                 if (ui::PropertyFloat(label.c_str(), &value, 0.01f, 100.0f,
                                       renderer::LodScreenSize(defaults, lod) * 100.0f,
-                                      "モデルの最大寸法が画面の高さに占める割合がこれより小さくなると、"
-                                      "この段階以降を使います。カメラの画角（焦点距離）を変えても同じ大きさで替わります",
+                                      ui::Tr("モデルの最大寸法が画面の高さに占める割合がこれより小さくなると、"
+                                             "この段階以降を使います。カメラの画角（焦点距離）を変えても同じ大きさで替わります",
+                                             "When the model's largest dimension takes less than this share of the screen height, "
+                                             "this level and beyond are used. Switches at the same size regardless of the field of view"),
                                       "%.2f %%", ImGuiSliderFlags_Logarithmic)) {
                     // 未設定の段も今の値で埋めてから書き換える。手前の段より大きくはしない。
                     std::vector<float> sizes(count - 1);
@@ -675,7 +682,7 @@ void Application::DrawModelPreviewWindow() {
             ui::EndPropertyTable();
         }
         // 今のカメラの画角で、等倍の株がどの距離で替わるかの目安。
-        std::string distances = "今の画角での切り替え距離（等倍）:";
+        std::string distances = ui::Tr("今の画角での切り替え距離（等倍）:", "Switch distances at the current field of view (scale 1):");
         for (size_t lod = 1; lod < count; ++lod) {
             char text[32];
             std::snprintf(text, sizeof(text), "%s %.0f m", lod > 1 ? " /" : "",
@@ -683,21 +690,22 @@ void Application::DrawModelPreviewWindow() {
             distances += text;
         }
         ui::HintText("%s", distances.c_str());
-        ui::HintText("Model Scatter の「LOD 自動」で使います");
+        ui::HintText("%s", ui::Tr("Model Scatter の「LOD 自動」で使います", "Used by \"Auto LOD\" in Model Scatter"));
     }
     if (asset.geometry) DrawImpostorSection(asset);
     if (asset.geometry) {
-        ui::SectionHeader("マテリアルスロット");
+        ui::SectionHeader(ui::Tr("マテリアルスロット", "Material Slots"));
         if (ui::BeginPropertyTable("modelMaterials")) {
             for (size_t i = 0; i < asset.geometry->slots.size(); ++i) {
                 ImGui::PushID(static_cast<int>(i));
-                const std::string label = "スロット " + std::to_string(i + 1);
+                const std::string label = ui::Tr("スロット ", "Slot ") + std::to_string(i + 1);
                 changed |= DrawMaterialSlotRow(label.c_str(), asset.materials[i], m_materialLibrary, m_pendingAssetReveal, false);
                 ImGui::PopID();
             }
             ui::EndPropertyTable();
         }
-        ui::HintText("既存のマテリアルアセットを割り当てます。未割り当てはグレーで表示します");
+        ui::HintText("%s", ui::Tr("既存のマテリアルアセットを割り当てます。未割り当てはグレーで表示します",
+                                   "Assigns existing material assets. Unassigned slots show in gray"));
     }
     if (changed) {
         MarkDocumentChanged(false);
@@ -714,75 +722,90 @@ void Application::DrawImpostorSection(renderer::ModelAsset& asset) {
     static const char* const kFrameLabels[] = {"8 × 8", "12 × 12", "16 × 16"};
     static constexpr uint32_t kSizes[] = {128, 256, 512};
     static const char* const kSizeLabels[] = {"128 px", "256 px", "512 px"};
-    static const char* const kRangeLabels[] = {"半球", "全球"};
+    static const ui::LocalizedText kRangeLabels[] = {{"半球", "Hemisphere"}, {"全球", "Full Sphere"}};
     const auto indexOf = [](const auto& values, uint32_t value) {
         for (int i = 0; i < static_cast<int>(std::size(values)); ++i)
             if (values[i] == value) return i;
         return 1;
     };
-    ui::SectionHeader("インポスター");
-    if (ui::BeginPropertyTable("modelImpostor", "インポスターで表示")) {
+    ui::SectionHeader(ui::Tr("インポスター", "Impostor"));
+    if (ui::BeginPropertyTable("modelImpostor", ui::Tr("インポスターで表示", "Show Impostor"))) {
         int range = impostor.settings.fullSphere ? 1 : 0;
-        if (ui::PropertyCombo("範囲", &range, kRangeLabels, IM_ARRAYSIZE(kRangeLabels), 0,
-                              "半球は上から見る物（地面に置く植生や岩）向けで、同じ方向数なら上からの解像度が倍になる。"
-                              "下からも見る物は全球")) {
+        if (ui::PropertyCombo(ui::Tr("範囲", "Range"), &range, ui::Tr(kRangeLabels).data(), IM_ARRAYSIZE(kRangeLabels), 0,
+                              ui::Tr("半球は上から見る物（地面に置く植生や岩）向けで、同じ方向数なら上からの解像度が倍になる。"
+                                     "下からも見る物は全球",
+                                     "Hemisphere suits things seen from above (vegetation or rocks on the ground) and doubles "
+                                     "the resolution from above for the same view count. Use full sphere for things also seen from below"))) {
             impostor.settings.fullSphere = range == 1;
             changed = true;
         }
         int frames = indexOf(kFrames, impostor.settings.frames);
-        if (ui::PropertyCombo("方向数", &frames, kFrameLabels, IM_ARRAYSIZE(kFrameLabels), 1,
-                              "撮る方向の数。多いほど向きの変化が滑らかになるが、画像が大きくなる")) {
+        if (ui::PropertyCombo(ui::Tr("方向数", "Views"), &frames, kFrameLabels, IM_ARRAYSIZE(kFrameLabels), 1,
+                              ui::Tr("撮る方向の数。多いほど向きの変化が滑らかになるが、画像が大きくなる",
+                                     "Number of capture directions. More gives smoother transitions but larger images"))) {
             impostor.settings.frames = kFrames[frames];
             changed = true;
         }
         int size = indexOf(kSizes, impostor.settings.frameSize);
-        if (ui::PropertyCombo("解像度", &size, kSizeLabels, IM_ARRAYSIZE(kSizeLabels), 1,
-                              "1 方向の画像の一辺。画面で大きく見える距離で使うなら上げる")) {
+        if (ui::PropertyCombo(ui::Tr("解像度", "Resolution"), &size, kSizeLabels, IM_ARRAYSIZE(kSizeLabels), 1,
+                              ui::Tr("1 方向の画像の一辺。画面で大きく見える距離で使うなら上げる",
+                                     "Side length of the image per view. Raise it if seen large on screen"))) {
             impostor.settings.frameSize = kSizes[size];
             changed = true;
         }
         if (impostor.baked) {
             const auto& baked = impostor.bakedSettings;
             const uint32_t atlas = baked.frames * baked.frameSize;
-            ui::PropertyValue("作成済み", "%s・%u×%u・%u px", baked.fullSphere ? "全球" : "半球",
+            ui::PropertyValue(ui::Tr("作成済み", "Baked"), ui::Tr("%s・%u×%u・%u px", "%s, %u×%u, %u px"),
+                              baked.fullSphere ? ui::Tr("全球", "Full Sphere") : ui::Tr("半球", "Hemisphere"),
                               baked.frames, baked.frames, baked.frameSize);
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("作成したときの設定。画像は %u px 四方（色・法線・色むらの重みの 3 枚）", atlas);
+                ImGui::SetTooltip(ui::Tr("作成したときの設定。画像は %u px 四方（色・法線・色むらの重みの 3 枚）",
+                                         "Settings used when baked. Images are %u px square (color, normal and variation weight)"),
+                                  atlas);
             ImGui::BeginDisabled(m_impostors.Find(asset.id) == nullptr);
-            ui::PropertyBool("インポスターで表示", &m_modelShowImpostor, false,
-                             "プレビューを焼いた画像で描き、元のメッシュと見比べる（保存しない）");
+            ui::PropertyBool(ui::Tr("インポスターで表示", "Show Impostor"), &m_modelShowImpostor, false,
+                             ui::Tr("プレビューを焼いた画像で描き、元のメッシュと見比べる（保存しない）",
+                                    "Draws the preview with the baked images to compare with the mesh (not saved)"));
             ImGui::EndDisabled();
         } else {
-            ui::PropertyValue("作成済み", "なし");
+            ui::PropertyValue(ui::Tr("作成済み", "Baked"), "%s", ui::Tr("なし", "None"));
         }
         ui::EndPropertyTable();
     }
     const uint32_t atlas = impostor.settings.frames * impostor.settings.frameSize;
     const bool tooLarge = atlas > 8192;
-    if (tooLarge) ui::HintText("画像が大きすぎます。方向数 × 解像度は 8192 px までにしてください");
+    if (tooLarge) ui::HintText("%s", ui::Tr("画像が大きすぎます。方向数 × 解像度は 8192 px までにしてください",
+                                            "Image too large. Keep views × resolution within 8192 px"));
     else if (impostor.baked && !(impostor.settings == impostor.bakedSettings))
-        ui::HintText("設定が作成時と違います。作り直すと反映されます");
+        ui::HintText("%s", ui::Tr("設定が作成時と違います。作り直すと反映されます",
+                                   "Settings differ from the bake. Rebake to apply them"));
     if (impostor.baked && !m_impostors.Find(asset.id))
-        ui::HintText("焼いた画像を読み込めません。作り直してください");
+        ui::HintText("%s", ui::Tr("焼いた画像を読み込めません。作り直してください",
+                                   "Cannot load the baked images. Rebake them"));
     else if (impostor.baked && impostor.variationPath.empty())
-        ui::HintText("色むらの重みがありません（幹にも色むらが掛かります）。作り直すと付きます");
+        ui::HintText("%s", ui::Tr("色むらの重みがありません（幹にも色むらが掛かります）。作り直すと付きます",
+                                   "No variation weight (trunks get color variation too). Rebake to add it"));
     ImGui::BeginDisabled(tooLarge);
-    if (ui::Button(impostor.baked ? "作り直す" : "作成", ui::kButtonWidth)) m_pendingImpostorBake = asset.id;
+    if (ui::Button(impostor.baked ? ui::Tr("作り直す", "Rebake") : ui::Tr("作成", "Bake"), ui::kButtonWidth)) m_pendingImpostorBake = asset.id;
     ImGui::EndDisabled();
     if (impostor.baked) {
         ImGui::SameLine();
-        if (ui::Button("削除", ui::kButtonWidth)) ImGui::OpenPopup("インポスターの削除");
+        if (ui::Button(ui::Tr("削除", "Delete"), ui::kButtonWidth)) ImGui::OpenPopup("###DeleteImpostor");
     }
-    ui::HintText("画像はモデルの横に「名前_Impostor_C.png / _N.png / _V.png」で保存します");
-    if (ImGui::BeginPopupModal("インポスターの削除", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    ui::HintText("%s", ui::Tr("画像はモデルの横に「名前_Impostor_C.png / _N.png / _V.png」で保存します",
+                               "Images are saved next to the model as \"Name_Impostor_C.png / _N.png / _V.png\""));
+    if (ImGui::BeginPopupModal(ui::Tr("インポスターの削除###DeleteImpostor", "Delete Impostor###DeleteImpostor"), nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted(asset.name.c_str());
-        ui::HintText("焼いた画像（色・法線・色むらの重み）と .meta を、ルート内の退避フォルダへ移します。");
-        if (ui::Button("削除", ui::kButtonWidth)) {
+        ui::HintText("%s", ui::Tr("焼いた画像（色・法線・色むらの重み）と .meta を、ルート内の退避フォルダへ移します。",
+                                   "Moves the baked images (color, normal, variation weight) and .meta to the backup folder in the root."));
+        if (ui::Button(ui::Tr("削除", "Delete"), ui::kButtonWidth)) {
             m_pendingImpostorDelete = asset.id;
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ui::Button("キャンセル", ui::kButtonWidth) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        if (ui::Button(ui::Tr("キャンセル", "Cancel"), ui::kButtonWidth) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
     if (changed) MarkDocumentChanged(false);

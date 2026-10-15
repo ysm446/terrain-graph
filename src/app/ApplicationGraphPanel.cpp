@@ -893,9 +893,12 @@ void Application::DrawGraphNode(const graph::Node& node) {
             }
             hovered = ImGui::IsItemHovered();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-                ImGui::SetTooltip(bypassed ? "バイパス中（このノードを飛ばしている）。クリックで戻す"
-                                           : "バイパス。このノードを飛ばし、入力をそのまま下流へ通す\n"
-                                             "通す入力が無いノードは空（マスクは黒）を出す。保存する");
+                ImGui::SetTooltip("%s", bypassed ? ui::Tr("バイパス中（このノードを飛ばしている）。クリックで戻す",
+                                                          "Bypassed (this node is skipped). Click to restore")
+                                                 : ui::Tr("バイパス。このノードを飛ばし、入力をそのまま下流へ通す\n"
+                                                          "通す入力が無いノードは空（マスクは黒）を出す。保存する",
+                                                          "Bypass. Skips this node and passes its input straight downstream\n"
+                                                          "Nodes with no input to pass output empty (black for masks). Saved"));
             }
             ImGui::PopID();
         } else {
@@ -916,7 +919,8 @@ void Application::DrawGraphNode(const graph::Node& node) {
             : enabled ? ImVec4(0.88f, 0.88f, 0.88f, 1.0f) : ImVec4(0.55f, 0.55f, 0.55f, 1.0f);
         ImGui::TextColored(titleColor, "%s", missingSettings != nullptr ? missingSettings->kindName.c_str() : NodeDisplayName(node));
         if (missingSettings != nullptr) {
-            ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.55f, 1.0f), "扱えないノード（この版では未対応）");
+            ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.55f, 1.0f), "%s",
+                               ui::Tr("扱えないノード（この版では未対応）", "Unsupported node (not in this version)"));
         }
         if (isPreview) {
             // ビューポートに出ている印。名前の右に小さく添える。
@@ -935,7 +939,7 @@ void Application::DrawGraphNode(const graph::Node& node) {
         if (const graph::NodeDefinition* definition = graph::FindNodeDefinition(node.kind);
             definition != nullptr && layerSettings != nullptr) {
             ImGui::TextColored(ImVec4(0.55f, 0.57f, 0.55f, 1.0f), "%s%s", definition->title,
-                               bypassed ? "（バイパス）" : "");
+                               bypassed ? ui::Tr("（バイパス）", " (Bypassed)") : "");
         }
     }
 
@@ -1316,7 +1320,8 @@ void Application::DrawCollapsedGraphGroup(graph::NodeGroup& group) {
     for (const Row& row : inputs) inputWidth = std::max(inputWidth, ImGui::CalcTextSize(row.label.c_str()).x);
     for (const Row& row : outputs) outputWidth = std::max(outputWidth, ImGui::CalcTextSize(row.label.c_str()).x);
     char title[192];
-    std::snprintf(title, sizeof(title), "%s（%zu ノード）", group.name.empty() ? "グループ" : group.name.c_str(), memberCount);
+    std::snprintf(title, sizeof(title), ui::Tr("%s（%zu ノード）", "%s (%zu nodes)"),
+                  group.name.empty() ? ui::Tr("グループ", "Group") : group.name.c_str(), memberCount);
     const float width = std::max({180.0f, inputWidth + outputWidth + 72.0f, ImGui::CalcTextSize(title).x + 8.0f});
 
     ed::PushStyleColor(ed::StyleColor_NodeBg, ImVec4(0.20f, 0.26f, 0.32f, 0.96f));
@@ -1402,7 +1407,7 @@ void Application::DrawGraphGroups() {
         ed::PushStyleColor(ed::StyleColor_NodeBorder, ImVec4(0.70f, 0.82f, 0.94f, 0.85f));
         ed::BeginNode(editorId);
         ImGui::PushID(kGroupEditorIdBase + group.id);
-        ImGui::TextUnformatted(group.name.empty() ? "グループ" : group.name.c_str());
+        ImGui::TextUnformatted(group.name.empty() ? ui::Tr("グループ", "Group") : group.name.c_str());
         ed::Group(ImVec2(group.width, group.height));
         const ImVec2 inner = ImGui::GetItemRectSize();
         ImGui::PopID();
@@ -1492,8 +1497,11 @@ void Application::CreateGraphGroup(const ImVec2& at) {
     if (!m_documentDirty) m_committed = CaptureDocument();
     m_selectedGraphGroup = m_graph.AddGroup(std::move(group));
     MarkDocumentChanged(false);
-    m_toasts.Push("グループを作りました", any ? "プロパティで名前を付けられます。枠の見出しを掴むと中のノードごと動きます"
-                                              : "空の枠を置きました。ノードを中へ入れるか、縁を掴んで大きさを変えます");
+    m_toasts.Push(ui::Tr("グループを作りました", "Group created"),
+                  any ? ui::Tr("プロパティで名前を付けられます。枠の見出しを掴むと中のノードごと動きます",
+                               "Name it in the properties. Drag the frame's title to move it with its nodes")
+                      : ui::Tr("空の枠を置きました。ノードを中へ入れるか、縁を掴んで大きさを変えます",
+                               "Placed an empty frame. Move nodes into it, or drag its edges to resize"));
 }
 
 size_t Application::ResolveGraphOverlapsWithGroups() {
@@ -1637,11 +1645,14 @@ void Application::ArrangeGraphLeftToRight(bool overlapsOnly) {
         })) {
         const size_t moved = ResolveGraphOverlapsWithGroups();
         if (moved == 0) {
-            m_toasts.Push("重なっているノードやグループはありません", "編集中のグラフ全体を調べました");
+            m_toasts.Push(ui::Tr("重なっているノードやグループはありません", "No overlapping nodes or groups"),
+                          ui::Tr("編集中のグラフ全体を調べました", "Checked the whole graph being edited"));
         } else {
             char detail[96];
-            std::snprintf(detail, sizeof(detail), "%zu 個のノードとグループを動かしました（Ctrl+Z で戻せます）", moved);
-            m_toasts.Push("ノードとグループの重なりを解消しました", detail);
+            std::snprintf(detail, sizeof(detail),
+                          ui::Tr("%zu 個のノードとグループを動かしました（Ctrl+Z で戻せます）",
+                                 "Moved %zu nodes and groups (Ctrl+Z to undo)"), moved);
+            m_toasts.Push(ui::Tr("ノードとグループの重なりを解消しました", "Resolved node and group overlaps"), detail);
         }
         return;
     }
@@ -1709,13 +1720,16 @@ void Application::ArrangeGraphLeftToRight(bool overlapsOnly) {
         }
         moved = graph::ResolveOverlaps(boxes, kArrangeMargin, movable);
         if (moved == 0) {
-            m_toasts.Push("重なっているノードはありません", movable.empty() ? "編集中のグラフ全体を調べました" : "選択したノードを調べました");
+            m_toasts.Push(ui::Tr("重なっているノードはありません", "No overlapping nodes"),
+                          movable.empty() ? ui::Tr("編集中のグラフ全体を調べました", "Checked the whole graph being edited")
+                                          : ui::Tr("選択したノードを調べました", "Checked the selected nodes"));
             return;
         }
     } else {
         moved = graph::ArrangeLeftToRight(boxes, edges, kArrangeGap, kArrangeMinGap, kArrangeMargin);
         if (moved == 0) {
-            m_toasts.Push("並べ直す所はありません", "どの接続も左から右へ向いています");
+            m_toasts.Push(ui::Tr("並べ直す所はありません", "Nothing to rearrange"),
+                          ui::Tr("どの接続も左から右へ向いています", "Every connection already runs left to right"));
             return;
         }
     }
@@ -1736,8 +1750,11 @@ void Application::ArrangeGraphLeftToRight(bool overlapsOnly) {
     }
     MarkDocumentChanged(false);
     char detail[96];
-    std::snprintf(detail, sizeof(detail), "%zu 個のノードを動かしました（Ctrl+Z で戻せます）", moved);
-    m_toasts.Push(overlapsOnly ? "ノードの重なりを解消しました" : "左から右へ並べ直しました", detail);
+    std::snprintf(detail, sizeof(detail),
+                  ui::Tr("%zu 個のノードを動かしました（Ctrl+Z で戻せます）", "Moved %zu nodes (Ctrl+Z to undo)"), moved);
+    m_toasts.Push(overlapsOnly ? ui::Tr("ノードの重なりを解消しました", "Resolved node overlaps")
+                               : ui::Tr("左から右へ並べ直しました", "Rearranged left to right"),
+                  detail);
 }
 
 // ノードのメモの先頭を、ノードの下端のすぐ下に吹き出しとして出す（グラフパネルの「メモを表示」）。
@@ -1822,7 +1839,7 @@ void Application::DrawGraphNodeTitles() {
             const ImVec2 position = ed::GetNodePosition(editorId);
             const ImVec2 size = ed::GetNodeSize(editorId);
             if (!IsValidNodePosition(position.x, position.y) || size.x <= 0.0f) continue;
-            const char* name = group.name.empty() ? "グループ" : group.name.c_str();
+            const char* name = group.name.empty() ? ui::Tr("グループ", "Group") : group.name.c_str();
             const ImVec2 textSize = font->CalcTextSizeA(groupFontSize, FLT_MAX, 0.0f, name);
             const float top = position.y - kNoteGap;
             const float left = group.collapsed ? position.x + size.x * 0.5f - textSize.x * 0.5f - padding.x : position.x;
@@ -2012,9 +2029,11 @@ void Application::DrawGraphEditor() {
                 // 繋げない理由。線が赤くなるだけだと、なぜ繋がらないのか分からない。
                 const graph::LinkCheck check = m_graph.CheckLink(startPin, endPin);
                 const char* reason = check == graph::LinkCheck::Cycle
-                                         ? "繋ぐと接続が循環するため繋げません"
+                                         ? ui::Tr("繋ぐと接続が循環するため繋げません",
+                                                  "Can't connect: it would create a cycle")
                                      : check == graph::LinkCheck::TypeMismatch
-                                         ? "ピンの型が違うため繋げません"
+                                         ? ui::Tr("ピンの型が違うため繋げません",
+                                                  "Can't connect: the pin types differ")
                                          : nullptr;
                 if (reason != nullptr) {
                     ed::Suspend();
@@ -2117,41 +2136,49 @@ void Application::DrawGraphEditor() {
         std::vector<ed::NodeId> selection(static_cast<size_t>(std::max(ed::GetSelectedObjectCount(), 0)));
         const int nodeCount = selection.empty() ? 0
             : ed::GetSelectedNodes(selection.data(), static_cast<int>(selection.size()));
-        ImGui::TextDisabled("整列（%d 個を選択中）", nodeCount);
+        ImGui::TextDisabled(ui::Tr("整列（%d 個を選択中）", "Align (%d selected)"), nodeCount);
         ImGui::Separator();
         const auto alignItem = [&](const char* label, const char* shortcut, GraphAlign mode, int minimum) {
             if (ImGui::MenuItem(label, shortcut, false, nodeCount >= minimum)) AlignSelectedGraphNodes(mode);
         };
-        alignItem("縦に並べる", nullptr, GraphAlign::StackY, 2);
-        alignItem("横に並べる", nullptr, GraphAlign::StackX, 2);
+        alignItem(ui::Tr("縦に並べる", "Stack Vertically"), nullptr, GraphAlign::StackY, 2);
+        alignItem(ui::Tr("横に並べる", "Stack Horizontally"), nullptr, GraphAlign::StackX, 2);
         ImGui::Separator();
-        alignItem("左揃え", nullptr, GraphAlign::Left, 2);
-        alignItem("右揃え", nullptr, GraphAlign::Right, 2);
-        alignItem("左右の中央揃え", nullptr, GraphAlign::CenterX, 2);
-        alignItem("上揃え", nullptr, GraphAlign::Top, 2);
-        alignItem("下揃え", nullptr, GraphAlign::Bottom, 2);
-        alignItem("上下の中央揃え", nullptr, GraphAlign::CenterY, 2);
+        alignItem(ui::Tr("左揃え", "Align Left"), nullptr, GraphAlign::Left, 2);
+        alignItem(ui::Tr("右揃え", "Align Right"), nullptr, GraphAlign::Right, 2);
+        alignItem(ui::Tr("左右の中央揃え", "Align Horizontal Centers"), nullptr, GraphAlign::CenterX, 2);
+        alignItem(ui::Tr("上揃え", "Align Top"), nullptr, GraphAlign::Top, 2);
+        alignItem(ui::Tr("下揃え", "Align Bottom"), nullptr, GraphAlign::Bottom, 2);
+        alignItem(ui::Tr("上下の中央揃え", "Align Vertical Centers"), nullptr, GraphAlign::CenterY, 2);
         ImGui::Separator();
-        alignItem("横に等間隔", nullptr, GraphAlign::DistributeX, 3);
-        alignItem("縦に等間隔", nullptr, GraphAlign::DistributeY, 3);
+        alignItem(ui::Tr("横に等間隔", "Distribute Horizontally"), nullptr, GraphAlign::DistributeX, 3);
+        alignItem(ui::Tr("縦に等間隔", "Distribute Vertically"), nullptr, GraphAlign::DistributeY, 3);
         // グラフ全体の並べ直し。**選択には依らない**（上の整列と違い、何も選んでいなくても効く）。
         // ポップアップの中ではエディタを止めているので、要求だけ置いて次のフレームで実行する。
         ImGui::Separator();
-        if (ImGui::MenuItem("グラフ全体を左から右へ並べ直す")) m_pendingGraphArrange = true;
-        if (ImGui::MenuItem(m_selectedGraphNodes.size() >= 2 ? "選択したノードの重なりを解消" : "ノードの重なりを解消"))
+        if (ImGui::MenuItem(ui::Tr("グラフ全体を左から右へ並べ直す", "Arrange Whole Graph Left to Right"))) m_pendingGraphArrange = true;
+        if (ImGui::MenuItem(m_selectedGraphNodes.size() >= 2
+                                ? ui::Tr("選択したノードの重なりを解消", "Resolve Overlaps in Selection")
+                                : ui::Tr("ノードの重なりを解消", "Resolve Node Overlaps")))
             m_pendingGraphSpread = true;
-        ImGui::SetItemTooltip("重なっているノードを縦にずらして離す（横には動かさない）。\n"
-                              "2 個以上を選んでいればその中だけ、そうでなければグラフ全体");
-        if (ImGui::MenuItem(m_selectedGraphNodes.empty() ? "空のグループを作る" : "選択したノードをグループにまとめる", "G")) {
+        ImGui::SetItemTooltip("%s", ui::Tr("重なっているノードを縦にずらして離す（横には動かさない）。\n"
+                                           "2 個以上を選んでいればその中だけ、そうでなければグラフ全体",
+                                           "Moves overlapping nodes apart vertically (never horizontally).\n"
+                                           "Only within the selection if 2 or more are selected, otherwise the whole graph"));
+        if (ImGui::MenuItem(m_selectedGraphNodes.empty() ? ui::Tr("空のグループを作る", "Create Empty Group")
+                                                         : ui::Tr("選択したノードをグループにまとめる", "Group Selected Nodes"),
+                            "G")) {
             m_pendingGraphGroup = true;
             m_pendingGraphGroupAt = ImGui::GetMousePosOnOpeningCurrentPopup();
         }
-        ImGui::SetItemTooltip("ノードを囲む枠を作る（表示だけ。評価には影響しない）。\n"
-                              "枠の見出しを掴むと中のノードごと動く");
+        ImGui::SetItemTooltip("%s", ui::Tr("ノードを囲む枠を作る（表示だけ。評価には影響しない）。\n"
+                                           "枠の見出しを掴むと中のノードごと動く",
+                                           "Creates a frame around nodes (display only, no effect on evaluation).\n"
+                                           "Drag the frame's title to move it with its nodes"));
         ImGui::EndPopup();
     }
     if (ImGui::BeginPopup("addGraphNode")) {
-        ImGui::TextDisabled("ノードを追加");
+        ImGui::TextDisabled("%s", ui::Tr("ノードを追加", "Add Node"));
         ImGui::Separator();
         // 編集中のグラフ（地形 / 雲）に出す種類か。
         const auto offered = [&](graph::NodeKind kind) {
@@ -2212,40 +2239,40 @@ void Application::DrawGraphEditor() {
             }
             ImGui::EndMenu();
         };
-        section("入出力", {
+        section(ui::Tr("入出力", "Input / Output"), {
             graph::NodeKind::Heightmap,
             graph::NodeKind::Mountain,
             graph::NodeKind::Output,
             graph::NodeKind::Terrain,
         });
-        section("合成", {
+        section(ui::Tr("合成", "Blend"), {
             graph::NodeKind::Surface,
             graph::NodeKind::Shape,
         });
-        section("侵食", {
+        section(ui::Tr("侵食", "Erosion"), {
             graph::NodeKind::FluvialErosion,
             graph::NodeKind::MultiScaleErosion,
             graph::NodeKind::Droplet,
             graph::NodeKind::Sediment,
             graph::NodeKind::Crumbling,
         });
-        section("水", {
+        section(ui::Tr("水", "Water"), {
             graph::NodeKind::Liquid,
             graph::NodeKind::River,
             graph::NodeKind::MeanderingRivers,
             graph::NodeKind::Lake,
         });
-        section("雪", {
+        section(ui::Tr("雪", "Snow"), {
             graph::NodeKind::SnowCover,
             graph::NodeKind::Snow,
             graph::NodeKind::SnowPlume,
         });
-        section("整形", {
+        section(ui::Tr("整形", "Shaping"), {
             graph::NodeKind::Blur,
             graph::NodeKind::FlattenBorders,
             graph::NodeKind::HeightLevels,
         });
-        section("マスク", {
+        section(ui::Tr("マスク", "Mask"), {
             graph::NodeKind::MaskImage,
             graph::NodeKind::MaskNoise,
             graph::NodeKind::MaskFlowline,
@@ -2258,12 +2285,12 @@ void Application::DrawGraphEditor() {
             graph::NodeKind::MaskBlend,
             graph::NodeKind::WindField,
         });
-        section("パス", {
+        section(ui::Tr("パス", "Path"), {
             graph::NodeKind::Path,
             graph::NodeKind::MaskPath,
             graph::NodeKind::MaskArea,
         });
-        section("道路", {
+        section(ui::Tr("道路", "Road"), {
             graph::NodeKind::RoadPath,
             graph::NodeKind::RoadMesh,
             graph::NodeKind::Shoulder,
@@ -2272,14 +2299,14 @@ void Application::DrawGraphEditor() {
             graph::NodeKind::MaskMesh,
             graph::NodeKind::MeshOutput,
         });
-        section("配置", {
+        section(ui::Tr("配置", "Placement"), {
             graph::NodeKind::Scatter,
             graph::NodeKind::ModelScatter,
             graph::NodeKind::ModelPlace,
             graph::NodeKind::ModelMerge,
             graph::NodeKind::ModelOutput,
         });
-        section("雲", {
+        section(ui::Tr("雲", "Clouds"), {
             graph::NodeKind::CloudWeatherLayer,
             graph::NodeKind::CloudShapeGenerate,
             graph::NodeKind::CloudMapGenerate,
@@ -2291,23 +2318,33 @@ void Application::DrawGraphEditor() {
         });
         // ノードを選んでいなくても並べ直せるよう、背景のメニューにも置く。
         ImGui::Separator();
-        if (ImGui::MenuItem("グラフ全体を左から右へ並べ直す")) m_pendingGraphArrange = true;
-        if (ImGui::MenuItem(m_selectedGraphNodes.size() >= 2 ? "選択したノードの重なりを解消" : "ノードの重なりを解消"))
+        if (ImGui::MenuItem(ui::Tr("グラフ全体を左から右へ並べ直す", "Arrange Whole Graph Left to Right"))) m_pendingGraphArrange = true;
+        if (ImGui::MenuItem(m_selectedGraphNodes.size() >= 2
+                                ? ui::Tr("選択したノードの重なりを解消", "Resolve Overlaps in Selection")
+                                : ui::Tr("ノードの重なりを解消", "Resolve Node Overlaps")))
             m_pendingGraphSpread = true;
-        ImGui::SetItemTooltip("重なっているノードを縦にずらして離す（横には動かさない）。\n"
-                              "2 個以上を選んでいればその中だけ、そうでなければグラフ全体");
-        if (ImGui::MenuItem(m_selectedGraphNodes.empty() ? "空のグループを作る" : "選択したノードをグループにまとめる", "G")) {
+        ImGui::SetItemTooltip("%s", ui::Tr("重なっているノードを縦にずらして離す（横には動かさない）。\n"
+                                           "2 個以上を選んでいればその中だけ、そうでなければグラフ全体",
+                                           "Moves overlapping nodes apart vertically (never horizontally).\n"
+                                           "Only within the selection if 2 or more are selected, otherwise the whole graph"));
+        if (ImGui::MenuItem(m_selectedGraphNodes.empty() ? ui::Tr("空のグループを作る", "Create Empty Group")
+                                                         : ui::Tr("選択したノードをグループにまとめる", "Group Selected Nodes"),
+                            "G")) {
             m_pendingGraphGroup = true;
             m_pendingGraphGroupAt = ImGui::GetMousePosOnOpeningCurrentPopup();
         }
-        ImGui::SetItemTooltip("ノードを囲む枠を作る（表示だけ。評価には影響しない）。\n"
-                              "枠の見出しを掴むと中のノードごと動く");
+        ImGui::SetItemTooltip("%s", ui::Tr("ノードを囲む枠を作る（表示だけ。評価には影響しない）。\n"
+                                           "枠の見出しを掴むと中のノードごと動く",
+                                           "Creates a frame around nodes (display only, no effect on evaluation).\n"
+                                           "Drag the frame's title to move it with its nodes"));
         // めったに触らない表示の切り替えなので、パネルに行を取らずここへ置く。
-        if (ImGui::MenuItem("ノードのメモを表示", nullptr, &m_settings.Display().showNodeNotes)) {
+        if (ImGui::MenuItem(ui::Tr("ノードのメモを表示", "Show Node Notes"), nullptr, &m_settings.Display().showNodeNotes)) {
             m_settings.Save();
         }
-        ImGui::SetItemTooltip("ノードのメモの先頭をノードに表示する。切るとメモの印だけになり、"
-                              "印に載せると全文が出る");
+        ImGui::SetItemTooltip("%s", ui::Tr("ノードのメモの先頭をノードに表示する。切るとメモの印だけになり、"
+                                           "印に載せると全文が出る",
+                                           "Shows the start of each node's note on the node. When off, only the note icon "
+                                           "remains; hover it to see the full note"));
         ImGui::EndPopup();
     }
     ed::Resume();
@@ -2414,26 +2451,31 @@ void Application::DrawGraphEditor() {
     if (const graph::Pin* pin = m_graph.FindPin(m_graphPinHover);
         pin != nullptr && !ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup) &&
         ImGui::GetTime() - m_graphPinHoverTime > 0.35) {
-        static const char* const kTypeNames[] = {"地形", "マスク", "パス", "雲のボリューム", "", "雲の形状", "点", "モデルの配置",
-                                                 "風の場", "道路の線形", "メッシュ"};
+        static const ui::LocalizedText kTypeNames[] = {
+            {"地形", "Terrain"}, {"マスク", "Mask"}, {"パス", "Path"}, {"雲のボリューム", "Cloud Volume"}, {"", ""},
+            {"雲の形状", "Cloud Shape"}, {"点", "Points"}, {"モデルの配置", "Model Instances"},
+            {"風の場", "Wind Field"}, {"道路の線形", "Road Alignment"}, {"メッシュ", "Mesh"}};
         const auto typeIndex = static_cast<size_t>(pin->valueType);
-        const char* typeName = typeIndex < std::size(kTypeNames) ? kTypeNames[typeIndex] : "";
+        const char* typeName = typeIndex < std::size(kTypeNames) ? kTypeNames[typeIndex].Get() : "";
         const bool input = pin->kind == graph::PinKind::Input;
         const graph::Node* owner = m_graph.FindNode(pin->nodeId);
         const char* description = owner != nullptr ? graph::PinDescription(*owner, *pin) : "";
         ImGui::BeginTooltip();
         ImGui::PushTextWrapPos(ui::Scaled(360.0f));
-        ImGui::Text("%s（%s・%s）", pin->label.c_str(), typeName, input ? "入力" : "出力");
+        ImGui::Text(ui::Tr("%s（%s・%s）", "%s (%s, %s)"), pin->label.c_str(), typeName,
+                    input ? ui::Tr("入力", "Input") : ui::Tr("出力", "Output"));
         if (description[0] != '\0') ImGui::TextUnformatted(description);
-        else ImGui::TextDisabled("%s", input ? "同じ型の出力を繋ぐ" : "同じ型の入力へ繋ぐ");
+        else ImGui::TextDisabled("%s", input ? ui::Tr("同じ型の出力を繋ぐ", "Connect an output of the same type")
+                                             : ui::Tr("同じ型の入力へ繋ぐ", "Connect to an input of the same type"));
         if (input) {
             // 何が繋がっているか。バイパスしたノードは飛ばして、実際に値を出すピンを示す。
             const graph::Pin* source = m_graph.ResolveSourcePin(pin->id);
             const graph::Node* sourceNode = source != nullptr ? m_graph.FindNode(source->nodeId) : nullptr;
-            if (sourceNode != nullptr) ImGui::TextDisabled("接続: %s の %s", NodeDisplayName(*sourceNode), source->label.c_str());
-            else ImGui::TextDisabled("未接続");
+            if (sourceNode != nullptr)
+                ImGui::TextDisabled(ui::Tr("接続: %s の %s", "Connected: %s, %s"), NodeDisplayName(*sourceNode), source->label.c_str());
+            else ImGui::TextDisabled("%s", ui::Tr("未接続", "Not connected"));
         } else if (owner != nullptr && graph::IsPreviewableNodeKind(owner->kind)) {
-            ImGui::TextDisabled("クリックでこの出力をビューポートに出す");
+            ImGui::TextDisabled("%s", ui::Tr("クリックでこの出力をビューポートに出す", "Click to show this output in the viewport"));
         }
         ImGui::PopTextWrapPos();
         ImGui::EndTooltip();
@@ -2496,7 +2538,7 @@ std::filesystem::path Application::SceneAssetDirectory() {
 }
 
 void Application::DrawSceneHierarchy() {
-    if (!ImGui::Begin("シーン階層")) { ImGui::End(); return; }
+    if (!ImGui::Begin(ui::Tr("シーン階層###SceneHierarchy", "Scene Hierarchy###SceneHierarchy"))) { ImGui::End(); return; }
     const bool components = m_sceneComponents.is_array();
     // 一時プレビュー中は保存先がプレビューのグラフになるので、項目の印と保存は出さない。
     const bool previewing = m_componentPreview >= 0;
@@ -2512,7 +2554,7 @@ void Application::DrawSceneHierarchy() {
     const auto unsavedControls = [&](bool dirty, int item, const char* tooltip) {
         if (!dirty || previewing) return;
         ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - controlsWidth);
-        ui::UnsavedMark("未保存の変更があります", saveSize);
+        ui::UnsavedMark(ui::Tr("未保存の変更があります", "Has unsaved changes"), saveSize);
         ImGui::SameLine();
         ImGui::PushID(item);
         if (ui::SaveIconButton("##save", saveSize, tooltip)) RequestComponentSave(item);
@@ -2548,7 +2590,8 @@ void Application::DrawSceneHierarchy() {
             if (ImGui::InvisibleButton(id, ImVec2(eyeSize, eyeSize))) *open = !*open;
             const ImU32 color = ImGui::GetColorU32(ImGui::IsItemHovered() ? ImGuiCol_Text : ImGuiCol_TextDisabled);
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-                ImGui::SetTooltip("%s", *open ? "出口ノードの行を畳む" : "出口ノードの行を開く");
+                ImGui::SetTooltip("%s", *open ? ui::Tr("出口ノードの行を畳む", "Collapse the output node rows")
+                                              : ui::Tr("出口ノードの行を開く", "Expand the output node rows"));
             }
             const ImVec2 c(min.x + eyeSize * 0.5f, min.y + eyeSize * 0.5f);
             const float r = eyeSize * 0.3f;
@@ -2578,16 +2621,20 @@ void Application::DrawSceneHierarchy() {
                 ToggleOutputDisplay(node->id, ImGui::GetIO().KeyCtrl);
             }
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-                ImGui::SetTooltip("ビューポートへの表示。作業中だけの切り替えで、保存しない\n"
-                                  "Ctrl+クリックでこの出口だけを表示 / もう一度で全部を表示");
+                ImGui::SetTooltip("%s", ui::Tr("ビューポートへの表示。作業中だけの切り替えで、保存しない\n"
+                                               "Ctrl+クリックでこの出口だけを表示 / もう一度で全部を表示",
+                                               "Show in the viewport. A temporary toggle that is not saved\n"
+                                               "Ctrl+click to show only this output / again to show all"));
             }
             ImGui::SameLine();
             if (graph::IsReferenceOutputKind(node->kind)) {
                 bool reference = OutputReference(node->id);
                 if (ui::WireframeToggle("##outputReference", &reference, eyeSize)) ToggleOutputReference(node->id);
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-                    ImGui::SetTooltip("リファレンス表示。灰色のワイヤーフレームで描き、影を落とさない\n"
-                                      "Ctrl+クリックの単独表示でも隠れない。作業中だけの切り替えで、保存しない");
+                    ImGui::SetTooltip("%s", ui::Tr("リファレンス表示。灰色のワイヤーフレームで描き、影を落とさない\n"
+                                                   "Ctrl+クリックの単独表示でも隠れない。作業中だけの切り替えで、保存しない",
+                                                   "Reference display. Drawn as a gray wireframe that casts no shadow\n"
+                                                   "Stays visible when soloing with Ctrl+click. A temporary toggle that is not saved"));
                 }
             } else {
                 ImGui::Dummy(ImVec2(eyeSize, eyeSize));
@@ -2609,7 +2656,7 @@ void Application::DrawSceneHierarchy() {
             if (hidden) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
             const bool clicked = ImGui::Selectable(label.c_str(), m_selectedGraphNode == node->id);
             if (hidden) ImGui::PopStyleColor();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("クリックでグラフのこのノードを選ぶ");
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", ui::Tr("クリックでグラフのこのノードを選ぶ", "Click to select this node in the graph"));
             if (clicked) {
                 OpenComponentEditor(components ? component : -1);
                 m_pendingSelectGraphNode = node->id;
@@ -2620,16 +2667,19 @@ void Application::DrawSceneHierarchy() {
         ImGui::Unindent(eyeSize + style.ItemSpacing.x);
     };
 
-    ImGui::TextUnformatted(m_projectPath.empty() ? "新規シーン" : ToUtf8Display(m_projectPath.stem()).c_str());
+    ImGui::TextUnformatted(m_projectPath.empty() ? ui::Tr("新規シーン", "New Scene") : ToUtf8Display(m_projectPath.stem()).c_str());
     unsavedControls(sceneDirty != 0, 3,
-                    components ? "シーン本体だけを保存する。部品のファイルは書き換えない" : "シーンを保存する");
+                    components ? ui::Tr("シーン本体だけを保存する。部品のファイルは書き換えない",
+                                        "Save only the scene itself. Component files are not rewritten")
+                               : ui::Tr("シーンを保存する", "Save the scene"));
     if (!components) {
-        ui::HintText("旧形式のシーンです。保存済みの元データを残して部品へ分離できます。");
-        if (ui::Button("部品へ分離…", ui::kWideButtonWidth)) m_pendingComponentMigration = true;
+        ui::HintText("%s", ui::Tr("旧形式のシーンです。保存済みの元データを残して部品へ分離できます。",
+                                  "This scene uses the old format. It can be split into components, keeping the saved original."));
+        if (ui::Button(ui::Tr("部品へ分離…", "Split into Components…"), ui::kWideButtonWidth)) m_pendingComponentMigration = true;
     }
     // 行の右クリックに置く改名。ファイルがある行だけ。F2 でも同じ。
     const auto renameMenuItem = [&](const std::filesystem::path& file) {
-        if (ImGui::MenuItem("名前を変更…", "F2", false, !file.empty())) {
+        if (ImGui::MenuItem(ui::Tr("名前を変更…", "Rename…"), "F2", false, !file.empty())) {
             OpenAssetRename(file);
             m_assetRenameInHierarchy = true;
         }
@@ -2668,7 +2718,7 @@ void Application::DrawSceneHierarchy() {
         if (file.empty()) {
             draw->AddText(textPos, ImGui::GetColorU32(ImGuiCol_Text), kind);
         } else {
-            const std::string suffix = std::string("（") + kind + "）";
+            const std::string suffix = std::string(ui::Tr("（", " (")) + kind + ui::Tr("）", ")");
             const float suffixWidth = ImGui::CalcTextSize(suffix.c_str()).x;
             const std::string name = ui::EllipsizeMiddle(ToUtf8Display(file.filename()).c_str(),
                                                          innerWidth - suffixWidth);
@@ -2692,80 +2742,100 @@ void Application::DrawSceneHierarchy() {
             flagHidden |= OutputHidden(node.id);
         }
         if (component) eye("##eyeCloud", &m_renderer.ShowClouds(),
-                           flagHidden ? "雲と雲影の表示。雲グラフの設定は保持する\n"
-                                        "いまは Cloud Output の表示フラグで一時的に隠しています"
-                                      : "雲と雲影の表示。雲グラフの設定は保持する");
+                           flagHidden ? ui::Tr("雲と雲影の表示。雲グラフの設定は保持する\n"
+                                               "いまは Cloud Output の表示フラグで一時的に隠しています",
+                                               "Show clouds and cloud shadows. The cloud graph settings are kept\n"
+                                               "Currently hidden temporarily by the Cloud Output display flag")
+                                      : ui::Tr("雲と雲影の表示。雲グラフの設定は保持する",
+                                               "Show clouds and cloud shadows. The cloud graph settings are kept"));
         else eye("##eyeTerrain", &m_renderer.ShowTerrain(),
-                 flagHidden ? "地形と配置したモデルの表示。影も一緒に消える\n"
-                              "いまは一部の出口ノードを表示フラグで一時的に隠しています"
-                            : "地形と配置したモデルの表示。影も一緒に消える");
+                 flagHidden ? ui::Tr("地形と配置したモデルの表示。影も一緒に消える\n"
+                                     "いまは一部の出口ノードを表示フラグで一時的に隠しています",
+                                     "Show the terrain and placed models. Their shadows go too\n"
+                                     "Some output nodes are currently hidden temporarily by their display flags")
+                            : ui::Tr("地形と配置したモデルの表示。影も一緒に消える",
+                                     "Show the terrain and placed models. Their shadows go too"));
         bool& outputsOpen = m_hierarchyOutputsOpen[component ? 1 : 0];
         fold("##foldOutputs", outputs.empty() ? nullptr : &outputsOpen);
         std::filesystem::path placed;
         if (components) for (const auto& entry : m_sceneComponents)
             if (io::ProjectWorkspace::String(entry, "role") == (component ? "cloud" : "terrain"))
                 placed = m_workspace.Resolve(entry.value("asset", nlohmann::json::object()));
-        if (row("##graphRow", placed, component ? "雲グラフ" : "地形グラフ", m_editComponent == component,
-                dirty, "ダブルクリックで編集。右クリックで改名・新規作成・入れ替え"))
+        if (row("##graphRow", placed,
+                component ? ui::Tr("雲グラフ", "Cloud Graph") : ui::Tr("地形グラフ", "Terrain Graph"),
+                m_editComponent == component, dirty,
+                ui::Tr("ダブルクリックで編集。右クリックで改名・新規作成・入れ替え",
+                       "Double-click to edit. Right-click to rename, create new, or replace")))
             OpenComponentEditor(components ? component : -1);
         // 新規作成と入れ替え。差し替える部品に未保存の編集があれば一時プレビューへ回る。
         if (components && ImGui::BeginPopupContextItem("componentMenu")) {
             renameMenuItem(placed);
             ImGui::Separator();
-            if (ImGui::MenuItem("新規作成して配置")) {
+            if (ImGui::MenuItem(ui::Tr("新規作成して配置", "Create New and Place"))) {
                 const auto path = io::CreateGraphAsset(m_workspace, SceneAssetDirectory(), component == 1);
                 if (path.empty()) TG_LOG_ERROR("グラフを作成できませんでした");
                 else { m_pendingComponentPlace = path; m_assetRefresh = true; }
             }
-            if (ImGui::MenuItem("入れ替え…")) {
+            if (ImGui::MenuItem(ui::Tr("入れ替え…", "Replace…"))) {
                 const auto selected = component ? ShowOpenFileDialog(L"雲グラフを選ぶ", {{L"雲グラフ", L"*.tgcloud"}})
                                                : ShowOpenFileDialog(L"地形グラフを選ぶ", {{L"地形グラフ", L"*.tgterrain"}});
                 if (!selected.empty()) m_pendingComponentPlace = selected;
             }
-            if (ImGui::MenuItem("アセットブラウザで表示", nullptr, false, !placed.empty())) m_pendingAssetReveal = placed;
+            if (ImGui::MenuItem(ui::Tr("アセットブラウザで表示", "Show in Asset Browser"), nullptr, false, !placed.empty())) m_pendingAssetReveal = placed;
             ImGui::EndPopup();
         }
-        unsavedControls(dirty, component, "このグラフのファイルだけを保存する");
+        unsavedControls(dirty, component, ui::Tr("このグラフのファイルだけを保存する", "Save only this graph's file"));
         if (outputsOpen) outputRows(component, outputs);
         ImGui::PopID();
     };
     graphEntry(0);
     {
         const bool atmosphereDirty = components && (m_sceneDirty & kDirtyAtmosphere);
-        eye("##eyeSky", &m_renderer.ShowSkybox(), "空の背景の表示。環境光と地形の手前の雲は残る");
+        eye("##eyeSky", &m_renderer.ShowSkybox(),
+            ui::Tr("空の背景の表示。環境光と地形の手前の雲は残る",
+                   "Show the sky background. Ambient light and clouds in front of the terrain remain"));
         fold("##foldSky", nullptr);
         const auto path = m_sceneAtmosphere.is_null() ? std::filesystem::path{} : m_workspace.Resolve(m_sceneAtmosphere);
-        if (row("##atmosphereRow", path, path.empty() && components ? "大気散乱スカイ（シーン保存時に作成）" : "大気散乱スカイ",
-                false, atmosphereDirty, "ダブルクリックでライティングへ。右クリックで改名・新規作成・読み込み")) {
+        if (row("##atmosphereRow", path,
+                path.empty() && components
+                    ? ui::Tr("大気散乱スカイ（シーン保存時に作成）", "Atmospheric Sky (Created on Scene Save)")
+                    : ui::Tr("大気散乱スカイ", "Atmospheric Sky"),
+                false, atmosphereDirty,
+                ui::Tr("ダブルクリックでライティングへ。右クリックで改名・新規作成・読み込み",
+                       "Double-click to go to Lighting. Right-click to rename, create new, or load"))) {
             m_renderer.AtmosphericMode() = true; m_pendingWorkEnvironmentSave = true; m_focusLighting = true;
         }
         if (components && ImGui::BeginPopupContextItem("atmosphereMenu")) {
             renameMenuItem(path);
             ImGui::Separator();
-            if (ImGui::MenuItem("新規作成して配置")) {
+            if (ImGui::MenuItem(ui::Tr("新規作成して配置", "Create New and Place"))) {
                 auto created = m_workspace.UniquePath(SceneAssetDirectory(), "大気散乱スカイ", ".tgatmosphere");
                 auto body = io::AtmosphereAssetBody(nlohmann::json::object(), "大気散乱スカイ");
                 if (!created.empty() && m_workspace.SaveAsset(created, "atmosphere-sky", body)) {
                     m_pendingComponentPlace = created; m_assetRefresh = true;
                 } else TG_LOG_ERROR("大気散乱スカイを作成できませんでした");
             }
-            if (ImGui::MenuItem("読み込む…")) {
+            if (ImGui::MenuItem(ui::Tr("読み込む…", "Load…"))) {
                 const auto selected = ShowOpenFileDialog(L"大気散乱スカイを読み込む", {{L"大気散乱スカイ", L"*.tgatmosphere"}});
                 if (!selected.empty()) m_pendingComponentPlace = selected;
             }
-            if (ImGui::MenuItem("アセットブラウザで表示", nullptr, false, !path.empty())) m_pendingAssetReveal = path;
+            if (ImGui::MenuItem(ui::Tr("アセットブラウザで表示", "Show in Asset Browser"), nullptr, false, !path.empty())) m_pendingAssetReveal = path;
             ImGui::EndPopup();
         }
         unsavedControls(atmosphereDirty, 2, m_sceneAtmosphere.is_null()
-                                                ? "スカイのアセットを作り、シーン本体と一緒に保存する"
-                                                : "大気散乱スカイのファイルだけを保存する");
+                                                ? ui::Tr("スカイのアセットを作り、シーン本体と一緒に保存する",
+                                                         "Create the sky asset and save it with the scene")
+                                                : ui::Tr("大気散乱スカイのファイルだけを保存する",
+                                                         "Save only the atmospheric sky file"));
     }
     graphEntry(1);
     ImGui::EndDisabled();
     if ((m_sceneDirty & kDirtyShared) && !previewing) {
-        ui::HintText("マテリアル・モデルに未保存の変更があります（Ctrl+S でまとめて保存）。");
+        ui::HintText("%s", ui::Tr("マテリアル・モデルに未保存の変更があります（Ctrl+S でまとめて保存）。",
+                                  "Materials or models have unsaved changes (Ctrl+S saves them all)."));
     }
-    ui::HintText("編集は保存するまでファイルへ書き込まれません。Ctrl+S で変更のある項目をまとめて保存します。");
+    ui::HintText("%s", ui::Tr("編集は保存するまでファイルへ書き込まれません。Ctrl+S で変更のある項目をまとめて保存します。",
+                              "Edits are not written to files until saved. Ctrl+S saves every changed item."));
     ImGui::End();
 }
 
@@ -2778,7 +2848,7 @@ void Application::DrawGraphPanel() {
     // （グラフのキャンバスがパネルの端まで届く）。文字や行を置く所だけ、元の余白ぶん字下げする。
     const ImVec2 panelPadding = ImGui::GetStyle().WindowPadding;
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-    const bool panelOpen = ImGui::Begin("グラフ");
+    const bool panelOpen = ImGui::Begin(ui::Tr("グラフ###Graph", "Graph###Graph"));
     ImGui::PopStyleVar();
     if (!panelOpen) {
         ImGui::End();
@@ -2787,12 +2857,13 @@ void Application::DrawGraphPanel() {
 
     if (m_componentPreview >= 0) {
         ImGui::Indent(panelPadding.x);
-        ui::HintText("未配置のアセットをシーン内で一時プレビュー中");
-        if (ui::Button("保存")) RequestSaveProject(false);
+        ui::HintText("%s", ui::Tr("未配置のアセットをシーン内で一時プレビュー中",
+                                  "Temporarily previewing an unplaced asset in the scene"));
+        if (ui::Button(ui::Tr("保存", "Save"))) RequestSaveProject(false);
         ImGui::SameLine();
-        if (ui::Button("元を保存して配置", ui::kWideButtonWidth)) m_pendingPreviewFinish = 1;
+        if (ui::Button(ui::Tr("元を保存して配置", "Save and Place"), ui::kWideButtonWidth)) m_pendingPreviewFinish = 1;
         ImGui::SameLine();
-        if (ui::Button("破棄して戻る", ui::kWideButtonWidth)) m_pendingPreviewFinish = 2;
+        if (ui::Button(ui::Tr("破棄して戻る", "Discard and Return"), ui::kWideButtonWidth)) m_pendingPreviewFinish = 2;
         ImGui::Unindent(panelPadding.x);
     }
     if (m_sceneComponents.is_array()) {
@@ -2800,14 +2871,18 @@ void Application::DrawGraphPanel() {
         // 中身はタブの中に描かず、下の区画が編集対象に合わせて切り替わる。
         ImGui::BeginDisabled(m_componentPreview >= 0);
         if (ImGui::BeginTabBar("graphComponentTabs")) {
-            static constexpr const char* kTabNames[2] = {"地形グラフ", "雲グラフ"};
+            // タブは選択を持つので、### 以降を言語によらない固定の ID にする。
+            static const ui::LocalizedText kTabNames[2] = {
+                {"地形グラフ###TerrainGraphTab", "Terrain Graph###TerrainGraphTab"},
+                {"雲グラフ###CloudGraphTab", "Cloud Graph###CloudGraphTab"},
+            };
             // シーン階層などから編集対象が変わったときは、タブの側を選び直す。
             const bool reselect = (m_graphTabShown != m_editComponent);
             int shown = -1;
             for (int component = 0; component < 2; ++component) {
                 const ImGuiTabItemFlags flags = (reselect && component == m_editComponent)
                     ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
-                if (ImGui::BeginTabItem(kTabNames[component], nullptr, flags)) {
+                if (ImGui::BeginTabItem(kTabNames[component].Get(), nullptr, flags)) {
                     shown = component;
                     ImGui::EndTabItem();
                 }
@@ -2824,7 +2899,8 @@ void Application::DrawGraphPanel() {
     if (const size_t cycleCount = GraphCycleNodes().size(); cycleCount > 0) {
         ImGui::Indent(panelPadding.x);
         ImGui::PushStyleColor(ImGuiCol_Text, ui::ErrorColor());
-        ImGui::TextWrapped("接続が循環しています（%zu 個のノード）。赤枠のノードの間の接続を 1 本外してください",
+        ImGui::TextWrapped(ui::Tr("接続が循環しています（%zu 個のノード）。赤枠のノードの間の接続を 1 本外してください",
+                                  "The connections form a cycle (%zu nodes). Remove one connection between the red-framed nodes"),
                            cycleCount);
         ImGui::PopStyleColor();
         ImGui::Unindent(panelPadding.x);
@@ -2889,21 +2965,24 @@ void Application::DrawGraphPanel() {
         if (ui::BeginPropertyTable("graphPreviewRow")) {
             if (previewPin != nullptr && previewNode != nullptr &&
                 previewNode->outputs.size() > 1) {
-                ui::PropertyValue("プレビュー", "%s（%s）", previewName,
+                ui::PropertyValue(ui::Tr("プレビュー", "Preview"), ui::Tr("%s（%s）", "%s (%s)"), previewName,
                                   previewPin->label.c_str());
             } else {
-                ui::PropertyValue("プレビュー", "%s", previewName);
+                ui::PropertyValue(ui::Tr("プレビュー", "Preview"), "%s", previewName);
             }
             ui::EndPropertyTable();
         }
         if (previewNode != nullptr) {
-            if (ui::Button("出力へ戻す", ui::kWideButtonWidth)) {
+            if (ui::Button(ui::Tr("出力へ戻す", "Back to Output"), ui::kWideButtonWidth)) {
                 SetPreviewGraphNode(0);
             }
         }
-        ui::HintText("出力ピンをクリック（またはノードをダブルクリック）で、"
-                     "ビューポートに出す出力を切り替える。Output ノードは選ぶだけで出力へ戻る。"
-                     "Mask の出力を選ぶと、そのマスクが白黒で貼られる");
+        ui::HintText("%s", ui::Tr("出力ピンをクリック（またはノードをダブルクリック）で、"
+                                  "ビューポートに出す出力を切り替える。Output ノードは選ぶだけで出力へ戻る。"
+                                  "Mask の出力を選ぶと、そのマスクが白黒で貼られる",
+                                  "Click an output pin (or double-click a node) to switch the output shown in the viewport. "
+                                  "Selecting the Output node returns to the output. "
+                                  "Choosing a Mask output shows that mask in black and white"));
         ImGui::Spacing();
     }
 
@@ -2911,34 +2990,43 @@ void Application::DrawGraphPanel() {
     if (m_selectedGraphNode == 0 && m_selectedGraphGroup != 0) {
         for (graph::NodeGroup& group : m_graph.MutableGroups()) {
             if (group.id != m_selectedGraphGroup) continue;
-            ui::SectionHeader("グループ");
+            ui::SectionHeader(ui::Tr("グループ", "Group"));
             if (ui::BeginPropertyTable("graphGroupRows")) {
                 char name[128] = {};
                 std::snprintf(name, sizeof(name), "%s", group.name.c_str());
-                if (ui::PropertyTextInput("名前", name, sizeof(name), "枠の見出しに出す名前")) {
+                if (ui::PropertyTextInput(ui::Tr("名前", "Name"), name, sizeof(name),
+                                          ui::Tr("枠の見出しに出す名前", "Name shown in the frame's title"))) {
                     group.name = name;
                     MarkDocumentChanged(false);
                 }
                 bool collapsed = group.collapsed;
-                if (ui::PropertyBool("畳む", &collapsed, false,
-                                     "中のノードを隠し、外と繋がるピンだけを持つ 1 個のノードにする。"
-                                     "枠のダブルクリックでも切り替わる")) {
+                if (ui::PropertyBool(ui::Tr("畳む", "Collapse"), &collapsed, false,
+                                     ui::Tr("中のノードを隠し、外と繋がるピンだけを持つ 1 個のノードにする。"
+                                            "枠のダブルクリックでも切り替わる",
+                                            "Hides the nodes inside and turns the group into one node with only the pins "
+                                            "connected outside. Double-clicking the frame also toggles it"))) {
                     ToggleGraphGroupCollapsed(group.id);
                 }
                 ui::EndPropertyTable();
             }
-            ui::HintText("ダブルクリックで畳む / 開く。"
-                         "枠の中にあるノードがこのグループの中身。見出しを掴むと中のノードごと動き、縁を掴むと大きさが変わる。"
-                         "Delete で枠だけを消す（中のノードは残る）。評価には影響しない");
+            ui::HintText("%s", ui::Tr("ダブルクリックで畳む / 開く。"
+                                      "枠の中にあるノードがこのグループの中身。見出しを掴むと中のノードごと動き、縁を掴むと大きさが変わる。"
+                                      "Delete で枠だけを消す（中のノードは残る）。評価には影響しない",
+                                      "Double-click to collapse / expand. "
+                                      "Nodes inside the frame belong to this group. Drag the title to move it with its nodes, "
+                                      "drag the edges to resize. "
+                                      "Delete removes only the frame (the nodes stay). No effect on evaluation"));
         }
     }
 
     graph::Node* selected = m_graph.FindMutableNode(m_selectedGraphNode);
     // メモはどの種類のノードにも共通。評価には使わないので、確定しても再評価しない。
     if (selected != nullptr && ui::BeginPropertyTable("graphNodeNote")) {
-        if (ui::PropertyTextMultiline("メモ", selected->note, 3,
-                                      "なぜこのノードを置いたか、などのメモ。ノードビューに表示する"
-                                      "（評価には影響しない）。欄の外をクリックで確定")) {
+        if (ui::PropertyTextMultiline(ui::Tr("メモ", "Note"), selected->note, 3,
+                                      ui::Tr("なぜこのノードを置いたか、などのメモ。ノードビューに表示する"
+                                             "（評価には影響しない）。欄の外をクリックで確定",
+                                             "A note such as why this node is here. Shown in the node view "
+                                             "(no effect on evaluation). Click outside the field to confirm"))) {
             MarkDocumentChanged(false);
         }
         ui::EndPropertyTable();
@@ -2962,10 +3050,11 @@ bool Application::DrawModelSlotRow(const char* label, uint64_t& model, graph::Gr
     ImGui::SameLine();
     ImGui::SetCursorPosY(rowY + (thumbnailSize - ImGui::GetFrameHeight()) * 0.5f);
     ImGui::SetNextItemWidth(AssetReferenceWidth(std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x)));
-    if (ImGui::BeginCombo("##model", current ? current->name.c_str() : (model ? "見つからないモデル" : "未指定"))) {
+    if (ImGui::BeginCombo("##model", current ? current->name.c_str()
+                                             : (model ? ui::Tr("見つからないモデル", "Missing Model") : ui::Tr("未指定", "(None)")))) {
         ui::ComboFilterInput();
         // 絞り込み中は「未指定」を出さない。
-        if (!ui::ComboFilterActive() && ImGui::Selectable("未指定", model == 0)) { model = 0; changed = true; }
+        if (!ui::ComboFilterActive() && ImGui::Selectable(ui::Tr("未指定", "(None)"), model == 0)) { model = 0; changed = true; }
         // サムネイルと名前の行。行全体をサムネイルの高さの Selectable にして、その上へ画像と名前を描く。
         // 画面の外の行はサムネイルを頼まない（作るのは 1 フレームに 1 枚なので、見えているものを優先する）。
         const auto row = [&](const char* id, const std::filesystem::path& path, const char* name, const char* folder, bool picked) {
@@ -3020,13 +3109,15 @@ bool Application::DrawModelSlotRow(const char* label, uint64_t& model, graph::Gr
 // ノードの複製を渡して描き、行の範囲と既定値を記録する（ui::SetPropertyRecorder）。
 void Application::DrawNodeProperties(graph::Node* selected) {
     if (selected == nullptr) {
-        ui::HintText("ノードを選ぶと設定が出る。背景の右クリックで追加、"
-                     "ピンをドラッグして接続、Ctrl+C / Ctrl+V でコピー");
+        ui::HintText("%s", ui::Tr("ノードを選ぶと設定が出る。背景の右クリックで追加、"
+                                  "ピンをドラッグして接続、Ctrl+C / Ctrl+V でコピー",
+                                  "Select a node to see its settings. Right-click the background to add, "
+                                  "drag pins to connect, Ctrl+C / Ctrl+V to copy"));
     } else if (auto* settings = std::get_if<graph::LayerNodeSettings>(&selected->settings)) {
         bool changed = false;
         if (ui::BeginPropertyTable("graphNodeBasicRows")) {
-            changed |= ui::PropertyBool("有効", &settings->layer.enabled, true,
-                                        "無効にすると合成から外れる");
+            changed |= ui::PropertyBool(ui::Tr("有効", "Enabled"), &settings->layer.enabled, true,
+                                        ui::Tr("無効にすると合成から外れる", "When disabled, left out of the blend"));
             ui::EndPropertyTable();
         }
         // 「下地」入力が繋がっていないノードは一番下のレイヤー扱い。
@@ -3051,8 +3142,10 @@ void Application::DrawNodeProperties(graph::Node* selected) {
             if (!path || graph::BuildMeanderPoints(path->path,
                 scale ? scale->sizeMeters : graph::TerrainScale{}.sizeMeters,
                 p.riverWidth * p.meanderScale * 2.0f).empty()) {
-                ui::HintText("有効な川筋がないため地形は変わらず、River は空になる。"
-                    "独立した開いた Path を矢印が揃う向きで接続する（合計 2048 標本まで）。");
+                ui::HintText("%s", ui::Tr("有効な川筋がないため地形は変わらず、River は空になる。"
+                    "独立した開いた Path を矢印が揃う向きで接続する（合計 2048 標本まで）。",
+                    "No valid channel, so the terrain is unchanged and River is empty. "
+                    "Connect separate open Paths with their arrows facing the same way (up to 2048 samples in total)."));
             }
         }
         // Surface の UV Path に Path が繋がっていれば、帯の座標で貼る設定を出す。
@@ -3069,27 +3162,32 @@ void Application::DrawNodeProperties(graph::Node* selected) {
         if (isMountain) {
             auto& p = settings->mountain;
             const compositor::MountainParams defaults;
-            ui::SectionHeader("山岳地形");
-            if (ui::BeginPropertyTable("mountainRows", "山並みの方向")) {
-                changed |= ui::PropertyFloat("山の間隔", &p.spacing, 50.0f, 16000.0f, defaults.spacing,
-                    "起伏の基準となる長さ。大きくすると山の数が減る", "%.1f m", ImGuiSliderFlags_Logarithmic);
-                changed |= ui::PropertyFloat("尾根の強さ", &p.ridge, 0.0f, 1.0f, defaults.ridge,
-                    "丸い起伏から連続した尾根へ変える");
-                changed |= ui::PropertyFloat("尖り具合", &p.sharpness, 0.5f, 4.0f, defaults.sharpness,
-                    "大きいほど山頂が絞られ、裾野が広がる");
-                changed |= ui::PropertyFloat("山並みの方向", &p.direction, -180.0f, 180.0f, defaults.direction,
-                    "山並みを伸ばす方向。0 度は X 方向", "%.1f deg");
-                changed |= ui::PropertyFloat("山並みの長さ", &p.elongation, 1.0f, 5.0f, defaults.elongation,
-                    "1 は方向性なし。大きいほど指定方向へ山並みが伸びる", "%.2f 倍");
-                changed |= ui::PropertyFloat("うねり", &p.warp, 0.0f, 1.5f, defaults.warp,
-                    "尾根の流れを曲げて規則的な形を崩す");
-                changed |= ui::PropertyFloat("細部の強さ", &p.detail, 0.0f, 0.8f, defaults.detail,
-                    "大きな山に重ねる細かな起伏。侵食は後ろのノードで加える");
-                changed |= ui::PropertyInt("シード", &p.seed, 0, 65535, defaults.seed,
-                    "同じ設定とシードで同じ山並みを再生成する");
+            ui::SectionHeader(ui::Tr("山岳地形", "Mountain Terrain"));
+            if (ui::BeginPropertyTable("mountainRows", ui::Tr("山並みの方向", "Range Elongation"))) {
+                changed |= ui::PropertyFloat(ui::Tr("山の間隔", "Spacing"), &p.spacing, 50.0f, 16000.0f, defaults.spacing,
+                    ui::Tr("起伏の基準となる長さ。大きくすると山の数が減る",
+                           "Base length of the relief. Larger means fewer mountains"), "%.1f m", ImGuiSliderFlags_Logarithmic);
+                changed |= ui::PropertyFloat(ui::Tr("尾根の強さ", "Ridge Strength"), &p.ridge, 0.0f, 1.0f, defaults.ridge,
+                    ui::Tr("丸い起伏から連続した尾根へ変える", "Turns rounded relief into continuous ridges"));
+                changed |= ui::PropertyFloat(ui::Tr("尖り具合", "Sharpness"), &p.sharpness, 0.5f, 4.0f, defaults.sharpness,
+                    ui::Tr("大きいほど山頂が絞られ、裾野が広がる", "Higher narrows the peaks and widens the foothills"));
+                changed |= ui::PropertyFloat(ui::Tr("山並みの方向", "Range Direction"), &p.direction, -180.0f, 180.0f, defaults.direction,
+                    ui::Tr("山並みを伸ばす方向。0 度は X 方向", "Direction the ranges extend. 0 deg is the X axis"), "%.1f deg");
+                changed |= ui::PropertyFloat(ui::Tr("山並みの長さ", "Range Elongation"), &p.elongation, 1.0f, 5.0f, defaults.elongation,
+                    ui::Tr("1 は方向性なし。大きいほど指定方向へ山並みが伸びる",
+                           "1 has no direction. Higher stretches the ranges further in the set direction"),
+                    ui::Tr("%.2f 倍", "%.2fx"));
+                changed |= ui::PropertyFloat(ui::Tr("うねり", "Warp"), &p.warp, 0.0f, 1.5f, defaults.warp,
+                    ui::Tr("尾根の流れを曲げて規則的な形を崩す", "Bends the ridge lines to break up regular shapes"));
+                changed |= ui::PropertyFloat(ui::Tr("細部の強さ", "Detail Strength"), &p.detail, 0.0f, 0.8f, defaults.detail,
+                    ui::Tr("大きな山に重ねる細かな起伏。侵食は後ろのノードで加える",
+                           "Fine relief layered on the large mountains. Add erosion with later nodes"));
+                changed |= ui::PropertyInt(ui::Tr("シード", "Seed"), &p.seed, 0, 65535, defaults.seed,
+                    ui::Tr("同じ設定とシードで同じ山並みを再生成する", "The same settings and seed regenerate the same ranges"));
                 ui::EndPropertyTable();
             }
-            ui::HintText("画像なしで地形を生成する。Result を侵食・Surface・Output へ接続する");
+            ui::HintText("%s", ui::Tr("画像なしで地形を生成する。Result を侵食・Surface・Output へ接続する",
+                                      "Generates terrain without an image. Connect Result to erosion, Surface, or Output"));
         } else {
             changed |= DrawLayerSettings(settings->layer, isBase, isSource, maskFromNode,
                                          m_graph.MaskSourceResolves(*selected), pathUvConnected);
@@ -3099,40 +3197,49 @@ void Application::DrawNodeProperties(graph::Node* selected) {
         // プレビュー設定ではなくここに置くのは、実寸が見え方の設定ではなく
         // 読み込んだデータそのものの性質だから。
         if (isSource) {
-            ui::SectionHeader("スケール");
+            ui::SectionHeader(ui::Tr("スケール", "Scale"));
             if (ui::BeginPropertyTable("graphNodeScaleRows")) {
                 const graph::TerrainScale defaults = isMountain ? graph::MakeMountainNodeSettings().scale : graph::TerrainScale{};
                 changed |= ui::PropertyFloat(
-                    "サイズ", &settings->scale.sizeMeters, 0.5f, 32768.0f, defaults.sizeMeters,
-                    "地形の一辺の長さ（m）。カメラと影の範囲もこれに追従する", "%.1f m",
+                    ui::Tr("サイズ", "Size"), &settings->scale.sizeMeters, 0.5f, 32768.0f, defaults.sizeMeters,
+                    ui::Tr("地形の一辺の長さ（m）。カメラと影の範囲もこれに追従する",
+                           "Side length of the terrain (m). The camera and shadow range follow it"), "%.1f m",
                     ImGuiSliderFlags_Logarithmic);
                 changed |= ui::PropertyFloat(
-                    "標高差", &settings->scale.heightMeters, 0.0f,
+                    ui::Tr("標高差", "Elevation Range"), &settings->scale.heightMeters, 0.0f,
                     std::max(1.0f, settings->scale.sizeMeters * 0.5f), defaults.heightMeters,
-                    "ハイト 0〜1 の全幅が何 m になるか（最低地点から最高地点までの差）",
+                    ui::Tr("ハイト 0〜1 の全幅が何 m になるか（最低地点から最高地点までの差）",
+                           "How many meters the full 0-1 height range spans (lowest to highest point)"),
                     "%.1f m", ImGuiSliderFlags_Logarithmic);
                 changed |= ui::PropertyFloat(
-                    "最低標高", &settings->scale.baseElevationMeters, -12000.0f, 9000.0f,
+                    ui::Tr("最低標高", "Base Elevation"), &settings->scale.baseElevationMeters, -12000.0f, 9000.0f,
                     defaults.baseElevationMeters,
-                    "ハイト 0 の所の標高（m）。ビューポートの Height Range のラベルを標高で出す。"
-                    "形や評価には効かない",
+                    ui::Tr("ハイト 0 の所の標高（m）。ビューポートの Height Range のラベルを標高で出す。"
+                           "形や評価には効かない",
+                           "Elevation (m) at height 0. Labels the viewport's Height Range in elevation. "
+                           "No effect on shape or evaluation"),
                     "%.1f m");
-                ui::PropertyValue("最高標高", "%.1f m",
+                ui::PropertyValue(ui::Tr("最高標高", "Max Elevation"), "%.1f m",
                                   settings->scale.baseElevationMeters + settings->scale.heightMeters);
                 ui::EndPropertyTable();
             }
-            ui::HintText(isMountain
-                ? "生成する地形の実寸。標高差はハイト 0〜1 の換算幅で、実際の起伏は形によって変わる"
-                : "読み込んだ地形の実寸。プレビュー設定の平面のサイズと変位量はこれに従う");
+            ui::HintText("%s", isMountain
+                ? ui::Tr("生成する地形の実寸。標高差はハイト 0〜1 の換算幅で、実際の起伏は形によって変わる",
+                         "Real size of the generated terrain. Elevation Range is the span of heights 0-1; "
+                         "the actual relief depends on the shape")
+                : ui::Tr("読み込んだ地形の実寸。プレビュー設定の平面のサイズと変位量はこれに従う",
+                         "Real size of the loaded terrain. Plane size and displacement in the preview settings follow it"));
 
             // 現実の場所。記録だけで評価には効かない。外部のツールや LLM が
             // OSM などから周辺の情報を引く手がかりにする。
-            ui::SectionHeader("位置");
+            ui::SectionHeader(ui::Tr("位置", "Location"));
             if (ui::BeginPropertyTable("graphNodeLocationRows")) {
                 const graph::TerrainScale defaults;
                 changed |= ui::PropertyBool(
-                    "位置を持つ", &settings->scale.hasLocation, defaults.hasLocation,
-                    "地形の現実の場所（中心の緯度・経度）を記録する。形や評価には効かない");
+                    ui::Tr("位置を持つ", "Has Location"), &settings->scale.hasLocation, defaults.hasLocation,
+                    ui::Tr("地形の現実の場所（中心の緯度・経度）を記録する。形や評価には効かない",
+                           "Records the terrain's real-world location (center latitude and longitude). "
+                           "No effect on shape or evaluation"));
                 if (settings->scale.hasLocation) {
                     // **スライダーではなく文字で入れる。** float のスライダーだと経度 138 度で
                     // 刻みが約 1.5 m になり、打った値がそのまま残らない。範囲いっぱいを
@@ -3140,9 +3247,11 @@ void Application::DrawNodeProperties(graph::Node* selected) {
                     // 緯度の行へ「36.0183, 138.3642」（地図アプリからのコピー）を入れると両方が入る。
                     char latitudeText[64] = {};
                     std::snprintf(latitudeText, sizeof(latitudeText), "%.6f", settings->scale.latitude);
-                    if (ui::PropertyTextInput("緯度", latitudeText, sizeof(latitudeText),
-                                              "地形の中心の緯度（度）。北緯が正。\n"
-                                              "「緯度, 経度」の形で貼ると経度も入る")) {
+                    if (ui::PropertyTextInput(ui::Tr("緯度", "Latitude"), latitudeText, sizeof(latitudeText),
+                                              ui::Tr("地形の中心の緯度（度）。北緯が正。\n"
+                                                     "「緯度, 経度」の形で貼ると経度も入る",
+                                                     "Latitude of the terrain center (degrees). North is positive.\n"
+                                                     "Pasting \"latitude, longitude\" fills in the longitude too"))) {
                         char* end = nullptr;
                         const double latitude = std::strtod(latitudeText, &end);
                         if (end != latitudeText) {
@@ -3160,8 +3269,9 @@ void Application::DrawNodeProperties(graph::Node* selected) {
                     }
                     char longitudeText[64] = {};
                     std::snprintf(longitudeText, sizeof(longitudeText), "%.6f", settings->scale.longitude);
-                    if (ui::PropertyTextInput("経度", longitudeText, sizeof(longitudeText),
-                                              "地形の中心の経度（度）。東経が正")) {
+                    if (ui::PropertyTextInput(ui::Tr("経度", "Longitude"), longitudeText, sizeof(longitudeText),
+                                              ui::Tr("地形の中心の経度（度）。東経が正",
+                                                     "Longitude of the terrain center (degrees). East is positive"))) {
                         char* end = nullptr;
                         const double longitude = std::strtod(longitudeText, &end);
                         if (end != longitudeText) {
@@ -3179,80 +3289,92 @@ void Application::DrawNodeProperties(graph::Node* selected) {
         }
     } else if (auto* mask = std::get_if<graph::MaskNodeSettings>(&selected->settings)) {
         bool changed = false;
-        const char* header = "マスク画像";
+        const char* header = ui::Tr("マスク画像", "Mask Image");
         const char* hint =
-            "レイヤーの Mask 入力へ繋ぐと、白い所にだけそのレイヤーが乗る。"
-            "効き方（係数 / カーブ / レベル）はレイヤー側で決める";
+            ui::Tr("レイヤーの Mask 入力へ繋ぐと、白い所にだけそのレイヤーが乗る。"
+                   "効き方（係数 / カーブ / レベル）はレイヤー側で決める",
+                   "Connect to a layer's Mask input to apply that layer only where the mask is white. The layer decides how it applies (factor / curve / levels)");
         switch (selected->kind) {
             case graph::NodeKind::MaskNoise:
-                header = "ノイズ";
-                hint = "下地に依らないノイズをマスクにする。"
-                       "周波数は整数へ丸めて使うので、出力は必ずタイルする";
+                header = ui::Tr("ノイズ", "Noise");
+                hint = ui::Tr("下地に依らないノイズをマスクにする。"
+                              "周波数は整数へ丸めて使うので、出力は必ずタイルする",
+                              "Turns noise independent of the base into a mask. Frequencies are rounded to integers, so the output always tiles");
                 break;
             case graph::NodeKind::MaskFlowline:
-                header = "流跡";
-                hint = "Base の地形に沿って粒子を流し、通った場所をマスクにする。地形の高さは変えない。"
-                       "Source は発生範囲と強さ、Outflow は途中で流れを弱める範囲を指定する";
+                header = ui::Tr("流跡", "Flowline");
+                hint = ui::Tr("Base の地形に沿って粒子を流し、通った場所をマスクにする。地形の高さは変えない。"
+                              "Source は発生範囲と強さ、Outflow は途中で流れを弱める範囲を指定する",
+                              "Flows particles over the Base terrain and masks where they pass. The terrain height is unchanged. Source sets where and how strongly they spawn; Outflow sets where the flow weakens along the way");
                 break;
             case graph::NodeKind::WindField:
-                header = "風の場";
-                hint = "Base の地形の周囲の風を粗い 3D 格子で近似する。Speed は地表から鉛直半セル上の風速、"
-                       "Spindrift は風下の稜線で風速がしきい値を"
-                       "超える所。Wind は 3D の速度場で、今は繋ぐ先がない。Spindrift を Snow Plume の Source に繋ぐと雪煙になる。"
-                       "矢印の根元は風を取得した位置、向きは空中の風向、長さは風速（入力風速の 2 倍で頭打ち）。"
-                       "斜面に沿う流れや粒子の軌跡ではない。最後に評価した風を表示する"
-                       "（Speed か Spindrift の接続が必要）";
+                header = ui::Tr("風の場", "Wind Field");
+                hint = ui::Tr("Base の地形の周囲の風を粗い 3D 格子で近似する。Speed は地表から鉛直半セル上の風速、"
+                              "Spindrift は風下の稜線で風速がしきい値を"
+                              "超える所。Wind は 3D の速度場で、今は繋ぐ先がない。Spindrift を Snow Plume の Source に繋ぐと雪煙になる。"
+                              "矢印の根元は風を取得した位置、向きは空中の風向、長さは風速（入力風速の 2 倍で頭打ち）。"
+                              "斜面に沿う流れや粒子の軌跡ではない。最後に評価した風を表示する"
+                              "（Speed か Spindrift の接続が必要）",
+                              "Approximates the wind around the Base terrain on a coarse 3D grid. Speed is the wind speed half a cell above the ground; Spindrift is where the wind exceeds the threshold on leeward ridges. Wind is the 3D velocity field and has nothing to connect to yet. Connect Spindrift to a Snow Plume's Source for blowing snow. Arrows start where the wind was sampled, point in the wind direction aloft, and their length is the speed (capped at 2x the input speed). They are not flow along slopes or particle paths. Shows the last evaluated wind (needs Speed or Spindrift connected)");
                 break;
             case graph::NodeKind::MaskFluvial:
-                header = "川筋";
-                hint = "下地の高さから水の集まる所（川筋）を作る。"
-                       "Base にどこまでのハイトを使うかを繋ぐ";
+                header = ui::Tr("川筋", "Channels");
+                hint = ui::Tr("下地の高さから水の集まる所（川筋）を作る。"
+                              "Base にどこまでのハイトを使うかを繋ぐ",
+                              "Builds where water collects (channels) from the base height. Connect the height to use to Base");
                 break;
             case graph::NodeKind::MaskHeight:
-                header = "標高";
-                hint = "下地の標高帯（m）をマスクにする。"
-                       "0 m は地形の一番低い所で、標高差 m が一番高い所。"
-                       "Base にどこまでのハイトを使うかを繋ぐ";
+                header = ui::Tr("標高", "Elevation");
+                hint = ui::Tr("下地の標高帯（m）をマスクにする。"
+                              "0 m は地形の一番低い所で、標高差 m が一番高い所。"
+                              "Base にどこまでのハイトを使うかを繋ぐ",
+                              "Masks an elevation band (m) of the base. 0 m is the lowest point of the terrain and the elevation range in m is the highest. Connect the height to use to Base");
                 break;
             case graph::NodeKind::MaskSlope:
-                header = "傾斜";
-                hint = "下地の傾斜（角度）をマスクにする。"
-                       "Base にどこまでのハイトを使うかを繋ぐ";
+                header = ui::Tr("傾斜", "Slope");
+                hint = ui::Tr("下地の傾斜（角度）をマスクにする。"
+                              "Base にどこまでのハイトを使うかを繋ぐ",
+                              "Masks the base slope (angle). Connect the height to use to Base");
                 break;
             case graph::NodeKind::MaskCurvature:
-                header = "曲率";
-                hint = "下地の凹凸をマスクにする。周りの平均と比べて、"
-                       "高い所（尾根）か低い所（谷）を拾う。"
-                       "Base にどこまでのハイトを使うかを繋ぐ";
+                header = ui::Tr("曲率", "Curvature");
+                hint = ui::Tr("下地の凹凸をマスクにする。周りの平均と比べて、"
+                              "高い所（尾根）か低い所（谷）を拾う。"
+                              "Base にどこまでのハイトを使うかを繋ぐ",
+                              "Masks the base relief. Picks points higher (ridges) or lower (valleys) than the surrounding average. Connect the height to use to Base");
                 break;
             case graph::NodeKind::MaskLevels:
-                header = "レベル";
-                hint = "入力のマスクの黒点 / 白点 / ガンマを整える";
+                header = ui::Tr("レベル", "Levels");
+                hint = ui::Tr("入力のマスクの黒点 / 白点 / ガンマを整える", "Adjusts the black point / white point / gamma of the input mask");
                 break;
             case graph::NodeKind::MaskBlur:
-                header = "ぼかし";
-                hint = "入力のマスクをぼかす。境界のギザギザや、"
-                       "しきい値で二値になったマスクを馴染ませるのに使う";
+                header = ui::Tr("ぼかし", "Blur");
+                hint = ui::Tr("入力のマスクをぼかす。境界のギザギザや、"
+                              "しきい値で二値になったマスクを馴染ませるのに使う",
+                              "Blurs the input mask. Use it to smooth jagged edges or masks made binary by a threshold");
                 break;
             case graph::NodeKind::MaskBlend:
-                header = "合成";
-                hint = "マスク 2 枚を合成する。片方だけ繋いだときはそれを通す";
+                header = ui::Tr("合成", "Blend");
+                hint = ui::Tr("マスク 2 枚を合成する。片方だけ繋いだときはそれを通す", "Blends two masks. With only one connected, it passes that one through");
                 break;
             case graph::NodeKind::MaskPath:
-                header = "パスの足跡";
-                hint = "Path 入力の線を、点ごとの幅とフェザーでマスクにする。"
-                       "形はパスの点が持ち、ここでは調整だけ";
+                header = ui::Tr("パスの足跡", "Path Footprint");
+                hint = ui::Tr("Path 入力の線を、点ごとの幅とフェザーでマスクにする。"
+                              "形はパスの点が持ち、ここでは調整だけ",
+                              "Masks the Path input's lines using each point's width and feather. The points hold the shape; this node only adjusts it");
                 break;
             case graph::NodeKind::MaskArea:
-                header = "パスの面";
-                hint = "Path 入力の閉じた鎖を多角形とみなし、内側を 1 にする。"
-                       "輪の中に輪を描けば穴になる。開いた鎖と点ごとの幅は読まない";
+                header = ui::Tr("パスの面", "Path Area");
+                hint = ui::Tr("Path 入力の閉じた鎖を多角形とみなし、内側を 1 にする。"
+                              "輪の中に輪を描けば穴になる。開いた鎖と点ごとの幅は読まない",
+                              "Treats the Path input's closed chains as polygons and sets their inside to 1. A loop inside a loop makes a hole. Open chains and point widths are ignored");
                 break;
             case graph::NodeKind::MaskMesh:
-                header = "メッシュの足跡";
-                hint = "Mesh 入力（Road Mesh か Shoulder）のメッシュを地形平面へ投影し、三角形の内側を 1 にする。"
-                       "鎖のどこに繋いでも路面と路肩をまとめた足跡になる。反転して Model Scatter のマスクに掛けると、"
-                       "道路の上に植生が生えなくなる";
+                header = ui::Tr("メッシュの足跡", "Mesh Footprint");
+                hint = ui::Tr("Mesh 入力（Road Mesh か Shoulder）のメッシュを地形平面へ投影し、三角形の内側を 1 にする。"
+                              "鎖のどこに繋いでも路面と路肩をまとめた足跡になる。反転して Model Scatter のマスクに掛けると、"
+                              "道路の上に植生が生えなくなる",
+                              "Projects the Mesh input (Road Mesh or Shoulder) onto the terrain plane and sets the inside of its triangles to 1. Wherever it connects in the chain, the footprint covers both road surface and shoulders. Invert it and use it as a Model Scatter mask to keep vegetation off the road");
                 break;
             default:
                 break;
@@ -3300,7 +3422,7 @@ void Application::DrawNodeProperties(graph::Node* selected) {
                     changed |= DrawMeshMaskRows(mask->meshMask);
                     break;
                 default:
-                    changed |= DrawMapSlotRow("画像", mask->map, m_textureLibrary, m_pendingAssetReveal);
+                    changed |= DrawMapSlotRow(ui::Tr("画像", "Image"), mask->map, m_textureLibrary, m_pendingAssetReveal);
                     break;
             }
             ui::EndPropertyTable();
@@ -3311,15 +3433,17 @@ void Application::DrawNodeProperties(graph::Node* selected) {
             const graph::Node* meshNode = m_graph.FindUpstreamNodeForPin(selected->inputs.front().id);
             const compositor::MeshFootprint* footprint =
                 m_meshFootprints.Find(static_cast<uint32_t>(selected->id));
-            ui::SectionHeader("状態");
+            ui::SectionHeader(ui::Tr("状態", "Status"));
             if (meshNode == nullptr) {
-                ui::HintText("Mesh 入力が繋がっていないので、マスクは空になる");
+                ui::HintText("%s", ui::Tr("Mesh 入力が繋がっていないので、マスクは空になる", "The Mesh input isn't connected, so the mask is empty"));
             } else if (footprint == nullptr) {
-                ui::HintText(meshNode->kind == graph::NodeKind::ModelPlace
-                                 ? "敷地の形がまだ無い（Model Place にモデルと配置が無いときは空のまま）"
-                                 : "道路の形を組み立て中（Road Path に線が無い、または形を作れないときは空のまま）");
+                ui::HintText("%s", meshNode->kind == graph::NodeKind::ModelPlace
+                                 ? ui::Tr("敷地の形がまだ無い（Model Place にモデルと配置が無いときは空のまま）",
+                                          "No pad shape yet (stays empty while Model Place has no model or placement)")
+                                 : ui::Tr("道路の形を組み立て中（Road Path に線が無い、または形を作れないときは空のまま）",
+                                          "Building the road shape (stays empty if Road Path has no line or the shape can't be made)"));
             } else if (ui::BeginPropertyTable("maskMeshStatusRows")) {
-                ui::PropertyValue("足跡", "三角形 %zu", footprint->TriangleCount());
+                ui::PropertyValue(ui::Tr("足跡", "Footprint"), ui::Tr("三角形 %zu", "%zu triangles"), footprint->TriangleCount());
                 ui::EndPropertyTable();
             }
         }
@@ -3336,10 +3460,11 @@ void Application::DrawNodeProperties(graph::Node* selected) {
                 }
             }
             if (pathSettings == nullptr) {
-                ui::HintText("Path 入力が繋がっていないので、マスクは空になる");
+                ui::HintText("%s", ui::Tr("Path 入力が繋がっていないので、マスクは空になる", "The Path input isn't connected, so the mask is empty"));
             } else if (!hasClosed) {
-                ui::HintText("閉じた鎖が無いので、マスクは空になる。端の点を始点へ重ねるか、"
-                             "鎖を右クリック → 閉じる");
+                ui::HintText("%s", ui::Tr("閉じた鎖が無いので、マスクは空になる。端の点を始点へ重ねるか、"
+                                          "鎖を右クリック → 閉じる",
+                                          "There are no closed chains, so the mask is empty. Drag the end point onto the start point, or right-click the chain → Close"));
             }
         }
         if (changed) {
@@ -3347,187 +3472,194 @@ void Application::DrawNodeProperties(graph::Node* selected) {
             MarkDocumentChanged();
         }
     } else if (const auto* missing = std::get_if<graph::MissingNodeSettings>(&selected->settings)) {
-        ui::SectionHeader("扱えないノード");
+        ui::SectionHeader(ui::Tr("扱えないノード", "Unsupported Node"));
         if (ui::BeginPropertyTable("missingNodeRows")) {
-            ui::PropertyValue("保存名", "%s", missing->kindName.c_str());
+            ui::PropertyValue(ui::Tr("保存名", "Saved Name"), "%s", missing->kindName.c_str());
             ui::EndPropertyTable();
         }
-        ui::HintText("この版では扱えない種類のノードです。廃止された種類か、新しい版で追加された種類です。"
-                     "評価には使われず、保存時は元の種類名のまま書き戻します。不要なら削除してください。");
+        ui::HintText("%s", ui::Tr("この版では扱えない種類のノードです。廃止された種類か、新しい版で追加された種類です。"
+                                  "評価には使われず、保存時は元の種類名のまま書き戻します。不要なら削除してください。",
+                                  "This version can't handle this kind of node. It was either removed or added in a newer version. It is not evaluated and is saved back under its original kind name. Delete it if you don't need it."));
     } else if (auto* cloudMerge = std::get_if<graph::CloudMergeSettings>(&selected->settings)) {
         const graph::CloudMergeSettings defaults;
         bool changed = false;
-        ui::HintText("接続した形状を同じ座標で統合します。接続すると次の空き入力が増えます。同じ形状の重複接続は1回だけ。入れ子の滑らかさは最大値を全体へ適用します。");
-        if (ui::BeginPropertyTable("CloudMergeRows", "横方向のばらつき")) {
-            changed |= ui::PropertyFloat("つなぎの滑らかさ", &cloudMerge->smoothness, 0.0f, 500.0f, defaults.smoothness, "値はメートル単位。形状の膨らみは最大でこの1/4。", "%.0f m");
+        ui::HintText("%s", ui::Tr("接続した形状を同じ座標で統合します。接続すると次の空き入力が増えます。同じ形状の重複接続は1回だけ。入れ子の滑らかさは最大値を全体へ適用します。", "Merges the connected shapes in the same coordinates. Connecting adds the next free input. Duplicate connections of the same shape count once. For nested merges, the largest smoothness applies to all."));
+        if (ui::BeginPropertyTable("CloudMergeRows", ui::Tr("横方向のばらつき", "Join Smoothness"))) {
+            changed |= ui::PropertyFloat(ui::Tr("つなぎの滑らかさ", "Join Smoothness"), &cloudMerge->smoothness, 0.0f, 500.0f, defaults.smoothness, ui::Tr("値はメートル単位。形状の膨らみは最大でこの1/4。", "In meters. Shapes swell by at most 1/4 of this."), "%.0f m");
             ui::EndPropertyTable();
         }
         if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
     } else if (auto* weather = std::get_if<graph::CloudWeatherSettings>(&selected->settings)) {
         const graph::CloudWeatherSettings defaults;
         bool changed=false;
-        ui::HintText("雲量と雲種のマップで広域の雲層を作ります。Coverage / Type にマスクを接続すると場所ごとに変わり、未接続はスライダーの値を全域に使います。Volume を Cloud Output へ接続。");
-        ui::SectionHeader("動き");
-        if (ui::BeginPropertyTable("CloudWeatherMotionRows", "積乱雲の広がり")) {
+        ui::HintText("%s", ui::Tr("雲量と雲種のマップで広域の雲層を作ります。Coverage / Type にマスクを接続すると場所ごとに変わり、未接続はスライダーの値を全域に使います。Volume を Cloud Output へ接続。", "Builds a wide cloud layer from coverage and cloud type maps. Connecting masks to Coverage / Type varies them by location; unconnected inputs use the slider value everywhere. Connect Volume to Cloud Output."));
+        ui::SectionHeader(ui::Tr("動き", "Motion"));
+        if (ui::BeginPropertyTable("CloudWeatherMotionRows", ui::Tr("積乱雲の広がり", "Pattern Speed Ratio"))) {
             float position = m_renderer.WeatherLoopPosition(static_cast<uint32_t>(selected->id), weather->loopPosition);
-            if (ui::PropertyBool("再生", &weather->animate, defaults.animate, "指定した区間を繰り返し再生します。")) {
+            if (ui::PropertyBool(ui::Tr("再生", "Play"), &weather->animate, defaults.animate, ui::Tr("指定した区間を繰り返し再生します。", "Plays the set range in a loop."))) {
                 weather->loopPosition = position;
                 changed = true;
             }
-            if (ui::PropertyFloat("ループ位置", &position, 0.0f, 1.0f, defaults.loopPosition,
-                                  "0が開始、1が終端（開始と同じ状態）。再生中も操作でき、指定位置から続けます。", "%.3f")) {
+            if (ui::PropertyFloat(ui::Tr("ループ位置", "Loop Position"), &position, 0.0f, 1.0f, defaults.loopPosition,
+                                  ui::Tr("0が開始、1が終端（開始と同じ状態）。再生中も操作でき、指定位置から続けます。", "0 is the start, 1 the end (same state as the start). Adjustable while playing; playback continues from there."), "%.3f")) {
                 weather->loopPosition = position;
                 m_renderer.SeekWeatherLoop(static_cast<uint32_t>(selected->id), position);
                 changed = true;
             }
-            changed |= ui::PropertyFloat("ループ時間", &weather->loopDuration, 0.1f, 3600.0f, defaults.loopDuration,
-                                         "1周の秒数。終端で先頭へ戻ります。風向や模様の速度比によって継ぎ目が生じます。", "%.1f s");
-            changed |= ui::PropertyFloat("風速", &weather->windSpeed, 0.0f, 1000.0f, defaults.windSpeed, nullptr, "%.1f m/s");
-            changed |= ui::PropertyFloat("風向", &weather->windDirection, 0.0f, 360.0f, defaults.windDirection, "0 は +Z、90 は +X。", "%.0f °");
-            changed |= ui::PropertyBool("模様を変化", &weather->evolveNoise, defaults.evolveNoise, "オフでは現在の形を保ったまま移動します。オンでは雲量の分布は移動し、形状と細部の模様が別の速度で流れて形が変わります。");
+            changed |= ui::PropertyFloat(ui::Tr("ループ時間", "Loop Duration"), &weather->loopDuration, 0.1f, 3600.0f, defaults.loopDuration,
+                                         ui::Tr("1周の秒数。終端で先頭へ戻ります。風向や模様の速度比によって継ぎ目が生じます。", "Seconds per loop. Returns to the start at the end. A seam can appear depending on wind direction and pattern speed ratio."), "%.1f s");
+            changed |= ui::PropertyFloat(ui::Tr("風速", "Wind Speed"), &weather->windSpeed, 0.0f, 1000.0f, defaults.windSpeed, nullptr, "%.1f m/s");
+            changed |= ui::PropertyFloat(ui::Tr("風向", "Wind Direction"), &weather->windDirection, 0.0f, 360.0f, defaults.windDirection, ui::Tr("0 は +Z、90 は +X。", "0 is +Z, 90 is +X."), "%.0f °");
+            changed |= ui::PropertyBool(ui::Tr("模様を変化", "Evolve Pattern"), &weather->evolveNoise, defaults.evolveNoise, ui::Tr("オフでは現在の形を保ったまま移動します。オンでは雲量の分布は移動し、形状と細部の模様が別の速度で流れて形が変わります。", "When off, clouds move keeping their current shape. When on, the coverage moves while the shape and detail patterns flow at a different speed, so the shapes change."));
             if (weather->evolveNoise)
-                changed |= ui::PropertyFloat("模様の速度比", &weather->noiseSpeedRatio, 0.0f, 1.0f, defaults.noiseSpeedRatio, "1 で雲と同じ速度（形を維持）、0 で模様を空間に固定。小さいほど移動に伴う形の変化が速くなります。", "%.2f");
+                changed |= ui::PropertyFloat(ui::Tr("模様の速度比", "Pattern Speed Ratio"), &weather->noiseSpeedRatio, 0.0f, 1.0f, defaults.noiseSpeedRatio, ui::Tr("1 で雲と同じ速度（形を維持）、0 で模様を空間に固定。小さいほど移動に伴う形の変化が速くなります。", "1 moves at the cloud speed (keeps the shape), 0 fixes the pattern in space. Lower values change the shape faster as clouds move."), "%.2f");
             ui::EndPropertyTable();
         }
-        ui::SectionHeader("雲種");
-        if (ui::BeginPropertyTable("CloudWeatherTypeRows", "積乱雲の広がり")) {
-            changed |= ui::PropertyFloat("雲量", &weather->coverage, 0.0f, 1.0f, defaults.coverage, "雲の占有率。Coverage マスクの値を掛けます。", "%.2f");
-            changed |= ui::PropertyFloat("雲種", &weather->cloudType, 0.0f, 1.0f, defaults.cloudType, "0 で層雲、0.5 で積雲、1 で積乱雲。高さプロファイルを連続的に補間します。Type マスクの値を掛けます。", "%.2f");
-            changed |= ui::PropertyFloat("積乱雲の広がり", &weather->anvil, 0.0f, 1.0f, defaults.anvil, "雲種 0.5 以上で上部を横へ広げます（かなとこ雲）。", "%.2f");
-            changed |= ui::PropertyFloat("雲底のほつれ", &weather->wisp, 0.0f, 1.0f, defaults.wisp, "雲底付近の細部の削りを強めます。", "%.2f");
-            changed |= ui::PropertyFloat("帯状の伸び", &weather->streets, 0.0f, 1.0f, defaults.streets, "雲量の分布を風向に沿って引き伸ばし、列状の並びを作ります。", "%.2f");
-            changed |= ui::PropertyFloat("塊の密度差", &weather->variation, 0.0f, 1.0f, defaults.variation, "塊ごとに厚い雲と薄い雲を混ぜます。0 で均一。", "%.2f");
+        ui::SectionHeader(ui::Tr("雲種", "Cloud Type"));
+        if (ui::BeginPropertyTable("CloudWeatherTypeRows", ui::Tr("積乱雲の広がり", "Clump Variation"))) {
+            changed |= ui::PropertyFloat(ui::Tr("雲量", "Coverage"), &weather->coverage, 0.0f, 1.0f, defaults.coverage, ui::Tr("雲の占有率。Coverage マスクの値を掛けます。", "Fraction of sky covered by cloud. Multiplied by the Coverage mask."), "%.2f");
+            changed |= ui::PropertyFloat(ui::Tr("雲種", "Cloud Type"), &weather->cloudType, 0.0f, 1.0f, defaults.cloudType, ui::Tr("0 で層雲、0.5 で積雲、1 で積乱雲。高さプロファイルを連続的に補間します。Type マスクの値を掛けます。", "0 is stratus, 0.5 cumulus, 1 cumulonimbus. Interpolates the height profile continuously. Multiplied by the Type mask."), "%.2f");
+            changed |= ui::PropertyFloat(ui::Tr("積乱雲の広がり", "Anvil Spread"), &weather->anvil, 0.0f, 1.0f, defaults.anvil, ui::Tr("雲種 0.5 以上で上部を横へ広げます（かなとこ雲）。", "Spreads the top sideways for cloud type 0.5 and above (anvil cloud)."), "%.2f");
+            changed |= ui::PropertyFloat(ui::Tr("雲底のほつれ", "Base Wisps"), &weather->wisp, 0.0f, 1.0f, defaults.wisp, ui::Tr("雲底付近の細部の削りを強めます。", "Strengthens detail erosion near the cloud base."), "%.2f");
+            changed |= ui::PropertyFloat(ui::Tr("帯状の伸び", "Cloud Streets"), &weather->streets, 0.0f, 1.0f, defaults.streets, ui::Tr("雲量の分布を風向に沿って引き伸ばし、列状の並びを作ります。", "Stretches the coverage along the wind direction to form rows."), "%.2f");
+            changed |= ui::PropertyFloat(ui::Tr("塊の密度差", "Clump Variation"), &weather->variation, 0.0f, 1.0f, defaults.variation, ui::Tr("塊ごとに厚い雲と薄い雲を混ぜます。0 で均一。", "Mixes thick and thin clouds per clump. 0 is uniform."), "%.2f");
             ui::EndPropertyTable();
         }
-        ui::SectionHeader("範囲");
-        if (ui::BeginPropertyTable("CloudWeatherRangeRows", "積乱雲の広がり")) {
-            changed |= ui::PropertyFloat("中心 X", &weather->centerX, -100000.0f, 100000.0f, defaults.centerX, "メートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("中心 Z", &weather->centerZ, -100000.0f, 100000.0f, defaults.centerZ, "メートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("範囲幅", &weather->width, 100.0f, 200000.0f, defaults.width, "マスク全体をこの範囲に割り当てます。範囲を広げると遠くの雲が地平線へ沈みます（100 km で約 800 m）。", "%.0f m");
-            changed |= ui::PropertyFloat("範囲奥行き", &weather->depth, 100.0f, 200000.0f, defaults.depth, "マスク全体をこの範囲に割り当てます。", "%.0f m");
-            changed |= ui::PropertyFloat("雲底高度", &weather->bottomHeight, -10000.0f, 20000.0f, defaults.bottomHeight, "メートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("最大厚さ", &weather->maxThickness, 100.0f, 20000.0f, defaults.maxThickness, "雲種 1（積乱雲）で使う厚さ。層雲はこの約2割、積雲は約5割の高さまで。", "%.0f m");
-            changed |= ui::PropertyFloat("端のフェード", &weather->edgeSoftness, 0.01f, 1.0f, defaults.edgeSoftness, "範囲の端で密度を落とす幅（範囲に対する比率）。", "%.2f");
+        ui::SectionHeader(ui::Tr("範囲", "Range"));
+        if (ui::BeginPropertyTable("CloudWeatherRangeRows", ui::Tr("積乱雲の広がり", "Cloud Base Height"))) {
+            changed |= ui::PropertyFloat(ui::Tr("中心 X", "Center X"), &weather->centerX, -100000.0f, 100000.0f, defaults.centerX, ui::Tr("メートル単位。", "In meters."), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("中心 Z", "Center Z"), &weather->centerZ, -100000.0f, 100000.0f, defaults.centerZ, ui::Tr("メートル単位。", "In meters."), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("範囲幅", "Range Width"), &weather->width, 100.0f, 200000.0f, defaults.width, ui::Tr("マスク全体をこの範囲に割り当てます。範囲を広げると遠くの雲が地平線へ沈みます（100 km で約 800 m）。", "Maps the whole mask to this range. Widening it sinks distant clouds below the horizon (about 800 m at 100 km)."), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("範囲奥行き", "Range Depth"), &weather->depth, 100.0f, 200000.0f, defaults.depth, ui::Tr("マスク全体をこの範囲に割り当てます。", "Maps the whole mask to this range."), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("雲底高度", "Cloud Base Height"), &weather->bottomHeight, -10000.0f, 20000.0f, defaults.bottomHeight, ui::Tr("メートル単位。", "In meters."), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("最大厚さ", "Max Thickness"), &weather->maxThickness, 100.0f, 20000.0f, defaults.maxThickness, ui::Tr("雲種 1（積乱雲）で使う厚さ。層雲はこの約2割、積雲は約5割の高さまで。", "Thickness used for cloud type 1 (cumulonimbus). Stratus reaches about a fifth of it, cumulus about half."), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("端のフェード", "Edge Fade"), &weather->edgeSoftness, 0.01f, 1.0f, defaults.edgeSoftness, ui::Tr("範囲の端で密度を落とす幅（範囲に対する比率）。", "Width over which density fades at the range edges (ratio of the range)."), "%.2f");
             ui::EndPropertyTable();
         }
-        ui::SectionHeader("形状と密度");
-        if (ui::BeginPropertyTable("CloudWeatherShapeRows", "積乱雲の広がり")) {
+        ui::SectionHeader(ui::Tr("形状と密度", "Shape and Density"));
+        if (ui::BeginPropertyTable("CloudWeatherShapeRows", ui::Tr("積乱雲の広がり", "Far Start Distance"))) {
             static const char* const kNoise[]={"Perlin fBM","Perlin-Worley"};
-            changed |= ui::PropertyCombo("ノイズの種類", &weather->noiseType, kNoise, 2, defaults.noiseType);
-            changed |= ui::PropertyFloat("模様の大きさ", &weather->noiseScale, 100.0f, 50000.0f, defaults.noiseScale, "形状ノイズの周期。", "%.0f m");
-            changed |= ui::PropertyFloat("細部の大きさ", &weather->detailScale, 20.0f, 5000.0f, defaults.detailScale, "細部ノイズの周期。小さいほど縁が細かくなり、近景の刻み幅もこれに合わせて細かくなります。12〜30 km より遠くでは細部を省きます。", "%.0f m");
-            changed |= ui::PropertyFloat("細部の削り", &weather->detailStrength, 0.0f, 1.0f, defaults.detailStrength, nullptr, "%.2f");
-            changed |= ui::PropertyFloat("遠景の開始距離", &weather->farDistance, 0.0f, 200000.0f, defaults.farDistance, "この距離より先の雲を 1/4 解像度の別パスで描き、手前と合成します。0 で無効。層は地球と同心の球殻として扱い、遠くの雲は地平線へ沈みます。", "%.0f m");
-            changed |= ui::PropertyBool("距離 LOD", &weather->distanceLod, defaults.distanceLod, "オンで遠景ほど刻みを伸ばし、刻みより細かいノイズを平均へ寄せ、25〜60 km より先で細部を省きます。オフは全距離を近景の刻みで評価するため負荷が上がります。");
-            changed |= ui::PropertyFloat("密度", &weather->extinction, 0.0001f, 0.2f, defaults.extinction,
-                "雲の中を進む光の減衰の強さ（消散係数、1/m）。密度 1 の場所で 1 m 進むごとに光がこの割合で失われます。\n"
-                "大きいほど光を通しにくく、輪郭が硬く雲影が濃くなります。実際の積雲はおよそ 0.02〜0.1 /m。", "%.4f", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyCombo(ui::Tr("ノイズの種類", "Noise Type"), &weather->noiseType, kNoise, 2, defaults.noiseType);
+            changed |= ui::PropertyFloat(ui::Tr("模様の大きさ", "Pattern Scale"), &weather->noiseScale, 100.0f, 50000.0f, defaults.noiseScale, ui::Tr("形状ノイズの周期。", "Period of the shape noise."), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("細部の大きさ", "Detail Scale"), &weather->detailScale, 20.0f, 5000.0f, defaults.detailScale, ui::Tr("細部ノイズの周期。小さいほど縁が細かくなり、近景の刻み幅もこれに合わせて細かくなります。12〜30 km より遠くでは細部を省きます。", "Period of the detail noise. Smaller values make finer edges, and the near-field step size shrinks to match. Detail is skipped beyond 12-30 km."), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("細部の削り", "Detail Erosion"), &weather->detailStrength, 0.0f, 1.0f, defaults.detailStrength, nullptr, "%.2f");
+            changed |= ui::PropertyFloat(ui::Tr("遠景の開始距離", "Far Start Distance"), &weather->farDistance, 0.0f, 200000.0f, defaults.farDistance, ui::Tr("この距離より先の雲を 1/4 解像度の別パスで描き、手前と合成します。0 で無効。層は地球と同心の球殻として扱い、遠くの雲は地平線へ沈みます。", "Clouds beyond this distance are drawn in a separate quarter-resolution pass and blended with the near ones. 0 disables it. The layer is treated as a shell concentric with the Earth, so distant clouds sink below the horizon."), "%.0f m");
+            changed |= ui::PropertyBool(ui::Tr("距離 LOD", "Distance LOD"), &weather->distanceLod, defaults.distanceLod, ui::Tr("オンで遠景ほど刻みを伸ばし、刻みより細かいノイズを平均へ寄せ、25〜60 km より先で細部を省きます。オフは全距離を近景の刻みで評価するため負荷が上がります。", "When on, the step grows with distance, noise finer than the step fades to its average, and detail is skipped beyond 25-60 km. When off, every distance uses the near-field step, which costs more."));
+            changed |= ui::PropertyFloat(ui::Tr("密度", "Density"), &weather->extinction, 0.0001f, 0.2f, defaults.extinction,
+                ui::Tr("雲の中を進む光の減衰の強さ（消散係数、1/m）。密度 1 の場所で 1 m 進むごとに光がこの割合で失われます。\n"
+                       "大きいほど光を通しにくく、輪郭が硬く雲影が濃くなります。実際の積雲はおよそ 0.02〜0.1 /m。",
+                       "How strongly light is attenuated inside the cloud (extinction coefficient, 1/m). At density 1, this fraction of light is lost per meter.\nHigher values let less light through, with harder edges and darker cloud shadows. Real cumulus is about 0.02-0.1 /m."), "%.4f", ImGuiSliderFlags_Logarithmic);
             changed |= ui::PropertyFloat("Indirect Light", &weather->indirectLight, 0.0f, 1.0f, defaults.indirectLight,
-                "雲の中で繰り返し散乱する太陽光の反射率。1 で各次数のエネルギーが単散乱と同じ上限、\n"
-                "0 は太陽光の多重散乱なし。光を足す方向には働かず、密度・透過率・地形への雲影は変えません。", "%.2f");
-            changed |= ui::PropertyFloat("多重散乱の広がり", &weather->scatterSpread, 0.05f, 0.9f, defaults.scatterSpread,
-                "多重散乱した光が雲の中へ行き渡る度合い。高次ほど太陽方向の減衰を (1-広がり) の累乗で縮めます。\n"
-                "大きいほど陰の側まで光が回って柔らかく、小さいほど陰が締まります。エネルギーは増えません。", "%.2f");
+                ui::Tr("雲の中で繰り返し散乱する太陽光の反射率。1 で各次数のエネルギーが単散乱と同じ上限、\n"
+                       "0 は太陽光の多重散乱なし。光を足す方向には働かず、密度・透過率・地形への雲影は変えません。",
+                       "Albedo of sunlight scattered repeatedly inside the cloud. At 1 each order is capped at the single-scattering energy,\n0 disables multiple scattering of sunlight. It never adds light and leaves density, transmittance, and cloud shadows on the terrain unchanged."), "%.2f");
+            changed |= ui::PropertyFloat(ui::Tr("多重散乱の広がり", "Scatter Spread"), &weather->scatterSpread, 0.05f, 0.9f, defaults.scatterSpread,
+                ui::Tr("多重散乱した光が雲の中へ行き渡る度合い。高次ほど太陽方向の減衰を (1-広がり) の累乗で縮めます。\n"
+                       "大きいほど陰の側まで光が回って柔らかく、小さいほど陰が締まります。エネルギーは増えません。",
+                       "How far multiply scattered light spreads through the cloud. Higher orders shrink the sunward attenuation by powers of (1 - spread).\nHigher values carry light into the shaded side for a softer look; lower values keep shadows crisp. Energy does not increase."), "%.2f");
             changed |= ui::PropertyFloat("Ambient Light", &weather->ambientLight, 0.0f, 5.0f, defaults.ambientLight, nullptr, "%.2f");
-            changed |= ui::PropertyInt("シード", &weather->seed, 0, 10000, defaults.seed);
+            changed |= ui::PropertyInt(ui::Tr("シード", "Seed"), &weather->seed, 0, 10000, defaults.seed);
             ui::EndPropertyTable();
         }
         if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
     } else if (auto* generate = std::get_if<graph::CloudShapeGenerateSettings>(&selected->settings)) {
         const graph::CloudShapeGenerateSettings defaults;
         bool changed=false;
-        ui::HintText("単独の積雲を球の集合として生成。Shape を Cloud Replicate / Cloud Merge / Cloud Noise へ接続します。");
-        if (ui::BeginPropertyTable("CloudShapeGenerateRows", "二次形状の繰り返し")) {
-            static const char* const kSpecies[]={"Humilis（扁平）","Mediocris（中程度）","Congestus（塔状）"};
-            changed |= ui::PropertyCombo("雲種", &generate->species, kSpecies, 3, defaults.species, "土台の厚さと塔の高さ・本数を切り替えます。");
-            changed |= ui::PropertyInt("シード", &generate->seed, 0, 10000, defaults.seed);
-            changed |= ui::PropertyFloat("中心 X", &generate->centerX, -100000.0f, 100000.0f, defaults.centerX, "メートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("中心 Y", &generate->centerY, -10000.0f, 20000.0f, defaults.centerY, "土台の中心高度。メートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("中心 Z", &generate->centerZ, -100000.0f, 100000.0f, defaults.centerZ, "メートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("サイズ", &generate->size, 10.0f, 5000.0f, defaults.size, "基本半径。長さ・幅・球の間隔・塔の高さの基準になります。", "%.0f m");
-            changed |= ui::PropertyFloat("長さ (X)", &generate->length, 0.1f, 5.0f, defaults.length, "サイズに対するX方向の倍率。", "%.2f");
-            changed |= ui::PropertyFloat("幅 (Z)", &generate->width, 0.1f, 5.0f, defaults.width, "サイズに対するZ方向の倍率。", "%.2f");
-            changed |= ui::PropertyFloat("球の間隔", &generate->pointSeparation, 0.05f, 1.0f, defaults.pointSeparation, "サイズに対する比率。小さいほど細かく多数の球を敷き詰めます。", "%.2f");
-            changed |= ui::PropertyFloat("乱れ", &generate->distortion, 0.0f, 1.0f, defaults.distortion, "配置と半径のランダムな乱れ。", "%.2f");
-            changed |= ui::PropertyFloat("下側の切り取り", &generate->flattenBottom, 0.0f, 0.9f, defaults.flattenBottom, "土台の高さに対する割合。平面より下の球を除き、かかる球を持ち上げます。", "%.2f");
-            changed |= ui::PropertyFloat("回転", &generate->rotation, -180.0f, 180.0f, defaults.rotation, "上方向まわりの回転。", "%.0f °");
-            changed |= ui::PropertyBool("半径をランダム化", &generate->randomScale, defaults.randomScale, "球ごとに半径へ乱数倍率を掛けます。");
+        ui::HintText("%s", ui::Tr("単独の積雲を球の集合として生成。Shape を Cloud Replicate / Cloud Merge / Cloud Noise へ接続します。", "Generates a single cumulus as a set of spheres. Connect Shape to Cloud Replicate / Cloud Merge / Cloud Noise."));
+        if (ui::BeginPropertyTable("CloudShapeGenerateRows", ui::Tr("二次形状の繰り返し", "Secondary Iterations"))) {
+            static const ui::LocalizedText kSpecies[]={{"Humilis（扁平）", "Humilis (Flat)"},{"Mediocris（中程度）", "Mediocris (Medium)"},
+                                                       {"Congestus（塔状）", "Congestus (Towering)"}};
+            changed |= ui::PropertyCombo(ui::Tr("雲種", "Cloud Type"), &generate->species, ui::Tr(kSpecies).data(), 3, defaults.species,
+                                         ui::Tr("土台の厚さと塔の高さ・本数を切り替えます。",
+                                                "Switches the base thickness and the height and number of towers."));
+            changed |= ui::PropertyInt(ui::Tr("シード", "Seed"), &generate->seed, 0, 10000, defaults.seed);
+            changed |= ui::PropertyFloat(ui::Tr("中心 X", "Center X"), &generate->centerX, -100000.0f, 100000.0f, defaults.centerX, ui::Tr("メートル単位。", "In meters."), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("中心 Y", "Center Y"), &generate->centerY, -10000.0f, 20000.0f, defaults.centerY, ui::Tr("土台の中心高度。メートル単位。", "Center height of the base. In meters."), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("中心 Z", "Center Z"), &generate->centerZ, -100000.0f, 100000.0f, defaults.centerZ, ui::Tr("メートル単位。", "In meters."), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("サイズ", "Size"), &generate->size, 10.0f, 5000.0f, defaults.size, ui::Tr("基本半径。長さ・幅・球の間隔・塔の高さの基準になります。", "Base radius. The reference for length, width, sphere spacing, and tower height."), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("長さ (X)", "Length (X)"), &generate->length, 0.1f, 5.0f, defaults.length, ui::Tr("サイズに対するX方向の倍率。", "Scale in X relative to the size."), "%.2f");
+            changed |= ui::PropertyFloat(ui::Tr("幅 (Z)", "Width (Z)"), &generate->width, 0.1f, 5.0f, defaults.width, ui::Tr("サイズに対するZ方向の倍率。", "Scale in Z relative to the size."), "%.2f");
+            changed |= ui::PropertyFloat(ui::Tr("球の間隔", "Sphere Spacing"), &generate->pointSeparation, 0.05f, 1.0f, defaults.pointSeparation, ui::Tr("サイズに対する比率。小さいほど細かく多数の球を敷き詰めます。", "Ratio to the size. Smaller values pack more, finer spheres."), "%.2f");
+            changed |= ui::PropertyFloat(ui::Tr("乱れ", "Turbulence"), &generate->distortion, 0.0f, 1.0f, defaults.distortion, ui::Tr("配置と半径のランダムな乱れ。", "Random jitter of placement and radius."), "%.2f");
+            changed |= ui::PropertyFloat(ui::Tr("下側の切り取り", "Bottom Cutoff"), &generate->flattenBottom, 0.0f, 0.9f, defaults.flattenBottom, ui::Tr("土台の高さに対する割合。平面より下の球を除き、かかる球を持ち上げます。", "Ratio to the base height. Removes spheres below the plane and lifts the ones crossing it."), "%.2f");
+            changed |= ui::PropertyFloat(ui::Tr("回転", "Rotation"), &generate->rotation, -180.0f, 180.0f, defaults.rotation, ui::Tr("上方向まわりの回転。", "Rotation around the up axis."), "%.0f °");
+            changed |= ui::PropertyBool(ui::Tr("半径をランダム化", "Randomize Radius"), &generate->randomScale, defaults.randomScale, ui::Tr("球ごとに半径へ乱数倍率を掛けます。", "Multiplies each sphere's radius by a random factor."));
             if (generate->randomScale) {
-                changed |= ui::PropertyFloat("倍率 最小", &generate->scaleMin, 0.1f, 3.0f, defaults.scaleMin, nullptr, "%.2f");
-                changed |= ui::PropertyFloat("倍率 最大", &generate->scaleMax, 0.1f, 3.0f, defaults.scaleMax, nullptr, "%.2f");
+                changed |= ui::PropertyFloat(ui::Tr("倍率 最小", "Min Scale"), &generate->scaleMin, 0.1f, 3.0f, defaults.scaleMin, nullptr, "%.2f");
+                changed |= ui::PropertyFloat(ui::Tr("倍率 最大", "Max Scale"), &generate->scaleMax, 0.1f, 3.0f, defaults.scaleMax, nullptr, "%.2f");
             }
-            changed |= ui::PropertyBool("二次形状", &generate->secondaryShapes, defaults.secondaryShapes, "既存の球の上側へ小さな球を積み、輪郭を細かくします。");
+            changed |= ui::PropertyBool(ui::Tr("二次形状", "Secondary Shapes"), &generate->secondaryShapes, defaults.secondaryShapes, ui::Tr("既存の球の上側へ小さな球を積み、輪郭を細かくします。", "Stacks smaller spheres on top of the existing ones for a finer outline."));
             if (generate->secondaryShapes) {
-                changed |= ui::PropertyInt("二次形状の繰り返し", &generate->iterations, 1, 3, defaults.iterations, "繰り返すごとに球数が約3倍になります。");
-                changed |= ui::PropertyFloat("押し出し", &generate->displacement, 0.0f, 1.0f, defaults.displacement, "親の半径に対する子球の距離。", "%.2f");
-                changed |= ui::PropertyFloat("広がり", &generate->spread, 0.0f, 1.0f, defaults.spread, "0で真上、1で水平まで方向が散らばります。", "%.2f");
+                changed |= ui::PropertyInt(ui::Tr("二次形状の繰り返し", "Secondary Iterations"), &generate->iterations, 1, 3, defaults.iterations, ui::Tr("繰り返すごとに球数が約3倍になります。", "Each iteration roughly triples the sphere count."));
+                changed |= ui::PropertyFloat(ui::Tr("押し出し", "Displacement"), &generate->displacement, 0.0f, 1.0f, defaults.displacement, ui::Tr("親の半径に対する子球の距離。", "Distance of child spheres relative to the parent radius."), "%.2f");
+                changed |= ui::PropertyFloat(ui::Tr("広がり", "Spread"), &generate->spread, 0.0f, 1.0f, defaults.spread, ui::Tr("0で真上、1で水平まで方向が散らばります。", "0 points straight up; 1 scatters directions down to horizontal."), "%.2f");
             }
-            changed |= ui::PropertyFloat("つなぎの滑らかさ", &generate->smoothnessRatio, 0.0f, 3.0f, defaults.smoothnessRatio, "球の半径（サイズ×球の間隔）に対する比率。実際の値は下に表示します。球のくびれは最大で実際の値の1/4埋まります。", "%.2f");
+            changed |= ui::PropertyFloat(ui::Tr("つなぎの滑らかさ", "Join Smoothness"), &generate->smoothnessRatio, 0.0f, 3.0f, defaults.smoothnessRatio, ui::Tr("球の半径（サイズ×球の間隔）に対する比率。実際の値は下に表示します。球のくびれは最大で実際の値の1/4埋まります。", "Ratio to the sphere radius (size x sphere spacing). The actual value is shown below. Gaps between spheres fill by up to 1/4 of the actual value."), "%.2f");
             const auto generated=m_graph.CompileCloudShapes(selected->id);
             char text[48]; std::snprintf(text,sizeof(text),"%.0f m",generated.smoothness);
-            ui::PropertyValue("実際の滑らかさ", "%s", text);
-            std::snprintf(text,sizeof(text),"%zu 個",generated.primitives.size());
-            ui::PropertyValue("合計形状数", "%s", text);
-            changed |= ui::PropertyBool("配置ガイド", &generate->showGuides, defaults.showGuides, "選択中に元形状の球を大円で表示します。多数の場合は表示のみ間引きます。");
+            ui::PropertyValue(ui::Tr("実際の滑らかさ", "Actual Smoothness"), "%s", text);
+            std::snprintf(text,sizeof(text),ui::Tr("%zu 個", "%zu"),generated.primitives.size());
+            ui::PropertyValue(ui::Tr("合計形状数", "Total Shapes"), "%s", text);
+            changed |= ui::PropertyBool(ui::Tr("配置ガイド", "Placement Guides"), &generate->showGuides, defaults.showGuides, ui::Tr("選択中に元形状の球を大円で表示します。多数の場合は表示のみ間引きます。", "While selected, shows the source spheres as great circles. With many spheres, only the display is thinned out."));
             ui::EndPropertyTable();
-            if (generated.shapeOverflow) ui::HintText("作業メモリ予算を超えました。球の間隔を大きくするか二次形状の繰り返しを減らしてください。");
+            if (generated.shapeOverflow) ui::HintText("%s", ui::Tr("作業メモリ予算を超えました。球の間隔を大きくするか二次形状の繰り返しを減らしてください。", "Exceeded the working memory budget. Increase the sphere spacing or reduce the secondary iterations."));
         }
         if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
     } else if (auto* map = std::get_if<graph::CloudMapSettings>(&selected->settings)) {
         const graph::CloudMapSettings defaults;
         bool changed=false;
-        ui::HintText("近傍点を結ぶ線から雲底と上向きの球列を生成。Shape を Cloud Replicate または Cloud Noise へ接続します。");
-        if (ui::BeginPropertyTable("CloudMapRows", "接続線 / 成長ライン")) {
-            changed |= ui::PropertyInt("ポイント数", &map->pointCount, 0, 10000, defaults.pointCount, "指定範囲へ一様ランダムに散布します。");
-            changed |= ui::PropertyInt("シード", &map->seed, 0, 10000, defaults.seed);
-            changed |= ui::PropertyFloat("範囲幅", &map->width, 100.0f, 100000.0f, defaults.width, "メートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("範囲奥行き", &map->depth, 100.0f, 100000.0f, defaults.depth, "メートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("中心 X", &map->centerX, -100000.0f, 100000.0f, defaults.centerX, "メートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("中心 Z", &map->centerZ, -100000.0f, 100000.0f, defaults.centerZ, "メートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("接続距離", &map->connectionDistance, 1.0f, 10000.0f, defaults.connectionDistance, "接続距離以内の全ペアを1回ずつ結びます。", "%.0f m");
-            changed |= ui::PropertyFloat("雲底高度", &map->bottomHeight, -10000.0f, 20000.0f, defaults.bottomHeight, "メートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("雲底の厚さ", &map->bottomThickness, 2.0f, 2000.0f, defaults.bottomThickness, "厚さの半分が楕円体の垂直半径になります。", "%.0f m");
-            changed |= ui::PropertyFloat("厚さ／横幅の上限", &map->maxThicknessRatio, 0.01f, 1.0f, defaults.maxThicknessRatio, "雲底の厚さを水平直径×比率以下に抑えます。底面高度は共通。最小厚さは2mです。", "%.2f");
-            changed |= ui::PropertyFloat("成長ライン密度", &map->columnsPerKm, 0.0f, 50.0f, defaults.columnsPerKm, "線の長さに比例した本数。端数は確率で生成します。0で雲底のみ。", "%.1f 本/km");
-            changed |= ui::PropertyFloat("成長高さ 最小", &map->minGrowth, 0.0f, 5000.0f, defaults.minGrowth, "メートル単位。成長高さの最小・最大が逆の場合は入れ替えて評価します。", "%.0f m");
-            changed |= ui::PropertyFloat("成長高さ 最大", &map->maxGrowth, 0.0f, 5000.0f, defaults.maxGrowth, "メートル単位。成長高さの最小・最大が逆の場合は入れ替えて評価します。", "%.0f m");
-            changed |= ui::PropertyFloat("高さ／横幅の上限", &map->maxHeightRatio, 0.0f, 1.0f, defaults.maxHeightRatio, "接続線の長さ×比率で成長ラインを制限します。成長高さの最小値より優先。0で成長なし。雲底の厚さ・球の半径は含みません。", "%.2f");
-            changed |= ui::PropertyFloat("成長球の半径", &map->columnRadius, 10.0f, 1000.0f, defaults.columnRadius, "メートル単位。", "%.0f m");
-            changed |= ui::PropertyBool("孤立点を除外", &map->removeIsolated, defaults.removeIsolated, "他のポイントとつながらない点を雲形状と分布ガイドから除外します。");
-            if (!map->removeIsolated) changed |= ui::PropertyFloat("孤立点の半径", &map->isolatedRadius, 1.0f, 1000.0f, defaults.isolatedRadius, "メートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("つなぎの滑らかさ", &map->smoothness, 0.0f, 500.0f, defaults.smoothness, "メートル単位。", "%.0f m");
-            changed |= ui::PropertyBool("分布ガイド", &map->showGuides, defaults.showGuides, "散布範囲・ポイント・接続線・成長ラインを表示します。多数の場合は表示のみ間引きます。");
+        ui::HintText("%s", ui::Tr("近傍点を結ぶ線から雲底と上向きの球列を生成。Shape を Cloud Replicate または Cloud Noise へ接続します。", "Generates cloud bases and upward sphere columns from lines joining nearby points. Connect Shape to Cloud Replicate or Cloud Noise."));
+        if (ui::BeginPropertyTable("CloudMapRows", ui::Tr("接続線 / 成長ライン", "Edges / Growth Lines"))) {
+            changed |= ui::PropertyInt(ui::Tr("ポイント数", "Points"), &map->pointCount, 0, 10000, defaults.pointCount, ui::Tr("指定範囲へ一様ランダムに散布します。", "Scatters points uniformly at random over the range."));
+            changed |= ui::PropertyInt(ui::Tr("シード", "Seed"), &map->seed, 0, 10000, defaults.seed);
+            changed |= ui::PropertyFloat(ui::Tr("範囲幅", "Range Width"), &map->width, 100.0f, 100000.0f, defaults.width, ui::Tr("メートル単位。", "In meters."), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("範囲奥行き", "Range Depth"), &map->depth, 100.0f, 100000.0f, defaults.depth, ui::Tr("メートル単位。", "In meters."), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("中心 X", "Center X"), &map->centerX, -100000.0f, 100000.0f, defaults.centerX, ui::Tr("メートル単位。", "In meters."), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("中心 Z", "Center Z"), &map->centerZ, -100000.0f, 100000.0f, defaults.centerZ, ui::Tr("メートル単位。", "In meters."), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("接続距離", "Connect Distance"), &map->connectionDistance, 1.0f, 10000.0f, defaults.connectionDistance, ui::Tr("接続距離以内の全ペアを1回ずつ結びます。", "Joins every pair within the connect distance once."), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("雲底高度", "Cloud Base Height"), &map->bottomHeight, -10000.0f, 20000.0f, defaults.bottomHeight, ui::Tr("メートル単位。", "In meters."), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("雲底の厚さ", "Base Thickness"), &map->bottomThickness, 2.0f, 2000.0f, defaults.bottomThickness, ui::Tr("厚さの半分が楕円体の垂直半径になります。", "Half the thickness becomes the ellipsoid's vertical radius."), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("厚さ／横幅の上限", "Max Thickness Ratio"), &map->maxThicknessRatio, 0.01f, 1.0f, defaults.maxThicknessRatio, ui::Tr("雲底の厚さを水平直径×比率以下に抑えます。底面高度は共通。最小厚さは2mです。", "Limits the base thickness to the horizontal diameter x this ratio. The bottom height is shared. Minimum thickness is 2 m."), "%.2f");
+            changed |= ui::PropertyFloat(ui::Tr("成長ライン密度", "Growth Line Density"), &map->columnsPerKm, 0.0f, 50.0f, defaults.columnsPerKm, ui::Tr("線の長さに比例した本数。端数は確率で生成します。0で雲底のみ。", "Count proportional to line length. Fractions are generated by chance. 0 gives bases only."), ui::Tr("%.1f 本/km", "%.1f /km"));
+            changed |= ui::PropertyFloat(ui::Tr("成長高さ 最小", "Min Growth Height"), &map->minGrowth, 0.0f, 5000.0f, defaults.minGrowth, ui::Tr("メートル単位。成長高さの最小・最大が逆の場合は入れ替えて評価します。", "In meters. If the min and max growth heights are reversed, they are swapped when evaluated."), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("成長高さ 最大", "Max Growth Height"), &map->maxGrowth, 0.0f, 5000.0f, defaults.maxGrowth, ui::Tr("メートル単位。成長高さの最小・最大が逆の場合は入れ替えて評価します。", "In meters. If the min and max growth heights are reversed, they are swapped when evaluated."), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("高さ／横幅の上限", "Max Height Ratio"), &map->maxHeightRatio, 0.0f, 1.0f, defaults.maxHeightRatio, ui::Tr("接続線の長さ×比率で成長ラインを制限します。成長高さの最小値より優先。0で成長なし。雲底の厚さ・球の半径は含みません。", "Limits growth lines to the edge length x this ratio. Takes priority over the min growth height. 0 means no growth. Excludes base thickness and sphere radius."), "%.2f");
+            changed |= ui::PropertyFloat(ui::Tr("成長球の半径", "Growth Radius"), &map->columnRadius, 10.0f, 1000.0f, defaults.columnRadius, ui::Tr("メートル単位。", "In meters."), "%.0f m");
+            changed |= ui::PropertyBool(ui::Tr("孤立点を除外", "Remove Isolated"), &map->removeIsolated, defaults.removeIsolated, ui::Tr("他のポイントとつながらない点を雲形状と分布ガイドから除外します。", "Removes points not connected to any other point from the cloud shape and distribution guides."));
+            if (!map->removeIsolated) changed |= ui::PropertyFloat(ui::Tr("孤立点の半径", "Isolated Radius"), &map->isolatedRadius, 1.0f, 1000.0f, defaults.isolatedRadius, ui::Tr("メートル単位。", "In meters."), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("つなぎの滑らかさ", "Join Smoothness"), &map->smoothness, 0.0f, 500.0f, defaults.smoothness, ui::Tr("メートル単位。", "In meters."), "%.0f m");
+            changed |= ui::PropertyBool(ui::Tr("分布ガイド", "Distribution Guides"), &map->showGuides, defaults.showGuides, ui::Tr("散布範囲・ポイント・接続線・成長ラインを表示します。多数の場合は表示のみ間引きます。", "Shows the scatter range, points, edges, and growth lines. With many, only the display is thinned out."));
             const auto generated=m_graph.CompileCloudShapes(selected->id);
             if (generated.mapGuide) {
                 char text[96];
                 std::snprintf(text,sizeof(text),"%u / %u",generated.mapGuide->edgeCount,generated.mapGuide->columnCount);
-                ui::PropertyValue("接続線 / 成長ライン", "%s", text);
+                ui::PropertyValue(ui::Tr("接続線 / 成長ライン", "Edges / Growth Lines"), "%s", text);
             }
-            char text[48]; std::snprintf(text,sizeof(text),"%zu 個",generated.primitives.size());
-            ui::PropertyValue("合計形状数", "%s", text);
+            char text[48]; std::snprintf(text,sizeof(text),ui::Tr("%zu 個", "%zu"),generated.primitives.size());
+            ui::PropertyValue(ui::Tr("合計形状数", "Total Shapes"), "%s", text);
             ui::EndPropertyTable();
-            if (generated.shapeOverflow) ui::HintText("作業メモリ予算を超えました。ポイント数・接続距離・成長ライン密度を下げてください。");
+            if (generated.shapeOverflow) ui::HintText("%s", ui::Tr("作業メモリ予算を超えました。ポイント数・接続距離・成長ライン密度を下げてください。", "Exceeded the working memory budget. Lower the points, connect distance, or growth line density."));
         }
         if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
     } else if (auto* animation = std::get_if<graph::CloudAnimationSettings>(&selected->settings)) {
         const graph::CloudAnimationSettings defaults;
         bool changed=false;
-        ui::HintText("Cloud Noise → Cloud Animation → Cloud Output と接続します。指定範囲の雲を水平に循環させます。範囲外の元形状は使いません。");
-        if (ui::BeginPropertyTable("CloudAnimationRows", "模様の速度比")) {
-            changed |= ui::PropertyBool("再生", &animation->playing, defaults.playing, "オフで現在位置に一時停止します。");
-            changed |= ui::PropertyFloat("中心 X", &animation->centerX, -100000, 100000, defaults.centerX, "方向は0°が+Z、90°が+X。範囲はワールド座標で指定します。", "%.1f m");
-            changed |= ui::PropertyFloat("中心 Z", &animation->centerZ, -100000, 100000, defaults.centerZ, "方向は0°が+Z、90°が+X。範囲はワールド座標で指定します。", "%.1f m");
-            changed |= ui::PropertyFloat("幅", &animation->width, 100, 100000, defaults.width, "方向は0°が+Z、90°が+X。範囲はワールド座標で指定します。", "%.1f m");
-            changed |= ui::PropertyFloat("奥行き", &animation->depth, 100, 100000, defaults.depth, "方向は0°が+Z、90°が+X。範囲はワールド座標で指定します。", "%.1f m");
-            changed |= ui::PropertyFloat("速度", &animation->speed, 0, 1000, defaults.speed, "方向は0°が+Z、90°が+X。範囲はワールド座標で指定します。", "%.1f m/s");
-            changed |= ui::PropertyFloat("方向", &animation->direction, 0, 360, defaults.direction, "方向は0°が+Z、90°が+X。範囲はワールド座標で指定します。", "%.1f °");
-            changed |= ui::PropertyBool("模様を変化", &animation->evolveNoise, defaults.evolveNoise,
-                "雲の移動に対して模様を遅く流します。オフにすると現在の模様を保って移動します。");
+        ui::HintText("%s", ui::Tr("Cloud Noise → Cloud Animation → Cloud Output と接続します。指定範囲の雲を水平に循環させます。範囲外の元形状は使いません。", "Connect Cloud Noise → Cloud Animation → Cloud Output. Cycles clouds horizontally within the range. Source shapes outside the range are not used."));
+        if (ui::BeginPropertyTable("CloudAnimationRows", ui::Tr("模様の速度比", "Pattern Speed Ratio"))) {
+            changed |= ui::PropertyBool(ui::Tr("再生", "Play"), &animation->playing, defaults.playing, ui::Tr("オフで現在位置に一時停止します。", "When off, pauses at the current position."));
+            changed |= ui::PropertyFloat(ui::Tr("中心 X", "Center X"), &animation->centerX, -100000, 100000, defaults.centerX, ui::Tr("方向は0°が+Z、90°が+X。範囲はワールド座標で指定します。", "Direction 0° is +Z, 90° is +X. The range is in world coordinates."), "%.1f m");
+            changed |= ui::PropertyFloat(ui::Tr("中心 Z", "Center Z"), &animation->centerZ, -100000, 100000, defaults.centerZ, ui::Tr("方向は0°が+Z、90°が+X。範囲はワールド座標で指定します。", "Direction 0° is +Z, 90° is +X. The range is in world coordinates."), "%.1f m");
+            changed |= ui::PropertyFloat(ui::Tr("幅", "Width"), &animation->width, 100, 100000, defaults.width, ui::Tr("方向は0°が+Z、90°が+X。範囲はワールド座標で指定します。", "Direction 0° is +Z, 90° is +X. The range is in world coordinates."), "%.1f m");
+            changed |= ui::PropertyFloat(ui::Tr("奥行き", "Depth"), &animation->depth, 100, 100000, defaults.depth, ui::Tr("方向は0°が+Z、90°が+X。範囲はワールド座標で指定します。", "Direction 0° is +Z, 90° is +X. The range is in world coordinates."), "%.1f m");
+            changed |= ui::PropertyFloat(ui::Tr("速度", "Speed"), &animation->speed, 0, 1000, defaults.speed, ui::Tr("方向は0°が+Z、90°が+X。範囲はワールド座標で指定します。", "Direction 0° is +Z, 90° is +X. The range is in world coordinates."), "%.1f m/s");
+            changed |= ui::PropertyFloat(ui::Tr("方向", "Direction"), &animation->direction, 0, 360, defaults.direction, ui::Tr("方向は0°が+Z、90°が+X。範囲はワールド座標で指定します。", "Direction 0° is +Z, 90° is +X. The range is in world coordinates."), "%.1f °");
+            changed |= ui::PropertyBool(ui::Tr("模様を変化", "Evolve Pattern"), &animation->evolveNoise, defaults.evolveNoise,
+                ui::Tr("雲の移動に対して模様を遅く流します。オフにすると現在の模様を保って移動します。", "Flows the pattern slower than the clouds move. When off, clouds move keeping their current pattern."));
             if (animation->evolveNoise)
-                changed |= ui::PropertyFloat("模様の速度比", &animation->noiseSpeedRatio, 0, 1, defaults.noiseSpeedRatio,
-                    "1で模様を維持。小さいほど移動に伴う変化が速くなります。再生停止中は模様も停止します。", "%.2f");
+                changed |= ui::PropertyFloat(ui::Tr("模様の速度比", "Pattern Speed Ratio"), &animation->noiseSpeedRatio, 0, 1, defaults.noiseSpeedRatio,
+                    ui::Tr("1で模様を維持。小さいほど移動に伴う変化が速くなります。再生停止中は模様も停止します。", "1 keeps the pattern. Lower values change it faster as clouds move. The pattern stops while playback is paused."), "%.2f");
             ui::PropertyLabelEmpty("resetCloudAnimation");
-            if (ui::Button("開始位置へ戻す", ui::kWideButtonWidth)) {
+            if (ui::Button(ui::Tr("開始位置へ戻す", "Reset to Start"), ui::kWideButtonWidth)) {
                 animation->playing=false;
                 if (m_graph.CompileCloud().sourceId==selected->id) m_renderer.ResetCloudMotion();
                 changed=true;
@@ -3535,56 +3667,60 @@ void Application::DrawNodeProperties(graph::Node* selected) {
             ui::PropertyEnd();
             ui::EndPropertyTable();
         }
-        ui::HintText("高さは入力の雲を維持します。複数接続時は出力に近い Animation の設定を使います。再生位置は保存しません。");
+        ui::HintText("%s", ui::Tr("高さは入力の雲を維持します。複数接続時は出力に近い Animation の設定を使います。再生位置は保存しません。", "Keeps the input clouds' heights. With several connected, the Animation nearest the output wins. The playback position is not saved."));
         if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
     } else if (auto* transform = std::get_if<graph::CloudTransformSettings>(&selected->settings)) {
         const graph::CloudTransformSettings defaults;
         bool changed=false;
-        ui::HintText("Shape を接続すると、形状全体を移動できます。軸を左ドラッグで移動、Esc で取消。Alt + ドラッグは視点操作です。");
-        if (ui::BeginPropertyTable("CloudTransformRows", "移動 X")) {
-            changed |= ui::PropertyFloat("移動 X", &transform->translateX, -10000, 10000, defaults.translateX, "元形状からの移動量。", "%.1f m");
-            changed |= ui::PropertyFloat("移動 Y", &transform->translateY, -10000, 10000, defaults.translateY, "元形状からの移動量。", "%.1f m");
-            changed |= ui::PropertyFloat("移動 Z", &transform->translateZ, -10000, 10000, defaults.translateZ, "元形状からの移動量。", "%.1f m");
-            changed |= ui::PropertyBool("配置ガイド", &transform->showGuides, defaults.showGuides, "選択中に移動後の球を大円で表示します。軸ギズモは残ります。");
+        ui::HintText("%s", ui::Tr("Shape を接続すると、形状全体を移動できます。軸を左ドラッグで移動、Esc で取消。Alt + ドラッグは視点操作です。", "Connect Shape to move the whole shape. Left-drag an axis to move, Esc to cancel. Alt + drag controls the view."));
+        if (ui::BeginPropertyTable("CloudTransformRows", ui::Tr("移動 X", "Placement Guides"))) {
+            changed |= ui::PropertyFloat(ui::Tr("移動 X", "Offset X"), &transform->translateX, -10000, 10000, defaults.translateX, ui::Tr("元形状からの移動量。", "Offset from the source shape."), "%.1f m");
+            changed |= ui::PropertyFloat(ui::Tr("移動 Y", "Offset Y"), &transform->translateY, -10000, 10000, defaults.translateY, ui::Tr("元形状からの移動量。", "Offset from the source shape."), "%.1f m");
+            changed |= ui::PropertyFloat(ui::Tr("移動 Z", "Offset Z"), &transform->translateZ, -10000, 10000, defaults.translateZ, ui::Tr("元形状からの移動量。", "Offset from the source shape."), "%.1f m");
+            changed |= ui::PropertyBool(ui::Tr("配置ガイド", "Placement Guides"), &transform->showGuides, defaults.showGuides, ui::Tr("選択中に移動後の球を大円で表示します。軸ギズモは残ります。", "While selected, shows the moved spheres as great circles. The axis gizmo remains."));
             ui::EndPropertyTable();
         }
         if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
     } else if (auto* cloudNoise = std::get_if<graph::CloudNoiseSettings>(&selected->settings)) {
         const graph::CloudNoiseSettings defaults;
         bool changed = false;
-        ui::HintText("形状を一体にしてノイズと密度を評価します。Volume をCloud Output へ接続。");
-        if (ui::BeginPropertyTable("CloudNoiseRows", "横方向のばらつき")) {
-            const char* noiseTypes[] = {"Perlin（従来）", "Perlin fBM", "Perlin-Worley"};
-            changed |= ui::PropertyCombo("ノイズの種類", &cloudNoise->noiseType, noiseTypes, 3, defaults.noiseType,
-                "Perlin は従来の輪郭。Perlin fBM は複数スケールの模様、Perlin-Worley は丸い膨らみと細部の削りを使います。雲本体と影に共通です。");
-            changed |= ui::PropertyFloat("模様の大きさ", &cloudNoise->scale, 10.0f, 5000.0f, defaults.scale, "値はメートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("輪郭の変位", &cloudNoise->displacement, 0.0f, 500.0f, defaults.displacement, "値はメートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("細部の削り", &cloudNoise->detail, 0.0f, 200.0f, defaults.detail, "値はメートル単位。", "%.0f m");
-            changed |= ui::PropertyFloat("境界の柔らかさ", &cloudNoise->feather, 1.0f, 300.0f, defaults.feather, "値はメートル単位。", "%.0f m");
-            changed |= ui::PropertyBool("雲底を平らにする", &cloudNoise->flattenBottom, defaults.flattenBottom,
-                "指定した高さより下の密度を削ります。球のない隙間を埋める機能ではありません。");
+        ui::HintText("%s", ui::Tr("形状を一体にしてノイズと密度を評価します。Volume をCloud Output へ接続。", "Combines the shapes into one and evaluates noise and density. Connect Volume to Cloud Output."));
+        if (ui::BeginPropertyTable("CloudNoiseRows", ui::Tr("横方向のばらつき", "Edge Displacement"))) {
+            static const ui::LocalizedText kNoiseTypes[] = {{"Perlin（従来）", "Perlin (Legacy)"}, {"Perlin fBM", "Perlin fBM"},
+                                                            {"Perlin-Worley", "Perlin-Worley"}};
+            changed |= ui::PropertyCombo(ui::Tr("ノイズの種類", "Noise Type"), &cloudNoise->noiseType, ui::Tr(kNoiseTypes).data(), 3, defaults.noiseType,
+                ui::Tr("Perlin は従来の輪郭。Perlin fBM は複数スケールの模様、Perlin-Worley は丸い膨らみと細部の削りを使います。雲本体と影に共通です。", "Perlin gives the legacy outline. Perlin fBM uses multi-scale patterns; Perlin-Worley uses round billows with detail erosion. Shared by the clouds and their shadows."));
+            changed |= ui::PropertyFloat(ui::Tr("模様の大きさ", "Pattern Scale"), &cloudNoise->scale, 10.0f, 5000.0f, defaults.scale, ui::Tr("値はメートル単位。", "In meters."), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("輪郭の変位", "Edge Displacement"), &cloudNoise->displacement, 0.0f, 500.0f, defaults.displacement, ui::Tr("値はメートル単位。", "In meters."), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("細部の削り", "Detail Erosion"), &cloudNoise->detail, 0.0f, 200.0f, defaults.detail, ui::Tr("値はメートル単位。", "In meters."), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("境界の柔らかさ", "Edge Softness"), &cloudNoise->feather, 1.0f, 300.0f, defaults.feather, ui::Tr("値はメートル単位。", "In meters."), "%.0f m");
+            changed |= ui::PropertyBool(ui::Tr("雲底を平らにする", "Flatten Base"), &cloudNoise->flattenBottom, defaults.flattenBottom,
+                ui::Tr("指定した高さより下の密度を削ります。球のない隙間を埋める機能ではありません。", "Removes density below the set height. It does not fill gaps between spheres."));
             if (cloudNoise->flattenBottom) {
-                changed |= ui::PropertyFloat("雲底の高さ", &cloudNoise->bottomHeight, -20000.0f, 20000.0f, defaults.bottomHeight,
-                    "ワールド座標の高さ。雲の内部を横切る高さに設定すると平らな雲底になります。", "%.0f m");
-                changed |= ui::PropertyFloat("雲底のぼかし幅", &cloudNoise->bottomFeather, 0.0f, 300.0f, defaults.bottomFeather,
-                    "雲底から上方向に密度を立ち上げる幅。0では水平面で切り取ります。", "%.0f m");
+                changed |= ui::PropertyFloat(ui::Tr("雲底の高さ", "Cloud Base Height"), &cloudNoise->bottomHeight, -20000.0f, 20000.0f, defaults.bottomHeight,
+                    ui::Tr("ワールド座標の高さ。雲の内部を横切る高さに設定すると平らな雲底になります。", "Height in world coordinates. Set it to a height that cuts through the cloud for a flat base."), "%.0f m");
+                changed |= ui::PropertyFloat(ui::Tr("雲底のぼかし幅", "Base Feather"), &cloudNoise->bottomFeather, 0.0f, 300.0f, defaults.bottomFeather,
+                    ui::Tr("雲底から上方向に密度を立ち上げる幅。0では水平面で切り取ります。", "Height over which density ramps up from the base. 0 cuts flat at the plane."), "%.0f m");
             }
-            changed |= ui::PropertyFloat("密度", &cloudNoise->extinction, 0.0001f, 0.2f, defaults.extinction,
-                "雲の中を進む光の減衰の強さ（消散係数、1/m）。密度 1 の場所で 1 m 進むごとに光がこの割合で失われます。\n"
-                "大きいほど光を通しにくく、輪郭が硬く雲影が濃くなります。実際の積雲はおよそ 0.02〜0.1 /m。", "%.4f", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat(ui::Tr("密度", "Density"), &cloudNoise->extinction, 0.0001f, 0.2f, defaults.extinction,
+                ui::Tr("雲の中を進む光の減衰の強さ（消散係数、1/m）。密度 1 の場所で 1 m 進むごとに光がこの割合で失われます。\n"
+                       "大きいほど光を通しにくく、輪郭が硬く雲影が濃くなります。実際の積雲はおよそ 0.02〜0.1 /m。",
+                       "How strongly light is attenuated inside the cloud (extinction coefficient, 1/m). At density 1, this fraction of light is lost per meter.\nHigher values let less light through, with harder edges and darker cloud shadows. Real cumulus is about 0.02-0.1 /m."), "%.4f", ImGuiSliderFlags_Logarithmic);
             changed |= ui::PropertyFloat("Indirect Light", &cloudNoise->indirectLight, 0.0f, 1.0f, defaults.indirectLight,
-                "雲の中で繰り返し散乱する太陽光の反射率。1 で各次数のエネルギーが単散乱と同じ上限、\n"
-                "0 は太陽光の多重散乱なし。光を足す方向には働かず、密度・透過率・地形への雲影は変えません。", "%.2f");
-            changed |= ui::PropertyFloat("多重散乱の広がり", &cloudNoise->scatterSpread, 0.05f, 0.9f, defaults.scatterSpread,
-                "多重散乱した光が雲の中へ行き渡る度合い。高次ほど太陽方向の減衰を (1-広がり) の累乗で縮めます。\n"
-                "大きいほど陰の側まで光が回って柔らかく、小さいほど陰が締まります。エネルギーは増えません。", "%.2f");
-            changed |= ui::PropertyFloat("Ambient Light", &cloudNoise->ambientLight, 0.0f, 5.0f, defaults.ambientLight, "形状を一体にしてノイズと密度を評価します。Volume をCloud Output へ接続。", "%.2f");
-            changed |= ui::PropertyInt("シード", &cloudNoise->seed, 0, 10000, defaults.seed, "形状を一体にしてノイズと密度を評価します。Volume をCloud Output へ接続。");
+                ui::Tr("雲の中で繰り返し散乱する太陽光の反射率。1 で各次数のエネルギーが単散乱と同じ上限、\n"
+                       "0 は太陽光の多重散乱なし。光を足す方向には働かず、密度・透過率・地形への雲影は変えません。",
+                       "Albedo of sunlight scattered repeatedly inside the cloud. At 1 each order is capped at the single-scattering energy,\n0 disables multiple scattering of sunlight. It never adds light and leaves density, transmittance, and cloud shadows on the terrain unchanged."), "%.2f");
+            changed |= ui::PropertyFloat(ui::Tr("多重散乱の広がり", "Scatter Spread"), &cloudNoise->scatterSpread, 0.05f, 0.9f, defaults.scatterSpread,
+                ui::Tr("多重散乱した光が雲の中へ行き渡る度合い。高次ほど太陽方向の減衰を (1-広がり) の累乗で縮めます。\n"
+                       "大きいほど陰の側まで光が回って柔らかく、小さいほど陰が締まります。エネルギーは増えません。",
+                       "How far multiply scattered light spreads through the cloud. Higher orders shrink the sunward attenuation by powers of (1 - spread).\nHigher values carry light into the shaded side for a softer look; lower values keep shadows crisp. Energy does not increase."), "%.2f");
+            changed |= ui::PropertyFloat("Ambient Light", &cloudNoise->ambientLight, 0.0f, 5.0f, defaults.ambientLight, ui::Tr("形状を一体にしてノイズと密度を評価します。Volume をCloud Output へ接続。", "Combines the shapes into one and evaluates noise and density. Connect Volume to Cloud Output."), "%.2f");
+            changed |= ui::PropertyInt(ui::Tr("シード", "Seed"), &cloudNoise->seed, 0, 10000, defaults.seed, ui::Tr("形状を一体にしてノイズと密度を評価します。Volume をCloud Output へ接続。", "Combines the shapes into one and evaluates noise and density. Connect Volume to Cloud Output."));
             ui::EndPropertyTable();
         }
         const auto compiled = m_graph.CompileCloud();
-        if (compiled.shapeOverflow) ui::HintText("形状生成の作業メモリ予算を超えています。球の数や配置密度を下げてください。");
-        if (!m_renderer.AtmosphericMode() && ui::Button("大気散乱へ切替", ui::kWideButtonWidth)) {
+        if (compiled.shapeOverflow) ui::HintText("%s", ui::Tr("形状生成の作業メモリ予算を超えています。球の数や配置密度を下げてください。", "Shape generation exceeds the working memory budget. Reduce the sphere count or placement density."));
+        if (!m_renderer.AtmosphericMode() && ui::Button(ui::Tr("大気散乱へ切替", "Use Atmospheric"), ui::kWideButtonWidth)) {
             // ライティングの方式はアンドゥの写しに入らないので段は積まず、未保存の判定だけ映す。
             m_renderer.AtmosphericMode() = true;
             RefreshSceneDirty();
@@ -3600,25 +3736,26 @@ void Application::DrawNodeProperties(graph::Node* selected) {
             defaults.centerY = 500.0f;
             defaults.noiseScale = 1500.0f;
             defaults.motionMode = 1;
-            ui::HintText("Distribution にマスクを接続：白に雲、黒は空。未接続は全面。マスク全体を雲層の範囲に割り当てます");
+            ui::HintText("%s", ui::Tr("Distribution にマスクを接続：白に雲、黒は空。未接続は全面。マスク全体を雲層の範囲に割り当てます", "Connect a mask to Distribution: clouds where white, clear sky where black. Unconnected covers everywhere. Maps the whole mask to the cloud layer range"));
         }
-        ui::SectionHeader("動き");
+        ui::SectionHeader(ui::Tr("動き", "Motion"));
         if (ui::BeginPropertyTable("cloudMotionRows")) {
-            changed |= ui::PropertyBool("再生", &cloud->animate, defaults.animate,
-                "風で雲を動かします。オフでその位置に一時停止します。");
-            const char* modes[] = {"雲全体を移動", "範囲内で模様を流す", "流れながら変化"};
-            changed |= ui::PropertyCombo("動かし方", &cloud->motionMode, modes, 3, defaults.motionMode,
-                "全体移動、範囲内の移流、流れながら変化を選べます。変化では模様を雲より遅く進めます。切替時は開始位置へ戻ります。");
+            changed |= ui::PropertyBool(ui::Tr("再生", "Play"), &cloud->animate, defaults.animate,
+                ui::Tr("風で雲を動かします。オフでその位置に一時停止します。", "Moves clouds with the wind. When off, pauses at the current position."));
+            static const ui::LocalizedText kModes[] = {
+                {"雲全体を移動", "Move Whole Cloud"}, {"範囲内で模様を流す", "Advect in Range"}, {"流れながら変化", "Evolve While Moving"}};
+            changed |= ui::PropertyCombo(ui::Tr("動かし方", "Motion Mode"), &cloud->motionMode, ui::Tr(kModes).data(), 3, defaults.motionMode,
+                ui::Tr("全体移動、範囲内の移流、流れながら変化を選べます。変化では模様を雲より遅く進めます。切替時は開始位置へ戻ります。", "Choose moving the whole cloud, advecting within the range, or evolving while moving. Evolving advances the pattern slower than the clouds. Switching resets to the start position."));
             if (cloud->motionMode == 2 || (isCloudLayer && cloud->motionMode == 1)) {
-                changed |= ui::PropertyFloat("模様の速度比", &cloud->noiseSpeedRatio, 0.0f, 1.0f, defaults.noiseSpeedRatio,
-                    "1 で雲と同じ速度（形を維持）、0 で模様を空間に固定。小さいほど移動に伴う形の変化が速くなります。", "%.2f");
+                changed |= ui::PropertyFloat(ui::Tr("模様の速度比", "Pattern Speed"), &cloud->noiseSpeedRatio, 0.0f, 1.0f, defaults.noiseSpeedRatio,
+                    ui::Tr("1 で雲と同じ速度（形を維持）、0 で模様を空間に固定。小さいほど移動に伴う形の変化が速くなります。", "1 moves at the cloud speed (keeps the shape), 0 fixes the pattern in space. Lower values change the shape faster as clouds move."), "%.2f");
             }
-            changed |= ui::PropertyFloat("風速", &cloud->windSpeed, 0.0f, 1000.0f, defaults.windSpeed,
-                "雲が進む速さ（m/s）。大きいほど速く動きます。", "%.1f m/s");
-            changed |= ui::PropertyFloat("風向", &cloud->windDirection, -180.0f, 180.0f, defaults.windDirection,
-                "進行方向。0 度は +Z、90 度は +X です。", "%.0f deg");
+            changed |= ui::PropertyFloat(ui::Tr("風速", "Wind Speed"), &cloud->windSpeed, 0.0f, 1000.0f, defaults.windSpeed,
+                ui::Tr("雲が進む速さ（m/s）。大きいほど速く動きます。", "How fast clouds travel (m/s). Higher is faster."), "%.1f m/s");
+            changed |= ui::PropertyFloat(ui::Tr("風向", "Wind Direction"), &cloud->windDirection, -180.0f, 180.0f, defaults.windDirection,
+                ui::Tr("進行方向。0 度は +Z、90 度は +X です。", "Direction of travel. 0 deg is +Z, 90 deg is +X."), "%.0f deg");
             ui::PropertyLabelEmpty("resetCloudMotion");
-            if (ui::Button("開始位置へ戻す", ui::kWideButtonWidth)) {
+            if (ui::Button(ui::Tr("開始位置へ戻す", "Reset to Start"), ui::kWideButtonWidth)) {
                 cloud->animate = false;
                 if (m_graph.CompileCloud().sourceId == selected->id)
                     m_renderer.ResetCloudMotion();
@@ -3627,68 +3764,72 @@ void Application::DrawNodeProperties(graph::Node* selected) {
             ui::PropertyEnd();
             ui::EndPropertyTable();
         }
-        ui::HintText("再生中の環境光・反射は固定し、停止後に更新します");
-        ui::SectionHeader("ライティング");
+        ui::HintText("%s", ui::Tr("再生中の環境光・反射は固定し、停止後に更新します", "Ambient light and reflections are frozen during playback and update after it stops"));
+        ui::SectionHeader(ui::Tr("ライティング", "Lighting"));
         if (ui::BeginPropertyTable("cloudLightingRows")) {
             changed |= ui::PropertyFloat("Indirect Light", &cloud->indirectLight, 0.0f, 1.0f, defaults.indirectLight,
-                "雲の中で繰り返し散乱する太陽光の反射率。1 で各次数のエネルギーが単散乱と同じ上限、\n"
-                "0 は太陽光の多重散乱なし。光を足す方向には働かず、密度・透過率・地形への雲影は変えません。", "%.2f");
-            changed |= ui::PropertyFloat("多重散乱の広がり", &cloud->scatterSpread, 0.05f, 0.9f, defaults.scatterSpread,
-                "多重散乱した光が雲の中へ行き渡る度合い。高次ほど太陽方向の減衰を (1-広がり) の累乗で縮めます。\n"
-                "大きいほど陰の側まで光が回って柔らかく、小さいほど陰が締まります。エネルギーは増えません。", "%.2f");
+                ui::Tr("雲の中で繰り返し散乱する太陽光の反射率。1 で各次数のエネルギーが単散乱と同じ上限、\n"
+                       "0 は太陽光の多重散乱なし。光を足す方向には働かず、密度・透過率・地形への雲影は変えません。",
+                       "Albedo of sunlight scattered repeatedly inside the cloud. At 1 each order is capped at the single-scattering energy,\n0 disables multiple scattering of sunlight. It never adds light and leaves density, transmittance, and cloud shadows on the terrain unchanged."), "%.2f");
+            changed |= ui::PropertyFloat(ui::Tr("多重散乱の広がり", "Scatter Spread"), &cloud->scatterSpread, 0.05f, 0.9f, defaults.scatterSpread,
+                ui::Tr("多重散乱した光が雲の中へ行き渡る度合い。高次ほど太陽方向の減衰を (1-広がり) の累乗で縮めます。\n"
+                       "大きいほど陰の側まで光が回って柔らかく、小さいほど陰が締まります。エネルギーは増えません。",
+                       "How far multiply scattered light spreads through the cloud. Higher orders shrink the sunward attenuation by powers of (1 - spread).\nHigher values carry light into the shaded side for a softer look; lower values keep shadows crisp. Energy does not increase."), "%.2f");
             changed |= ui::PropertyFloat("Ambient Light", &cloud->ambientLight, 0.0f, 5.0f, defaults.ambientLight,
-                "雲が空と地面反射から受ける環境光の倍率。スカイライト強度に掛け合わせます。\n"
-                "0 は影響なし、1 は従来どおり。地形のスカイライト強度や雲の太陽光・密度は変えません。", "%.2f");
+                ui::Tr("雲が空と地面反射から受ける環境光の倍率。スカイライト強度に掛け合わせます。\n"
+                       "0 は影響なし、1 は従来どおり。地形のスカイライト強度や雲の太陽光・密度は変えません。",
+                       "Multiplier for ambient light the clouds receive from the sky and ground reflection. Multiplies the skylight intensity.\n0 has no effect, 1 is the legacy look. Does not change the terrain skylight or the clouds' sunlight or density."), "%.2f");
             ui::EndPropertyTable();
         }
-        ui::SectionHeader("形と配置");
+        ui::SectionHeader(ui::Tr("形と配置", "Shape and Placement"));
         if (ui::BeginPropertyTable("cloudNodeRows")) {
-            changed |= ui::PropertyBool("有効", &cloud->enabled, defaults.enabled);
-            changed |= ui::PropertyFloat("中心 X", &cloud->centerX, -10000.0f, 10000.0f, defaults.centerX,
-                                         "雲の中心位置（m）。地形原点からの位置です。", "%.1f m");
-            changed |= ui::PropertyFloat("中心 Z", &cloud->centerZ, -10000.0f, 10000.0f, defaults.centerZ,
-                                         "雲の中心位置（m）。地形原点からの位置です。", "%.1f m");
-            changed |= ui::PropertyFloat("中心高度", &cloud->centerY, -10000.0f, 10000.0f, defaults.centerY,
-                                         "雲の中心の高さ（m）。低くすると山腹や谷へ移ります。", "%.1f m");
-            changed |= ui::PropertyFloat("横幅", &cloud->width, 10.0f, 20000.0f, defaults.width,
-                                         "雲の X 方向の全幅。大きくすると横へ広がります。", "%.1f m", ImGuiSliderFlags_Logarithmic);
-            changed |= ui::PropertyFloat("奥行き", &cloud->depth, 10.0f, 20000.0f, defaults.depth,
-                                         "雲の Z 方向の全幅。大きくすると奥へ広がります。", "%.1f m", ImGuiSliderFlags_Logarithmic);
-            changed |= ui::PropertyFloat("厚さ", &cloud->thickness, 10.0f, 20000.0f, defaults.thickness,
-                                         "雲の上下方向の全幅。中心高度の上下へ半分ずつ広がります。", "%.1f m", ImGuiSliderFlags_Logarithmic);
-            changed |= ui::PropertyBool("平らな雲底", &cloud->flatBottom, defaults.flatBottom,
-                "底を中心高度 − 厚さの半分にそろえ、境界を薄くぼかします。上部の凹凸は残します。");
+            changed |= ui::PropertyBool(ui::Tr("有効", "Enabled"), &cloud->enabled, defaults.enabled);
+            changed |= ui::PropertyFloat(ui::Tr("中心 X", "Center X"), &cloud->centerX, -10000.0f, 10000.0f, defaults.centerX,
+                                         ui::Tr("雲の中心位置（m）。地形原点からの位置です。", "Cloud center position (m), measured from the terrain origin."), "%.1f m");
+            changed |= ui::PropertyFloat(ui::Tr("中心 Z", "Center Z"), &cloud->centerZ, -10000.0f, 10000.0f, defaults.centerZ,
+                                         ui::Tr("雲の中心位置（m）。地形原点からの位置です。", "Cloud center position (m), measured from the terrain origin."), "%.1f m");
+            changed |= ui::PropertyFloat(ui::Tr("中心高度", "Center Height"), &cloud->centerY, -10000.0f, 10000.0f, defaults.centerY,
+                                         ui::Tr("雲の中心の高さ（m）。低くすると山腹や谷へ移ります。", "Height of the cloud center (m). Lower it to move clouds onto slopes or into valleys."), "%.1f m");
+            changed |= ui::PropertyFloat(ui::Tr("横幅", "Width"), &cloud->width, 10.0f, 20000.0f, defaults.width,
+                                         ui::Tr("雲の X 方向の全幅。大きくすると横へ広がります。", "Full width of the cloud in X. Larger spreads it sideways."), "%.1f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat(ui::Tr("奥行き", "Depth"), &cloud->depth, 10.0f, 20000.0f, defaults.depth,
+                                         ui::Tr("雲の Z 方向の全幅。大きくすると奥へ広がります。", "Full width of the cloud in Z. Larger spreads it in depth."), "%.1f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat(ui::Tr("厚さ", "Thickness"), &cloud->thickness, 10.0f, 20000.0f, defaults.thickness,
+                                         ui::Tr("雲の上下方向の全幅。中心高度の上下へ半分ずつ広がります。", "Full vertical extent of the cloud. Spreads half above and half below the center height."), "%.1f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyBool(ui::Tr("平らな雲底", "Flat Base"), &cloud->flatBottom, defaults.flatBottom,
+                ui::Tr("底を中心高度 − 厚さの半分にそろえ、境界を薄くぼかします。上部の凹凸は残します。", "Aligns the bottom to center height − half the thickness and softens the boundary. The top relief is kept."));
             if (cloud->flatBottom) {
-                changed |= ui::PropertyFloat("雲底の平らさ", &cloud->bottomFlatness, 0.0f, 1.0f, defaults.bottomFlatness,
-                    "0 で丸い雲底、1 で従来の平らな雲底。中間値で底の丸みを調整します。", "%.2f");
+                changed |= ui::PropertyFloat(ui::Tr("雲底の平らさ", "Base Flatness"), &cloud->bottomFlatness, 0.0f, 1.0f, defaults.bottomFlatness,
+                    ui::Tr("0 で丸い雲底、1 で従来の平らな雲底。中間値で底の丸みを調整します。", "0 gives a rounded base, 1 the legacy flat base. Values between adjust the roundness."), "%.2f");
             }
-            changed |= ui::PropertyFloat("消散係数", &cloud->extinction, 0.0001f, 0.2f, defaults.extinction,
-                "雲の中を進む光の減衰の強さ（消散係数、1/m）。密度 1 の場所で 1 m 進むごとに光がこの割合で失われます。\n"
-                "大きいほど光を通しにくく、輪郭が硬く雲影が濃くなります。実際の積雲はおよそ 0.02〜0.1 /m。", "%.4f", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat(ui::Tr("消散係数", "Extinction"), &cloud->extinction, 0.0001f, 0.2f, defaults.extinction,
+                ui::Tr("雲の中を進む光の減衰の強さ（消散係数、1/m）。密度 1 の場所で 1 m 進むごとに光がこの割合で失われます。\n"
+                       "大きいほど光を通しにくく、輪郭が硬く雲影が濃くなります。実際の積雲はおよそ 0.02〜0.1 /m。",
+                       "How strongly light is attenuated inside the cloud (extinction coefficient, 1/m). At density 1, this fraction of light is lost per meter.\nHigher values let less light through, with harder edges and darker cloud shadows. Real cumulus is about 0.02-0.1 /m."), "%.4f", ImGuiSliderFlags_Logarithmic);
             const char* noiseTypes[] = {"Perlin fBM", "Perlin-Worley"};
-            changed |= ui::PropertyCombo("ノイズの種類", &cloud->noiseType, noiseTypes, 2, defaults.noiseType,
-                "Perlin fBM は従来の模様。Perlin-Worley は丸い細胞状の膨らみと、Worley による細部の崩しを使います。雲本体と影に共通です。");
-            changed |= ui::PropertyFloat("模様の大きさ", &cloud->noiseScale, 10.0f, 20000.0f, defaults.noiseScale,
+            changed |= ui::PropertyCombo(ui::Tr("ノイズの種類", "Noise Type"), &cloud->noiseType, noiseTypes, 2, defaults.noiseType,
+                ui::Tr("Perlin fBM は従来の模様。Perlin-Worley は丸い細胞状の膨らみと、Worley による細部の崩しを使います。雲本体と影に共通です。", "Perlin fBM is the legacy pattern. Perlin-Worley uses round cellular billows with Worley detail breakup. Shared by the clouds and their shadows."));
+            changed |= ui::PropertyFloat(ui::Tr("模様の大きさ", "Pattern Scale"), &cloud->noiseScale, 10.0f, 20000.0f, defaults.noiseScale,
                                          isCloudLayer
-                                             ? "配置の1セルあたりの長さ（m）。繰り返しセル数との積が配置の周期になります。表面ノイズの大きさにも影響します。"
-                                             : "ノイズの基準となる長さ（m）。大きいほど大きな膨らみになります。",
+                                             ? ui::Tr("配置の1セルあたりの長さ（m）。繰り返しセル数との積が配置の周期になります。表面ノイズの大きさにも影響します。", "Length of one placement cell (m). Multiplied by the repeat cells, it gives the placement period. Also affects the surface noise size.")
+                                             : ui::Tr("ノイズの基準となる長さ（m）。大きいほど大きな膨らみになります。", "Base length of the noise (m). Larger values make larger billows."),
                                          "%.1f m", ImGuiSliderFlags_Logarithmic);
             if (isCloudLayer) {
-                changed |= ui::PropertyInt("繰り返しセル数", &cloud->cellCount, 1, 32, defaults.cellCount,
-                    "横・奥行きに共通の配置周期。範囲内の雲の個数ではありません。大きくすると配置が繰り返すまでの距離が長くなります。高さ方向のセルはありません。");
-                changed |= ui::PropertyFloat("雲量", &cloud->coverage, 0.0f, 1.0f, defaults.coverage,
-                    "分布の中を雲で覆う量。0 で雲なし、1 で隙間が少なくなります。", "%.2f");
-            } else changed |= ui::PropertyFloat("形の崩し", &cloud->shapeStrength, 0.0f, 1.0f, defaults.shapeStrength,
-                                         "楕円体の輪郭をノイズで削ります。大きいほど形が崩れます。", "%.2f");
-            changed |= ui::PropertyFloat("細部の崩し", &cloud->detailStrength, 0.0f, 1.0f, defaults.detailStrength,
-                                         "細かな密度の抜けを加えます。大きいほど縁がほぐれます。", "%.2f");
-            changed |= ui::PropertyFloat("縁の柔らかさ", &cloud->edgeSoftness, 0.02f, 1.0f, defaults.edgeSoftness,
-                                         "輪郭から内側へ密度が増す幅の割合。大きいほど薄く柔らかくなります。", "%.2f");
-            changed |= ui::PropertyInt("シード", &cloud->seed, 0, 10000, defaults.seed);
+                changed |= ui::PropertyInt(ui::Tr("繰り返しセル数", "Repeat Cells"), &cloud->cellCount, 1, 32, defaults.cellCount,
+                    ui::Tr("横・奥行きに共通の配置周期。範囲内の雲の個数ではありません。大きくすると配置が繰り返すまでの距離が長くなります。高さ方向のセルはありません。", "Placement period shared by width and depth. Not the number of clouds in the range. Larger values lengthen the distance before placement repeats. There are no cells in height."));
+                changed |= ui::PropertyFloat(ui::Tr("雲量", "Coverage"), &cloud->coverage, 0.0f, 1.0f, defaults.coverage,
+                    ui::Tr("分布の中を雲で覆う量。0 で雲なし、1 で隙間が少なくなります。", "How much of the distribution is covered by cloud. 0 is clear; 1 leaves few gaps."), "%.2f");
+            } else changed |= ui::PropertyFloat(ui::Tr("形の崩し", "Shape Breakup"), &cloud->shapeStrength, 0.0f, 1.0f, defaults.shapeStrength,
+                                         ui::Tr("楕円体の輪郭をノイズで削ります。大きいほど形が崩れます。", "Erodes the ellipsoid outline with noise. Higher breaks the shape up more."), "%.2f");
+            changed |= ui::PropertyFloat(ui::Tr("細部の崩し", "Detail Breakup"), &cloud->detailStrength, 0.0f, 1.0f, defaults.detailStrength,
+                                         ui::Tr("細かな密度の抜けを加えます。大きいほど縁がほぐれます。", "Adds fine holes in density. Higher frays the edges more."), "%.2f");
+            changed |= ui::PropertyFloat(ui::Tr("縁の柔らかさ", "Edge Softness"), &cloud->edgeSoftness, 0.02f, 1.0f, defaults.edgeSoftness,
+                                         ui::Tr("輪郭から内側へ密度が増す幅の割合。大きいほど薄く柔らかくなります。", "Fraction over which density ramps up inward from the outline. Higher is thinner and softer."), "%.2f");
+            changed |= ui::PropertyInt(ui::Tr("シード", "Seed"), &cloud->seed, 0, 10000, defaults.seed);
             ui::EndPropertyTable();
         }
-        ui::HintText("Volume をCloud Output へ接続して表示。太陽と照明はライティング設定を共有します");
-        if (!m_renderer.AtmosphericMode() && ui::Button("大気散乱へ切替", ui::kWideButtonWidth)) {
+        ui::HintText("%s", ui::Tr("Volume をCloud Output へ接続して表示。太陽と照明はライティング設定を共有します", "Connect Volume to Cloud Output to display. Sun and lighting are shared with the lighting settings"));
+        if (!m_renderer.AtmosphericMode() && ui::Button(ui::Tr("大気散乱へ切替", "Use Atmospheric"), ui::kWideButtonWidth)) {
             // ライティングの方式はアンドゥの写しに入らないので段は積まず、未保存の判定だけ映す。
             m_renderer.AtmosphericMode() = true;
             RefreshSceneDirty();
@@ -3700,74 +3841,78 @@ void Application::DrawNodeProperties(graph::Node* selected) {
     } else if (auto* plume = std::get_if<graph::SnowPlumeSettings>(&selected->settings)) {
         const graph::SnowPlumeSettings defaults;
         bool changed = false;
-        ui::HintText("Source のマスクが強い所から、風下へ半透明の帯を伸ばして雪煙を描く。"
-                     "Wind Field の Spindrift を繋ぐと、稜線の風下から出て Wind Field の風に流れる。"
-                     "ビューポートだけの表示で、合成結果や書き出しには入らない");
+        ui::HintText("%s", ui::Tr("Source のマスクが強い所から、風下へ半透明の帯を伸ばして雪煙を描く。"
+                                  "Wind Field の Spindrift を繋ぐと、稜線の風下から出て Wind Field の風に流れる。"
+                                  "ビューポートだけの表示で、合成結果や書き出しには入らない",
+                                  "Draws blowing snow as translucent ribbons stretching downwind from where the Source mask is strong. With a Wind Field's Spindrift connected, they start on the lee of ridges and follow the Wind Field. Viewport only; not included in the composite or exports"));
         const auto compiled = m_graph.CompileSnowPlumes();
         const auto found = std::find_if(compiled.begin(), compiled.end(),
                                         [&](const auto& c) { return c.node == selected->id; });
         const bool fromWind = found != compiled.end() && found->fromWindField;
-        if (found != compiled.end() && found->maskPin == 0) ui::HintText("Source が未接続なので何も出ない");
-        ui::SectionHeader("発生");
+        if (found != compiled.end() && found->maskPin == 0) ui::HintText("%s", ui::Tr("Source が未接続なので何も出ない", "Source isn't connected, so nothing is shown"));
+        ui::SectionHeader(ui::Tr("発生", "Emission"));
         if (ui::BeginPropertyTable("snowPlumeSource")) {
-            changed |= ui::PropertyFloat("しきい値", &plume->threshold, 0.0f, 0.99f, defaults.threshold,
-                                         "Source がこれ以下の所からは出さない。上の値ほど強い所に絞られる", "%.2f");
-            changed |= ui::PropertyFloat("発生の割合", &plume->coverage, 0.0f, 1.0f, defaults.coverage,
-                                         "Source が 1 の所で帯が出る割合。下げると間引かれてまばらになる", "%.2f");
-            changed |= ui::PropertyInt("種の数（一辺）", &plume->seedsPerSide, 4, 256, defaults.seedsPerSide,
-                                       "地形の一辺をこの数に分け、各マスから最大 1 本の帯を出す。多いほど密で重い");
-            changed |= ui::PropertyInt("シード", &plume->seed, 0, 1000000, defaults.seed);
+            changed |= ui::PropertyFloat(ui::Tr("しきい値", "Threshold"), &plume->threshold, 0.0f, 0.99f, defaults.threshold,
+                                         ui::Tr("Source がこれ以下の所からは出さない。上の値ほど強い所に絞られる", "Nothing spawns where Source is at or below this. Higher values restrict it to stronger areas"), "%.2f");
+            changed |= ui::PropertyFloat(ui::Tr("発生の割合", "Spawn Ratio"), &plume->coverage, 0.0f, 1.0f, defaults.coverage,
+                                         ui::Tr("Source が 1 の所で帯が出る割合。下げると間引かれてまばらになる", "Fraction of ribbons that appear where Source is 1. Lower values thin them out"), "%.2f");
+            changed |= ui::PropertyInt(ui::Tr("種の数（一辺）", "Seeds per Side"), &plume->seedsPerSide, 4, 256, defaults.seedsPerSide,
+                                       ui::Tr("地形の一辺をこの数に分け、各マスから最大 1 本の帯を出す。多いほど密で重い", "Divides each side of the terrain into this many cells, each emitting at most one ribbon. More is denser and heavier"));
+            changed |= ui::PropertyInt(ui::Tr("シード", "Seed"), &plume->seed, 0, 1000000, defaults.seed);
             ui::EndPropertyTable();
         }
-        ui::SectionHeader("形");
+        ui::SectionHeader(ui::Tr("形", "Shape"));
         if (ui::BeginPropertyTable("snowPlumeShape")) {
-            changed |= ui::PropertyFloat("長さ", &plume->lengthMeters, 1.0f, 5000.0f, defaults.lengthMeters,
-                                         "風下へ伸びる長さ。帯ごとに ±10% ばらつく", "%.0f m", ImGuiSliderFlags_Logarithmic);
-            changed |= ui::PropertyFloat("根元の幅", &plume->widthStart, 0.1f, 2000.0f, defaults.widthStart,
-                                         "種の間隔（地形の一辺 ÷ 種の数）の 1.3 倍が下限。それより細くしても変わらない"
-                                         "（隣の帯と必ず重ねるため）。細くしたいときは種の数を増やす",
+            changed |= ui::PropertyFloat(ui::Tr("長さ", "Length"), &plume->lengthMeters, 1.0f, 5000.0f, defaults.lengthMeters,
+                                         ui::Tr("風下へ伸びる長さ。帯ごとに ±10% ばらつく", "Length stretching downwind. Each ribbon varies by ±10%"), "%.0f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat(ui::Tr("根元の幅", "Root Width"), &plume->widthStart, 0.1f, 2000.0f, defaults.widthStart,
+                                         ui::Tr("種の間隔（地形の一辺 ÷ 種の数）の 1.3 倍が下限。それより細くしても変わらない"
+                                                "（隣の帯と必ず重ねるため）。細くしたいときは種の数を増やす",
+                                                "The minimum is 1.3x the seed spacing (terrain side ÷ seeds). Narrower values have no effect (ribbons must overlap their neighbors). Increase the seeds to make them thinner"),
                                          "%.1f m", ImGuiSliderFlags_Logarithmic);
-            changed |= ui::PropertyFloat("先端の幅", &plume->widthEnd, 0.1f, 2000.0f, defaults.widthEnd,
-                                         "風下へ行くほどこの幅まで広がる。根元の幅（下限を掛けた後）より細くはならない",
+            changed |= ui::PropertyFloat(ui::Tr("先端の幅", "Tip Width"), &plume->widthEnd, 0.1f, 2000.0f, defaults.widthEnd,
+                                         ui::Tr("風下へ行くほどこの幅まで広がる。根元の幅（下限を掛けた後）より細くはならない", "Widens to this toward the downwind end. Never narrower than the root width (after its minimum)"),
                                          "%.1f m", ImGuiSliderFlags_Logarithmic);
-            changed |= ui::PropertyFloat("持ち上がり", &plume->lift, 0.0f, 1000.0f, defaults.lift,
-                                         "稜線を越えてから浮き上がる高さ", "%.0f m");
-            changed |= ui::PropertyFloat("沈み込み", &plume->sink, 0.0f, 1000.0f, defaults.sink,
-                                         "先端までに風下の斜面側へ下がる高さ。地形の下へは潜らない", "%.0f m");
-            changed |= ui::PropertyFloat("風上の助走", &plume->upwind, 0.0f, 1000.0f, defaults.upwind,
-                                         "稜線の風上側へ帯を延ばす長さ。斜面を這って立ち上がり、稜線でいちばん濃くなって剥がれる。"
-                                         "0 だと稜線の風下から急に湧いて見える", "%.0f m");
-            changed |= ui::PropertyFloat("斜面に沿う", &plume->slopeFollow, 0.0f, 1.0f, defaults.slopeFollow,
-                                         "風下の斜面が落ちるぶんを追う割合。0 でまっすぐ流れ、1 で斜面に沿って谷へ下りる。"
-                                         "上のシートほど追わないので、谷へ覆いかぶさる楔の形になる", "%.2f");
-            changed |= ui::PropertyInt("シートの数", &plume->sheets, 1, 3, defaults.sheets,
-                                       "1 本の帯に重ねる層の数。2 枚目以降は上に薄く広く重なり、厚みが出る");
+            changed |= ui::PropertyFloat(ui::Tr("持ち上がり", "Lift"), &plume->lift, 0.0f, 1000.0f, defaults.lift,
+                                         ui::Tr("稜線を越えてから浮き上がる高さ", "Height the ribbon rises after crossing the ridge"), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("沈み込み", "Sink"), &plume->sink, 0.0f, 1000.0f, defaults.sink,
+                                         ui::Tr("先端までに風下の斜面側へ下がる高さ。地形の下へは潜らない", "Height it drops toward the lee slope by the tip. Never goes below the terrain"), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("風上の助走", "Upwind Run-up"), &plume->upwind, 0.0f, 1000.0f, defaults.upwind,
+                                         ui::Tr("稜線の風上側へ帯を延ばす長さ。斜面を這って立ち上がり、稜線でいちばん濃くなって剥がれる。"
+                                                "0 だと稜線の風下から急に湧いて見える",
+                                                "How far the ribbon extends upwind of the ridge. It creeps up the slope, is densest at the ridge, then lifts off. At 0 it appears to spring up suddenly on the lee side"), "%.0f m");
+            changed |= ui::PropertyFloat(ui::Tr("斜面に沿う", "Follow Slope"), &plume->slopeFollow, 0.0f, 1.0f, defaults.slopeFollow,
+                                         ui::Tr("風下の斜面が落ちるぶんを追う割合。0 でまっすぐ流れ、1 で斜面に沿って谷へ下りる。"
+                                                "上のシートほど追わないので、谷へ覆いかぶさる楔の形になる",
+                                                "How much it follows the lee slope downward. 0 flows straight, 1 follows the slope into the valley. Upper sheets follow less, forming a wedge that overhangs the valley"), "%.2f");
+            changed |= ui::PropertyInt(ui::Tr("シートの数", "Sheets"), &plume->sheets, 1, 3, defaults.sheets,
+                                       ui::Tr("1 本の帯に重ねる層の数。2 枚目以降は上に薄く広く重なり、厚みが出る", "Number of layers per ribbon. Later sheets stack above, thinner and wider, adding depth"));
             ui::EndPropertyTable();
         }
-        ui::SectionHeader("見え方");
+        ui::SectionHeader(ui::Tr("見え方", "Appearance"));
         if (ui::BeginPropertyTable("snowPlumeLook")) {
-            changed |= ui::PropertyFloat("不透明度", &plume->opacity, 0.0f, 1.0f, defaults.opacity, nullptr, "%.2f");
-            changed |= ui::PropertyFloat("塊の大きさ", &plume->puffSize, 1.0f, 1000.0f, defaults.puffSize,
-                                         "雪煙の濃淡の基本の大きさ", "%.0f m", ImGuiSliderFlags_Logarithmic);
-            changed |= ui::PropertyFloat("乱れ", &plume->turbulence, 0.0f, 1.0f, defaults.turbulence,
-                                         "帯の蛇行と、輪郭のちぎれ具合", "%.2f");
-            changed |= ui::PropertyFloat("前方散乱", &plume->anisotropy, 0.0f, 0.95f, defaults.anisotropy,
-                                         "逆光で縁が光る強さ（位相関数の g）", "%.2f");
+            changed |= ui::PropertyFloat(ui::Tr("不透明度", "Opacity"), &plume->opacity, 0.0f, 1.0f, defaults.opacity, nullptr, "%.2f");
+            changed |= ui::PropertyFloat(ui::Tr("塊の大きさ", "Puff Size"), &plume->puffSize, 1.0f, 1000.0f, defaults.puffSize,
+                                         ui::Tr("雪煙の濃淡の基本の大きさ", "Base size of the density variation in the blowing snow"), "%.0f m", ImGuiSliderFlags_Logarithmic);
+            changed |= ui::PropertyFloat(ui::Tr("乱れ", "Turbulence"), &plume->turbulence, 0.0f, 1.0f, defaults.turbulence,
+                                         ui::Tr("帯の蛇行と、輪郭のちぎれ具合", "Meandering of the ribbons and how ragged their edges are"), "%.2f");
+            changed |= ui::PropertyFloat(ui::Tr("前方散乱", "Forward Scatter"), &plume->anisotropy, 0.0f, 0.95f, defaults.anisotropy,
+                                         ui::Tr("逆光で縁が光る強さ（位相関数の g）", "How strongly edges glow when backlit (phase function g)"), "%.2f");
             ui::EndPropertyTable();
         }
-        ui::SectionHeader("動き");
+        ui::SectionHeader(ui::Tr("動き", "Motion"));
         if (ui::BeginPropertyTable("snowPlumeMotion")) {
-            changed |= ui::PropertyFloat("突風", &plume->gust, 0.0f, 1.0f, defaults.gust,
-                                         "帯ごとに位相をずらして、長さと濃さを時間で揺らす", "%.2f");
-            changed |= ui::PropertyFloat("ループ長", &plume->loopSeconds, 1.0f, 600.0f, defaults.loopSeconds,
-                                         "この秒数で動きが完全に一巡する（継ぎ目のないループ）", "%.1f 秒");
+            changed |= ui::PropertyFloat(ui::Tr("突風", "Gust"), &plume->gust, 0.0f, 1.0f, defaults.gust,
+                                         ui::Tr("帯ごとに位相をずらして、長さと濃さを時間で揺らす", "Varies length and density over time, with a different phase per ribbon"), "%.2f");
+            changed |= ui::PropertyFloat(ui::Tr("ループ長", "Loop Length"), &plume->loopSeconds, 1.0f, 600.0f, defaults.loopSeconds,
+                                         ui::Tr("この秒数で動きが完全に一巡する（継ぎ目のないループ）", "The motion completes one full cycle in this many seconds (a seamless loop)"), ui::Tr("%.1f 秒", "%.1f s"));
             if (fromWind) {
-                ui::PropertyValue("風", "%.0f° / %.1f m/s（Wind Field）", found->windDirection, found->windSpeed);
+                ui::PropertyValue(ui::Tr("風", "Wind"), ui::Tr("%.0f° / %.1f m/s（Wind Field）", "%.0f° / %.1f m/s (Wind Field)"), found->windDirection, found->windSpeed);
             } else {
-                changed |= ui::PropertyFloat("風向", &plume->windDirection, 0.0f, 360.0f, defaults.windDirection,
-                                             "Source の上流に Wind Field が無いときの風向。0 が +Z、90 が +X", "%.0f°");
-                changed |= ui::PropertyFloat("風速", &plume->windSpeed, 0.0f, 100.0f, defaults.windSpeed,
-                                             "雪煙の濃淡が流れる速さ", "%.1f m/s");
+                changed |= ui::PropertyFloat(ui::Tr("風向", "Wind Direction"), &plume->windDirection, 0.0f, 360.0f, defaults.windDirection,
+                                             ui::Tr("Source の上流に Wind Field が無いときの風向。0 が +Z、90 が +X", "Wind direction when there is no Wind Field upstream of Source. 0 is +Z, 90 is +X"), "%.0f°");
+                changed |= ui::PropertyFloat(ui::Tr("風速", "Wind Speed"), &plume->windSpeed, 0.0f, 100.0f, defaults.windSpeed,
+                                             ui::Tr("雪煙の濃淡が流れる速さ", "Speed at which the density variation drifts"), "%.1f m/s");
             }
             ui::EndPropertyTable();
         }
@@ -3775,43 +3920,46 @@ void Application::DrawNodeProperties(graph::Node* selected) {
         if (changed) MarkDocumentChanged(false);
     } else if (auto* scatter = std::get_if<graph::ModelScatterSettings>(&selected->settings)) {
         bool changed = false;
-        ui::HintText("Crumbling の Points を接続し、Instances をModel Outputへ接続します");
-        if (ui::BeginPropertyTable("modelScatterSettings", "Scale マスクの最小倍率")) {
-            changed |= ui::PropertyInt("シード",&scatter->seed,0,1000000,1);
-            changed |= ui::PropertyFloat("描画距離", &scatter->maxDistance, 0, 100000, 0,
-                "この距離より遠いモデルを描画対象から外します。0は距離制限なし。影にも適用します", "%.0f m");
-            changed |= ui::PropertyBool("点の直径に合わせる",&scatter->usePointSize,true,
-                "モデルの最大寸法を、点の直径（Scatter / Crumbling の「最小の直径」〜「最大の直径」）に合わせます。"
-                "オフならモデルの実寸で置きます");
+        ui::HintText("%s", ui::Tr("Crumbling の Points を接続し、Instances をModel Outputへ接続します", "Connect Crumbling's Points, and connect Instances to Model Output"));
+        if (ui::BeginPropertyTable("modelScatterSettings", ui::Tr("Scale マスクの最小倍率", "LOD Distance Scale"))) {
+            changed |= ui::PropertyInt(ui::Tr("シード", "Seed"),&scatter->seed,0,1000000,1);
+            changed |= ui::PropertyFloat(ui::Tr("描画距離", "Draw Distance"), &scatter->maxDistance, 0, 100000, 0,
+                ui::Tr("この距離より遠いモデルを描画対象から外します。0は距離制限なし。影にも適用します", "Models farther than this are not drawn. 0 means no limit. Also applies to shadows"), "%.0f m");
+            changed |= ui::PropertyBool(ui::Tr("点の直径に合わせる", "Fit Point Diameter"),&scatter->usePointSize,true,
+                ui::Tr("モデルの最大寸法を、点の直径（Scatter / Crumbling の「最小の直径」〜「最大の直径」）に合わせます。"
+                       "オフならモデルの実寸で置きます",
+                       "Fits the model's largest dimension to the point diameter (between Scatter / Crumbling's minimum and maximum diameter). When off, models are placed at real size"));
             // 対数のスライダーにして 1.0 付近を細かく動かせるようにする。
-            constexpr const char* kScaleTooltip = "株ごとの倍率はこの範囲から選ぶ。大きくすると描画と影の負荷が増える";
-            changed |= ui::PropertyFloat("最小スケール",&scatter->scaleMin,graph::kModelScatterScaleMin,graph::kModelScatterScaleMax,
+            const char* kScaleTooltip = ui::Tr("株ごとの倍率はこの範囲から選ぶ。大きくすると描画と影の負荷が増える",
+                                               "Each plant's scale is picked from this range. Larger values cost more to draw and shadow");
+            changed |= ui::PropertyFloat(ui::Tr("最小スケール", "Min Scale"),&scatter->scaleMin,graph::kModelScatterScaleMin,graph::kModelScatterScaleMax,
                                          0.8f,kScaleTooltip,"%.2f",ImGuiSliderFlags_Logarithmic);
-            changed |= ui::PropertyFloat("最大スケール",&scatter->scaleMax,graph::kModelScatterScaleMin,graph::kModelScatterScaleMax,
+            changed |= ui::PropertyFloat(ui::Tr("最大スケール", "Max Scale"),&scatter->scaleMax,graph::kModelScatterScaleMin,graph::kModelScatterScaleMax,
                                          1.2f,kScaleTooltip,"%.2f",ImGuiSliderFlags_Logarithmic);
-            changed |= ui::PropertyFloat("Scale マスクの最小倍率",&scatter->sizeAtZero,0.05f,1.0f,1.0f,
-                "Scatter の Scale 入力に繋いだマスクが 0（黒）の所の、モデルの倍率。1（白）の所は等倍で、間はなめらかに変わる。"
-                "森林限界へ向かって木を低くする、などに使う。1 ならマスクを使わない。"
-                "下の最小・最大スケール（株ごとの乱数）にさらに掛かる","%.2f");
+            changed |= ui::PropertyFloat(ui::Tr("Scale マスクの最小倍率", "Scale Mask Min"),&scatter->sizeAtZero,0.05f,1.0f,1.0f,
+                ui::Tr("Scatter の Scale 入力に繋いだマスクが 0（黒）の所の、モデルの倍率。1（白）の所は等倍で、間はなめらかに変わる。"
+                       "森林限界へ向かって木を低くする、などに使う。1 ならマスクを使わない。"
+                       "下の最小・最大スケール（株ごとの乱数）にさらに掛かる",
+                       "Model scale where the mask connected to Scatter's Scale input is 0 (black). Where it is 1 (white) the scale is 1x, blending smoothly in between. Use it to shrink trees toward the tree line, for example. At 1 the mask is unused. Multiplies the min / max scale below (random per plant)"),"%.2f");
             {
                 // 今どう効いているかを 1 行で出す（マスクの 0 が何倍か、を値を読み替えずに分かるように）。
                 const graph::Node* source = selected->inputs.empty() ? nullptr : m_graph.FindUpstreamNodeForPin(selected->inputs[0].id);
                 const bool isScatter = source != nullptr && source->kind == graph::NodeKind::Scatter && source->inputs.size() > 3;
                 const bool connected = isScatter && m_graph.FindUpstreamNodeForPin(source->inputs[3].id) != nullptr;
-                if (!isScatter) ui::PropertyValue("Scale マスク", "%s", "なし（Scatter の点だけが持つ）");
-                else if (!connected) ui::PropertyValue("Scale マスク", "%s", "未接続（等倍）");
-                else if (scatter->sizeAtZero >= 1.0f) ui::PropertyValue("Scale マスク", "%s", "接続中だが使わない（最小倍率が 1）");
-                else ui::PropertyValue("Scale マスク", "黒 %.2f 倍 → 白 等倍", scatter->sizeAtZero);
+                if (!isScatter) ui::PropertyValue(ui::Tr("Scale マスク", "Scale Mask"), "%s", ui::Tr("なし（Scatter の点だけが持つ）", "None (only Scatter points have one)"));
+                else if (!connected) ui::PropertyValue(ui::Tr("Scale マスク", "Scale Mask"), "%s", ui::Tr("未接続（等倍）", "Not connected (1x)"));
+                else if (scatter->sizeAtZero >= 1.0f) ui::PropertyValue(ui::Tr("Scale マスク", "Scale Mask"), "%s", ui::Tr("接続中だが使わない（最小倍率が 1）", "Connected but unused (minimum is 1)"));
+                else ui::PropertyValue(ui::Tr("Scale マスク", "Scale Mask"), ui::Tr("黒 %.2f 倍 → 白 等倍", "Black %.2fx → White 1x"), scatter->sizeAtZero);
             }
-            changed |= ui::PropertyFloat("地表に沿う",&scatter->alignToNormal,0,1,1);
-            changed |= ui::PropertyFloat("接地オフセット",&scatter->offset,-10000,10000,0,"負の値で地面へ埋め込みます","%.3f m");
-            changed |= ui::PropertyBool("LOD 自動",&scatter->autoLod,true,
-                "画面に映る大きさで LOD を切り替えます。切り替えの画面サイズはモデルのプロパティで設定します");
+            changed |= ui::PropertyFloat(ui::Tr("地表に沿う", "Align to Surface"),&scatter->alignToNormal,0,1,1);
+            changed |= ui::PropertyFloat(ui::Tr("接地オフセット", "Ground Offset"),&scatter->offset,-10000,10000,0,ui::Tr("負の値で地面へ埋め込みます", "Negative values sink models into the ground"),"%.3f m");
+            changed |= ui::PropertyBool(ui::Tr("LOD 自動", "Auto LOD"),&scatter->autoLod,true,
+                ui::Tr("画面に映る大きさで LOD を切り替えます。切り替えの画面サイズはモデルのプロパティで設定します", "Switches LOD by on-screen size. Set the switch sizes in the model's properties"));
             if (scatter->autoLod)
-                changed |= ui::PropertyFloat("LOD 距離の倍率",&scatter->lodBias,0.01f,100.0f,1.0f,
-                    "切り替わる距離に掛けます。小さくすると近くから簡略な段階になり軽くなります","%.2f");
+                changed |= ui::PropertyFloat(ui::Tr("LOD 距離の倍率", "LOD Distance Scale"),&scatter->lodBias,0.01f,100.0f,1.0f,
+                    ui::Tr("切り替わる距離に掛けます。小さくすると近くから簡略な段階になり軽くなります", "Multiplies the switch distances. Lower values use simpler levels closer in, which is lighter"),"%.2f");
             else
-                changed |= ui::PropertyInt("LOD",&scatter->lod,0,16,0,"モデルにないLODは最も近い段階を使います");
+                changed |= ui::PropertyInt("LOD",&scatter->lod,0,16,0,ui::Tr("モデルにないLODは最も近い段階を使います", "LODs the model doesn't have use the nearest level"));
             ui::EndPropertyTable();
         }
         int remove = -1;
@@ -3819,37 +3967,38 @@ void Application::DrawNodeProperties(graph::Node* selected) {
             for (size_t i=0;i<scatter->models.size();++i) {
                 ImGui::PushID(static_cast<int>(i));
                 auto& choice=scatter->models[i];
-                const auto label="モデル "+std::to_string(i+1);
+                const auto label=std::string(ui::Tr("モデル ", "Model "))+std::to_string(i+1);
                 changed |= DrawModelSlotRow(label.c_str(), choice.model, selected->id, i);
-                changed |= ui::PropertyFloat("出現比率",&choice.weight,0,1000,1);
-                ui::PropertyLabel("候補"); if(ui::Button("削除")) remove=static_cast<int>(i); ui::PropertyEnd();
+                changed |= ui::PropertyFloat(ui::Tr("出現比率", "Weight"),&choice.weight,0,1000,1);
+                ui::PropertyLabel(ui::Tr("候補", "Candidate")); if(ui::Button(ui::Tr("削除", "Delete"))) remove=static_cast<int>(i); ui::PropertyEnd();
                 ImGui::PopID();
             }
             ui::EndPropertyTable();
         }
         if(remove>=0) { scatter->models.erase(scatter->models.begin()+remove); changed=true; }
-        if(ui::Button("モデルを追加",ui::kWideButtonWidth)) {
+        if(ui::Button(ui::Tr("モデルを追加", "Add Model"),ui::kWideButtonWidth)) {
             scatter->models.push_back({m_models.empty()?0:m_models.front().id,1}); changed=true;
         }
         if(changed) { m_graph.MarkDirty(); MarkDocumentChanged(false); }
     } else if (auto* place = std::get_if<graph::ModelPlaceSettings>(&selected->settings)) {
         bool changed = false;
         const graph::ModelPlaceSettings defaults;
-        ui::HintText("建物などのモデルを 1 つずつ置く。Instances を Model Output（Model Merge を挟める）へ、"
-                     "Pad（敷地）を Grading / Mask Mesh の Mesh へ繋ぐ");
-        if (ui::BeginPropertyTable("modelPlaceSettings", "LOD 距離の倍率")) {
-            changed |= DrawModelSlotRow("モデル", place->model, selected->id, 0);
-            changed |= ui::PropertyFloat("接地オフセット", &place->offset, -10000, 10000, defaults.offset,
-                "接地点（標高）からモデルを上下へずらす。負の値で基礎を地面へ埋めます", "%.3f m");
-            changed |= ui::PropertyFloat("描画距離", &place->maxDistance, 0, 100000, defaults.maxDistance,
-                "この距離より遠いモデルを描画対象から外します。0は距離制限なし。影にも適用します", "%.0f m");
-            changed |= ui::PropertyBool("LOD 自動", &place->autoLod, defaults.autoLod,
-                "画面に映る大きさで LOD を切り替えます。切り替えの画面サイズはモデルのプロパティで設定します");
+        ui::HintText("%s", ui::Tr("建物などのモデルを 1 つずつ置く。Instances を Model Output（Model Merge を挟める）へ、"
+                                  "Pad（敷地）を Grading / Mask Mesh の Mesh へ繋ぐ",
+                                  "Places models such as buildings one by one. Connect Instances to Model Output (Model Merge can go in between), and Pad to the Mesh input of Grading / Mask Mesh"));
+        if (ui::BeginPropertyTable("modelPlaceSettings", ui::Tr("LOD 距離の倍率", "LOD Distance Scale"))) {
+            changed |= DrawModelSlotRow(ui::Tr("モデル", "Model"), place->model, selected->id, 0);
+            changed |= ui::PropertyFloat(ui::Tr("接地オフセット", "Ground Offset"), &place->offset, -10000, 10000, defaults.offset,
+                ui::Tr("接地点（標高）からモデルを上下へずらす。負の値で基礎を地面へ埋めます", "Shifts the model up or down from the ground point (elevation). Negative values sink the foundation into the ground"), "%.3f m");
+            changed |= ui::PropertyFloat(ui::Tr("描画距離", "Draw Distance"), &place->maxDistance, 0, 100000, defaults.maxDistance,
+                ui::Tr("この距離より遠いモデルを描画対象から外します。0は距離制限なし。影にも適用します", "Models farther than this are not drawn. 0 means no limit. Also applies to shadows"), "%.0f m");
+            changed |= ui::PropertyBool(ui::Tr("LOD 自動", "Auto LOD"), &place->autoLod, defaults.autoLod,
+                ui::Tr("画面に映る大きさで LOD を切り替えます。切り替えの画面サイズはモデルのプロパティで設定します", "Switches LOD by on-screen size. Set the switch sizes in the model's properties"));
             if (place->autoLod)
-                changed |= ui::PropertyFloat("LOD 距離の倍率", &place->lodBias, 0.01f, 100.0f, defaults.lodBias,
-                    "切り替わる距離に掛けます。小さくすると近くから簡略な段階になり軽くなります", "%.2f");
+                changed |= ui::PropertyFloat(ui::Tr("LOD 距離の倍率", "LOD Distance Scale"), &place->lodBias, 0.01f, 100.0f, defaults.lodBias,
+                    ui::Tr("切り替わる距離に掛けます。小さくすると近くから簡略な段階になり軽くなります", "Multiplies the switch distances. Lower values use simpler levels closer in, which is lighter"), "%.2f");
             else
-                changed |= ui::PropertyInt("LOD", &place->lod, 0, 16, defaults.lod, "モデルにないLODは最も近い段階を使います");
+                changed |= ui::PropertyInt("LOD", &place->lod, 0, 16, defaults.lod, ui::Tr("モデルにないLODは最も近い段階を使います", "LODs the model doesn't have use the nearest level"));
             ui::EndPropertyTable();
         }
         // 位置は地形の UV で持ち、中心からの m（東が +X、南が +Z）で見せる。
@@ -3869,31 +4018,31 @@ void Application::DrawNodeProperties(graph::Node* selected) {
         for (size_t i = 0; i < place->placements.size(); ++i) {
             ImGui::PushID(static_cast<int>(i));
             auto& placement = place->placements[i];
-            ui::SectionHeader(("配置 " + std::to_string(i + 1)).c_str());
-            if (ui::BeginPropertyTable("placementRows", "位置 X（東）")) {
+            ui::SectionHeader((std::string(ui::Tr("配置 ", "Placement ")) + std::to_string(i + 1)).c_str());
+            if (ui::BeginPropertyTable("placementRows", ui::Tr("位置 X（東）", "Position Z (South)"))) {
                 float x = (placement.u - 0.5f) * sizeMeters, z = (placement.v - 0.5f) * sizeMeters;
-                if (ui::PropertyFloat("位置 X（東）", &x, -half, half, 0.0f, "地形の中心からの距離（m）。東が正", "%.2f m")) {
+                if (ui::PropertyFloat(ui::Tr("位置 X（東）", "Position X (East)"), &x, -half, half, 0.0f, ui::Tr("地形の中心からの距離（m）。東が正", "Distance from the terrain center (m). East is positive"), "%.2f m")) {
                     placement.u = std::clamp(x / sizeMeters + 0.5f, 0.0f, 1.0f); changed = true;
                 }
-                if (ui::PropertyFloat("位置 Z（南）", &z, -half, half, 0.0f, "地形の中心からの距離（m）。南が正", "%.2f m")) {
+                if (ui::PropertyFloat(ui::Tr("位置 Z（南）", "Position Z (South)"), &z, -half, half, 0.0f, ui::Tr("地形の中心からの距離（m）。南が正", "Distance from the terrain center (m). South is positive"), "%.2f m")) {
                     placement.v = std::clamp(z / sizeMeters + 0.5f, 0.0f, 1.0f); changed = true;
                 }
-                changed |= ui::PropertyFloat("標高", &placement.elevationMeters, baseElevation - 100.0f,
+                changed |= ui::PropertyFloat(ui::Tr("標高", "Elevation"), &placement.elevationMeters, baseElevation - 100.0f,
                     baseElevation + m_renderer.DisplacementScale() + 100.0f, baseElevation,
-                    "接地点（モデルの底面の中心）の標高。地形には追従しないので、敷地を Grading で均してこの高さに合わせる", "%.2f m");
-                changed |= ui::PropertyFloat("方位", &placement.yawDegrees, -180.0f, 180.0f, 0.0f,
-                    "上から見て時計回りの回転。0 でモデルの +X が東、+Z が南を向く", "%.1f°");
-                changed |= ui::PropertyFloat("倍率", &placement.scale, graph::kModelPlaceScaleMin, graph::kModelPlaceScaleMax, 1.0f,
-                    "モデルの実寸に掛ける倍率", "%.3f", ImGuiSliderFlags_Logarithmic);
-                ui::PropertyValue("地形の標高", "%.2f m", terrainElevation(placement.u, placement.v));
-                ui::PropertyLabel("操作");
-                if (ui::Button("地形の高さへ")) { placement.elevationMeters = terrainElevation(placement.u, placement.v); changed = true; }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("標高を、今の地形（均した後）のこの位置の高さにする");
+                    ui::Tr("接地点（モデルの底面の中心）の標高。地形には追従しないので、敷地を Grading で均してこの高さに合わせる", "Elevation of the ground point (center of the model's bottom). It doesn't follow the terrain, so level the pad with Grading to match this height"), "%.2f m");
+                changed |= ui::PropertyFloat(ui::Tr("方位", "Heading"), &placement.yawDegrees, -180.0f, 180.0f, 0.0f,
+                    ui::Tr("上から見て時計回りの回転。0 でモデルの +X が東、+Z が南を向く", "Clockwise rotation seen from above. At 0 the model's +X faces east and +Z faces south"), "%.1f°");
+                changed |= ui::PropertyFloat(ui::Tr("倍率", "Scale"), &placement.scale, graph::kModelPlaceScaleMin, graph::kModelPlaceScaleMax, 1.0f,
+                    ui::Tr("モデルの実寸に掛ける倍率", "Multiplier on the model's real size"), "%.3f", ImGuiSliderFlags_Logarithmic);
+                ui::PropertyValue(ui::Tr("地形の標高", "Terrain Elevation"), "%.2f m", terrainElevation(placement.u, placement.v));
+                ui::PropertyLabel(ui::Tr("操作", "Actions"));
+                if (ui::Button(ui::Tr("地形の高さへ", "To Terrain"))) { placement.elevationMeters = terrainElevation(placement.u, placement.v); changed = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", ui::Tr("標高を、今の地形（均した後）のこの位置の高さにする", "Sets the elevation to the current terrain height here (after leveling)"));
                 ImGui::SameLine();
-                if (ui::Button("注視点へ")) { atTarget(placement); changed = true; }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("ビューポートの注視点（回転の中心）の位置へ移し、標高を地形に合わせる");
+                if (ui::Button(ui::Tr("注視点へ", "To Target"))) { atTarget(placement); changed = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", ui::Tr("ビューポートの注視点（回転の中心）の位置へ移し、標高を地形に合わせる", "Moves to the viewport's target (orbit center) and matches the elevation to the terrain"));
                 ImGui::SameLine();
-                if (ui::Button("削除")) remove = static_cast<int>(i);
+                if (ui::Button(ui::Tr("削除", "Delete"))) remove = static_cast<int>(i);
                 ui::PropertyEnd();
                 ui::EndPropertyTable();
             }
@@ -3901,44 +4050,45 @@ void Application::DrawNodeProperties(graph::Node* selected) {
         }
         if (remove >= 0) { place->placements.erase(place->placements.begin() + remove); changed = true; }
         ImGui::BeginDisabled(place->placements.size() >= graph::kModelPlaceMaxPlacements);
-        if (ui::Button("配置を追加", ui::kWideButtonWidth)) {
+        if (ui::Button(ui::Tr("配置を追加", "Add Placement"), ui::kWideButtonWidth)) {
             graph::ModelPlacement placement;
             atTarget(placement);
             place->placements.push_back(placement); changed = true;
         }
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("ビューポートの注視点の位置に、地形の高さで置く");
-        ui::SectionHeader("敷地（Pad）");
-        if (ui::BeginPropertyTable("modelPlacePadRows", "余白")) {
-            changed |= ui::PropertyFloat("余白", &place->padMarginMeters, 0.0f, graph::kModelPlacePadMarginMax, defaults.padMarginMeters,
-                "敷地を外へ広げる幅（m）。敷地は接地点の標高の平らな面で、Grading が地形をこれに合わせて均す", "%.1f m");
-            if (place->padPolygon.empty()) ui::PropertyValue("形", "%s", "モデルの外形（矩形）");
+            ImGui::SetTooltip("%s", ui::Tr("ビューポートの注視点の位置に、地形の高さで置く", "Places at the viewport's target, at the terrain height"));
+        ui::SectionHeader(ui::Tr("敷地（Pad）", "Pad"));
+        if (ui::BeginPropertyTable("modelPlacePadRows", ui::Tr("余白", "Margin"))) {
+            changed |= ui::PropertyFloat(ui::Tr("余白", "Margin"), &place->padMarginMeters, 0.0f, graph::kModelPlacePadMarginMax, defaults.padMarginMeters,
+                ui::Tr("敷地を外へ広げる幅（m）。敷地は接地点の標高の平らな面で、Grading が地形をこれに合わせて均す", "Width (m) to extend the pad outward. The pad is a flat surface at the ground point's elevation; Grading levels the terrain to it"), "%.1f m");
+            if (place->padPolygon.empty()) ui::PropertyValue(ui::Tr("形", "Shape"), "%s", ui::Tr("モデルの外形（矩形）", "Model bounds (rectangle)"));
             else {
-                ui::PropertyValue("形", "多角形（%zu 点）", place->padPolygon.size());
-                ui::PropertyLabel("多角形");
-                if (ui::Button("矩形に戻す")) { place->padPolygon.clear(); changed = true; }
+                ui::PropertyValue(ui::Tr("形", "Shape"), ui::Tr("多角形（%zu 点）", "Polygon (%zu points)"), place->padPolygon.size());
+                ui::PropertyLabel(ui::Tr("多角形", "Polygon"));
+                if (ui::Button(ui::Tr("矩形に戻す", "Rectangle"))) { place->padPolygon.clear(); changed = true; }
                 ui::PropertyEnd();
             }
             ui::EndPropertyTable();
         }
         if (changed) { m_graph.MarkDirty(); MarkDocumentChanged(false); }
     } else if (selected->kind == graph::NodeKind::ModelMerge) {
-        ui::HintText("複数のInstancesをまとめます。接続すると入力が増え、各Model Scatterの設定を保持します");
+        ui::HintText("%s", ui::Tr("複数のInstancesをまとめます。接続すると入力が増え、各Model Scatterの設定を保持します", "Combines several Instances. Connecting adds inputs, and each Model Scatter keeps its settings"));
     } else if (selected->kind == graph::NodeKind::ModelOutput) {
-        ui::HintText("Model Scatter / Model Place / Model Merge のInstancesを接続します。ハイトマップとは独立してモデルを描画します");
+        ui::HintText("%s", ui::Tr("Model Scatter / Model Place / Model Merge のInstancesを接続します。ハイトマップとは独立してモデルを描画します", "Connect Instances from Model Scatter / Model Place / Model Merge. Models are drawn independently of the heightmap"));
     } else if (selected->kind == graph::NodeKind::Terrain) {
-        ui::HintText("地形グラフの Output に繋いだ結果を Result に出します。Mask Slope / Mask Height などの "
-                     "Base に繋ぐと、雲グラフのマスクを実際の地形から作れます");
+        ui::HintText("%s", ui::Tr("地形グラフの Output に繋いだ結果を Result に出します。Mask Slope / Mask Height などの "
+                                  "Base に繋ぐと、雲グラフのマスクを実際の地形から作れます",
+                                  "Outputs what is connected to the terrain graph's Output as Result. Connect it to the Base of Mask Slope / Mask Height and so on to build cloud graph masks from the actual terrain"));
         // CompileLayers は何も繋がっていなくてもベースのレイヤーを 1 つ出す（空にはならない）ので、
         // 実寸を持つチェーンの根があるかで判定する。
         if (m_graph.FindChainScale(0) == nullptr) {
-            ui::HintText("地形グラフの Output に何も繋がっていないので、Result は空になる");
+            ui::HintText("%s", ui::Tr("地形グラフの Output に何も繋がっていないので、Result は空になる", "Nothing is connected to the terrain graph's Output, so Result is empty"));
         }
     } else if (selected->kind == graph::NodeKind::CloudOutput) {
-        ui::HintText("Cloud Noise の Volume を接続して表示します。Cloud Animation を挟むと移動できます。未接続なら雲は表示しません");
-        ui::HintText("保存済みの Cloud / Cloud Layer (Legacy) も引き続き表示できます");
-        if (!m_renderer.AtmosphericMode() && ui::Button("大気散乱へ切替", ui::kWideButtonWidth)) {
+        ui::HintText("%s", ui::Tr("Cloud Noise の Volume を接続して表示します。Cloud Animation を挟むと移動できます。未接続なら雲は表示しません", "Connect Cloud Noise's Volume to display it. Insert Cloud Animation to move clouds. Nothing is shown when unconnected"));
+        ui::HintText("%s", ui::Tr("保存済みの Cloud / Cloud Layer (Legacy) も引き続き表示できます", "Saved Cloud / Cloud Layer (Legacy) nodes still display"));
+        if (!m_renderer.AtmosphericMode() && ui::Button(ui::Tr("大気散乱へ切替", "Use Atmospheric"), ui::kWideButtonWidth)) {
             // ライティングの方式はアンドゥの写しに入らないので段は積まず、未保存の判定だけ映す（他の切替と同じ）。
             m_renderer.AtmosphericMode() = true; m_pendingWorkEnvironmentSave = true;
             RefreshSceneDirty();
@@ -3977,7 +4127,7 @@ void Application::DrawNodeProperties(graph::Node* selected) {
             MarkDocumentChanged(false);
         }
     } else {
-        ui::HintText("出力ノード。「マテリアル」へ繋いだチェーンがプレビューになる");
+        ui::HintText("%s", ui::Tr("出力ノード。「マテリアル」へ繋いだチェーンがプレビューになる", "Output node. The chain connected to \"Material\" is previewed"));
     }
 }
 

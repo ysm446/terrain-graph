@@ -49,7 +49,7 @@ void Application::RevertAsset(const std::filesystem::path& path) {
         m_skyLibrary, m_renderer, m_graph, &m_models, &m_sceneComponents, -1, &m_sceneAtmosphere};
     if (!io::LoadSharedAsset(m_workspace, path, m_device, m_pipelineCache, refs, true)) {
         TG_LOG_ERROR("アセットを戻せませんでした: %s", ToUtf8Display(path).c_str());
-        m_toasts.Push("アセットを戻せませんでした", name);
+        m_toasts.Push(ui::Tr("アセットを戻せませんでした", "Could not revert the asset"), name);
         return;
     }
     const auto ext = path.extension();
@@ -77,7 +77,7 @@ void Application::RevertAsset(const std::filesystem::path& path) {
     RefreshSceneDirty();
     m_assetRefresh = true;
     m_assetThumbnails.Invalidate();
-    m_toasts.Push("変更前に戻しました", name);
+    m_toasts.Push(ui::Tr("変更前に戻しました", "Reverted changes"), name);
     TG_LOG_INFO("アセットを変更前に戻しました: %s", ToUtf8Display(path).c_str());
 }
 
@@ -137,8 +137,10 @@ void Application::ProcessSelectedAssetSave() {
     m_assetRefresh = true;
     if (savedCount) {
         m_assetThumbnails.Invalidate();
-        m_toasts.Push(std::to_string(savedCount) + " 件のアセットを保存しました");
-    } else if (!failedCount) m_toasts.Push("選択したアセットに保存する変更はありません");
-    if (failedCount) m_toasts.Push("保存に失敗したアセットがあります", "変更は未保存のまま保持しています");
+        m_toasts.Push(std::to_string(savedCount) + ui::Tr(" 件のアセットを保存しました", " asset(s) saved"));
+    } else if (!failedCount) m_toasts.Push(ui::Tr("選択したアセットに保存する変更はありません", "The selected assets have no changes to save"));
+    if (failedCount)
+        m_toasts.Push(ui::Tr("保存に失敗したアセットがあります", "Some assets failed to save"),
+                      ui::Tr("変更は未保存のまま保持しています", "The changes are kept unsaved"));
 }
 } // namespace tg

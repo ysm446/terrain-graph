@@ -2,6 +2,8 @@
 
 #include <imgui.h>
 
+#include "ui/Localization.h"
+
 #include <cstddef>
 #include <string>
 #include <string_view>
@@ -40,6 +42,8 @@ void UnsavedMark(const char* tooltip, float size = 0.0f);
 // 部品の寸法。96 DPI 基準の値を置き、使うときに Scaled() で現在の DPI へ合わせる。
 // 値の意味と使い分けは design-guide.md にある。種類を勝手に増やさない。
 inline constexpr float kLabelColumnWidth = 108.0f;
+// 英語のときのラベル列。英語のラベルは同じ意味でも日本語より横に長いので、列だけ広げる。
+inline constexpr float kLabelColumnWidthEnglish = 144.0f;
 inline constexpr float kSliderMinWidth = 76.0f;
 inline constexpr float kSliderMaxWidth = 176.0f;
 inline constexpr float kComboMaxWidth = 190.0f;

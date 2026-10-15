@@ -297,9 +297,11 @@ inline const compositor::MaterialLayer& DefaultLayerFor(compositor::LayerKind ki
 }
 
 // 曲率マスクの向き。compositor::CurvatureMode の並びと一致させること。
-inline const char* const kCurvatureModeLabels[] = {"尾根", "谷", "両方"};
+inline const ui::LocalizedText kCurvatureModeLabels[] = {
+    {"尾根", "Ridges"}, {"谷", "Valleys"}, {"両方", "Both"}};
 // 岩片の形。compositor::RockStyle の並びと一致させること。
-inline const char* const kRockStyleLabels[] = {"丸い", "多面体", "尖った破片"};
+inline const ui::LocalizedText kRockStyleLabels[] = {
+    {"丸い", "Rounded"}, {"多面体", "Faceted"}, {"尖った破片", "Shards"}};
 // 堆積 / 積雪の計算グリッド。合成解像度とは別に持つ。
 inline const char* const kSedimentResolutionLabels[] = {"256", "512", "1024"};
 inline constexpr uint32_t kSedimentResolutionValues[] = {256, 512, 1024};
@@ -313,29 +315,48 @@ inline const renderer::MaterialSettings kDefaultMaterial;
 inline const renderer::CameraState kDefaultCamera;
 inline const renderer::SkySettings kDefaultSky;
 
-inline const char* const kNoiseTypeLabels[] = {"fBm",    "尾根状", "セル状",
-                                              "Perlin", "雲状",   "割れ目"};
-inline const char* const kValueSourceLabels[] = {"定数", "ノイズ", "テクスチャ"};
+inline const ui::LocalizedText kNoiseTypeLabels[] = {
+    {"fBm", "fBm"},       {"尾根状", "Ridged"}, {"セル状", "Cellular"},
+    {"Perlin", "Perlin"}, {"雲状", "Billow"},   {"割れ目", "Cracks"}};
+inline const ui::LocalizedText kValueSourceLabels[] = {
+    {"定数", "Constant"}, {"ノイズ", "Noise"}, {"テクスチャ", "Texture"}};
 // **「ノード」は選ばせない。** グラフで Mask 入力へ繋ぐと自動でそれになる。
-inline const char* const kMaskSourceLabels[] = {
-    "定数",       "ノイズ",     "テクスチャ", "下地の高さ",
-    "下地の傾斜", "下地の曲率", "下地の窪み", "ペイント",
+inline const ui::LocalizedText kMaskSourceLabels[] = {
+    {"定数", "Constant"},
+    {"ノイズ", "Noise"},
+    {"テクスチャ", "Texture"},
+    {"下地の高さ", "Base Height"},
+    {"下地の傾斜", "Base Slope"},
+    {"下地の曲率", "Base Curvature"},
+    {"下地の窪み", "Base Cavity"},
+    {"ペイント", "Paint"},
 };
 // マスクの合成。compositor::MaskBlendMode の並びと一致させること。
-inline const char* const kMaskBlendModeLabels[] = {"加算", "乗算", "小さいほう", "大きいほう",
-                                                   "減算"};
+inline const ui::LocalizedText kMaskBlendModeLabels[] = {
+    {"加算", "Add"}, {"乗算", "Multiply"}, {"小さいほう", "Min"}, {"大きいほう", "Max"},
+    {"減算", "Subtract"}};
 // 川筋マスクの出力カーブ。compositor::FluvialCurve の並びと一致させること。
-inline const char* const kFluvialCurveLabels[] = {"対数", "しきい値", "線形"};
+inline const ui::LocalizedText kFluvialCurveLabels[] = {
+    {"対数", "Logarithmic"}, {"しきい値", "Threshold"}, {"線形", "Linear"}};
 // 川筋マスクの計算グリッド。合成解像度とは別に持つ。
 inline const char* const kFluvialResolutionLabels[] = {"256", "512", "1024"};
 inline constexpr uint32_t kFluvialResolutionValues[] = {256, 512, 1024};
 inline const char* const kChannelLabels[] = {"BaseColor", "Normal", "Surface", "Height"};
 
 // ビューポートの表示モード。renderer::DebugView と並びを合わせること。
-inline const char* const kDebugViewLabels[] = {
-    "Shaded",           "Base Color", "Normal (Camera)", "Normal (World)",
-    "Roughness",        "Metalness",  "AO",              "Height",
-    "Height (Local)",   "Wireframe",  "Clay",            "LOD",
+inline const ui::LocalizedText kDebugViewLabels[] = {
+    {"シェーディング", "Shaded"},
+    {"ベースカラー", "Base Color"},
+    {"法線（カメラ）", "Normal (Camera)"},
+    {"法線（ワールド）", "Normal (World)"},
+    {"ラフネス", "Roughness"},
+    {"メタルネス", "Metalness"},
+    {"AO", "AO"},
+    {"ハイト", "Height"},
+    {"ハイト（ローカル）", "Height (Local)"},
+    {"ワイヤーフレーム", "Wireframe"},
+    {"クレイ", "Clay"},
+    {"LOD", "LOD"},
 };
 // ペイントマスクの解像度。
 inline const char* const kResolutionLabels[] = {"512", "1024", "2048", "4096"};
@@ -370,7 +391,8 @@ inline constexpr const char* kAssetPathDragDropType = "TG_ASSET_PATH";
 
 // テクスチャの一覧に出すフォーマット名。DXGI の名前は長いので短く言い換える。
 inline const char* TextureFormatLabel(const compositor::LibraryTexture& entry) {
-    return entry.isFloat ? "RGBA16F (リニア)" : "RGBA8 (sRGB / リニア)";
+    return entry.isFloat ? ui::Tr("RGBA16F (リニア)", "RGBA16F (Linear)")
+                         : ui::Tr("RGBA8 (sRGB / リニア)", "RGBA8 (sRGB / Linear)");
 }
 
 // ステータスバーの通知を残す時間（秒）。情報だけが時間で消える。
@@ -401,9 +423,10 @@ inline int MaterialResolutionIndex(uint32_t resolution) {
 inline bool DrawNoiseTypeRow(const char* label, compositor::NoiseType& type,
                       compositor::NoiseType defaultType) {
     int selected = static_cast<int>(type);
-    if (ui::PropertyCombo(label, &selected, kNoiseTypeLabels, IM_ARRAYSIZE(kNoiseTypeLabels),
+    if (ui::PropertyCombo(label, &selected, ui::Tr(kNoiseTypeLabels).data(), IM_ARRAYSIZE(kNoiseTypeLabels),
                           static_cast<int>(defaultType),
-                          "fBm: 一般的な起伏 / 尾根状: 稜線や割れ目 / セル状: 石畳や砂利")) {
+                          ui::Tr("fBm: 一般的な起伏 / 尾根状: 稜線や割れ目 / セル状: 石畳や砂利",
+                                 "fBm: general relief / Ridged: ridgelines and cracks / Cellular: paving and gravel"))) {
         type = static_cast<compositor::NoiseType>(selected);
         return true;
     }
@@ -414,27 +437,27 @@ inline bool DrawNoiseTypeRow(const char* label, compositor::NoiseType& type,
 // ハイトでは寄与の量を heightGain が担うので、showAmount を false にして「量」を出さない。
 inline bool DrawNoiseRows(compositor::NoiseParams& noise, const compositor::NoiseParams& defaults,
                    bool showAmount = true) {
-    bool changed = DrawNoiseTypeRow("種類", noise.type, defaults.type);
+    bool changed = DrawNoiseTypeRow(ui::Tr("種類", "Type"), noise.type, defaults.type);
     // 周波数はタイルするよう整数へ丸めて評価される（Common.hlsli の SampleNoise）。
     // スライダーの刻みも 1 にして、丸めと表示がずれないようにする。
-    changed |= ui::PropertyFloat("周波数", &noise.scale, 1.0f, 64.0f, defaults.scale,
-                                 "大きいほど細かい模様になる。タイルさせるため整数で使う",
+    changed |= ui::PropertyFloat(ui::Tr("周波数", "Frequency"), &noise.scale, 1.0f, 64.0f, defaults.scale,
+                                 ui::Tr("大きいほど細かい模様になる。タイルさせるため整数で使う", "Higher gives a finer pattern. Used as an integer so it tiles"),
                                  "%.0f", 0, 1.0f);
     if (showAmount) {
-        changed |= ui::PropertyFloat("量", &noise.amount, 0.0f, 3.0f, defaults.amount,
-                                     "ノイズの寄与。0 で効かなくなる", "%.2f");
+        changed |= ui::PropertyFloat(ui::Tr("量", "Amount"), &noise.amount, 0.0f, 3.0f, defaults.amount,
+                                     ui::Tr("ノイズの寄与。0 で効かなくなる", "Noise contribution. 0 disables it"), "%.2f");
     }
-    changed |= ui::PropertyInt("オクターブ", &noise.octaves, 1, 8, defaults.octaves,
-                               "重ねる段数。多いほど細部が増え、計算も増える");
-    changed |= ui::PropertyFloat("オフセット", &noise.offset, 0.0f, 64.0f, defaults.offset,
-                                 "同じ設定で別の模様がほしいときにずらす", "%.1f", 0, 0.5f);
+    changed |= ui::PropertyInt(ui::Tr("オクターブ", "Octaves"), &noise.octaves, 1, 8, defaults.octaves,
+                               ui::Tr("重ねる段数。多いほど細部が増え、計算も増える", "Number of layers. More adds detail and cost"));
+    changed |= ui::PropertyFloat(ui::Tr("オフセット", "Offset"), &noise.offset, 0.0f, 64.0f, defaults.offset,
+                                 ui::Tr("同じ設定で別の模様がほしいときにずらす", "Shift for a different pattern with the same settings"), "%.1f", 0, 0.5f);
     return changed;
 }
 
 inline void DrawAssetSourceButton(const std::filesystem::path& path, std::filesystem::path& request) {
     ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-    const auto tooltip = path.empty() ? std::string("参照元がありません（未指定または未保存）")
-        : std::string("参照元をアセットブラウザで表示\n") + ToUtf8Display(path);
+    const auto tooltip = path.empty() ? std::string(ui::Tr("参照元がありません（未指定または未保存）", "No source (unassigned or unsaved)"))
+        : std::string(ui::Tr("参照元をアセットブラウザで表示\n", "Show the source in the Asset Browser\n")) + ToUtf8Display(path);
     if (ui::RevealSourceButton(!path.empty(), tooltip.c_str())) request = path;
 }
 inline float AssetReferenceWidth(float width) {
@@ -443,10 +466,10 @@ inline float AssetReferenceWidth(float width) {
 inline void DrawAssetPathRow(const char* label, const std::filesystem::path& path, std::filesystem::path& request) {
     ui::PropertyLabel(label);
     // アイコンを先に置き、長いファイル名でも画面外へ押し出されないようにする。
-    const auto tooltip = path.empty() ? std::string("参照元がありません") : std::string("参照元をアセットブラウザで表示\n") + ToUtf8Display(path);
+    const auto tooltip = path.empty() ? std::string(ui::Tr("参照元がありません", "No source")) : std::string(ui::Tr("参照元をアセットブラウザで表示\n", "Show the source in the Asset Browser\n")) + ToUtf8Display(path);
     if (ui::RevealSourceButton(!path.empty(), tooltip.c_str())) request = path;
     ImGui::SameLine();
-    ImGui::TextWrapped("%s", path.empty() ? "（未指定）" : ToUtf8Display(path.filename()).c_str());
+    ImGui::TextWrapped("%s", path.empty() ? ui::Tr("（未指定）", "(None)") : ToUtf8Display(path.filename()).c_str());
     ui::PropertyEnd();
 }
 
@@ -490,7 +513,7 @@ inline void DrawUnloadedAssetChoices(uint32_t widget, uint32_t previous, bool te
             }
             ImGui::SetCursorPos(nextPos);
             if (picked) context->Queue(path, widget, previous);
-            if (hovered) ImGui::SetTooltip("%s\n選ぶと読み込んで割り当てる", relative.c_str());
+            if (hovered) ImGui::SetTooltip(ui::Tr("%s\n選ぶと読み込んで割り当てる", "%s\nSelect to load and assign it"), relative.c_str());
         } else {
             const float side = ImGui::GetFrameHeight();
             // ラベルをSelectable自身に持たせ、ポップアップの幅も名前に合わせる。
@@ -520,10 +543,10 @@ inline bool AcceptAssetSlotDrop(uint32_t widget, uint32_t& value, bool texture, 
 // マテリアルを選ぶ行。サムネイル付きの一覧から選ぶ。
 inline bool DrawMaterialSlotRow(const char* label, compositor::MaterialAssetId& slot,
                          const compositor::MaterialLibrary& library, std::filesystem::path& revealRequest, bool allowLayerMaterials = true, bool showThumbnail = false) {
-    ui::PropertyLabel(label, "「なし」ならレイヤーの定数値だけで塗る");
+    ui::PropertyLabel(label, ui::Tr("「なし」ならレイヤーの定数値だけで塗る", "If None, paints with the layer's constant values only"));
     const uint32_t widget = ImGui::GetID("##value");
 
-    std::string preview = "なし";
+    std::string preview = ui::Tr("なし", "None");
     if (const compositor::MaterialAsset* current = library.Find(slot); current != nullptr) {
         preview = current->name;
     }
@@ -548,7 +571,7 @@ inline bool DrawMaterialSlotRow(const char* label, compositor::MaterialAssetId& 
         ui::ThumbnailButton("##assignedMaterial", static_cast<ImTextureID>(library.ThumbnailHandle(slot).ptr), thumbnailSize, false);
         changed |= acceptDrop();
         AcceptAssetSlotDrop(widget, slot, false, allowLayerMaterials);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("マテリアルをここへドロップして割り当て");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", ui::Tr("マテリアルをここへドロップして割り当て", "Drop a material here to assign it"));
         ImGui::SameLine();
         ImGui::SetCursorPosY(rowY + (thumbnailSize - ImGui::GetFrameHeight()) * 0.5f);
     }
@@ -556,7 +579,7 @@ inline bool DrawMaterialSlotRow(const char* label, compositor::MaterialAssetId& 
         AssetReferenceWidth(std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x)));
     if (ImGui::BeginCombo("##value", preview.c_str())) {
         ui::ComboFilterInput();
-        if (!ui::ComboFilterActive() && ImGui::Selectable("なし", slot == compositor::kNoMaterialAsset)) {
+        if (!ui::ComboFilterActive() && ImGui::Selectable(ui::Tr("なし", "None"), slot == compositor::kNoMaterialAsset)) {
             slot = compositor::kNoMaterialAsset;
             changed = true;
         }
@@ -621,7 +644,7 @@ inline bool DrawMaterialSlotRow(const char* label, compositor::MaterialAssetId& 
 inline bool DrawTextureCombo(const char* id, compositor::TextureId& slot,
                       const compositor::TextureLibrary& library, float width, std::filesystem::path& revealRequest) {
     const uint32_t widget = ImGui::GetID(id);
-    std::string preview = "なし";
+    std::string preview = ui::Tr("なし", "None");
     bool missing = false;
     if (const compositor::LibraryTexture* current = library.Find(slot); current != nullptr) {
         preview = current->name;
@@ -641,7 +664,7 @@ inline bool DrawTextureCombo(const char* id, compositor::TextureId& slot,
     }
     if (open) {
         ui::ComboFilterInput();
-        if (!ui::ComboFilterActive() && ImGui::Selectable("なし", slot == compositor::kNoTexture)) {
+        if (!ui::ComboFilterActive() && ImGui::Selectable(ui::Tr("なし", "None"), slot == compositor::kNoTexture)) {
             slot = compositor::kNoTexture;
             changed = true;
         }
@@ -690,15 +713,17 @@ inline bool DrawTextureCombo(const char* id, compositor::TextureId& slot,
         ImGui::GetDragDropPayload() == nullptr) {
         if (const compositor::LibraryTexture* current = library.Find(slot); current != nullptr) {
             if (current->missing) {
-                ImGui::SetTooltip("%s\nリンク切れ: ファイルが見つかりません。"
-                                  "テクスチャ一覧の右クリックから繋ぎ直す",
+                ImGui::SetTooltip(ui::Tr("%s\nリンク切れ: ファイルが見つかりません。"
+                                         "テクスチャ一覧の右クリックから繋ぎ直す",
+                                         "%s\nBroken link: file not found. "
+                                         "Relink it from the texture list's right-click menu"),
                                   current->name.c_str());
             } else {
                 ImGui::SetTooltip("%s\n%u x %u", current->name.c_str(), current->texture.width,
                                   current->texture.height);
             }
         } else {
-            ImGui::SetTooltip("なし\nテクスチャ一覧からドラッグしても割り当てられる");
+            ImGui::SetTooltip("%s", ui::Tr("なし\nテクスチャ一覧からドラッグしても割り当てられる", "None\nYou can also drag one from the texture list to assign it"));
         }
     }
     const auto* source = library.Find(slot);
@@ -714,31 +739,31 @@ inline bool DrawTextureCombo(const char* id, compositor::TextureId& slot,
 inline bool DrawWindRows(compositor::WindParams& wind) {
     const compositor::WindParams defaults;
     bool changed = false;
-    changed |= ui::PropertyFloat("風向", &wind.directionDegrees, 0.0f, 360.0f, defaults.directionDegrees,
-                                 "風が吹いていく向き。0 で +Z、90 で +X（雲の風向と同じ）", "%.0f °");
-    changed |= ui::PropertyFloat("風速", &wind.speedMetersPerSecond, 0.0f, 60.0f, defaults.speedMetersPerSecond,
-                                 "地形にぶつける一様な風の速さ（m/s）", "%.1f m/s");
-    changed |= ui::PropertyFloat("計算する高さ", &wind.heightMeters, 10.0f, 3000.0f, defaults.heightMeters,
-                                 "地形の最高点からどこまで上を計算するか（m）。低いと稜線の上で流れが詰まる",
+    changed |= ui::PropertyFloat(ui::Tr("風向", "Wind Direction"), &wind.directionDegrees, 0.0f, 360.0f, defaults.directionDegrees,
+                                 ui::Tr("風が吹いていく向き。0 で +Z、90 で +X（雲の風向と同じ）", "Direction the wind blows toward. 0 is +Z, 90 is +X (same as the cloud wind)"), "%.0f °");
+    changed |= ui::PropertyFloat(ui::Tr("風速", "Wind Speed"), &wind.speedMetersPerSecond, 0.0f, 60.0f, defaults.speedMetersPerSecond,
+                                 ui::Tr("地形にぶつける一様な風の速さ（m/s）", "Speed of the uniform wind blown at the terrain (m/s)"), "%.1f m/s");
+    changed |= ui::PropertyFloat(ui::Tr("計算する高さ", "Domain Height"), &wind.heightMeters, 10.0f, 3000.0f, defaults.heightMeters,
+                                 ui::Tr("地形の最高点からどこまで上を計算するか（m）。低いと稜線の上で流れが詰まる", "How far above the highest terrain point to simulate (m). Too low and the flow chokes over ridges"),
                                  "%.0f m", ImGuiSliderFlags_Logarithmic);
     int resolution = static_cast<int>(wind.resolution);
-    if (ui::PropertyInt("格子（水平）", &resolution, 32, 512, static_cast<int>(defaults.resolution),
-                        "水平の格子の一辺（セル数）。上げるほど細かい地形に沿うが、反復のコストが増える")) {
+    if (ui::PropertyInt(ui::Tr("格子（水平）", "Grid (Horizontal)"), &resolution, 32, 512, static_cast<int>(defaults.resolution),
+                        ui::Tr("水平の格子の一辺（セル数）。上げるほど細かい地形に沿うが、反復のコストが増える", "Cells per side of the horizontal grid. Higher follows finer terrain but each iteration costs more"))) {
         wind.resolution = static_cast<uint32_t>(resolution); changed = true;
     }
     int layers = static_cast<int>(wind.layers);
-    if (ui::PropertyInt("格子（鉛直）", &layers, 4, 128, static_cast<int>(defaults.layers),
-                        "鉛直の層数。標高差と計算する高さの合計をこの数で割った厚さが 1 層。矢印は地表から半層上の風")) {
+    if (ui::PropertyInt(ui::Tr("格子（鉛直）", "Grid (Vertical)"), &layers, 4, 128, static_cast<int>(defaults.layers),
+                        ui::Tr("鉛直の層数。標高差と計算する高さの合計をこの数で割った厚さが 1 層。矢印は地表から半層上の風", "Number of vertical layers. Each is (elevation range + domain height) / this count thick. Arrows show the wind half a layer above ground"))) {
         wind.layers = static_cast<uint32_t>(layers); changed = true;
     }
-    changed |= ui::PropertyInt("反復", &wind.iterations, 2, 512, defaults.iterations,
-                               "圧力の反復回数。少ないと地形を避けきらず、稜線の吹き上げが弱い");
-    changed |= ui::PropertyFloat("粉雪のしきい値", &wind.spindriftThreshold, 0.0f, 60.0f, defaults.spindriftThreshold,
-                                 "Spindrift が出始める地表の風速（m/s）", "%.1f m/s");
-    changed |= ui::PropertyFloat("粉雪の幅", &wind.spindriftRange, 0.1f, 60.0f, defaults.spindriftRange,
-                                 "しきい値からこれだけ超えたら Spindrift が 1（m/s）", "%.1f m/s");
-    changed |= ui::PropertyFloat("風下の傾き", &wind.leeSlope, 0.01f, 2.0f, defaults.leeSlope,
-                                 "風の向きに地形がこの傾き（高さ / 距離）で下る所を風下とみなし、Spindrift を 1 にする",
+    changed |= ui::PropertyInt(ui::Tr("反復", "Iterations"), &wind.iterations, 2, 512, defaults.iterations,
+                               ui::Tr("圧力の反復回数。少ないと地形を避けきらず、稜線の吹き上げが弱い", "Pressure iterations. Too few and the flow does not fully avoid the terrain, weakening updrafts over ridges"));
+    changed |= ui::PropertyFloat(ui::Tr("粉雪のしきい値", "Drift Threshold"), &wind.spindriftThreshold, 0.0f, 60.0f, defaults.spindriftThreshold,
+                                 ui::Tr("Spindrift が出始める地表の風速（m/s）", "Surface wind speed at which Spindrift starts (m/s)"), "%.1f m/s");
+    changed |= ui::PropertyFloat(ui::Tr("粉雪の幅", "Drift Range"), &wind.spindriftRange, 0.1f, 60.0f, defaults.spindriftRange,
+                                 ui::Tr("しきい値からこれだけ超えたら Spindrift が 1（m/s）", "Spindrift reaches 1 this far above the threshold (m/s)"), "%.1f m/s");
+    changed |= ui::PropertyFloat(ui::Tr("風下の傾き", "Lee Slope"), &wind.leeSlope, 0.01f, 2.0f, defaults.leeSlope,
+                                 ui::Tr("風の向きに地形がこの傾き（高さ / 距離）で下る所を風下とみなし、Spindrift を 1 にする", "Where the terrain drops downwind at this slope (height / distance), it counts as lee and Spindrift is 1"),
                                  "%.2f", ImGuiSliderFlags_Logarithmic);
     return changed;
 }
@@ -748,42 +773,46 @@ inline bool DrawFluvialRows(compositor::FluvialParams& fluvial) {
     bool changed = false;
 
     int curve = static_cast<int>(fluvial.curve);
-    if (ui::PropertyCombo("カーブ", &curve, kFluvialCurveLabels,
+    if (ui::PropertyCombo(ui::Tr("カーブ", "Curve"), &curve, ui::Tr(kFluvialCurveLabels).data(),
                           IM_ARRAYSIZE(kFluvialCurveLabels),
                           static_cast<int>(defaults.curve),
-                          "対数は細い支流まで見える連続的な川筋、"
-                          "しきい値は川とみなす所だけを抜く、線形は主流が強く出る")) {
+                          ui::Tr("対数は細い支流まで見える連続的な川筋、"
+                                 "しきい値は川とみなす所だけを抜く、線形は主流が強く出る",
+                                 "Logarithmic shows continuous channels down to thin tributaries, "
+                                 "Threshold keeps only what counts as river, Linear emphasizes main streams"))) {
         fluvial.curve = static_cast<compositor::FluvialCurve>(curve);
         changed = true;
     }
 
     const bool isThreshold = (fluvial.curve == compositor::FluvialCurve::Threshold);
     changed |= ui::PropertyFloat(
-        "しきい値", &fluvial.threshold, 0.0f, 0.05f, defaults.threshold,
-        isThreshold ? "これより多く水が集まる所を川とみなす（全セル数に対する割合）"
-                    : "これ未満の流量を切り捨てる（全セル数に対する割合）",
+        ui::Tr("しきい値", "Threshold"), &fluvial.threshold, 0.0f, 0.05f, defaults.threshold,
+        isThreshold ? ui::Tr("これより多く水が集まる所を川とみなす（全セル数に対する割合）", "Where more water than this collects counts as river (fraction of all cells)")
+                    : ui::Tr("これ未満の流量を切り捨てる（全セル数に対する割合）", "Flow below this is discarded (fraction of all cells)"),
         "%.4f", 0, 0.0005f);
     if (isThreshold) {
-        changed |= ui::PropertyFloat("やわらかさ", &fluvial.softness, 0.001f, 2.0f,
+        changed |= ui::PropertyFloat(ui::Tr("やわらかさ", "Softness"), &fluvial.softness, 0.001f, 2.0f,
                                      defaults.softness,
-                                     "しきい値の前後をどれだけなだらかに繋ぐか", "%.3f");
-        changed |= ui::PropertyFloat("川縁", &fluvial.edgePower, 0.1f, 8.0f,
+                                     ui::Tr("しきい値の前後をどれだけなだらかに繋ぐか", "How smoothly to transition around the threshold"), "%.3f");
+        changed |= ui::PropertyFloat(ui::Tr("川縁", "Edge Power"), &fluvial.edgePower, 0.1f, 8.0f,
                                      defaults.edgePower,
-                                     "1 より大きいと川が細く、小さいと太くなる", "%.2f");
+                                     ui::Tr("1 より大きいと川が細く、小さいと太くなる", "Above 1 makes rivers thinner, below 1 wider"), "%.2f");
     } else {
-        changed |= ui::PropertyFloat("ガンマ", &fluvial.gamma, 0.05f, 4.0f, defaults.gamma,
-                                     "下げると細い支流が明るくなり、上げると主流だけが残る",
+        changed |= ui::PropertyFloat(ui::Tr("ガンマ", "Gamma"), &fluvial.gamma, 0.05f, 4.0f, defaults.gamma,
+                                     ui::Tr("下げると細い支流が明るくなり、上げると主流だけが残る", "Lower brightens thin tributaries; higher keeps only the main streams"),
                                      "%.2f");
     }
 
     changed |= ui::PropertyFloat(
-        "最大ディテール", &fluvial.detailMeters, 1.0f, 512.0f, defaults.detailMeters,
-        "流向を読む前にならす大きさ（m）。大きいほど小さな凹凸を無視して大きな谷筋を追う",
+        ui::Tr("最大ディテール", "Max Detail"), &fluvial.detailMeters, 1.0f, 512.0f, defaults.detailMeters,
+        ui::Tr("流向を読む前にならす大きさ（m）。大きいほど小さな凹凸を無視して大きな谷筋を追う", "Smoothing size before reading flow direction (m). Larger ignores small bumps and follows larger valleys"),
         "%.1f m", ImGuiSliderFlags_Logarithmic);
-    changed |= ui::PropertyFloat("集中度", &fluvial.concentration, 0.1f, 16.0f,
+    changed |= ui::PropertyFloat(ui::Tr("集中度", "Concentration"), &fluvial.concentration, 0.1f, 16.0f,
                                  defaults.concentration,
-                                 "下流への配分の集中度。大きいほど主流へ集まり、"
-                                 "小さいほど面的に広がる",
+                                 ui::Tr("下流への配分の集中度。大きいほど主流へ集まり、"
+                                        "小さいほど面的に広がる",
+                                        "How concentrated the downstream flow is. Higher gathers into main streams, "
+                                        "lower spreads over the surface"),
                                  "%.2f");
 
     int resolutionIndex = 1;
@@ -792,10 +821,12 @@ inline bool DrawFluvialRows(compositor::FluvialParams& fluvial) {
             resolutionIndex = i;
         }
     }
-    if (ui::PropertyCombo("解像度", &resolutionIndex, kFluvialResolutionLabels,
+    if (ui::PropertyCombo(ui::Tr("解像度", "Resolution"), &resolutionIndex, kFluvialResolutionLabels,
                           IM_ARRAYSIZE(kFluvialResolutionLabels), 1,
-                          "川筋を計算するグリッド。合成解像度とは別。"
-                          "上げるほど細かい支流が出るが、反復回数も比例して増える")) {
+                          ui::Tr("川筋を計算するグリッド。合成解像度とは別。"
+                                 "上げるほど細かい支流が出るが、反復回数も比例して増える",
+                                 "Grid for computing channels, separate from the composite resolution. "
+                                 "Higher shows finer tributaries, but iterations grow proportionally"))) {
         fluvial.resolution = kFluvialResolutionValues[resolutionIndex];
         changed = true;
     }
@@ -807,24 +838,25 @@ inline bool DrawCurvatureRows(compositor::CurvatureParams& curvature) {
     const compositor::CurvatureParams defaults;
     bool changed = false;
     int mode = static_cast<int>(curvature.mode);
-    if (ui::PropertyCombo("向き", &mode, kCurvatureModeLabels,
+    if (ui::PropertyCombo(ui::Tr("向き", "Mode"), &mode, ui::Tr(kCurvatureModeLabels).data(),
                           IM_ARRAYSIZE(kCurvatureModeLabels), static_cast<int>(defaults.mode),
-                          "周りより高い所（尾根）、低い所（谷）、その両方のどれを拾うか")) {
+                          ui::Tr("周りより高い所（尾根）、低い所（谷）、その両方のどれを拾うか",
+                                 "Whether to pick spots higher (ridges) or lower (valleys) than their surroundings, or both"))) {
         curvature.mode = static_cast<compositor::CurvatureMode>(mode);
         changed = true;
     }
     changed |= ui::PropertyFloat(
-        "最大ディテール", &curvature.detailMeters, 1.0f, 512.0f, defaults.detailMeters,
-        "比べる周りの広さ（m）。大きいほど小さな凹凸を無視して広い尾根や谷を拾う",
+        ui::Tr("最大ディテール", "Max Detail"), &curvature.detailMeters, 1.0f, 512.0f, defaults.detailMeters,
+        ui::Tr("比べる周りの広さ（m）。大きいほど小さな凹凸を無視して広い尾根や谷を拾う", "Size of the neighborhood to compare (m). Larger ignores small bumps and picks broad ridges and valleys"),
         "%.1f m", ImGuiSliderFlags_Logarithmic);
     changed |= ui::PropertyFloat(
-        "感度", &curvature.sensitivityMeters, 0.01f, 100.0f, defaults.sensitivityMeters,
-        "この高さの差で 1 になる。小さいほど弱い曲率まで明るくなる", "%.2f m",
+        ui::Tr("感度", "Sensitivity"), &curvature.sensitivityMeters, 0.01f, 100.0f, defaults.sensitivityMeters,
+        ui::Tr("この高さの差で 1 になる。小さいほど弱い曲率まで明るくなる", "Height difference that maps to 1. Smaller brightens weaker curvature too"), "%.2f m",
         ImGuiSliderFlags_Logarithmic);
-    changed |= ui::PropertyFloat("しきい値", &curvature.threshold, 0.0f, 0.99f,
-                                 defaults.threshold, "これ以下の弱い曲率を捨てる", "%.2f");
-    changed |= ui::PropertyFloat("ガンマ", &curvature.gamma, 0.05f, 4.0f, defaults.gamma,
-                                 "1 未満で弱い曲率を明るく、1 より大きいと強い所だけを残す",
+    changed |= ui::PropertyFloat(ui::Tr("しきい値", "Threshold"), &curvature.threshold, 0.0f, 0.99f,
+                                 defaults.threshold, ui::Tr("これ以下の弱い曲率を捨てる", "Discards curvature weaker than this"), "%.2f");
+    changed |= ui::PropertyFloat(ui::Tr("ガンマ", "Gamma"), &curvature.gamma, 0.05f, 4.0f, defaults.gamma,
+                                 ui::Tr("1 未満で弱い曲率を明るく、1 より大きいと強い所だけを残す", "Below 1 brightens weak curvature; above 1 keeps only strong areas"),
                                  "%.2f");
     return changed;
 }
@@ -834,10 +866,10 @@ inline bool DrawCurvatureRows(compositor::CurvatureParams& curvature) {
 inline bool DrawPathMaskRows(compositor::PathMaskParams& params) {
     const compositor::PathMaskParams defaults;
     bool changed = false;
-    changed |= ui::PropertyFloat("ガンマ", &params.gamma, 0.05f, 8.0f, defaults.gamma,
-                                 "フェザーのカーブ。1 未満で外側まで明るく、1 より大きいと中心へ締まる",
+    changed |= ui::PropertyFloat(ui::Tr("ガンマ", "Gamma"), &params.gamma, 0.05f, 8.0f, defaults.gamma,
+                                 ui::Tr("フェザーのカーブ。1 未満で外側まで明るく、1 より大きいと中心へ締まる", "Feather curve. Below 1 stays bright farther out; above 1 tightens toward the center"),
                                  "%.2f", ImGuiSliderFlags_Logarithmic);
-    changed |= ui::PropertyBool("反転", &params.invert, defaults.invert, "白黒を入れ替える");
+    changed |= ui::PropertyBool(ui::Tr("反転", "Invert"), &params.invert, defaults.invert, ui::Tr("白黒を入れ替える", "Swaps black and white"));
     return changed;
 }
 
@@ -845,19 +877,21 @@ inline bool DrawPathMaskRows(compositor::PathMaskParams& params) {
 inline bool DrawAreaMaskRows(compositor::AreaMaskParams& params) {
     const compositor::AreaMaskParams defaults;
     bool changed = false;
-    changed |= ui::PropertyFloat("縁のぼかし", &params.featherMeters, 0.0f, 200.0f,
+    changed |= ui::PropertyFloat(ui::Tr("縁のぼかし", "Edge Blur"), &params.featherMeters, 0.0f, 200.0f,
                                  defaults.featherMeters,
-                                 "多角形の縁の外側を 0 へ落とす幅（m）。0 で二値", "%.1f m",
+                                 ui::Tr("多角形の縁の外側を 0 へ落とす幅（m）。0 で二値", "Width outside the polygon edge that falls off to 0 (m). 0 is binary"), "%.1f m",
                                  ImGuiSliderFlags_Logarithmic);
-    changed |= ui::PropertyFloat("縁のずれ", &params.offsetMeters, -200.0f, 200.0f,
+    changed |= ui::PropertyFloat(ui::Tr("縁のずれ", "Edge Offset"), &params.offsetMeters, -200.0f, 200.0f,
                                  defaults.offsetMeters,
-                                 "縁を外へ（正）/ 内へ（負）ずらす距離（m）。"
-                                 "線を引いた所より少し広く / 狭く取りたいときに",
+                                 ui::Tr("縁を外へ（正）/ 内へ（負）ずらす距離（m）。"
+                                        "線を引いた所より少し広く / 狭く取りたいときに",
+                                        "Distance to move the edge outward (positive) / inward (negative) (m). "
+                                        "Use it to take slightly more / less than the drawn line"),
                                  "%.1f m");
-    changed |= ui::PropertyFloat("ガンマ", &params.gamma, 0.05f, 8.0f, defaults.gamma,
-                                 "ぼかしのカーブ。1 未満で外側まで明るく、1 より大きいと内側へ締まる",
+    changed |= ui::PropertyFloat(ui::Tr("ガンマ", "Gamma"), &params.gamma, 0.05f, 8.0f, defaults.gamma,
+                                 ui::Tr("ぼかしのカーブ。1 未満で外側まで明るく、1 より大きいと内側へ締まる", "Blur curve. Below 1 stays bright farther out; above 1 tightens inward"),
                                  "%.2f", ImGuiSliderFlags_Logarithmic);
-    changed |= ui::PropertyBool("反転", &params.invert, defaults.invert, "白黒を入れ替える");
+    changed |= ui::PropertyBool(ui::Tr("反転", "Invert"), &params.invert, defaults.invert, ui::Tr("白黒を入れ替える", "Swaps black and white"));
     return changed;
 }
 
@@ -865,70 +899,75 @@ inline bool DrawAreaMaskRows(compositor::AreaMaskParams& params) {
 inline bool DrawMeshMaskRows(compositor::MeshMaskParams& params) {
     const compositor::MeshMaskParams defaults;
     bool changed = false;
-    changed |= ui::PropertyFloat("余白", &params.marginMeters, 0.0f, 50.0f, defaults.marginMeters,
-                                 "メッシュの外側へ広げる幅（m）。路肩の外まで木を生やさないときなどに",
+    changed |= ui::PropertyFloat(ui::Tr("余白", "Margin"), &params.marginMeters, 0.0f, 50.0f, defaults.marginMeters,
+                                 ui::Tr("メッシュの外側へ広げる幅（m）。路肩の外まで木を生やさないときなどに", "Width to expand outside the mesh (m). E.g. to keep trees off beyond the shoulder"),
                                  "%.1f m");
-    changed |= ui::PropertyFloat("フェザー", &params.featherMeters, 0.0f, 50.0f, defaults.featherMeters,
-                                 "余白の外側を 0 へ落とす幅（m）。0 で二値", "%.1f m",
+    changed |= ui::PropertyFloat(ui::Tr("フェザー", "Feather"), &params.featherMeters, 0.0f, 50.0f, defaults.featherMeters,
+                                 ui::Tr("余白の外側を 0 へ落とす幅（m）。0 で二値", "Width beyond the margin that falls off to 0 (m). 0 is binary"), "%.1f m",
                                  ImGuiSliderFlags_Logarithmic);
-    changed |= ui::PropertyFloat("ガンマ", &params.gamma, 0.05f, 8.0f, defaults.gamma,
-                                 "フェザーのカーブ。1 未満で外側まで明るく、1 より大きいと内側へ締まる",
+    changed |= ui::PropertyFloat(ui::Tr("ガンマ", "Gamma"), &params.gamma, 0.05f, 8.0f, defaults.gamma,
+                                 ui::Tr("フェザーのカーブ。1 未満で外側まで明るく、1 より大きいと内側へ締まる", "Feather curve. Below 1 stays bright farther out; above 1 tightens inward"),
                                  "%.2f", ImGuiSliderFlags_Logarithmic);
-    changed |= ui::PropertyBool("反転", &params.invert, defaults.invert,
-                                "白黒を入れ替える。植生の除外に使うときはオン");
+    changed |= ui::PropertyBool(ui::Tr("反転", "Invert"), &params.invert, defaults.invert,
+                                ui::Tr("白黒を入れ替える。植生の除外に使うときはオン", "Swaps black and white. Turn on when excluding vegetation"));
     return changed;
 }
 
 inline bool DrawFlowlineRows(compositor::FlowlineParams& p) {
     const compositor::FlowlineParams d;
     bool changed = false;
-    const char* modes[] = {"本数", "密度"};
-    changed |= ui::PropertyCombo("発生方法", &p.scatteringMode, modes, 2, d.scatteringMode);
+    const char* modes[] = {ui::Tr("本数", "Count"), ui::Tr("密度", "Density")};
+    changed |= ui::PropertyCombo(ui::Tr("発生方法", "Spawn Mode"), &p.scatteringMode, modes, 2, d.scatteringMode);
     if (p.scatteringMode == 0)
-        changed |= ui::PropertyInt("本数", &p.numberOfFlows, 1, 1000000, d.numberOfFlows);
+        changed |= ui::PropertyInt(ui::Tr("本数", "Count"), &p.numberOfFlows, 1, 1000000, d.numberOfFlows);
     else
-        changed |= ui::PropertyFloat("密度", &p.density, 0.0f, 1.0f, d.density, "解像度と地形の幅に応じた粒子密度", "%.4f");
-    changed |= ui::PropertyFloat("長さ", &p.lengthMeters, 0.0f, 1024.0f, d.lengthMeters, "粒子が移動する最大距離", "%.2f m");
-    changed |= ui::PropertyFloat("摩擦", &p.friction, 0.01f, 1.0f, d.friction, "大きいほど慣性が減り、局所的な傾斜に沿う");
-    changed |= ui::PropertyBool("障害物の回避", &p.reflectVelocity, d.reflectVelocity);
+        changed |= ui::PropertyFloat(ui::Tr("密度", "Density"), &p.density, 0.0f, 1.0f, d.density, ui::Tr("解像度と地形の幅に応じた粒子密度", "Particle density scaled by resolution and terrain width"), "%.4f");
+    changed |= ui::PropertyFloat(ui::Tr("長さ", "Length"), &p.lengthMeters, 0.0f, 1024.0f, d.lengthMeters, ui::Tr("粒子が移動する最大距離", "Max distance a particle travels"), "%.2f m");
+    changed |= ui::PropertyFloat(ui::Tr("摩擦", "Friction"), &p.friction, 0.01f, 1.0f, d.friction, ui::Tr("大きいほど慣性が減り、局所的な傾斜に沿う", "Higher reduces inertia so particles follow local slopes"));
+    changed |= ui::PropertyBool(ui::Tr("障害物の回避", "Avoid Obstacles"), &p.reflectVelocity, d.reflectVelocity);
     if (p.reflectVelocity)
-        changed |= ui::PropertyFloat("回避量", &p.reflectionAmount, 0.0f, 1.0f, d.reflectionAmount);
-    changed |= ui::PropertyBool("窪みに滞留", &p.allowPooling, d.allowPooling, "無効なら周囲より低い窪みで粒子を止める");
-    changed |= ui::PropertyFloat("強さ", &p.strength, 0.0f, 1.0f, d.strength, "流跡へ加算する強さ", "%.4f");
-    changed |= ui::PropertyFloat("流れの分散", &p.volume, 0.0f, 1.0f, d.volume, "既に流れた場所を避けて流跡を分散する", "%.4f");
-    changed |= ui::PropertyFloat("最小傾斜", &p.talusAngle, 0.0f, 90.0f, d.talusAngle, "これより緩い斜面では流跡を弱める", "%.1f 度");
-    changed |= ui::PropertyFloat("傾斜の遷移幅", &p.talusFalloff, 0.0f, 90.0f, d.talusFalloff, "最小傾斜の手前で流跡を徐々に弱める角度幅", "%.1f 度");
-    changed |= ui::PropertyBool("発生値を制限", &p.clampSource, d.clampSource, "Source 入力を 0〜1 に制限する");
-    changed |= ui::PropertyBool("流出域を加算", &p.showOutflow, d.showOutflow, "Outflow 入力を最終マスクに加える");
-    changed |= ui::PropertyBool("出力を圧縮", &p.normalize, d.normalize, "値 / (1 + 値) で 0〜1 に圧縮する。流出域の加算はその後に行う");
+        changed |= ui::PropertyFloat(ui::Tr("回避量", "Avoidance"), &p.reflectionAmount, 0.0f, 1.0f, d.reflectionAmount);
+    changed |= ui::PropertyBool(ui::Tr("窪みに滞留", "Allow Pooling"), &p.allowPooling, d.allowPooling, ui::Tr("無効なら周囲より低い窪みで粒子を止める", "When off, particles stop in pits lower than their surroundings"));
+    changed |= ui::PropertyFloat(ui::Tr("強さ", "Strength"), &p.strength, 0.0f, 1.0f, d.strength, ui::Tr("流跡へ加算する強さ", "Amount added to the flow trail"), "%.4f");
+    changed |= ui::PropertyFloat(ui::Tr("流れの分散", "Flow Dispersion"), &p.volume, 0.0f, 1.0f, d.volume, ui::Tr("既に流れた場所を避けて流跡を分散する", "Spreads trails by avoiding places already flowed through"), "%.4f");
+    changed |= ui::PropertyFloat(ui::Tr("最小傾斜", "Min Slope"), &p.talusAngle, 0.0f, 90.0f, d.talusAngle, ui::Tr("これより緩い斜面では流跡を弱める", "Weakens trails on slopes gentler than this"), ui::Tr("%.1f 度", "%.1f°"));
+    changed |= ui::PropertyFloat(ui::Tr("傾斜の遷移幅", "Slope Falloff"), &p.talusFalloff, 0.0f, 90.0f, d.talusFalloff, ui::Tr("最小傾斜の手前で流跡を徐々に弱める角度幅", "Angle range below Min Slope over which trails fade"), ui::Tr("%.1f 度", "%.1f°"));
+    changed |= ui::PropertyBool(ui::Tr("発生値を制限", "Clamp Source"), &p.clampSource, d.clampSource, ui::Tr("Source 入力を 0〜1 に制限する", "Clamps the Source input to 0-1"));
+    changed |= ui::PropertyBool(ui::Tr("流出域を加算", "Add Outflow"), &p.showOutflow, d.showOutflow, ui::Tr("Outflow 入力を最終マスクに加える", "Adds the Outflow input to the final mask"));
+    changed |= ui::PropertyBool(ui::Tr("出力を圧縮", "Compress Output"), &p.normalize, d.normalize, ui::Tr("値 / (1 + 値) で 0〜1 に圧縮する。流出域の加算はその後に行う", "Compresses to 0-1 with v / (1 + v). Outflow is added afterward"));
     return changed;
 }
 
 inline bool DrawHeightMaskRows(compositor::HeightParams& height) {
     const compositor::HeightParams defaults;
     bool changed = false;
-    changed |= ui::PropertyBool("全範囲", &height.useFullRange, defaults.useFullRange,
-                                "地形の一番低い所を 0、一番高い所を 1 にして、"
-                                "標高そのものをグラデーションにする。"
-                                "入れると下の 3 行は使わない");
+    changed |= ui::PropertyBool(ui::Tr("全範囲", "Full Range"), &height.useFullRange, defaults.useFullRange,
+                                ui::Tr("地形の一番低い所を 0、一番高い所を 1 にして、"
+                                       "標高そのものをグラデーションにする。"
+                                       "入れると下の 3 行は使わない",
+                                       "Maps the lowest terrain to 0 and the highest to 1, "
+                                       "making the elevation itself a gradient. "
+                                       "When on, the 3 rows below are unused"));
     if (!height.useFullRange) {
-        changed |= ui::PropertyFloat("最低標高", &height.minMeters, 0.0f, 8000.0f,
-                                     defaults.minMeters, "これより低い所を 0 にする",
+        changed |= ui::PropertyFloat(ui::Tr("最低標高", "Min Elevation"), &height.minMeters, 0.0f, 8000.0f,
+                                     defaults.minMeters, ui::Tr("これより低い所を 0 にする", "Areas below this become 0"),
                                      "%.1f m");
-        changed |= ui::PropertyFloat("最高標高", &height.maxMeters, 0.0f, 8000.0f,
-                                     defaults.maxMeters, "これより高い所を 0 にする",
+        changed |= ui::PropertyFloat(ui::Tr("最高標高", "Max Elevation"), &height.maxMeters, 0.0f, 8000.0f,
+                                     defaults.maxMeters, ui::Tr("これより高い所を 0 にする", "Areas above this become 0"),
                                      "%.1f m");
-        changed |= ui::PropertyFloat("フェザー", &height.featherMeters, 0.0f, 1000.0f,
+        changed |= ui::PropertyFloat(ui::Tr("フェザー", "Feather"), &height.featherMeters, 0.0f, 1000.0f,
                                      defaults.featherMeters,
-                                     "標高帯の上下の境目をぼかす幅。0 で硬い帯になる",
+                                     ui::Tr("標高帯の上下の境目をぼかす幅。0 で硬い帯になる", "Width that softens the band's upper and lower edges. 0 gives a hard band"),
                                      "%.1f m", ImGuiSliderFlags_Logarithmic);
     }
-    changed |= ui::PropertyFloat("ガンマ", &height.gamma, 0.05f, 4.0f, defaults.gamma,
-                                 "1 未満で境目の弱い所を明るく、"
-                                 "1 より大きいと帯の中心だけを残す",
+    changed |= ui::PropertyFloat(ui::Tr("ガンマ", "Gamma"), &height.gamma, 0.05f, 4.0f, defaults.gamma,
+                                 ui::Tr("1 未満で境目の弱い所を明るく、"
+                                        "1 より大きいと帯の中心だけを残す",
+                                        "Below 1 brightens the weak edges; "
+                                        "above 1 keeps only the band's center"),
                                  "%.2f");
-    changed |= ui::PropertyBool("反転", &height.invert, defaults.invert,
-                                "指定した標高帯の外側のマスクを作るときに使う");
+    changed |= ui::PropertyBool(ui::Tr("反転", "Invert"), &height.invert, defaults.invert,
+                                ui::Tr("指定した標高帯の外側のマスクを作るときに使う", "Use to make a mask outside the given elevation band"));
     return changed;
 }
 
@@ -937,18 +976,18 @@ inline bool DrawSlopeRows(compositor::SlopeParams& slope) {
     const compositor::SlopeParams defaults;
     bool changed = false;
     changed |= ui::PropertyFloat(
-        "最大ディテール", &slope.detailMeters, 0.0f, 512.0f, defaults.detailMeters,
-        "傾斜を測る距離（m）。大きいほど小さな凹凸を無視して大きな斜面を拾う",
+        ui::Tr("最大ディテール", "Max Detail"), &slope.detailMeters, 0.0f, 512.0f, defaults.detailMeters,
+        ui::Tr("傾斜を測る距離（m）。大きいほど小さな凹凸を無視して大きな斜面を拾う", "Distance over which slope is measured (m). Larger ignores small bumps and picks broad slopes"),
         "%.1f m", ImGuiSliderFlags_Logarithmic);
-    changed |= ui::PropertyFloat("最小角", &slope.minDegrees, 0.0f, 89.0f, defaults.minDegrees,
-                                 "これ以下の傾斜を 0 にする", "%.1f 度");
-    changed |= ui::PropertyFloat("最大角", &slope.maxDegrees, 1.0f, 90.0f, defaults.maxDegrees,
-                                 "これ以上の傾斜を 1 にする", "%.1f 度");
-    changed |= ui::PropertyFloat("ガンマ", &slope.gamma, 0.05f, 4.0f, defaults.gamma,
-                                 "1 未満で弱い斜面を明るく、1 より大きいと急斜面だけを残す",
+    changed |= ui::PropertyFloat(ui::Tr("最小角", "Min Angle"), &slope.minDegrees, 0.0f, 89.0f, defaults.minDegrees,
+                                 ui::Tr("これ以下の傾斜を 0 にする", "Slopes at or below this become 0"), ui::Tr("%.1f 度", "%.1f°"));
+    changed |= ui::PropertyFloat(ui::Tr("最大角", "Max Angle"), &slope.maxDegrees, 1.0f, 90.0f, defaults.maxDegrees,
+                                 ui::Tr("これ以上の傾斜を 1 にする", "Slopes at or above this become 1"), ui::Tr("%.1f 度", "%.1f°"));
+    changed |= ui::PropertyFloat(ui::Tr("ガンマ", "Gamma"), &slope.gamma, 0.05f, 4.0f, defaults.gamma,
+                                 ui::Tr("1 未満で弱い斜面を明るく、1 より大きいと急斜面だけを残す", "Below 1 brightens gentle slopes; above 1 keeps only steep ones"),
                                  "%.2f");
-    changed |= ui::PropertyBool("反転", &slope.invert, defaults.invert,
-                                "平地のマスクを作るときに使う");
+    changed |= ui::PropertyBool(ui::Tr("反転", "Invert"), &slope.invert, defaults.invert,
+                                ui::Tr("平地のマスクを作るときに使う", "Use to make a mask of flat ground"));
     return changed;
 }
 
@@ -956,14 +995,14 @@ inline bool DrawSlopeRows(compositor::SlopeParams& slope) {
 inline bool DrawLevelsRows(compositor::LevelsParams& levels) {
     const compositor::LevelsParams defaults;
     bool changed = false;
-    changed |= ui::PropertyFloat("黒点", &levels.blackPoint, 0.0f, 1.0f, defaults.blackPoint,
-                                 "これ以下を 0 にする。弱い成分を切り落とす", "%.3f");
-    changed |= ui::PropertyFloat("白点", &levels.whitePoint, 0.0f, 1.0f, defaults.whitePoint,
-                                 "これ以上を 1 にする。下げるほど早く飽和する", "%.3f");
-    changed |= ui::PropertyFloat("ガンマ", &levels.gamma, 0.05f, 4.0f, defaults.gamma,
-                                 "1 未満で暗部を持ち上げ、1 より大きいと強い部分だけを残す",
+    changed |= ui::PropertyFloat(ui::Tr("黒点", "Black Point"), &levels.blackPoint, 0.0f, 1.0f, defaults.blackPoint,
+                                 ui::Tr("これ以下を 0 にする。弱い成分を切り落とす", "Values at or below this become 0. Cuts weak components"), "%.3f");
+    changed |= ui::PropertyFloat(ui::Tr("白点", "White Point"), &levels.whitePoint, 0.0f, 1.0f, defaults.whitePoint,
+                                 ui::Tr("これ以上を 1 にする。下げるほど早く飽和する", "Values at or above this become 1. Lower saturates sooner"), "%.3f");
+    changed |= ui::PropertyFloat(ui::Tr("ガンマ", "Gamma"), &levels.gamma, 0.05f, 4.0f, defaults.gamma,
+                                 ui::Tr("1 未満で暗部を持ち上げ、1 より大きいと強い部分だけを残す", "Below 1 lifts dark areas; above 1 keeps only strong areas"),
                                  "%.2f");
-    changed |= ui::PropertyBool("反転", &levels.invert, defaults.invert, nullptr);
+    changed |= ui::PropertyBool(ui::Tr("反転", "Invert"), &levels.invert, defaults.invert, nullptr);
     return changed;
 }
 
@@ -973,15 +1012,17 @@ inline bool DrawMaskBlurRows(compositor::MaskBlurParams& blur) {
     const compositor::MaskBlurParams defaults;
     bool changed = false;
     // 半径は実寸（m）。合成解像度を変えても効きが変わらない。
-    changed |= ui::PropertyFloat("半径", &blur.radiusMeters, 0.0f, 512.0f, defaults.radiusMeters,
-                                 "ぼかす範囲（m）。大きいほど境界がなだらかになる", "%.2f m",
+    changed |= ui::PropertyFloat(ui::Tr("半径", "Radius"), &blur.radiusMeters, 0.0f, 512.0f, defaults.radiusMeters,
+                                 ui::Tr("ぼかす範囲（m）。大きいほど境界がなだらかになる", "Blur extent (m). Larger gives smoother boundaries"), "%.2f m",
                                  ImGuiSliderFlags_Logarithmic);
-    changed |= ui::PropertyFloat("強さ", &blur.strength, 0.0f, 1.0f, defaults.strength,
-                                 "元のマスクとぼかしたマスクを混ぜる量。1 で完全なぼかし",
+    changed |= ui::PropertyFloat(ui::Tr("強さ", "Strength"), &blur.strength, 0.0f, 1.0f, defaults.strength,
+                                 ui::Tr("元のマスクとぼかしたマスクを混ぜる量。1 で完全なぼかし", "Mix between the original and blurred mask. 1 is fully blurred"),
                                  "%.2f");
-    changed |= ui::PropertyInt("反復", &blur.iterations, 1, 16, defaults.iterations,
-                               "ぼかしを重ねる回数。多いほど広く均される"
-                               "（実効半径はおよそ 半径 x sqrt(反復)）");
+    changed |= ui::PropertyInt(ui::Tr("反復", "Iterations"), &blur.iterations, 1, 16, defaults.iterations,
+                               ui::Tr("ぼかしを重ねる回数。多いほど広く均される"
+                                      "（実効半径はおよそ 半径 x sqrt(反復)）",
+                                      "Number of blur passes. More smooths a wider area "
+                                      "(effective radius is about Radius x sqrt(Iterations))"));
     return changed;
 }
 
@@ -990,23 +1031,26 @@ inline bool DrawBlendRows(compositor::BlendParams& blend) {
     const compositor::BlendParams defaults;
     bool changed = false;
     int mode = static_cast<int>(blend.mode);
-    if (ui::PropertyCombo("種類", &mode, kMaskBlendModeLabels,
+    if (ui::PropertyCombo(ui::Tr("種類", "Type"), &mode, ui::Tr(kMaskBlendModeLabels).data(),
                           IM_ARRAYSIZE(kMaskBlendModeLabels), static_cast<int>(defaults.mode),
-                          "乗算は絞り込み（両方が立つ所だけ）、加算は合算、"
-                          "小さいほう / 大きいほうは飽和させずに寄せる。"
-                          "減算は前景から背景を引く（背景が立つ所を除く。0 で切る）")) {
+                          ui::Tr("乗算は絞り込み（両方が立つ所だけ）、加算は合算、"
+                                 "小さいほう / 大きいほうは飽和させずに寄せる。"
+                                 "減算は前景から背景を引く（背景が立つ所を除く。0 で切る）",
+                                 "Multiply narrows (only where both are set), Add sums, "
+                                 "Min / Max combine without saturating. "
+                                 "Subtract takes the background from the foreground (removes where the background is set, clamped at 0)"))) {
         blend.mode = static_cast<compositor::MaskBlendMode>(mode);
         changed = true;
     }
-    changed |= ui::PropertyFloat("強さ", &blend.intensity, 0.0f, 1.0f, defaults.intensity,
-                                 "前景そのままと合成結果の間の補間。0 で前景のまま", "%.2f");
+    changed |= ui::PropertyFloat(ui::Tr("強さ", "Strength"), &blend.intensity, 0.0f, 1.0f, defaults.intensity,
+                                 ui::Tr("前景そのままと合成結果の間の補間。0 で前景のまま", "Interpolates between the plain foreground and the blend result. 0 keeps the foreground"), "%.2f");
     return changed;
 }
 
 // テクスチャスロットを選ぶ行。RGB をそのまま使うマップ（ベースカラー / 法線）用。
 inline bool DrawTextureSlotRow(const char* label, compositor::TextureId& slot,
                         const compositor::TextureLibrary& library, std::filesystem::path& revealRequest) {
-    ui::PropertyLabel(label, "「なし」なら定数値を使う");
+    ui::PropertyLabel(label, ui::Tr("「なし」なら定数値を使う", "If None, the constant value is used"));
     const float width =
         std::min(ui::Scaled(ui::kComboMaxWidth), ImGui::GetContentRegionAvail().x);
     const bool changed = DrawTextureCombo("##value", slot, library, width, revealRequest);
@@ -1018,7 +1062,7 @@ inline bool DrawTextureSlotRow(const char* label, compositor::TextureId& slot,
 // Megascans の _ORD のように 1 枚へ複数のマップを詰めたテクスチャがあるため。
 inline bool DrawMapSlotRow(const char* label, compositor::MapSlot& slot,
                     const compositor::TextureLibrary& library, std::filesystem::path& revealRequest) {
-    ui::PropertyLabel(label, "「なし」なら定数値を使う。右は読むチャンネル");
+    ui::PropertyLabel(label, ui::Tr("「なし」なら定数値を使う。右は読むチャンネル", "If None, the constant value is used. The right box picks the channel to read"));
 
     const float channelWidth = ui::Scaled(52.0f);
     const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;

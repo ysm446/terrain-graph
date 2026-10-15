@@ -63,6 +63,11 @@ void AppSettings::Load() {
     }
 
     if (const auto ui = document.find("ui"); ui != document.end() && ui->is_object()) {
+        if (const auto language = ui->find("language");
+            language != ui->end() && language->is_string()) {
+            // 知らない値は既定（日本語）のまま。
+            if (language->get<std::string>() == "en") m_ui.language = UiLanguage::English;
+        }
         if (const auto follow = ui->find("followSystemScale");
             follow != ui->end() && follow->is_boolean()) {
             m_ui.followSystemScale = follow->get<bool>();
@@ -150,6 +155,7 @@ bool AppSettings::Save() const {
     }
 
     json ui;
+    ui["language"] = (m_ui.language == UiLanguage::English) ? "en" : "ja";
     ui["followSystemScale"] = m_ui.followSystemScale;
     ui["manualScale"] = m_ui.manualScale;
     ui["fontSize"] = m_ui.fontSize;

@@ -91,11 +91,11 @@ void DrawTooltip(const char* tooltip) {
 // 戻り値は次に呼ぶまでの一時領域を指す（そのまま PropertyLabel へ渡す前提）。
 const char* NumericTooltip(const char* tooltip) {
     static char buffer[512];
-    constexpr const char* kInputHelp = "Ctrl + クリックで直接入力";
+    const char* inputHelp = Tr("Ctrl + クリックで直接入力", "Ctrl + click to type a value");
     if (tooltip == nullptr || tooltip[0] == '\0') {
-        return kInputHelp;
+        return inputHelp;
     }
-    std::snprintf(buffer, sizeof(buffer), "%s\n%s", tooltip, kInputHelp);
+    std::snprintf(buffer, sizeof(buffer), "%s\n%s", tooltip, inputHelp);
     return buffer;
 }
 
@@ -130,7 +130,7 @@ bool ResetDot(bool isDefault, const std::string& defaultText) {
     bool hovered = false;
     const bool pressed = ResetDotCore(isDefault, hovered);
     if (hovered) {
-        ImGui::SetTooltip("既定値に戻す\n既定値: %s", defaultText.c_str());
+        ImGui::SetTooltip(Tr("既定値に戻す\n既定値: %s", "Reset to default\nDefault: %s"), defaultText.c_str());
     }
     return pressed;
 }
@@ -612,8 +612,10 @@ bool BeginPropertyTable(const char* id, const char* widestLabel) {
         return false;
     }
     // ラベル列は文字が入る幅なので、文字サイズにも追従させる（大きくして切れないように）。
-    const float labelWidth = widestLabel ? std::max(TextScaled(kLabelColumnWidth),
-        ImGui::CalcTextSize(widestLabel).x + ImGui::CalcTextSize("：").x) : TextScaled(kLabelColumnWidth);
+    const float baseWidth = TextScaled(CurrentLanguage() == Language::English ? kLabelColumnWidthEnglish
+                                                                              : kLabelColumnWidth);
+    const float labelWidth = widestLabel ? std::max(baseWidth,
+        ImGui::CalcTextSize(widestLabel).x + ImGui::CalcTextSize("：").x) : baseWidth;
     ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed, labelWidth);
     ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch);
     return true;
@@ -800,7 +802,8 @@ bool PropertyFloat(const char* label, float* value, float minValue, float maxVal
     bool resetHovered = false;
     const bool resetPressed = ResetDotCore(NearlyEqual(*value, defaultValue), resetHovered);
     if (resetHovered) {
-        ImGui::SetTooltip("既定値に戻す\n既定値: %s", FormatFloat(defaultValue, format).c_str());
+        ImGui::SetTooltip(Tr("既定値に戻す\n既定値: %s", "Reset to default\nDefault: %s"),
+                          FormatFloat(defaultValue, format).c_str());
     }
     if (resetPressed) {
         *value = std::clamp(defaultValue, minValue, maxValue);
@@ -840,7 +843,7 @@ bool PropertyBool(const char* label, bool* value, bool defaultValue, const char*
     PropertyLabel(label, tooltip);
     bool changed = ImGui::Checkbox("##value", value);
 
-    if (ResetDot(*value == defaultValue, defaultValue ? "オン" : "オフ")) {
+    if (ResetDot(*value == defaultValue, defaultValue ? Tr("オン", "On") : Tr("オフ", "Off"))) {
         *value = defaultValue;
         changed = true;
     }
@@ -1098,7 +1101,7 @@ void ComboFilterInput() {
         ImGui::SetKeyboardFocusHere();
     }
     ImGui::SetNextItemWidth(-FLT_MIN);
-    ImGui::InputTextWithHint("##comboFilter", "名前で絞り込む", g_comboFilter, sizeof(g_comboFilter));
+    ImGui::InputTextWithHint("##comboFilter", Tr("名前で絞り込む", "Filter by name"), g_comboFilter, sizeof(g_comboFilter));
     ImGui::Separator();
 }
 

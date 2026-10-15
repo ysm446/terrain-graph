@@ -182,6 +182,14 @@ bool Application::Initialize(const StartupOptions& options) {
     UpdateWindowTitle();
 
     m_settings.Load();
+    ApplyUiLanguage();
+    // 開発用の書き出し（スクリーンショット・カタログ・レポート）は、設定によらず日本語にする。
+    // 設定の行のラベルがカタログに載るので、出力が使う人の設定で変わらないように。
+    if (Headless()) ui::SetLanguage(ui::Language::Japanese);
+    // 開発用の上書き。設定には書かないので、次の起動では設定の言語に戻る。
+    if (m_options.language == "en") ui::SetLanguage(ui::Language::English);
+    if (m_options.language == "ja") ui::SetLanguage(ui::Language::Japanese);
+    if (m_options.showSettings) m_showSettings = true;
     m_recentProjects.Load();
     if (!Headless()) m_recentProjects.AddRoot(m_workspace.Root());
     // 表示設定は写し取らない。使うところで m_settings.Display() を直接読む。
@@ -958,40 +966,41 @@ void Application::DrawUi() {
     // メニューバー分を差し引いた状態になる。既定のパネル配置がこれに依存する。
     if (ImGui::BeginMainMenuBar()) {
         DrawFileMenu();
-        if (ImGui::BeginMenu("編集")) {
-            if (ImGui::MenuItem("元に戻す", "Ctrl+Z", false, m_undoHistory.CanUndo())) {
+        if (ImGui::BeginMenu(ui::Tr("編集", "Edit"))) {
+            if (ImGui::MenuItem(ui::Tr("元に戻す", "Undo"), "Ctrl+Z", false, m_undoHistory.CanUndo())) {
                 m_pendingHistoryStep = -1;
             }
-            if (ImGui::MenuItem("やり直す", "Ctrl+Y", false, m_undoHistory.CanRedo())) {
+            if (ImGui::MenuItem(ui::Tr("やり直す", "Redo"), "Ctrl+Y", false, m_undoHistory.CanRedo())) {
                 m_pendingHistoryStep = 1;
             }
             ImGui::Separator();
-            ImGui::TextDisabled("対象はグラフとマテリアル");
+            ImGui::TextDisabled("%s", ui::Tr("対象はグラフとマテリアル", "Applies to graphs and materials"));
             ImGui::EndMenu();
         }
         // ビューポートの表示に関わる切り替え（FPS / 統計 / ハイトの範囲）は
         // メニューではなくビューポート左上の「表示」ボタンに置く。
-        if (ImGui::BeginMenu("ウィンドウ")) {
-            if (ImGui::MenuItem("レイアウトをリセット")) {
+        if (ImGui::BeginMenu(ui::Tr("ウィンドウ", "Window"))) {
+            if (ImGui::MenuItem(ui::Tr("レイアウトをリセット", "Reset Layout"))) {
                 m_rebuildLayout = true;
             }
             ImGui::Separator();
             // 下のパネル（「アセット」が入っている枠）。畳むと枠のドックノードが空になり、
             // ビューポートが縦に広がる。設定に覚えさせる（区画の大きさと同じ扱い）。
-            if (ImGui::MenuItem("下のパネル", "Ctrl+B", &m_settings.Display().showAssetBand)) {
+            if (ImGui::MenuItem(ui::Tr("下のパネル", "Bottom Panel"), "Ctrl+B", &m_settings.Display().showAssetBand)) {
                 m_settings.Save();
             }
-            ImGui::SetItemTooltip("アセットが入っている枠を、同じ枠のタブ（グラフなど）ごと畳む");
+            ImGui::SetItemTooltip("%s", ui::Tr("アセットが入っている枠を、同じ枠のタブ（グラフなど）ごと畳む",
+                                         "Collapse the frame holding Assets, together with the other tabs in it (such as Graph)"));
             ImGui::Separator();
-            ImGui::MenuItem("マテリアルプレビュー", nullptr, &m_showMaterialSphere);
-            ImGui::MenuItem("モデルプレビュー", nullptr, &m_showModelPreview);
-            ImGui::MenuItem("テクスチャプレビュー", nullptr, &m_showTexturePreview);
-            ImGui::MenuItem("境界マテリアル", nullptr, &m_showBoundaryPreview);
-            ImGui::MenuItem("作業用IBL", nullptr, &m_showSkyPreview);
-            if (ImGui::MenuItem("参照ビューア", nullptr, &m_showReferenceViewer) && m_showReferenceViewer)
+            ImGui::MenuItem(ui::Tr("マテリアルプレビュー", "Material Preview"), nullptr, &m_showMaterialSphere);
+            ImGui::MenuItem(ui::Tr("モデルプレビュー", "Model Preview"), nullptr, &m_showModelPreview);
+            ImGui::MenuItem(ui::Tr("テクスチャプレビュー", "Texture Preview"), nullptr, &m_showTexturePreview);
+            ImGui::MenuItem(ui::Tr("境界マテリアル", "Boundary Material"), nullptr, &m_showBoundaryPreview);
+            ImGui::MenuItem(ui::Tr("作業用IBL", "Work IBL"), nullptr, &m_showSkyPreview);
+            if (ImGui::MenuItem(ui::Tr("参照ビューア", "Reference Viewer"), nullptr, &m_showReferenceViewer) && m_showReferenceViewer)
                 m_referenceIndexDirty = true;
-            ImGui::MenuItem("情報", nullptr, &m_showInfo);
-            ImGui::MenuItem("設定", nullptr, &m_showSettings);
+            ImGui::MenuItem(ui::Tr("情報", "Info"), nullptr, &m_showInfo);
+            ImGui::MenuItem(ui::Tr("設定", "Settings"), nullptr, &m_showSettings);
             ImGui::EndMenu();
         }
         ImGui::EndMainMenuBar();
@@ -1002,7 +1011,7 @@ void Application::DrawUi() {
     // ドックスペースの ID には版を付ける。**パネルを増減したら版を上げること。**
     // ID が変われば ini に配置が無い状態になり、既定レイアウトが組み直される。
     // 上げないと、新しいパネルがどこにも入らず浮いたままになる。
-    const ImGuiID dockspaceId = ImGui::GetID("TerrainGraphDockSpace_v20");
+    const ImGuiID dockspaceId = ImGui::GetID("TerrainGraphDockSpace_v21");
 
     // ステータスバーもメニューバーと同じく、先に作って作業領域を狭めておく。
     DrawStatusBar();
@@ -1024,19 +1033,19 @@ void Application::DrawUi() {
     // 下のパネルを畳んでいる間は、「アセット」と同じ枠にタブで入っているパネルも出さない
     // （HiddenWithAssetBand）。枠のタブが 1 つでも残ると、帯の高さがビューポートへ戻らない。
     // ビューポートの後に描く（同じ枠のタブで、前面はビューポートのまま）。
-    if (!HiddenWithAssetBand("チャンネル")) DrawChannelPreviewPanel();
+    if (!HiddenWithAssetBand("###Channels")) DrawChannelPreviewPanel();
     // タブが重なる枠では、**最初に submit したパネルが前面のタブになり、
     // タブは submit した順に並ぶ**（ini に配置が無いとき）。
     // 作業の起点はグラフなので、右カラムの他のパネルより先に描く。
-    if (!HiddenWithAssetBand("シーン階層")) DrawSceneHierarchy();
-    if (!HiddenWithAssetBand("グラフ")) DrawGraphPanel();
+    if (!HiddenWithAssetBand("###SceneHierarchy")) DrawSceneHierarchy();
+    if (!HiddenWithAssetBand("###Graph")) DrawGraphPanel();
     // 下のパネルは畳める。出さなければドックノードが空になり、中央（ビューポート）が
     // その高さをもらう。ウィンドウはドック先を覚えているので、戻せば同じ所へ入る。
     if (m_settings.Display().showAssetBand) {
         DrawAssetBrowser();
     }
-    if (!HiddenWithAssetBand("プレビュー設定")) DrawMaterialPanel();
-    if (!HiddenWithAssetBand("ライティング")) DrawLightingPanel();
+    if (!HiddenWithAssetBand("###PreviewSettings")) DrawMaterialPanel();
+    if (!HiddenWithAssetBand("###Lighting")) DrawLightingPanel();
 
     DrawMaterialSphereWindow();
     DrawModelPreviewWindow();
@@ -1045,7 +1054,7 @@ void Application::DrawUi() {
     DrawSkyPreviewWindow();
     DrawSceneSwitchDialog();
     DrawAssetDeleteDialog();
-    if (!HiddenWithAssetBand("参照ビューア")) DrawReferenceViewer();
+    if (!HiddenWithAssetBand("###ReferenceViewer")) DrawReferenceViewer();
     DrawAssetRevertDialog();
     DrawSceneDuplicateDialog();
     // 削除確認の「代わり」は確認モーダルの中で重ねる。天球の差し替えはここで出す。
@@ -1056,6 +1065,10 @@ void Application::DrawUi() {
 
     if (m_focusDefaultTabs > 0) {
         --m_focusDefaultTabs;
+    }
+    // 開発用。既定のタブの前面指定（最初の数フレーム）が済んでから前面にする。
+    if (!m_options.focusWindow.empty() && m_frameCounter == 10) {
+        ImGui::SetWindowFocus(("###" + m_options.focusWindow).c_str());
     }
 
     // 入力・ドラッグ中は作業用コピーだけを更新。フォーカスが外れたら一度反映する。
@@ -1129,7 +1142,7 @@ bool Application::HiddenWithAssetBand(const char* windowName) {
         }
         return 0;
     };
-    const ImGuiID band = dockOf("アセット");
+    const ImGuiID band = dockOf("###Assets");
     return band != 0 && dockOf(windowName) == band;
 }
 
@@ -1151,11 +1164,11 @@ void Application::BuildDefaultLayout(ImGuiID dockspaceId) {
     // 帯はビューポートの真下だけに伸び、右カラムの下へは回り込まない。
     ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.28f, &bottom, &center);
 
-    ImGui::DockBuilderDockWindow("ビューポート", center);
+    ImGui::DockBuilderDockWindow("###Viewport", center);
     // 合成結果のチャンネルを 1 枚の絵で見るパネル。ビューポートと同じ枠のタブ（前面はビューポート）。
-    ImGui::DockBuilderDockWindow("チャンネル", center);
+    ImGui::DockBuilderDockWindow("###Channels", center);
     // アセット帯の左にフォルダ階層、右にその内容を表示する。
-    ImGui::DockBuilderDockWindow("アセット", bottom);
+    ImGui::DockBuilderDockWindow("###Assets", bottom);
     // 右カラムへタブで重ねる。縦に積むと 1 枚あたりが短くなり、
     // どれもスクロールしないと全体が見えなくなる。
     // **グラフは右カラムに置く。** 中央のタブにするとビューポートと排他になり、
@@ -1163,10 +1176,10 @@ void Application::BuildDefaultLayout(ImGuiID dockspaceId) {
     // 「繋ぎ替えて見た目を確かめる」の往復を優先する。
     ImGuiID hierarchy = 0;
     ImGui::DockBuilderSplitNode(right, ImGuiDir_Up, 0.22f, &hierarchy, &right);
-    ImGui::DockBuilderDockWindow("シーン階層", hierarchy);
-    ImGui::DockBuilderDockWindow("グラフ", right);
-    ImGui::DockBuilderDockWindow("プレビュー設定", right);
-    ImGui::DockBuilderDockWindow("ライティング", right);
+    ImGui::DockBuilderDockWindow("###SceneHierarchy", hierarchy);
+    ImGui::DockBuilderDockWindow("###Graph", right);
+    ImGui::DockBuilderDockWindow("###PreviewSettings", right);
+    ImGui::DockBuilderDockWindow("###Lighting", right);
 
     ImGui::DockBuilderFinish(dockspaceId);
 
@@ -1204,33 +1217,33 @@ void Application::DrawStatusBar() {
             if (const compositor::MaterialLayer* paintLayer = CurrentPaintLayer();
                 paintLayer != nullptr) {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_CheckMark));
-                ImGui::Text("ペイント中: %s", paintLayer->name.c_str());
+                ImGui::Text(ui::Tr("ペイント中: %s", "Painting: %s"), paintLayer->name.c_str());
                 ImGui::PopStyleColor();
                 ImGui::TextDisabled("|");
             }
             // パスを編集している間は左クリックが点を置く。ペイントと同じく常に見せる。
             if (const graph::Node* pathNode = CurrentPathNode(); pathNode != nullptr) {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_CheckMark));
-                ImGui::TextUnformatted("パス編集中");
+                ImGui::TextUnformatted(ui::Tr("パス編集中", "Editing path"));
                 ImGui::PopStyleColor();
                 ImGui::TextDisabled("|");
             }
             // シーンの読み込みは次のフレームの頭で同期的に行う。その間は画面が止まるので、
             // 直前のフレームで理由を見せておく。
             if (m_sceneLoadAnnounced) {
-                ImGui::TextDisabled("シーンを読み込み中…");
+                ImGui::TextDisabled("%s", ui::Tr("シーンを読み込み中…", "Loading scene…"));
                 ImGui::TextDisabled("|");
             } else if (m_sceneLoadSeconds >= 0.0f) {
                 // 読み込み後の通知は後続のログで流れるので、時間はここに残す。
-                ImGui::TextDisabled("読み込み %.2f 秒", m_sceneLoadSeconds);
+                ImGui::TextDisabled(ui::Tr("読み込み %.2f 秒", "Loaded in %.2f s"), m_sceneLoadSeconds);
                 if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("直近のシーン読み込みに掛かった時間");
+                    ImGui::SetTooltip("%s", ui::Tr("直近のシーン読み込みに掛かった時間", "Time taken by the last scene load"));
                 }
                 ImGui::TextDisabled("|");
             }
             // 合成の評価はコンピュートキューで走る。見えている絵が古い間はここで分かる。
             if (m_renderer.Evaluator().IsEvaluating()) {
-                ImGui::TextDisabled("合成を評価中…");
+                ImGui::TextDisabled("%s", ui::Tr("合成を評価中…", "Evaluating…"));
                 ImGui::TextDisabled("|");
             }
 
@@ -1303,6 +1316,14 @@ void Application::ApplyUiScale() {
     m_window.ResizeClient(DefaultClientWidth(), DefaultClientHeight());
 }
 
+// 文字列はその都度 ui::Tr で選ぶので、切り替えは次のフレームから全体に効く。
+// ウィンドウの ID は `###` 以降で固定しているので、ドッキングの配置は崩れない。
+void Application::ApplyUiLanguage() {
+    ui::SetLanguage(m_settings.Ui().language == io::UiLanguage::English ? ui::Language::English
+                                                                       : ui::Language::Japanese);
+    UpdateWindowTitle();
+}
+
 // アプリの設定。プロジェクトには保存しない（`%LOCALAPPDATA%` の settings.json）。
 //
 // ドックへは収めない。常設パネルは「何を作るか」に関わるものだけにして、
@@ -1314,7 +1335,7 @@ void Application::DrawSettingsWindow() {
 
     ImGui::SetNextWindowSize(ImVec2(ui::Scaled(460.0f), ui::Scaled(500.0f)),
                              ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("設定", &m_showSettings)) {
+    if (!ImGui::Begin(ui::Tr("設定###Settings", "Settings###Settings"), &m_showSettings)) {
         ImGui::End();
         return;
     }
@@ -1324,13 +1345,29 @@ void Application::DrawSettingsWindow() {
 
     ui::SectionHeader("UI");
     if (ui::BeginPropertyTable("settingsUiRows")) {
-        ui::PropertyValue("表示スケール", "%.0f%%  (Windows)", m_imgui.MonitorScale() * 100.0f);
+        // 言語の名前はどちらの言語でも訳さない（読めない言語に切り替えても戻せるように）。
+        static const char* const kLanguageLabels[] = {"日本語", "English"};
+        int language = static_cast<int>(ui.language);
+        if (ui::PropertyCombo(ui::Tr("言語", "Language"), &language, kLanguageLabels,
+                              IM_ARRAYSIZE(kLanguageLabels), 0,
+                              ui::Tr("UI の表示言語。英語のほうが自然な語（ノード名など）はどちらでも英語",
+                                     "Display language of the UI. Terms that read better in English "
+                                     "(node names etc.) stay in English"))) {
+            ui.language = static_cast<io::UiLanguage>(language);
+            ApplyUiLanguage();
+            changed = true;
+        }
+
+        ui::PropertyValue(ui::Tr("表示スケール", "Display Scale"), "%.0f%%  (Windows)",
+                          m_imgui.MonitorScale() * 100.0f);
 
         const io::UiSettings defaults;
-        changed |= ui::PropertyBool("スケール追従", &ui.followSystemScale,
+        changed |= ui::PropertyBool(ui::Tr("スケール追従", "Follow Scale"), &ui.followSystemScale,
                                     defaults.followSystemScale,
-                                    "Windows の表示スケール（DPI）に UI の大きさを合わせる。"
-                                    "切ると常に 100% で描く");
+                                    ui::Tr("Windows の表示スケール（DPI）に UI の大きさを合わせる。"
+                                           "切ると常に 100% で描く",
+                                           "Match the UI size to the Windows display scale (DPI). "
+                                           "When off, the UI is always drawn at 100%"));
 
         if (!ui.followSystemScale) {
             static const char* const kScaleLabels[] = {"100%", "125%", "150%", "200%"};
@@ -1341,8 +1378,10 @@ void Application::DrawSettingsWindow() {
                     selected = i;
                 }
             }
-            if (ui::PropertyCombo("拡大率", &selected, kScaleLabels, IM_ARRAYSIZE(kScaleLabels), 0,
-                                  "UI の大きさ。ウィンドウの大きさは変わらない")) {
+            if (ui::PropertyCombo(ui::Tr("拡大率", "Scale"), &selected, kScaleLabels,
+                                  IM_ARRAYSIZE(kScaleLabels), 0,
+                                  ui::Tr("UI の大きさ。ウィンドウの大きさは変わらない",
+                                         "Size of the UI. The working area stays the same"))) {
                 ui.manualScale = kScaleValues[selected];
                 changed = true;
             }
@@ -1351,42 +1390,52 @@ void Application::DrawSettingsWindow() {
         // 文字だけの大きさ。拡大率と違って余白や部品幅は変わらないので、
         // 「情報量は増やしたいが文字は読みたい」という詰め方の調整に使える。
         // ラベルは短く保つ。ラベル列に収まらないと途中で切れる。
-        changed |= ui::PropertyInt("文字サイズ", &ui.fontSize, static_cast<int>(ui::kMinFontSize),
+        changed |= ui::PropertyInt(ui::Tr("文字サイズ", "Font Size"), &ui.fontSize,
+                                   static_cast<int>(ui::kMinFontSize),
                                    static_cast<int>(ui::kMaxFontSize), defaults.fontSize,
-                                   "UI 全体の文字の大きさ（px）。拡大率とは別に掛かる。"
-                                   "部品の高さは文字から決まるので、行の高さも一緒に変わる");
+                                   ui::Tr("UI 全体の文字の大きさ（px）。拡大率とは別に掛かる。"
+                                          "部品の高さは文字から決まるので、行の高さも一緒に変わる",
+                                          "Text size of the whole UI (px), applied on top of the scale. "
+                                          "Row heights follow the text size"));
         ui::EndPropertyTable();
     }
-    ui::HintText("拡大するとウィンドウも同じ倍率で大きくなる（作業面積は変わらない）");
-    ui::HintText("パネルの幅は ini にピクセルで残る。ずれたら ウィンドウ > レイアウトをリセット");
+    ui::HintText("%s", ui::Tr("拡大するとウィンドウも同じ倍率で大きくなる（作業面積は変わらない）",
+                              "Scaling up also enlarges the window by the same factor "
+                              "(the working area stays the same)"));
+    ui::HintText("%s", ui::Tr("パネルの幅は ini にピクセルで残る。ずれたら ウィンドウ > レイアウトをリセット",
+                              "Panel widths are kept in pixels in the ini. "
+                              "If they drift, use Window > Reset Layout"));
 
-    ui::SectionHeader("ウィンドウ");
+    ui::SectionHeader(ui::Tr("ウィンドウ", "Window"));
     if (ui::BeginPropertyTable("settingsWindowRows")) {
-        ui::PropertyValue("描画サイズ", "%u x %u", m_device.Width(), m_device.Height());
+        ui::PropertyValue(ui::Tr("描画サイズ", "Render Size"), "%u x %u", m_device.Width(),
+                          m_device.Height());
         ui::PropertyLabelEmpty("windowReset");
         // 録画やスクリーンショットの解像度を揃えるために、既定へ戻す手段を残す。
-        if (ui::Button("既定の大きさに戻す", ui::kWideButtonWidth)) {
+        if (ui::Button(ui::Tr("既定の大きさに戻す", "Reset Size"), ui::kWideButtonWidth)) {
             m_window.ResizeClient(DefaultClientWidth(), DefaultClientHeight());
         }
         ui::PropertyEnd();
         ui::EndPropertyTable();
     }
-    ui::HintText("既定は %u x %u（%u x %u の %.0f%%）", DefaultClientWidth(),
-                 DefaultClientHeight(), kInitialWidth, kInitialHeight,
+    // 引数の並びはどちらの言語でも同じにする（書式だけを差し替えるため）。
+    ui::HintText(ui::Tr("既定は %u x %u（%u x %u の %.0f%%）", "Default is %u x %u (%u x %u at %.0f%%)"),
+                 DefaultClientWidth(), DefaultClientHeight(), kInitialWidth, kInitialHeight,
                  m_imgui.UiScale() * 100.0f);
 
-    ui::SectionHeader("表示");
+    ui::SectionHeader(ui::Tr("表示", "Display"));
     if (ui::BeginPropertyTable("settingsDisplayRows")) {
         // **設定を直接編集する。** 写しを経由すると、書き戻しを 1 つ忘れただけで
         // 「画面では変わったのに次回の起動で戻る」という壊れ方をする。
         io::DisplaySettings& display = m_settings.Display();
         const io::DisplaySettings defaults;
         bool displayChanged = false;
-        displayChanged |= ui::PropertyBool("垂直同期", &display.vsync, defaults.vsync);
+        displayChanged |= ui::PropertyBool(ui::Tr("垂直同期", "VSync"), &display.vsync, defaults.vsync);
 
         // FPS の上限。**値が少数の離散値なので、スライダーではなく選択にする。**
         // 「60 に合わせたつもりが 59」のような外れ方をしない。
-        static const char* const kLimitLabels[] = {"制限なし", "144", "120", "60", "30"};
+        static const ui::LocalizedText kLimitLabels[] = {
+            {"制限なし", "Unlimited"}, {"144", "144"}, {"120", "120"}, {"60", "60"}, {"30", "30"}};
         constexpr int kLimitValues[] = {0, 144, 120, 60, 30};
         const auto findLimit = [&kLimitValues](int fps) {
             for (int i = 0; i < IM_ARRAYSIZE(kLimitValues); ++i) {
@@ -1398,14 +1447,18 @@ void Application::DrawSettingsWindow() {
         };
 
         int limit = findLimit(display.frameRateLimit);
-        if (ui::PropertyCombo("FPS 上限", &limit, kLimitLabels, IM_ARRAYSIZE(kLimitLabels), 0,
-                              "前面にあるときの上限。垂直同期が入っていれば、"
-                              "モニタのリフレッシュレートとの低いほうが効く")) {
+        if (ui::PropertyCombo(ui::Tr("FPS 上限", "FPS Limit"), &limit, ui::Tr(kLimitLabels).data(),
+                              IM_ARRAYSIZE(kLimitLabels), 0,
+                              ui::Tr("前面にあるときの上限。垂直同期が入っていれば、"
+                                     "モニタのリフレッシュレートとの低いほうが効く",
+                                     "Limit while in the foreground. With VSync on, "
+                                     "the lower of this and the monitor refresh rate applies"))) {
             display.frameRateLimit = kLimitValues[limit];
             displayChanged = true;
         }
 
-        static const char* const kInactiveLabels[] = {"制限なし", "30", "10", "5"};
+        static const ui::LocalizedText kInactiveLabels[] = {
+            {"制限なし", "Unlimited"}, {"30", "30"}, {"10", "10"}, {"5", "5"}};
         constexpr int kInactiveValues[] = {0, 30, 10, 5};
         int inactive = 0;
         for (int i = 0; i < IM_ARRAYSIZE(kInactiveValues); ++i) {
@@ -1413,20 +1466,25 @@ void Application::DrawSettingsWindow() {
                 inactive = i;
             }
         }
-        if (ui::PropertyCombo("背面のとき", &inactive, kInactiveLabels,
-                              IM_ARRAYSIZE(kInactiveLabels), 2,
-                              "他のウィンドウの後ろにあるときの上限。"
-                              "見えていない絵に GPU を回し続けないための設定。"
-                              "完全には止めないので、シェーダのホットリロードは効いたまま")) {
+        if (ui::PropertyCombo(ui::Tr("背面のとき", "In Background"), &inactive,
+                              ui::Tr(kInactiveLabels).data(), IM_ARRAYSIZE(kInactiveLabels), 2,
+                              ui::Tr("他のウィンドウの後ろにあるときの上限。"
+                                     "見えていない絵に GPU を回し続けないための設定。"
+                                     "完全には止めないので、シェーダのホットリロードは効いたまま",
+                                     "Limit while behind other windows, so the GPU does not keep "
+                                     "drawing what nobody sees. Rendering never stops completely, "
+                                     "so shader hot reload keeps working"))) {
             display.inactiveFrameRateLimit = kInactiveValues[inactive];
             displayChanged = true;
         }
-        displayChanged |= ui::PropertyBool("ホットリロード", &display.hotReload,
+        displayChanged |= ui::PropertyBool(ui::Tr("ホットリロード", "Hot Reload"), &display.hotReload,
                                            defaults.hotReload,
-                                           "shaders/ の更新を検出して PSO を作り直す");
+                                           ui::Tr("shaders/ の更新を検出して PSO を作り直す",
+                                                  "Rebuild PSOs when files in shaders/ change"));
         // 背景色はバックバッファ（非 sRGB）へそのまま書く表示色なので、
         // リニア変換は挟まない。
-        displayChanged |= ui::PropertyColor("背景色", display.clearColor, kDefaultClearColor);
+        displayChanged |= ui::PropertyColor(ui::Tr("背景色", "Background"), display.clearColor,
+                                            kDefaultClearColor);
         if (displayChanged) {
             // design-guide の「設定ウィンドウ」に従い、変えたらその場で書く。
             // 直接編集しているので、ここで写し戻す必要はない。
@@ -1451,7 +1509,7 @@ void Application::DrawInfoWindow() {
 
     ImGui::SetNextWindowSize(ImVec2(ui::Scaled(460.0f), ui::Scaled(360.0f)),
                              ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("情報", &m_showInfo)) {
+    if (!ImGui::Begin(ui::Tr("情報###Info", "Info###Info"), &m_showInfo)) {
         ImGui::End();
         return;
     }
@@ -1459,26 +1517,29 @@ void Application::DrawInfoWindow() {
     const ImGuiIO& io = ImGui::GetIO();
 
     if (ui::BeginPropertyTable("infoRows")) {
-        ui::PropertyValue("バージョン", "%s", TG_APP_VERSION);
+        ui::PropertyValue(ui::Tr("バージョン", "Version"), "%s", TG_APP_VERSION);
         const std::string project = m_projectPath.empty()
-                                        ? std::string("未保存のプロジェクト")
+                                        ? std::string(ui::Tr("未保存のプロジェクト", "Unsaved project"))
                                         : ToUtf8Display(m_projectPath.filename());
-        ui::PropertyValue("プロジェクト", "%s", project.c_str());
-        ui::PropertyValue("ノード", "%zu 個", m_graph.Nodes().size());
-        ui::PropertyValue("マテリアル", "%zu 個", m_materialLibrary.Entries().size());
-        ui::PropertyValue("テクスチャ", "%zu 枚", m_textureLibrary.Entries().size());
-        ui::PropertyValue("フレーム", "%.1f FPS (%.3f ms)", io.Framerate,
+        ui::PropertyValue(ui::Tr("プロジェクト", "Project"), "%s", project.c_str());
+        ui::PropertyValue(ui::Tr("ノード", "Nodes"), ui::Tr("%zu 個", "%zu"), m_graph.Nodes().size());
+        ui::PropertyValue(ui::Tr("マテリアル", "Materials"), ui::Tr("%zu 個", "%zu"), m_materialLibrary.Entries().size());
+        ui::PropertyValue(ui::Tr("テクスチャ", "Textures"), ui::Tr("%zu 枚", "%zu"), m_textureLibrary.Entries().size());
+        ui::PropertyValue(ui::Tr("フレーム", "Frame"), "%.1f FPS (%.3f ms)", io.Framerate,
                           1000.0f / io.Framerate);
-        ui::PropertyValue("バックバッファ", "%u x %u", m_device.Width(), m_device.Height());
-        ui::PropertyValue("ビューポート", "%u x %u", m_renderer.Width(), m_renderer.Height());
-        ui::PropertyValue("合成", "%u^2 / %u レイヤー / %u タイル",
+        ui::PropertyValue(ui::Tr("バックバッファ", "Back Buffer"), "%u x %u", m_device.Width(), m_device.Height());
+        ui::PropertyValue(ui::Tr("ビューポート", "Viewport"), "%u x %u", m_renderer.Width(), m_renderer.Height());
+        ui::PropertyValue(ui::Tr("合成", "Composite"),
+                          ui::Tr("%u^2 / %u レイヤー / %u タイル", "%u^2 / %u layers / %u tiles"),
                           m_renderer.MaterialResolution(),
                           m_renderer.Evaluator().EvaluatedLayerCount(),
                           m_renderer.Evaluator().EvaluatedTileCount());
-        ui::PropertyValue("ペイント", "%zu 枚 / %u^2 / 履歴 %zu 段", m_paintMasks.Count(),
-                          m_paintMasks.Resolution(), m_paintMasks.UndoCount());
-        ui::PropertyValue("アンドゥ", "%zu 段 / やり直し %zu 段", m_undoHistory.UndoCount(),
-                          m_undoHistory.RedoCount());
+        ui::PropertyValue(ui::Tr("ペイント", "Paint"),
+                          ui::Tr("%zu 枚 / %u^2 / 履歴 %zu 段", "%zu masks / %u^2 / %zu history steps"),
+                          m_paintMasks.Count(), m_paintMasks.Resolution(), m_paintMasks.UndoCount());
+        ui::PropertyValue(ui::Tr("アンドゥ", "Undo"),
+                          ui::Tr("%zu 段 / やり直し %zu 段", "%zu steps / %zu redo steps"),
+                          m_undoHistory.UndoCount(), m_undoHistory.RedoCount());
         // VRAM は 2 行に分ける。1 行目はプロセス全体（枠に対してどれだけ使っているか）、
         // 2 行目はこのアプリが D3D12MA を通して確保した分。差はスワップチェーンや
         // ディスクリプタヒープ、ドライバの内部確保にあたる。
@@ -1486,12 +1547,13 @@ void Application::DrawInfoWindow() {
         constexpr double kMegaBytes = 1024.0 * 1024.0;
         ui::PropertyValue("VRAM", "%.0f / %.0f MB", static_cast<double>(vram.usage) / kMegaBytes,
                           static_cast<double>(vram.budget) / kMegaBytes);
-        ui::PropertyValue("VRAM 確保", "%.0f MB (ブロック %.0f MB)",
+        ui::PropertyValue(ui::Tr("VRAM 確保", "VRAM Allocated"),
+                          ui::Tr("%.0f MB (ブロック %.0f MB)", "%.0f MB (blocks %.0f MB)"),
                           static_cast<double>(vram.allocated) / kMegaBytes,
                           static_cast<double>(vram.reserved) / kMegaBytes);
-        ui::PropertyValue("PSO", "%zu 件", m_pipelineCache.PipelineCount());
-        ui::PropertyValue("解放待ち", "%zu 件", m_device.PendingDeletionCount());
-        ui::PropertyValue("アップロード", "%llu / %llu KB",
+        ui::PropertyValue("PSO", ui::Tr("%zu 件", "%zu"), m_pipelineCache.PipelineCount());
+        ui::PropertyValue(ui::Tr("解放待ち", "Pending Release"), ui::Tr("%zu 件", "%zu"), m_device.PendingDeletionCount());
+        ui::PropertyValue(ui::Tr("アップロード", "Upload"), "%llu / %llu KB",
                           static_cast<unsigned long long>(m_device.Upload().PeakBytes() / 1024),
                           static_cast<unsigned long long>(m_device.Upload().BytesPerFrame() / 1024));
         ui::EndPropertyTable();

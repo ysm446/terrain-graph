@@ -227,6 +227,7 @@ set(tg_sources
     src/renderer/SkySphere.h
     src/ui/ImGuiLayer.cpp
     src/ui/ImGuiLayer.h
+    src/ui/Localization.h
     src/ui/Toast.cpp
     src/ui/Toast.h
     src/ui/UiStyle.cpp

@@ -1,7 +1,40 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-10-09 08:50
+更新日時: 2026-10-15 09:41
+
+## UI の日本語 / English 切り替え — 段階 1（2026-10-15 08:48）
+
+ユーザー依頼「ビューポートだけ英語にしたのをやめ、設定に言語（日本語 / English）を作って各 UI 要素に日本語と英語を割り当てて切り替えたい。英語が自然なものは英語のままでよい」。方針はユーザーと合意済み（呼ぶ場所で対を並べる `ui::Tr`、ログは日本語のまま、既定は日本語、4 段階で進める）。仕様は [design-guide.md](../design/design-guide.md) の「表示言語」。
+
+段階 1（済）:
+- 仕組み: `ui/Localization.h`（`ui::Language`、`SetLanguage`、`Tr(ja, en)`、`LocalizedText` と配列版の `Tr`）。`UiStyle.h` から読み込むので UI のファイルはどこでも使える。
+- 設定: `io::UiSettings::language`（`settings.json` の `ui.language` = `"ja"` / `"en"`）、設定ウィンドウの「言語」行、`Application::ApplyUiLanguage`（ウィンドウのタイトルも書き直す）。
+- **ウィンドウ名の ID を固定**（`"ビューポート###Viewport"` など 16 個）。ドッキング・`HiddenWithAssetBand` は `"###Id"` で引く。ドックスペースを v21 に上げたので、**この版の最初の起動で配置が既定に戻る**。
+- 切り替えたもの: メニューバー（ファイル・最近使ったもの・編集・ウィンドウ）、ステータスバーの状態表示、設定・情報ウィンドウ、ビューポート（表示モード、「表示」メニュー、統計、風の凡例、ライトのギズモ、フライの速さ）、共通部品のツールチップ（既定値に戻す、Ctrl + クリック、オン / オフ、絞り込み）。ビューポートは日本語モードでは英語化前の日本語に戻した（解像度・インスタンスは新しく訳した）。
+- 開発用: `--language ja|en`（その起動だけ）、`--show-settings`。ヘッドレス（`--screenshot-ui`・カタログ・レポート）は設定によらず日本語。
+
+段階 2（済、2026-10-15 09:14）: サブエージェント 3 本で並行に訳し、ビルドと確認はまとめて行った。
+- シーン階層（`DrawSceneHierarchy`）とグラフのタブ名（`###TerrainGraphTab` / `###CloudGraphTab`）。
+- アセット（`ApplicationAssetBrowser.cpp` 全体と `ApplicationAssetSaving.cpp` のトースト）。確認ダイアログの名前を固定 ID に（`###AssetRevert` / `###SceneDuplicate` / `###AssetDelete` / `###WorkIblPicker` / `###ReplacementPicker` / `###ExitConfirm` / `###SceneSwitch`）。
+- プレビュー設定・ライティング（`ApplicationPreviewPanels.cpp`）、作業用IBL（`ApplicationSkyPanel.cpp`）。選択肢の表は `ui::LocalizedText` に。
+- 未保存の項目名（`UnsavedItemNames`）。
+- 英語のときのラベル列を 144 に広げた（`kLabelColumnWidthEnglish`）。開発用に `--focus-window <固定ID>` を追加。
+- 訳していないもの: ファイルダイアログの題とフィルタ名（ワイド文字列）、`ApplicationUiHelpers.h` の共有の表示（「参照元がありません」「（未指定）」など。段階 3 で）、`io::DuplicateScene` の失敗理由、新規アセットの既定の名前とファイル名（保存データ。ユーザーの判断待ち）。
+- 検証: Debug ビルド（警告 0）、CTest 6 件。tengudake を `--focus-window PreviewSettings / Lighting --language ja / en` で撮り、英語でラベルが列に収まること、日本語の見た目が変わっていないことを目視（`data/screenshots/p2-*.png`）。アセットのダイアログ・右クリックメニュー・タイルの種類名（84px の枠に「Layered Material」が収まるか）は未目視。
+
+段階 3（済、2026-10-15 09:41）: サブエージェント 5 本で並行に訳した（ファイルが重ならないように分担。担当をまたぐ表 kRockStyleLabels / kValueSourceLabels / kMaskSourceLabels は先に親が変換）。訳語は共通の用語集でそろえた（design-guide の「表示言語」に載せた）。
+- グラフの画面（`ApplicationGraphPanel.cpp`。ノードエディタ、追加メニュー、グループ、DrawNodeProperties）、ノードのプロパティ（`ApplicationLayerPanel.cpp`）、共有のヘルパー（`ApplicationUiHelpers.h`。Draw*Rows、アセットのスロット、選択肢の表）、レイヤーマテリアル・マテリアルの窓、Path / Road Path（ビューポートの操作案内・右クリックメニューを含む）、Road Mesh・境界マテリアル・モデル・テクスチャ・チャンネル・参照ビューア・書き出しの窓。合わせて約 2,000 の対。
+- 積雪の節見出し（CollapsingHeader）を `###snowCover0`〜`5` / `###snowLineCurve` に。開閉の状態は一度だけ既定に戻る。インポスターの削除確認を `###DeleteImpostor` に。
+- 訳していないもの: ノードの定義（表示名・説明・ピンのラベル。`NodeDefinitions.cpp`。追加メニューの説明やピンのツールチップに出る）、graph / compositor 側で作るエラー文（`BuildRoadBaseline` の `fail`、`ValidateShoulderSection`、`CompileLayerMaterial`、`ExtractPresetLayers`、モデル読み込みの `asset.error`）、新しく置くノードの既定の名前（`DefaultLayerFor` など。保存データ）。
+- 検証: Debug ビルド（警告 0）、CTest 6 件。tengudake で Snow Cover / Model Scatter / Path / Surface を `--select-node` で選び、英語でラベルが列に収まること、日本語の見た目が変わっていないことを目視（`data/screenshots/p3-*.png`）。「流量補正」「侵食履歴の影響」の誤訳（どちらも Flow Volume）を直した。ほかのノード（雲・道路・湖など）の英語の画面は未目視。
+
+残り:
+- 段階 4: ノードの説明文、ツールチップ、トースト、確認ダイアログ（`BeginPopupModal` の名前は ID を兼ねるので `###` にする）、ファイルダイアログの題名。
+- 判断待ち: ステータスバーに流れる通知（`TG_LOG_*` 由来）は日本語のまま。
+
+検証: Debug ビルド（警告 0）。`--screenshot-ui --show-settings --language ja / en` で tengudake を開き、メニュー・タブ・設定・統計が両方の言語で出ること、ドッキングの配置が保たれることを目視（`data/screenshots/lang-ja.png` / `lang-en.png`）。英語でボタンからはみ出した「Reset to Default Size」は「Reset Size」にした。
+**注意（今回の変更とは無関係）**: kiso-komagatake を `--screenshot-ui` で開くと DEVICE_HUNG（0x887A0006、MaskOpThumbnails の付近）で落ちる。変更前の Release ビルド（08:28）でも同じだったので既存の問題。未調査。
 
 ## 全体のレビューと手直し（2026-10-09 08:50）
 
