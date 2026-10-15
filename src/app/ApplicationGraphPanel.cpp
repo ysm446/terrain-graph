@@ -650,7 +650,7 @@ void Application::CopySelectedGraphNodes() {
         return id;
     };
     for (GraphClipboardNode& entry : m_graphClipboard) io::RemapNodeReferences(entry.settings, collect);
-    TG_LOG_INFO("ノードをコピーしました: %zu 個", m_graphClipboard.size());
+    TG_LOG_INFO(ui::Tr("ノードをコピーしました: %zu 個", "Copied nodes: %zu"), m_graphClipboard.size());
 }
 
 void Application::PasteGraphNodes(const ImVec2& viewCenter) {
@@ -707,7 +707,7 @@ void Application::PlaceGraphClipboard(const ImVec2& viewCenter, bool foreign) {
                 }
             }
             ++unresolved;
-            TG_LOG_WARN("貼り付けたノードの参照を外しました（このシーンで読み込めません）: %s", asset.name.c_str());
+            TG_LOG_WARN(ui::Tr("貼り付けたノードの参照を外しました（このシーンで読み込めません）: %s", "Removed a reference from the pasted nodes (cannot be loaded in this scene): %s"), asset.name.c_str());
             return decltype(findByUid(asset.uid)){};
         };
         remap.texture = [&](compositor::TextureId id) {
@@ -798,9 +798,9 @@ void Application::PlaceGraphClipboard(const ImVec2& viewCenter, bool foreign) {
         }
     }
     MarkDocumentChanged();
-    if (droppedPaint > 0) TG_LOG_WARN("ペイントマスクは別のシーンへ持ち出せないため外しました: %zu 箇所", droppedPaint);
+    if (droppedPaint > 0) TG_LOG_WARN(ui::Tr("ペイントマスクは別のシーンへ持ち出せないため外しました: %zu 箇所", "Removed paint masks, which cannot be moved to another scene: %zu"), droppedPaint);
     if (unresolved > 0 || droppedPaint > 0) return;  // 警告をステータスバーに残す
-    TG_LOG_INFO("ノードを貼り付けました: %zu 個", m_graphClipboard.size());
+    TG_LOG_INFO(ui::Tr("ノードを貼り付けました: %zu 個", "Pasted nodes: %zu"), m_graphClipboard.size());
 }
 
 const std::vector<graph::GraphId>& Application::GraphCycleNodes() {
@@ -2201,7 +2201,7 @@ void Application::DrawGraphEditor() {
             const graph::GraphId nodeId = m_graph.CreateNode(kind);
             graph::Node* node = m_graph.FindMutableNode(nodeId);
             if (node == nullptr) {
-                TG_LOG_WARN("ノードを追加できませんでした（種類の定義が見つかりません）");
+                TG_LOG_WARN(ui::Tr("ノードを追加できませんでした（種類の定義が見つかりません）", "Could not add the node (type definition not found)"));
                 return;
             }
             if (auto* settings = std::get_if<graph::LayerNodeSettings>(&node->settings)) {
@@ -2224,7 +2224,7 @@ void Application::DrawGraphEditor() {
             SetPreviewGraphNode(nodeId);
             MarkDocumentChanged();
             // ステータスバーに残す。追加が効いたかを画面で確かめられるようにする。
-            TG_LOG_INFO("ノードを追加しました: %s", NodeDisplayName(*node));
+            TG_LOG_INFO(ui::Tr("ノードを追加しました: %s", "Added node: %s"), NodeDisplayName(*node));
         };
         // **まずセクションを出し、そこから種類を選ぶ。** 種類が増えて 1 本のリストでは
         // 探しきれなくなったため。編集中のグラフに出す種類が 1 つも無いセクションは出さない。
@@ -2773,7 +2773,7 @@ void Application::DrawSceneHierarchy() {
             ImGui::Separator();
             if (ImGui::MenuItem(ui::Tr("新規作成して配置", "Create New and Place"))) {
                 const auto path = io::CreateGraphAsset(m_workspace, SceneAssetDirectory(), component == 1);
-                if (path.empty()) TG_LOG_ERROR("グラフを作成できませんでした");
+                if (path.empty()) TG_LOG_ERROR(ui::Tr("グラフを作成できませんでした", "Could not create the graph"));
                 else { m_pendingComponentPlace = path; m_assetRefresh = true; }
             }
             if (ImGui::MenuItem(ui::Tr("入れ替え…", "Replace…"))) {
@@ -2809,11 +2809,11 @@ void Application::DrawSceneHierarchy() {
             renameMenuItem(path);
             ImGui::Separator();
             if (ImGui::MenuItem(ui::Tr("新規作成して配置", "Create New and Place"))) {
-                auto created = m_workspace.UniquePath(SceneAssetDirectory(), "大気散乱スカイ", ".tgatmosphere");
-                auto body = io::AtmosphereAssetBody(nlohmann::json::object(), "大気散乱スカイ");
+                auto created = m_workspace.UniquePath(SceneAssetDirectory(), ui::Tr("大気散乱スカイ", "Atmospheric Sky"), ".tgatmosphere");
+                auto body = io::AtmosphereAssetBody(nlohmann::json::object(), ui::Tr("大気散乱スカイ", "Atmospheric Sky"));
                 if (!created.empty() && m_workspace.SaveAsset(created, "atmosphere-sky", body)) {
                     m_pendingComponentPlace = created; m_assetRefresh = true;
-                } else TG_LOG_ERROR("大気散乱スカイを作成できませんでした");
+                } else TG_LOG_ERROR(ui::Tr("大気散乱スカイを作成できませんでした", "Could not create the atmospheric sky"));
             }
             if (ImGui::MenuItem(ui::Tr("読み込む…", "Load…"))) {
                 const auto selected = ShowOpenFileDialog(ui::Tr(L"大気散乱スカイを読み込む", L"Load Atmospheric Sky"), {{ui::Tr(L"大気散乱スカイ", L"Atmospheric Sky"), L"*.tgatmosphere"}});

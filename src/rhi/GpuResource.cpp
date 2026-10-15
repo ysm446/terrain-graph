@@ -1,6 +1,7 @@
 #include "rhi/GpuResource.h"
 
 #include "core/Log.h"
+#include "ui/Localization.h"
 
 #include <algorithm>
 
@@ -80,7 +81,7 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
     // ヒープは Create で必ず渡される。無いまま「成功」させるとビューの無いテクスチャが返り、
     // シェーダ側で kInvalidDescriptorIndex を引いて黙って壊れる。
     if (m_srvHeap == nullptr || m_rtvHeap == nullptr || m_dsvHeap == nullptr) {
-        TG_LOG_ERROR("ResourceAllocator にディスクリプタヒープが設定されていません");
+        TG_LOG_ERROR(ui::Tr("ResourceAllocator にディスクリプタヒープが設定されていません", "ResourceAllocator has no descriptor heap"));
         return false;
     }
     if (!m_allocator) {
@@ -89,13 +90,13 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
     // mipLevels = 0（フルミップ連鎖の自動決定）は、ビュー生成や
     // SubresourceIndex の計算が実ミップ数を前提とするため受け付けない。
     if (desc.mipLevels == 0) {
-        TG_LOG_ERROR("CreateTexture2D: mipLevels = 0 は未対応です");
+        TG_LOG_ERROR(ui::Tr("CreateTexture2D: mipLevels = 0 は未対応です", "CreateTexture2D: mipLevels = 0 is not supported"));
         return false;
     }
     // RTV / DSV は現状スライス 0 の 2D ビューしか作らないため、配列とは併用できない。
     if (desc.arraySize > 1 && !desc.isCube &&
         (desc.allowRenderTarget || desc.allowDepthStencil)) {
-        TG_LOG_ERROR("CreateTexture2D: 配列テクスチャの RTV / DSV は未対応です");
+        TG_LOG_ERROR(ui::Tr("CreateTexture2D: 配列テクスチャの RTV / DSV は未対応です", "CreateTexture2D: RTV / DSV for array textures is not supported"));
         return false;
     }
 

@@ -10,6 +10,7 @@
 
 #include "core/ImageIo.h"
 #include "core/Log.h"
+#include "ui/Localization.h"
 
 #include <nlohmann/json.hpp>
 
@@ -2249,7 +2250,7 @@ bool ReadGraph(const json& source, graph::NodeGraph& graphData, const TextureRea
                 // 知らない種類（廃止した種類、または将来のビルドで増えた種類）は捨てずに
                 // ピンのないエラー表示のノードとして残す。リンクは繋がらないまま消える。
                 definition = graph::FindNodeDefinition(graph::NodeKind::Missing);
-                TG_LOG_WARN("扱えないノードの種類です: %s (id %d)", kindName.c_str(), id);
+                TG_LOG_WARN(ui::Tr("扱えないノードの種類です: %s (id %d)", "Unsupported node type: %s (id %d)"), kindName.c_str(), id);
             }
             graph::Node created;
             created.component = ReadInt(item, "component", 0);
@@ -3297,7 +3298,7 @@ renderer::SkyAssetId ReadSky(const json& node, renderer::SkyLibrary& skies,
     const renderer::SkyDefinition defaults;
     std::string name = ReadString(node, "name");
     if (name.empty()) {
-        name = "天球";
+        name = ui::Tr("天球", "Sky");
     }
     const renderer::SkyAssetId id = skies.Add(name);
     renderer::SkyAsset* asset = skies.FindMutable(id);
@@ -3334,7 +3335,7 @@ void MigrateSkyFromPreview(const json& preview, renderer::SkyLibrary& skies,
                            const fs::path& baseDir) {
     const renderer::SkyDefinition defaults;
     const std::string hdri = ReadString(preview, "hdri");
-    const renderer::SkyAssetId id = skies.Add("既定の空");
+    const renderer::SkyAssetId id = skies.Add(ui::Tr("既定の空", "Default Sky"));
     renderer::SkyAsset* asset = skies.FindMutable(id);
     if (asset == nullptr) {
         return;
@@ -3372,14 +3373,14 @@ bool WriteJsonFile(const fs::path& path, const json& document) {
     {
         std::ofstream stream(tempPath, std::ios::binary | std::ios::trunc);
         if (!stream.is_open()) {
-            TG_LOG_ERROR("ファイルを開けませんでした: %s", ToUtf8Portable(tempPath).c_str());
+            TG_LOG_ERROR(ui::Tr("ファイルを開けませんでした: %s", "Could not open the file: %s"), ToUtf8Portable(tempPath).c_str());
             return false;
         }
         // 人が読める形で書く。差分も取りやすい。壊れた文字列が混ざっていても
         // 例外を出さない（不正な UTF-8 は置換文字にする）。
         stream << document.dump(2, ' ', false, json::error_handler_t::replace) << '\n';
         if (!stream.good()) {
-            TG_LOG_ERROR("ファイルの書き込みに失敗しました: %s", ToUtf8Portable(tempPath).c_str());
+            TG_LOG_ERROR(ui::Tr("ファイルの書き込みに失敗しました: %s", "Failed to write the file: %s"), ToUtf8Portable(tempPath).c_str());
             return false;
         }
     }
@@ -3387,7 +3388,7 @@ bool WriteJsonFile(const fs::path& path, const json& document) {
     std::error_code renameError;
     fs::rename(tempPath, path, renameError);
     if (renameError) {
-        TG_LOG_ERROR("ファイルを差し替えられませんでした: %s", ToUtf8Portable(path).c_str());
+        TG_LOG_ERROR(ui::Tr("ファイルを差し替えられませんでした: %s", "Could not replace the file: %s"), ToUtf8Portable(path).c_str());
         std::error_code removeError;
         fs::remove(tempPath, removeError);
         return false;
@@ -3399,14 +3400,14 @@ bool ReadJsonFile(const fs::path& path, const char* expectedFormat, int maxVersi
                   json& outDocument) {
     std::ifstream stream(path, std::ios::binary);
     if (!stream.is_open()) {
-        TG_LOG_ERROR("ファイルを開けませんでした: %s", ToUtf8Portable(path).c_str());
+        TG_LOG_ERROR(ui::Tr("ファイルを開けませんでした: %s", "Could not open the file: %s"), ToUtf8Portable(path).c_str());
         return false;
     }
 
     // 例外は使わない方針なので、パース失敗は discarded で受ける。
     outDocument = json::parse(stream, nullptr, false);
     if (outDocument.is_discarded() || !outDocument.is_object()) {
-        TG_LOG_ERROR("JSON として読めませんでした: %s", ToUtf8Portable(path).c_str());
+        TG_LOG_ERROR(ui::Tr("JSON として読めませんでした: %s", "Could not parse as JSON: %s"), ToUtf8Portable(path).c_str());
         return false;
     }
 
@@ -3417,13 +3418,13 @@ bool ReadJsonFile(const fs::path& path, const char* expectedFormat, int maxVersi
         format = "terrain-graph." + format.substr(std::string("material-mixer.").size());
     }
     if (format != expectedFormat) {
-        TG_LOG_ERROR("形式が違います（%s ではなく %s）: %s", expectedFormat, format.c_str(),
+        TG_LOG_ERROR(ui::Tr("形式が違います（%s ではなく %s）: %s", "Wrong format (expected %s, got %s): %s"), expectedFormat, format.c_str(),
                      ToUtf8Portable(path).c_str());
         return false;
     }
     const int version = ReadInt(outDocument, "version", 0);
     if (version > maxVersion) {
-        TG_LOG_ERROR("このバージョンでは読めません（ファイル %d > 対応 %d）: %s", version,
+        TG_LOG_ERROR(ui::Tr("このバージョンでは読めません（ファイル %d > 対応 %d）: %s", "Cannot read with this version (file %d > supported %d): %s"), version,
                      maxVersion, ToUtf8Portable(path).c_str());
         return false;
     }
@@ -3761,7 +3762,7 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
         const std::vector<uint8_t> pixels = refs.paintMasks.ReadPixels(device, id);
         const uint32_t resolution = refs.paintMasks.Resolution();
         if (pixels.empty()) {
-            TG_LOG_ERROR("ペイントマスクを読み出せないため保存を中止します");
+            TG_LOG_ERROR(ui::Tr("ペイントマスクを読み出せないため保存を中止します", "Cannot read back the paint masks. Save aborted"));
             paintSaveFailed = true;
             return;
         }
@@ -3772,7 +3773,7 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
         fs::create_directories(paintDir, error);
         if (!SaveGray8Png(paintDir / FromUtf8(fileName), resolution, resolution, resolution,
                           pixels.data())) {
-            TG_LOG_WARN("ペイントマスクを書き出せませんでした: %s", fileName.c_str());
+            TG_LOG_WARN(ui::Tr("ペイントマスクを書き出せませんでした: %s", "Could not write the paint mask: %s"), fileName.c_str());
             paintSaveFailed = true;
             return;
         }
@@ -3840,7 +3841,7 @@ bool SaveProject(const std::filesystem::path& path, rhi::Device& device,
         return false;
     }
     RemoveStalePaintMasks(paintDir, writtenPaintFiles);
-    TG_LOG_INFO("プロジェクトを保存しました: %s", ToUtf8Portable(savePath).c_str());
+    TG_LOG_INFO(ui::Tr("プロジェクトを保存しました: %s", "Saved the project: %s"), ToUtf8Portable(savePath).c_str());
     return true;
 }
 
@@ -3849,7 +3850,7 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
     json document;
     if (!(workspace ? workspace->ReadScene(path, document)
                     : ReadJsonFile(path, kProjectFormat, kProjectFormatVersion, document))) {
-        if (workspace) TG_LOG_ERROR("シーンまたは参照アセットを開けません: %s", ToUtf8Portable(path).c_str());
+        if (workspace) TG_LOG_ERROR(ui::Tr("シーンまたは参照アセットを開けません: %s", "Cannot open the scene or its referenced assets: %s"), ToUtf8Portable(path).c_str());
         return false;
     }
 
@@ -3900,7 +3901,7 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
                 // パスと名前だけの「リンク切れ」として登録し、マテリアルやノードの
                 // 割り当てはそこへ繋いでおく。消してしまうと、次に保存した時点で
                 // どのファイルを指していたかが失われ、繋ぎ直せなくなる。
-                TG_LOG_WARN("テクスチャが見つかりません（リンク切れ）: %s",
+                TG_LOG_WARN(ui::Tr("テクスチャが見つかりません（リンク切れ）: %s", "Texture not found (broken link): %s"),
                             ToUtf8Portable(texturePath).c_str());
                 id = refs.textures.AddMissing(texturePath, name);
                 if (id == compositor::kNoTexture) {
@@ -3933,7 +3934,7 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
                 continue;
             }
             const int index = ReadInt(node, "id", 0);
-            const compositor::MaterialAssetId id = refs.materials.Add("マテリアル");
+            const compositor::MaterialAssetId id = refs.materials.Add(ui::Tr("マテリアル", "Material"));
             if (compositor::MaterialAsset* asset = refs.materials.FindMutable(id);
                 asset != nullptr) {
                 ReadMaterialBody(node, *asset, readTexture);
@@ -3969,7 +3970,7 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
                 asset.assetUid = ReadString(node, "uid");
                 asset.path = baseDir / FromUtf8(ReadString(node, "path"));
                 if (!renderer::LoadModel(asset.path, asset)) {
-                    TG_LOG_WARN("モデルの読み込みに失敗: %s", asset.error.c_str());
+                    TG_LOG_WARN(ui::Tr("モデルの読み込みに失敗: %s", "Failed to load the model: %s"), asset.error.c_str());
                 }
                 ReadModelLodScreenSizes(node, asset);
                 ReadModelImpostor(node, asset, [&](const json& value) { return ImpostorPathFromString(value, baseDir); });
@@ -4003,11 +4004,11 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
 
             LdrImage image;
             if (!LoadLdrImage(paintDir / FromUtf8(fileName), image) || !image.IsValid()) {
-                TG_LOG_WARN("ペイントマスクを読み込めませんでした: %s", fileName.c_str());
+                TG_LOG_WARN(ui::Tr("ペイントマスクを読み込めませんでした: %s", "Could not load the paint mask: %s"), fileName.c_str());
                 continue;
             }
             if (image.width != image.height) {
-                TG_LOG_WARN("ペイントマスクが正方ではありません: %s", fileName.c_str());
+                TG_LOG_WARN(ui::Tr("ペイントマスクが正方ではありません: %s", "Paint mask is not square: %s"), fileName.c_str());
                 continue;
             }
 
@@ -4090,7 +4091,7 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
     }
     if (!graphLoaded) {
         if (!legacyLayers.empty()) {
-            TG_LOG_INFO("旧形式のレイヤーをノードグラフへ移行しました（%zu 枚）",
+            TG_LOG_INFO(ui::Tr("旧形式のレイヤーをノードグラフへ移行しました（%zu 枚）", "Migrated legacy layers to the node graph (%zu layers)"),
                         legacyLayers.size());
             refs.graph = MigrateLayersToGraph(std::move(legacyLayers));
         } else {
@@ -4129,10 +4130,10 @@ bool LoadProject(const std::filesystem::path& path, rhi::Device& device,
 
     if (workspace && document.contains("_atmosphereAsset")) {
         if (!LoadWorkEnvironment(*workspace, device, pipelineCache, refs))
-            TG_LOG_WARN("作業用IBLを読み込めません。既定の作業環境を使用します");
+            TG_LOG_WARN(ui::Tr("作業用IBLを読み込めません。既定の作業環境を使用します", "Cannot load the working IBL. Using the default working environment"));
     }
 
-    TG_LOG_INFO("プロジェクトを開きました: %s", ToUtf8Portable(path).c_str());
+    TG_LOG_INFO(ui::Tr("プロジェクトを開きました: %s", "Opened the project: %s"), ToUtf8Portable(path).c_str());
     return true;
 }
 
@@ -4186,14 +4187,14 @@ bool LoadWorkEnvironment(ProjectWorkspace& workspace, rhi::Device& device,
 
 bool SaveAtmosphereAsset(ProjectWorkspace& workspace, const ProjectRefs& refs, const fs::path& directory) {
     if (!refs.atmosphereAsset) return false;
-    auto body = AtmosphereAssetBody(WritePreview(refs.renderer), "大気散乱スカイ");
+    auto body = AtmosphereAssetBody(WritePreview(refs.renderer), ui::Tr("大気散乱スカイ", "Atmospheric Sky"));
     fs::path path;
     if (!refs.atmosphereAsset->is_null()) {
         path = workspace.Resolve(*refs.atmosphereAsset);
         json existing;
         if (path.empty() || !workspace.ReadAsset(path, "atmosphere-sky", existing)) return false;
-        body["uid"] = ReadString(existing, "uid"); body["name"] = ReadString(existing, "name", "大気散乱スカイ");
-    } else path = workspace.UniquePath(directory, "大気散乱スカイ", ".tgatmosphere");
+        body["uid"] = ReadString(existing, "uid"); body["name"] = ReadString(existing, "name", ui::Tr("大気散乱スカイ", "Atmospheric Sky"));
+    } else path = workspace.UniquePath(directory, ui::Tr("大気散乱スカイ", "Atmospheric Sky"), ".tgatmosphere");
     if (!workspace.SaveAsset(path, "atmosphere-sky", body)) return false;
     *refs.atmosphereAsset = workspace.Reference(path);
     return !refs.atmosphereAsset->is_null();
@@ -4503,7 +4504,7 @@ void KeepOnlyActiveSky(rhi::Device& device, renderer::SkyLibrary& skies) {
 
 bool SaveMaterial(const std::filesystem::path& path, const compositor::MaterialAsset& asset,
                   const compositor::TextureLibrary& textures) {
-    if (asset.layerMaterial) { TG_LOG_ERROR("レイヤーマテリアルは共有アセット（.tglayer）として保存してください"); return false; }
+    if (asset.layerMaterial) { TG_LOG_ERROR(ui::Tr("レイヤーマテリアルは共有アセット（.tglayer）として保存してください", "Save layered materials as shared assets (.tglayer)")); return false; }
     // SaveProject と同じく、裸のファイル名でも相対パスが作れるよう絶対化する。
     std::error_code absoluteError;
     const fs::path absolutePath = fs::absolute(path, absoluteError);
@@ -4527,7 +4528,7 @@ bool SaveMaterial(const std::filesystem::path& path, const compositor::MaterialA
     if (!WriteJsonFile(savePath, document)) {
         return false;
     }
-    TG_LOG_INFO("マテリアルを書き出しました: %s", ToUtf8Portable(savePath).c_str());
+    TG_LOG_INFO(ui::Tr("マテリアルを書き出しました: %s", "Exported the material: %s"), ToUtf8Portable(savePath).c_str());
     return true;
 }
 
@@ -4553,14 +4554,14 @@ compositor::MaterialAssetId LoadMaterial(const std::filesystem::path& path, rhi:
         const compositor::TextureId id = textures.Load(device, pipelineCache, texturePath);
         if (id == compositor::kNoTexture) {
             // プロジェクトと同じく、見つからない画像はリンク切れとして残す。
-            TG_LOG_WARN("テクスチャが見つかりません（リンク切れ）: %s",
+            TG_LOG_WARN(ui::Tr("テクスチャが見つかりません（リンク切れ）: %s", "Texture not found (broken link): %s"),
                         ToUtf8Portable(texturePath).c_str());
             return textures.AddMissing(texturePath, std::string());
         }
         return id;
     };
 
-    const compositor::MaterialAssetId id = materials.Add("マテリアル");
+    const compositor::MaterialAssetId id = materials.Add(ui::Tr("マテリアル", "Material"));
     compositor::MaterialAsset* asset = materials.FindMutable(id);
     if (asset == nullptr) {
         return compositor::kNoMaterialAsset;
@@ -4568,7 +4569,7 @@ compositor::MaterialAssetId LoadMaterial(const std::filesystem::path& path, rhi:
     ReadMaterialBody(document, *asset, readTexture);
     asset->thumbnailDirty = true;
 
-    TG_LOG_INFO("マテリアルを読み込みました: %s", ToUtf8Portable(path).c_str());
+    TG_LOG_INFO(ui::Tr("マテリアルを読み込みました: %s", "Loaded the material: %s"), ToUtf8Portable(path).c_str());
     return id;
 }
 

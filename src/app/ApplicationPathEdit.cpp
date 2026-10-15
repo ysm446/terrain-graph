@@ -944,7 +944,7 @@ void Application::HandlePathInput(graph::Node& node, bool itemActive, bool itemH
         graph::PathClip clip;
         if (graph::ExtractPathClip(path, movable, state.selectedEdges, clip)) {
             m_pathClipboard = std::move(clip);
-            TG_LOG_INFO("パスをコピーしました: 点 %zu / エッジ %zu", m_pathClipboard.points.size(),
+            TG_LOG_INFO(ui::Tr("パスをコピーしました: 点 %zu / エッジ %zu", "Copied path: %zu points / %zu edges"), m_pathClipboard.points.size(),
                         m_pathClipboard.edges.size());
         }
     };
@@ -2057,7 +2057,7 @@ bool Application::BakePathRouteTerrain(const graph::Node& node) {
     constexpr uint32_t kResolution = 512;
     if (m_pathRouteEvaluator.Resolution() != kResolution) {
         if (!m_pathRouteEvaluator.Create(m_device, kResolution)) {
-            TG_LOG_WARN("経路探索用の評価器を作れませんでした");
+            TG_LOG_WARN(ui::Tr("経路探索用の評価器を作れませんでした", "Could not create the route-finding evaluator"));
             cache.valid = false;
             return false;
         }
@@ -2083,7 +2083,7 @@ bool Application::BakePathRouteTerrain(const graph::Node& node) {
     }
     if (!submitted || !evaluated || m_pathRouteEvaluator.HasPendingPostprocess() ||
         !m_pathRouteEvaluator.ReadbackHeight(m_device, cache.heightfield)) {
-        TG_LOG_WARN("経路探索用の地形を焼けませんでした");
+        TG_LOG_WARN(ui::Tr("経路探索用の地形を焼けませんでした", "Could not bake the terrain for route finding"));
         cache.valid = false;
         return false;
     }
@@ -2105,7 +2105,7 @@ bool Application::BakePathRouteTerrain(const graph::Node& node) {
                 }
             }
         } else {
-            TG_LOG_WARN("経路探索の Avoid のマスクを焼けませんでした（避ける所なしで探します）");
+            TG_LOG_WARN(ui::Tr("経路探索の Avoid のマスクを焼けませんでした（避ける所なしで探します）", "Could not bake the Avoid mask for route finding (searching without avoidance)"));
         }
     }
     cache.valid = true;
@@ -2134,7 +2134,7 @@ void Application::ProcessPendingPathRoutes() {
                                 m_pathRouteRequest.edges.empty() ? nullptr
                                                                  : &m_pathRouteRequest.edges);
         } else {
-            TG_LOG_WARN("経路探索には Base に地形を繋いでください");
+            TG_LOG_WARN(ui::Tr("経路探索には Base に地形を繋いでください", "Connect a terrain to Base for route finding"));
         }
         m_pathRouteRequest.force = false;
         m_pathRouteRequest.edges.clear();
@@ -2190,7 +2190,7 @@ void Application::RecomputePathRoutes(graph::Node& node, bool force,
     if (routed > 0) {
         m_graph.MarkDirty();
         MarkDocumentChanged();
-        TG_LOG_INFO("経路を計算しました: %zu 本", routed);
+        TG_LOG_INFO(ui::Tr("経路を計算しました: %zu 本", "Computed routes: %zu"), routed);
     }
 }
 

@@ -3,6 +3,7 @@
 #include "renderer/PreviewRenderer.h"
 
 #include "core/Log.h"
+#include "ui/Localization.h"
 
 #include <pix3.h>
 
@@ -420,14 +421,14 @@ void PreviewRenderer::ProcessPendingWork(rhi::Device& device,
         if (!CreateShadowTexture(device, m_shadowMap, L"ShadowMap", resolution) &&
             (m_shadowResolutionApplied = kShadowResolutions[0], m_shadowResolution = int(kShadowResolutions[0]),
              !CreateShadowTexture(device, m_shadowMap, L"ShadowMap", kShadowResolutions[0])))
-            TG_LOG_WARN("影のテクスチャを確保できません");
+            TG_LOG_WARN(ui::Tr("影のテクスチャを確保できません", "Could not allocate the shadow texture"));
     }
     for (uint32_t i = 0; i < kShadowCascadeCount; ++i) {
         auto& texture = m_shadowCascades[i];
         if (m_shadowEnabled && m_cascadedShadows && i < uint32_t(m_shadowCascadeCount)) {
             if (!texture.IsValid() && !CreateShadowTexture(device, texture, L"ShadowCascade", m_shadowResolutionApplied)) {
                 m_cascadedShadows = false;
-                TG_LOG_WARN("CSMのテクスチャを確保できません。従来の影へ戻します");
+                TG_LOG_WARN(ui::Tr("CSMのテクスチャを確保できません。従来の影へ戻します", "Could not allocate the CSM textures. Falling back to the legacy shadow"));
             }
         } else device.DeferRelease(texture);
     }
@@ -457,7 +458,7 @@ void PreviewRenderer::ProcessPendingWork(rhi::Device& device,
             m_plane = std::move(plane);
             m_meshSubdivisions = m_requestedMeshSubdivisions;
         } else {
-            TG_LOG_WARN("平面メッシュを作れませんでした（%u 分割）", m_requestedMeshSubdivisions);
+            TG_LOG_WARN(ui::Tr("平面メッシュを作れませんでした（%u 分割）", "Could not create the plane mesh (%u subdivisions)"), m_requestedMeshSubdivisions);
             m_requestedMeshSubdivisions = m_meshSubdivisions;
         }
     }
@@ -587,7 +588,7 @@ void PreviewRenderer::ApplyActiveSky(rhi::Device& device, rhi::PipelineCache& pi
         }
         // 読み込みに失敗しても、天球アセットの中身は書き換えない（ユーザーの
         // 指定を黙って消さない）。環境だけを手続き的な空へ落とす。
-        TG_LOG_WARN("HDRI の読み込みに失敗したため、手続き的な空で描きます");
+        TG_LOG_WARN(ui::Tr("HDRI の読み込みに失敗したため、手続き的な空で描きます", "Failed to load the HDRI. Using the procedural sky"));
     }
     m_environment.BuildFromSky(device, pipelineCache, m_activeSky.procedural);
     m_loadedHdriPath.clear();

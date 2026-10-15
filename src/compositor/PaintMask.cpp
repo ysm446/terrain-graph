@@ -1,6 +1,7 @@
 #include "compositor/PaintMask.h"
 
 #include "core/Log.h"
+#include "ui/Localization.h"
 
 #include <pix3.h>
 
@@ -261,7 +262,7 @@ PaintMaskId PaintMaskStore::AddFromPixels(rhi::Device& device, uint32_t resoluti
         m_requestedResolution = resolution;
     }
     if (resolution != m_resolution) {
-        TG_LOG_ERROR("ペイントマスクの解像度が揃っていません (%u != %u)", resolution,
+        TG_LOG_ERROR(ui::Tr("ペイントマスクの解像度が揃っていません (%u != %u)", "Paint mask resolutions do not match (%u != %u)"), resolution,
                      m_resolution);
         return kNoPaintMask;
     }
@@ -369,7 +370,7 @@ void PaintMaskStore::ProcessPendingWork(rhi::Device& device, rhi::PipelineCache&
         Resized item;
         item.entry = &entry;
         if (!CreateMaskTexture(device, resolution, item.texture)) {
-            TG_LOG_ERROR("ペイントマスクの作り直しに失敗しました");
+            TG_LOG_ERROR(ui::Tr("ペイントマスクの作り直しに失敗しました", "Failed to rebuild the paint mask"));
             for (Resized& created : resized) {
                 device.DeferRelease(created.texture);
             }

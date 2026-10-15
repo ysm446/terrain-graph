@@ -1,6 +1,7 @@
 #include "rhi/Common.h"
 
 #include "core/Log.h"
+#include "ui/Localization.h"
 
 namespace tg::rhi {
 
@@ -8,7 +9,7 @@ bool CheckHr(HRESULT hr, const char* expr, const char* file, int line) {
     if (SUCCEEDED(hr)) {
         return true;
     }
-    TG_LOG_ERROR("%s:%d: %s が 0x%08lX で失敗しました", file, line, expr,
+    TG_LOG_ERROR(ui::Tr("%s:%d: %s が 0x%08lX で失敗しました", "%s:%d: %s failed with 0x%08lX"), file, line, expr,
                  static_cast<unsigned long>(hr));
     return false;
 }

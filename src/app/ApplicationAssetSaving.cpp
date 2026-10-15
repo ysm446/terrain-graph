@@ -48,7 +48,7 @@ void Application::RevertAsset(const std::filesystem::path& path) {
     io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
         m_skyLibrary, m_renderer, m_graph, &m_models, &m_sceneComponents, -1, &m_sceneAtmosphere};
     if (!io::LoadSharedAsset(m_workspace, path, m_device, m_pipelineCache, refs, true)) {
-        TG_LOG_ERROR("アセットを戻せませんでした: %s", ToUtf8Display(path).c_str());
+        TG_LOG_ERROR(ui::Tr("アセットを戻せませんでした: %s", "Could not revert the asset: %s"), ToUtf8Display(path).c_str());
         m_toasts.Push(ui::Tr("アセットを戻せませんでした", "Could not revert the asset"), name);
         return;
     }
@@ -78,7 +78,7 @@ void Application::RevertAsset(const std::filesystem::path& path) {
     m_assetRefresh = true;
     m_assetThumbnails.Invalidate();
     m_toasts.Push(ui::Tr("変更前に戻しました", "Reverted changes"), name);
-    TG_LOG_INFO("アセットを変更前に戻しました: %s", ToUtf8Display(path).c_str());
+    TG_LOG_INFO(ui::Tr("アセットを変更前に戻しました: %s", "Reverted the asset: %s"), ToUtf8Display(path).c_str());
 }
 
 void Application::RequestSaveSelection() {
@@ -125,7 +125,7 @@ void Application::ProcessSelectedAssetSave() {
             }
         }
         if (saved) ++savedCount;
-        else { ++failedCount; TG_LOG_ERROR("アセットを保存できませんでした: %s", ToUtf8Display(path).c_str()); }
+        else { ++failedCount; TG_LOG_ERROR(ui::Tr("アセットを保存できませんでした: %s", "Could not save the asset: %s"), ToUtf8Display(path).c_str()); }
     }
     // RememberAssetStates はすべてのアセットの指紋を採り直すので、保存の回数だけ呼ばずに 1 度で済ます。
     if (!savedShared.empty()) {

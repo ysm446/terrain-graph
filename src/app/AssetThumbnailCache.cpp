@@ -3,6 +3,7 @@
 #include "core/ImageIo.h"
 #include "core/Log.h"
 #include "core/PathUtf8.h"
+#include "ui/Localization.h"
 #include <pix3.h>
 #include "rhi/TextureReadback.h"
 #include <algorithm>
@@ -82,7 +83,7 @@ void AssetThumbnailCache::Store(rhi::Device& device, const fs::path& path, rhi::
     Entry entry;
     entry.failed = !texture.IsValid(); entry.lastUsed = m_frame;
     entry.texture = std::move(texture);
-    if (entry.failed && Extension(path) != ".tgscene") TG_LOG_WARN("アセットのサムネイルを生成できません: %s", ToUtf8Display(path).c_str());
+    if (entry.failed && Extension(path) != ".tgscene") TG_LOG_WARN(ui::Tr("アセットのサムネイルを生成できません: %s", "Could not generate the asset thumbnail: %s"), ToUtf8Display(path).c_str());
     m_entries.emplace(path, std::move(entry));
 }
 bool AssetThumbnailCache::BuildImage(rhi::Device& device, const fs::path& path, rhi::GpuTexture& output) {

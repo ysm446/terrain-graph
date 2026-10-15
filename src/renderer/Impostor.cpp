@@ -12,6 +12,7 @@
 #include "core/Log.h"
 #include "core/PathUtf8.h"
 #include "renderer/Mesh.h"
+#include "ui/Localization.h"
 
 namespace tg::renderer {
 namespace {
@@ -182,7 +183,7 @@ bool ImpostorLibrary::Sync(rhi::Device& device, rhi::PipelineCache& cache, const
         color.width != size || color.height != size || normal.width != size || normal.height != size ||
         (hasVariation && (!LoadLdrImage(impostor.variationPath, variation) ||
                           variation.width != size || variation.height != size))) {
-        TG_LOG_WARN("インポスターの画像を読み込めません（無いか、大きさが設定と違います）: %s",
+        TG_LOG_WARN(ui::Tr("インポスターの画像を読み込めません（無いか、大きさが設定と違います）: %s", "Could not load the impostor images (missing, or the size differs from the settings): %s"),
                     ToUtf8Display(impostor.colorPath).c_str());
         m_failed[model.id] = impostor.colorPath;
         Remove(device, model.id);
@@ -222,7 +223,7 @@ bool ImpostorLibrary::Bake(rhi::Device& device, rhi::PipelineCache& cache, const
                            const std::filesystem::path& variationPath, ModelImpostor& result,
                            std::string& error) {
     if (!model.geometry || model.geometry->lods.empty()) {
-        error = "モデルの形状が読み込まれていません";
+        error = ui::Tr("モデルの形状が読み込まれていません", "The model geometry isn't loaded");
         return false;
     }
     ImpostorSettings settings = model.impostor.settings;
@@ -230,7 +231,7 @@ bool ImpostorLibrary::Bake(rhi::Device& device, rhi::PipelineCache& cache, const
     settings.frameSize = std::clamp<uint32_t>(settings.frameSize, 32, 2048);
     const uint32_t frames = settings.frames, frameSize = settings.frameSize, size = frames * frameSize;
     if (size > kMaxAtlasSize) {
-        error = "画像が大きすぎます（方向数 × 解像度は 8192 まで）";
+        error = ui::Tr("画像が大きすぎます（方向数 × 解像度は 8192 まで）", "Image too large (directions x resolution must be 8192 or less)");
         return false;
     }
     // 形状全体を囲む球。どの方向から撮ってもマスに収まる。
@@ -254,7 +255,7 @@ bool ImpostorLibrary::Bake(rhi::Device& device, rhi::PipelineCache& cache, const
     auto* bake = cache.GetGraphics(desc);
     auto* dilate = cache.GetCompute(L"ImpostorBake.hlsl", L"CsDilate");
     if (!bake || !dilate) {
-        error = "焼き込みのシェーダを用意できません";
+        error = ui::Tr("焼き込みのシェーダを用意できません", "Could not prepare the bake shaders");
         return false;
     }
 
@@ -281,7 +282,7 @@ bool ImpostorLibrary::Bake(rhi::Device& device, rhi::PipelineCache& cache, const
         return false;
     };
     for (size_t i = 0; i < parts.size(); ++i)
-        if (!meshes[i].Create(device, parts[i].mesh, L"ImpostorBakeMesh")) return fail("メッシュを作れません");
+        if (!meshes[i].Create(device, parts[i].mesh, L"ImpostorBakeMesh")) return fail(ui::Tr("メッシュを作れません", "Could not create the mesh"));
 
     rhi::TextureDesc target;
     target.width = target.height = size;
@@ -289,32 +290,32 @@ bool ImpostorLibrary::Bake(rhi::Device& device, rhi::PipelineCache& cache, const
     target.allowRenderTarget = true;
     target.clearColor[3] = 0.0f;
     target.debugName = L"ImpostorBakeColor";
-    if (!device.Allocator().CreateTexture2D(target, rawColor)) return fail("描画先を作れません");
+    if (!device.Allocator().CreateTexture2D(target, rawColor)) return fail(ui::Tr("描画先を作れません", "Could not create the render target"));
     target.debugName = L"ImpostorBakeNormal";
-    if (!device.Allocator().CreateTexture2D(target, rawNormal)) return fail("描画先を作れません");
+    if (!device.Allocator().CreateTexture2D(target, rawNormal)) return fail(ui::Tr("描画先を作れません", "Could not create the render target"));
     target.debugName = L"ImpostorBakeVariation";
-    if (!device.Allocator().CreateTexture2D(target, rawVariation)) return fail("描画先を作れません");
+    if (!device.Allocator().CreateTexture2D(target, rawVariation)) return fail(ui::Tr("描画先を作れません", "Could not create the render target"));
     rhi::TextureDesc depthDesc;
     depthDesc.width = depthDesc.height = size;
     depthDesc.format = DXGI_FORMAT_D32_FLOAT;
     depthDesc.allowDepthStencil = true;
     depthDesc.createSrv = false;
     depthDesc.debugName = L"ImpostorBakeDepth";
-    if (!device.Allocator().CreateTexture2D(depthDesc, depth)) return fail("深度を作れません");
+    if (!device.Allocator().CreateTexture2D(depthDesc, depth)) return fail(ui::Tr("深度を作れません", "Could not create the depth buffer"));
     if (!CreateAtlas(device, size, L"ImpostorColor", entry.color) ||
         !CreateAtlas(device, size, L"ImpostorNormal", entry.normal) ||
         !CreateAtlas(device, size, L"ImpostorVariation", entry.variation))
-        return fail("アトラスを作れません");
+        return fail(ui::Tr("アトラスを作れません", "Could not create the atlas"));
 
     // マスとパーツごとの定数。CBV は 256 バイト境界。
     constexpr uint64_t kStride = 256;
     const uint64_t drawCount = uint64_t(frames) * frames * parts.size();
     if (!device.Allocator().CreateUploadBuffer(drawCount * kStride, L"ImpostorBakeConstants", constantsBuffer))
-        return fail("定数を用意できません");
+        return fail(ui::Tr("定数を用意できません", "Could not prepare the constants"));
     {
         void* mapped = nullptr;
         const D3D12_RANGE none{0, 0};
-        if (!TG_CHECK_HR(constantsBuffer.resource->Map(0, &none, &mapped))) return fail("定数を用意できません");
+        if (!TG_CHECK_HR(constantsBuffer.resource->Map(0, &none, &mapped))) return fail(ui::Tr("定数を用意できません", "Could not prepare the constants"));
         auto* bytes = static_cast<uint8_t*>(mapped);
         for (size_t part = 0; part < parts.size(); ++part) {
             const auto slot = parts[part].slot;
@@ -406,14 +407,14 @@ bool ImpostorLibrary::Bake(rhi::Device& device, rhi::PipelineCache& cache, const
         PIXEndEvent(list);
     });
     // fail() も release() を呼ぶので、失敗時はそちらに任せて二重に返さない。
-    if (!baked) return fail("焼き込みに失敗しました");
+    if (!baked) return fail(ui::Tr("焼き込みに失敗しました", "Baking failed"));
     release();
     if (!FinishAtlas(device, cache, entry.color) || !FinishAtlas(device, cache, entry.normal) ||
         !FinishAtlas(device, cache, entry.variation))
-        return fail("ミップを作れません");
+        return fail(ui::Tr("ミップを作れません", "Could not create the mips"));
     if (!SaveAtlas(device, entry.color, colorPath) || !SaveAtlas(device, entry.normal, normalPath) ||
         !SaveAtlas(device, entry.variation, variationPath))
-        return fail("画像を保存できません");
+        return fail(ui::Tr("画像を保存できません", "Could not save the images"));
 
     result = model.impostor;
     result.settings = settings;
@@ -433,7 +434,7 @@ bool ImpostorLibrary::Bake(rhi::Device& device, rhi::PipelineCache& cache, const
     Remove(device, model.id);
     m_failed.erase(model.id);
     m_entries.emplace(model.id, std::move(entry));
-    TG_LOG_INFO("インポスターを作りました: %s（%u×%u 方向、%u px）", model.name.c_str(), frames, frames, frameSize);
+    TG_LOG_INFO(ui::Tr("インポスターを作りました: %s（%u×%u 方向、%u px）", "Created impostor: %s (%u x %u directions, %u px)"), model.name.c_str(), frames, frames, frameSize);
     return true;
 }
 }  // namespace tg::renderer

@@ -2,6 +2,7 @@
 #include "core/PathUtf8.h"
 #include "core/Log.h"
 #include "io/AppSettings.h"
+#include "ui/Localization.h"
 #include <nlohmann/json.hpp>
 #include <Windows.h>
 #include <algorithm>
@@ -117,6 +118,6 @@ void RecentFiles::Save() const {
     stream << document.dump(2, ' ', false, json::error_handler_t::replace) << '\n';
     stream.close();
     if (!stream || !MoveFileExW(temporary.c_str(), m_storage.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-        TG_LOG_WARN("最近使ったルート・シーンの履歴を保存できませんでした");
+        TG_LOG_WARN(ui::Tr("最近使ったルート・シーンの履歴を保存できませんでした", "Could not save the recent roots and scenes"));
 }
 }  // namespace tg::io

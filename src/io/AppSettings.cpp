@@ -2,6 +2,7 @@
 #include "io/ProjectWorkspace.h"
 
 #include "core/Log.h"
+#include "ui/Localization.h"
 
 #include <nlohmann/json.hpp>
 
@@ -53,7 +54,7 @@ void AppSettings::Load() {
     // 例外は使わない方針なので、パース失敗は discarded で受ける。
     const json document = json::parse(stream, nullptr, false);
     if (document.is_discarded() || !document.is_object()) {
-        TG_LOG_WARN("設定を読めませんでした。既定値で始めます");
+        TG_LOG_WARN(ui::Tr("設定を読めませんでした。既定値で始めます", "Could not read the settings. Starting with defaults"));
         return;
     }
     const auto format = document.find("format");
@@ -185,7 +186,7 @@ bool AppSettings::Save() const {
     // 一時ファイルへ書いてから置き換える（書きかけの settings.json を残さない）。
     // 壊れた文字列が混ざっていても例外を出さない（不正な UTF-8 は置換文字にする）のは WriteJson 側。
     if (!ProjectWorkspace::WriteJson(path, document)) {
-        TG_LOG_WARN("設定を保存できませんでした");
+        TG_LOG_WARN(ui::Tr("設定を保存できませんでした", "Could not save the settings"));
         return false;
     }
     return true;

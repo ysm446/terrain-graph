@@ -1,6 +1,7 @@
 #include "io/ThumbnailStore.h"
 #include "core/PathUtf8.h"
 #include "core/Log.h"
+#include "ui/Localization.h"
 #include <unordered_set>
 #include <functional>
 namespace tg::io {
@@ -43,7 +44,7 @@ void MigrateSceneThumbnails(const ProjectWorkspace& workspace) {
         if (!workspace.Contains(old) || !workspace.Contains(target) || !fs::is_regular_file(old, error) || fs::exists(target, error)) continue;
         fs::create_directories(target.parent_path(), error);
         if (!error) fs::rename(old, target, error);
-        if (error) TG_LOG_WARN("シーンサムネイルを移行できません: %s", ToUtf8Display(old).c_str());
+        if (error) TG_LOG_WARN(ui::Tr("シーンサムネイルを移行できません: %s", "Cannot migrate the scene thumbnail: %s"), ToUtf8Display(old).c_str());
         else {
             // ペイント等が残るフォルダは消さない。
             if (fs::is_empty(old.parent_path(), error)) fs::remove(old.parent_path(), error);

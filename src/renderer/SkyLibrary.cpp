@@ -3,6 +3,7 @@
 #include "core/ImageIo.h"
 #include "core/Log.h"
 #include "core/PathUtf8.h"
+#include "ui/Localization.h"
 
 #include <pix3.h>
 
@@ -179,7 +180,7 @@ SkyAssetId SkyLibrary::Duplicate(const SkyAsset& source) {
     // サムネイルは複製せず、作り直しに任せる（GPU リソースは持ち回らない）。
     SkyAsset asset;
     asset.id = m_nextId++;
-    asset.name = source.name + " のコピー";
+    asset.name = source.name + ui::Tr(" のコピー", " Copy");
     asset.sky = source.sky;
     m_entries.push_back(std::move(asset));
     return m_entries.back().id;
@@ -211,7 +212,7 @@ void SkyLibrary::Clear(rhi::Device& device) {
 
 SkyAssetId SkyLibrary::EnsureDefault() {
     if (m_entries.empty()) {
-        m_activeId = Add("既定の空");
+        m_activeId = Add(ui::Tr("既定の空", "Default Sky"));
         return m_activeId;
     }
     if (Find(m_activeId) == nullptr) {
@@ -258,7 +259,7 @@ void SkyLibrary::ProcessPendingWork(rhi::Device& device, rhi::PipelineCache& pip
             continue;
         }
         if (!BuildThumbnail(device, pipelineCache, asset)) {
-            TG_LOG_WARN("天球「%s」のサムネイルを作れませんでした", asset.name.c_str());
+            TG_LOG_WARN(ui::Tr("天球「%s」のサムネイルを作れませんでした", "Could not create the thumbnail for sky: %s"), asset.name.c_str());
         }
         // 失敗しても要求は落とす（同じ失敗を毎フレーム繰り返さない）。
         asset.thumbnailDirty = false;

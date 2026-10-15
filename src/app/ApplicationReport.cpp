@@ -229,10 +229,10 @@ bool Application::WriteEvaluationReport(bool timedOut, bool& reportOk) {
 
     const std::filesystem::path path = std::filesystem::absolute(m_options.reportPath);
     if (!io::ProjectWorkspace::WriteJson(path, report)) {
-        TG_LOG_ERROR("評価のレポートを書けませんでした: %s", ToUtf8Portable(path).c_str());
+        TG_LOG_ERROR(ui::Tr("評価のレポートを書けませんでした: %s", "Could not write the evaluation report: %s"), ToUtf8Portable(path).c_str());
         return false;
     }
-    TG_LOG_INFO("評価のレポートを書きました: %s", ToUtf8Portable(path).c_str());
+    TG_LOG_INFO(ui::Tr("評価のレポートを書きました: %s", "Wrote the evaluation report: %s"), ToUtf8Portable(path).c_str());
     return true;
 }
 

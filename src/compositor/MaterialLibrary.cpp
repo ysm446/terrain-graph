@@ -159,7 +159,7 @@ MaterialAsset& MaterialLibrary::RestoreAsset(MaterialAssetId id, const std::stri
 MaterialAssetId MaterialLibrary::Duplicate(const MaterialAsset& source) {
     MaterialAsset asset = source;
     asset.id = m_nextId++;
-    asset.name = source.name + " のコピー";
+    asset.name = source.name + ui::Tr(" のコピー", " Copy");
     asset.assetPath.clear(); asset.assetUid.clear();
     // サムネイルは共有しない。作り直させる。
     asset.thumbnail = rhi::GpuTexture{};
@@ -260,7 +260,7 @@ void MaterialLibrary::BuildPendingThumbnails(rhi::Device& device, rhi::PipelineC
         }
         if (!BuildThumbnail(device, pipelineCache, textures, asset, commandList)) {
             // 失敗を繰り返さないよう、要求は落とす。
-            TG_LOG_WARN("マテリアル「%s」のサムネイルを作れませんでした", asset.name.c_str());
+            TG_LOG_WARN(ui::Tr("マテリアル「%s」のサムネイルを作れませんでした", "Could not create the thumbnail for material \"%s\""), asset.name.c_str());
         }
         asset.thumbnailDirty = false;
     }

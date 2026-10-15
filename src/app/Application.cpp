@@ -99,7 +99,7 @@ bool Application::Initialize(const StartupOptions& options) {
     m_comInitialized =
         SUCCEEDED(::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE));
     if (!m_comInitialized) {
-        TG_LOG_WARN("COM を初期化できませんでした。ファイル選択ダイアログは使えません");
+        TG_LOG_WARN(ui::Tr("COM を初期化できませんでした。ファイル選択ダイアログは使えません", "Could not initialize COM. File dialogs are unavailable"));
     }
 
     // ウィンドウ生成より前に済ませる必要がある。
@@ -161,7 +161,7 @@ bool Application::Initialize(const StartupOptions& options) {
         io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
             m_skyLibrary, m_renderer, m_graph, &m_models, &m_sceneComponents, -1, &m_sceneAtmosphere};
         if (!io::LoadWorkEnvironment(m_workspace, m_device, m_pipelineCache, refs))
-            TG_LOG_WARN("作業用IBLを読み込めませんでした");
+            TG_LOG_WARN(ui::Tr("作業用IBLを読み込めませんでした", "Could not load the work IBL"));
     }
     if (!options.hdriPath.empty()) {
         m_renderer.AtmosphericMode() = false;
@@ -206,7 +206,7 @@ bool Application::Initialize(const StartupOptions& options) {
     // 起動直後の空のシーンは保存済みとみなす。
     MarkSceneSaved(~0u);
 
-    TG_LOG_INFO("terrain-graph %s を起動しました", TG_APP_VERSION);
+    TG_LOG_INFO(ui::Tr("terrain-graph %s を起動しました", "Started terrain-graph %s"), TG_APP_VERSION);
     return true;
 }
 
@@ -266,7 +266,7 @@ void Application::RequestScreenshot() {
     std::error_code error;
     std::filesystem::create_directories(directory, error);
     if (error) {
-        TG_LOG_ERROR("スクリーンショットの保存先を作れませんでした: %s",
+        TG_LOG_ERROR(ui::Tr("スクリーンショットの保存先を作れませんでした: %s", "Could not create the screenshot folder: %s"),
                      ToUtf8Display(directory).c_str());
         m_toasts.Push(ui::Tr("スクリーンショットを保存できませんでした", "Could not save the screenshot"),
                       ui::Tr("保存先を作れません", "Could not create the folder"));
@@ -286,7 +286,7 @@ void Application::RequestScreenshot() {
             std::snprintf(detail, sizeof(detail), "%u x %u  %s", width, height,
                           ToUtf8Display(saved.filename()).c_str());
             m_toasts.Push(ui::Tr("スクリーンショットを保存しました", "Screenshot saved"), detail, saved);
-            TG_LOG_INFO("スクリーンショットを保存しました: %s", ToUtf8Display(saved).c_str());
+            TG_LOG_INFO(ui::Tr("スクリーンショットを保存しました: %s", "Saved screenshot: %s"), ToUtf8Display(saved).c_str());
         });
 }
 
@@ -297,7 +297,7 @@ void Application::SaveViewportScreenshot() {
     std::error_code error;
     std::filesystem::create_directories(directory, error);
     if (error) {
-        TG_LOG_ERROR("スクリーンショットの保存先を作れませんでした: %s",
+        TG_LOG_ERROR(ui::Tr("スクリーンショットの保存先を作れませんでした: %s", "Could not create the screenshot folder: %s"),
                      ToUtf8Display(directory).c_str());
         m_toasts.Push(ui::Tr("スクリーンショットを保存できませんでした", "Could not save the screenshot"),
                       ui::Tr("保存先を作れません", "Could not create the folder"));
@@ -315,7 +315,7 @@ void Application::SaveViewportScreenshot() {
     std::snprintf(detail, sizeof(detail), "%u x %u  %s", m_renderer.Width(), m_renderer.Height(),
                   ToUtf8Display(path.filename()).c_str());
     m_toasts.Push(ui::Tr("ビューポートを保存しました", "Viewport saved"), detail, path);
-    TG_LOG_INFO("ビューポートのスクリーンショットを保存しました: %s", ToUtf8Display(path).c_str());
+    TG_LOG_INFO(ui::Tr("ビューポートのスクリーンショットを保存しました: %s", "Saved viewport screenshot: %s"), ToUtf8Display(path).c_str());
 }
 
 void Application::PollShaderHotReload() {
@@ -329,7 +329,7 @@ void Application::PollShaderHotReload() {
         return;
     }
 
-    TG_LOG_INFO("シェーダの更新を検出しました。PSO を作り直します");
+    TG_LOG_INFO(ui::Tr("シェーダの更新を検出しました。PSO を作り直します", "Shader change detected. Rebuilding PSOs"));
     // PSO は GPU が参照中の可能性があるため、破棄前に必ず待つ。
     m_device.WaitForGpu();
     m_pipelineCache.InvalidateAll();
@@ -755,7 +755,7 @@ int Application::Run() {
             } else if (m_frameCounter-benchmarkStartFrame >= m_options.benchmarkFrames) {
                 m_device.WaitForGpu();
                 const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now()-benchmarkStart).count();
-                TG_LOG_INFO("描画計測: %u frames, %.3f ms/frame, %.1f FPS, cloudReference=%d",
+                TG_LOG_INFO(ui::Tr("描画計測: %u frames, %.3f ms/frame, %.1f FPS, cloudReference=%d", "Render benchmark: %u frames, %.3f ms/frame, %.1f FPS, cloudReference=%d"),
                     m_options.benchmarkFrames, seconds*1000/m_options.benchmarkFrames,
                     m_options.benchmarkFrames/seconds, m_options.referenceCloudLighting ? 1 : 0);
                 break;
@@ -896,7 +896,7 @@ void Application::PrepareSnowPlumes() {
             slot->documentRevision = m_graphStack.Revision();
         }
         if (!PrepareCloudMask(slot->mask, plume.maskNode, plume.maskPin)) {
-            TG_LOG_ERROR("Snow Plume のマスク評価器を作れませんでした");
+            TG_LOG_ERROR(ui::Tr("Snow Plume のマスク評価器を作れませんでした", "Could not create the Snow Plume mask evaluator"));
             slot->mask.pin = 0;
             continue;
         }

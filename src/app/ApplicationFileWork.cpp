@@ -55,7 +55,7 @@ void Application::RequestSaveProject(bool saveAs) {
         m_pendingProjectSave = path;
         m_pendingProjectSave.replace_extension(L".tgscene");
     } else if (!path.empty()) {
-        TG_LOG_ERROR("シーンはプロジェクトルート内に保存してください");
+        TG_LOG_ERROR(ui::Tr("シーンはプロジェクトルート内に保存してください", "Save the scene inside the project root"));
     }
 }
 
@@ -134,11 +134,11 @@ std::string Application::UnsavedItemNames() const {
 void Application::SaveSceneThumbnail(const std::filesystem::path& path) {
     if (path.extension() != L".tgscene" || !m_renderer.HasOutput()) return;
     const auto thumbnail = io::SceneThumbnailPath(m_workspace, path);
-    if (thumbnail.empty()) { TG_LOG_WARN("シーンサムネイルの保存先がルート外です"); return; }
+    if (thumbnail.empty()) { TG_LOG_WARN(ui::Tr("シーンサムネイルの保存先がルート外です", "The scene thumbnail path is outside the root")); return; }
     std::error_code error;
     std::filesystem::create_directories(thumbnail.parent_path(), error);
     if (error || !m_renderer.SaveOutputToPng(m_device, thumbnail, 256))
-        TG_LOG_WARN("シーンは保存しましたが、サムネイルを保存できませんでした");
+        TG_LOG_WARN(ui::Tr("シーンは保存しましたが、サムネイルを保存できませんでした", "Saved the scene, but could not save its thumbnail"));
     m_assetThumbnails.Invalidate();
 }
 
@@ -324,7 +324,7 @@ void Application::HandleDroppedFiles(const std::vector<std::filesystem::path>& p
                 sky->sky.source = renderer::SkySource::Hdri;
                 sky->sky.hdriPath = path;
                 m_skyLibrary.MarkThumbnailDirty(sky->id);
-                TG_LOG_INFO("天球「%s」に %s を割り当てました", sky->name.c_str(),
+                TG_LOG_INFO(ui::Tr("天球「%s」に %s を割り当てました", "Sky \"%s\" now uses %s"), sky->name.c_str(),
                             ToUtf8Display(path.filename()).c_str());
             }
         } else if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" ||
@@ -332,11 +332,11 @@ void Application::HandleDroppedFiles(const std::vector<std::filesystem::path>& p
             m_pendingTexturePaths.push_back(path);
             ++images;
         } else {
-            TG_LOG_WARN("扱えない形式です: %s", ToUtf8Display(path.filename()).c_str());
+            TG_LOG_WARN(ui::Tr("扱えない形式です: %s", "Unsupported format: %s"), ToUtf8Display(path.filename()).c_str());
         }
     }
     if (images > 0) {
-        TG_LOG_INFO("%zu 枚の画像を読み込みます", images);
+        TG_LOG_INFO(ui::Tr("%zu 枚の画像を読み込みます", "Loading %zu images"), images);
     }
 }
 
@@ -349,7 +349,7 @@ void Application::FinishComponentPreview(bool place) {
         io::ProjectRefs previous{m_textureLibrary, m_materialLibrary, m_paintMasks,
             m_skyLibrary, m_renderer, m_previewOriginalGraph, &m_models, &m_previewOriginalComponents, m_componentPreview, &m_sceneAtmosphere};
         if (!io::SaveProject(path, m_device, previous, &m_workspace)) {
-            TG_LOG_ERROR("元のグラフを保存できないため、差し替えを中止しました");
+            TG_LOG_ERROR(ui::Tr("元のグラフを保存できないため、差し替えを中止しました", "Could not save the original graph. Replacement canceled"));
             return;
         }
     }
@@ -418,7 +418,7 @@ void Application::ResetProject() {
         io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
             m_skyLibrary, m_renderer, m_graph, &m_models, &m_sceneComponents, -1, &m_sceneAtmosphere};
         if (!io::LoadWorkEnvironment(m_workspace, m_device, m_pipelineCache, refs))
-            TG_LOG_WARN("作業用IBLを読み込めませんでした");
+            TG_LOG_WARN(ui::Tr("作業用IBLを読み込めませんでした", "Could not load the work IBL"));
     }
 
     m_selectedMaterial = 0;
@@ -453,7 +453,7 @@ void Application::ProcessPendingFileWork() {
     if (m_pendingPreviewFinish) { FinishComponentPreview(m_pendingPreviewFinish == 1); m_pendingPreviewFinish = 0; }
     if (m_componentPreview >= 0 && (!m_pendingRoot.empty() || !m_pendingProjectOpen.empty() || m_pendingProjectNew)) {
         m_pendingRoot.clear(); m_pendingProjectOpen.clear(); m_pendingProjectNew = false; m_pendingSceneCreate.clear();
-        TG_LOG_WARN("先にグラフの一時プレビューを終了してください");
+        TG_LOG_WARN(ui::Tr("先にグラフの一時プレビューを終了してください", "Finish the temporary graph preview first"));
     }
     if (m_pendingAssetOpen.extension() == L".tgscene" || m_pendingAssetOpen.extension() == L".tgproj" ||
         m_pendingAssetOpen.extension() == L".mmproj") {
@@ -486,8 +486,8 @@ void Application::ProcessPendingFileWork() {
         if (!migrated.empty()) {
             m_pendingProjectOpen = migrated;
             m_assetRefresh = true;
-            TG_LOG_INFO("保存済みの元シーンを保持して分離しました: %s", ToUtf8Display(migrated).c_str());
-        } else TG_LOG_ERROR("シーンを分離できませんでした。元データは保持しています");
+            TG_LOG_INFO(ui::Tr("保存済みの元シーンを保持して分離しました: %s", "Split the scene into components, keeping the saved original: %s"), ToUtf8Display(migrated).c_str());
+        } else TG_LOG_ERROR(ui::Tr("シーンを分離できませんでした。元データは保持しています", "Could not split the scene. The original data is kept"));
         return;
     }
     // どれもリソースの生成・破棄と GPU 待機を伴う。フレームの外で処理すること。
@@ -582,7 +582,7 @@ void Application::ProcessPendingFileWork() {
             // ルートの切り替えも含めた、このフレームで読み込みに掛かった時間。
             m_sceneLoadSeconds =
                 std::chrono::duration<float>(std::chrono::steady_clock::now() - loadStart).count();
-            TG_LOG_INFO("シーンを読み込みました: %s（%.2f 秒）",
+            TG_LOG_INFO(ui::Tr("シーンを読み込みました: %s（%.2f 秒）", "Loaded scene: %s (%.2f s)"),
                         ToUtf8Display(path.filename()).c_str(), m_sceneLoadSeconds);
         } else {
             // 消えた / 壊れたプロジェクトを履歴に残しても、選べるだけで意味がない。
@@ -606,7 +606,7 @@ void Application::ProcessPendingFileWork() {
                 m_assetRefresh = true;
                 m_previewSavedFingerprint = io::FingerprintScene(refs);
                 RememberAssetStates(true);
-                TG_LOG_INFO("グラフアセットを保存しました: %s", ToUtf8Display(m_componentPreviewPath).c_str());
+                TG_LOG_INFO(ui::Tr("グラフアセットを保存しました: %s", "Saved the graph asset: %s"), ToUtf8Display(m_componentPreviewPath).c_str());
                 return;
             }
             SaveSceneThumbnail(path);
@@ -619,7 +619,7 @@ void Application::ProcessPendingFileWork() {
         } else {
             m_saveThenSwitch = false;
             m_deferredRoot.clear(); m_deferredScene.clear(); m_deferredNew = false; m_deferredExit = false;
-            TG_LOG_ERROR("シーンの保存に失敗しました。現在の作業を保持しています");
+            TG_LOG_ERROR(ui::Tr("シーンの保存に失敗しました。現在の作業を保持しています", "Could not save the scene. Your current work is kept"));
         }
     }
 
@@ -627,7 +627,7 @@ void Application::ProcessPendingFileWork() {
     if (m_pendingComponentSave >= 0) {
         const int item = m_pendingComponentSave;
         m_pendingComponentSave = -1;
-        static const char* const kItemNames[] = {"地形グラフ", "雲グラフ", "大気散乱スカイ", "シーン"};
+        static const ui::LocalizedText kItemNames[] = {{"地形グラフ", "terrain graph"}, {"雲グラフ", "cloud graph"}, {"大気散乱スカイ", "atmospheric sky"}, {"シーン", "scene"}};
         io::ProjectRefs refs{m_textureLibrary, m_materialLibrary, m_paintMasks,
                              m_skyLibrary,     m_renderer,       m_graph, &m_models, &m_sceneComponents, -1, &m_sceneAtmosphere};
         unsigned saved = kDirtyShared;
@@ -651,9 +651,9 @@ void Application::ProcessPendingFileWork() {
             if (item == 3) SaveSceneThumbnail(m_projectPath);
             m_assetRefresh = true;
             MarkSceneSaved(saved);
-            TG_LOG_INFO("%sを保存しました", kItemNames[item]);
+            TG_LOG_INFO(ui::Tr("%sを保存しました", "Saved the %s"), kItemNames[item].Get());
         } else {
-            TG_LOG_ERROR("%sの保存に失敗しました。現在の作業を保持しています", kItemNames[item]);
+            TG_LOG_ERROR(ui::Tr("%sの保存に失敗しました。現在の作業を保持しています", "Could not save the %s. Your current work is kept"), kItemNames[item].Get());
         }
     }
 

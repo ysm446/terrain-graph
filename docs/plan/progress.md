@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-10-15 10:32
+更新日時: 2026-10-15 10:45
 
 ## UI の日本語 / English 切り替え — 段階 1（2026-10-15 08:48）
 
@@ -38,9 +38,11 @@
 - 英語でボタンからはみ出す訳を短くした（Recompute Routes、Split Components…、Discard & Return、To Clothoid、Auto Profile、Clone）。
 - 検証: Debug ビルド（警告 0）、CTest 6 件。tengudake の Road Mesh / Road Path を英語で撮って目視（`data/screenshots/p4-*.png`）。追加メニューの説明・ピンのツールチップ・ファイルダイアログは未目視（ヘッドレスで開けない）。
 
-残り（ユーザーの判断待ち）:
-- ステータスバーに流れる通知（`TG_LOG_*` 由来。インポスターや画像の読み込み失敗もここに出る）は日本語のまま。
-- 新しく作るアセット・ノードの既定の名前とファイル名（「新規マテリアル」「〜 のコピー」「大気散乱スカイ」など）は日本語のまま。
+段階 5（済、2026-10-15 10:45）: ユーザー指定「ステータスバーの通知と既定の名前も英語に」。
+- ログ: `TG_LOG_*` 約 290 か所をすべて `ui::Tr` に（サブエージェント 3 本、src/app・io/compositor/graph・rhi/renderer/core/ui に分担）。ログにだけ渡っていた文（インポスターの焼き込み、画像のデコード、`ReadLayerMaterial`、`ReadScene` の reason、`PinLabels`）も訳した。訳していないのはデバイス消失の記録（device-removed-*.txt の本文）と `--report` の指摘（GraphReadIssue、ApplicationReport の addIssue）。
+- 既定の名前（親が直した）: アセットの新規作成（シーン・レイヤーマテリアル・マテリアル・作業用IBL・大気散乱スカイ）、複製の「 コピー」「 のコピー」、「既定の空」、読み込み時の仮の名前（「天球」「マテリアル」）、部品への分離の「 スカイ / 雲 / 地形」、新規の雲 / 地形グラフ、グループの既定の名前（`NodeGroup::name`）。作った時点の言語で付く。
+- 検証: Debug ビルド（警告 0）、CTest 6 件。空のシーンを `--language en` で撮り、ステータスバーが英語になることを目視（`data/screenshots/p5-en-empty.png`）。
+- **注意**: tengudake と kiso-komagatake を `--screenshot-ui` で開くと DEVICE_HUNG（MaskOpThumbnails の付近）で落ちた。変更前の Release ビルドでも同じ。このとき別に起動中のアプリ（everest）が GPU を 99%・VRAM 40 GB 使っていたので、GPU の取り合いと思われる（09:40 ごろまでは同じシーンで撮れていた）。
 
 検証: Debug ビルド（警告 0）。`--screenshot-ui --show-settings --language ja / en` で tengudake を開き、メニュー・タブ・設定・統計が両方の言語で出ること、ドッキングの配置が保たれることを目視（`data/screenshots/lang-ja.png` / `lang-en.png`）。英語でボタンからはみ出した「Reset to Default Size」は「Reset Size」にした。
 **注意（今回の変更とは無関係）**: kiso-komagatake を `--screenshot-ui` で開くと DEVICE_HUNG（0x887A0006、MaskOpThumbnails の付近）で落ちる。変更前の Release ビルド（08:28）でも同じだったので既存の問題。未調査。

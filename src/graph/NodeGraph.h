@@ -175,7 +175,7 @@ enum class NodeKind : uint32_t {
 struct NodeGroup {
     int id = 0;
     int component = 0;  // 0: 地形グラフ、1: 雲グラフ
-    std::string name = "グループ";
+    std::string name = ui::Tr("グループ", "Group");  // 作った時点の言語
     // 枠の左上（見出しを含む）と、内側（ノードを置く領域）の大きさ。キャンバス座標。
     float x = 0.0f, y = 0.0f;
     float width = 400.0f, height = 300.0f;

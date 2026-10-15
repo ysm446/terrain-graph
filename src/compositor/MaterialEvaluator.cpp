@@ -2,6 +2,7 @@
 
 #include "core/Log.h"
 #include "compositor/MultiScaleBreaching.h"
+#include "ui/Localization.h"
 
 #include <pix3.h>
 #include <DirectXPackedVector.h>
@@ -725,7 +726,7 @@ bool MaterialEvaluator::Create(rhi::Device& device, uint32_t resolution, bool as
         if (!m_compute.IsValid() &&
             !m_compute.Create(device, kAsyncUploadBytes, L"MaterialEvaluatorCompute")) {
             // キューが作れなくても同期で評価はできる。落とさずに続ける。
-            TG_LOG_WARN("合成の評価用のコンピュートキューを作れませんでした。同期で評価します");
+            TG_LOG_WARN(ui::Tr("合成の評価用のコンピュートキューを作れませんでした。同期で評価します", "Could not create the compute queue for evaluation. Evaluating synchronously"));
             m_compute.Destroy(device);
         }
     }
@@ -851,7 +852,7 @@ bool MaterialEvaluator::EnsureWindResources(rhi::Device& device, uint32_t resolu
         device.Allocator().CreateStructuredBuffer(cells, 4, L"WindPressureB", m_wind.pressureB, true) &&
         device.Allocator().CreateStructuredBuffer(cells, 4, L"WindDivergence", m_wind.divergence, true);
     if (!ok) {
-        TG_LOG_WARN("風の場の作業バッファを作れませんでした（%u^2 x %u）", resolution, layers);
+        TG_LOG_WARN(ui::Tr("風の場の作業バッファを作れませんでした（%u^2 x %u）", "Could not create the wind field work buffers (%u^2 x %u)"), resolution, layers);
         ReleaseWindResources(device);
         return false;
     }
@@ -1005,7 +1006,7 @@ bool MaterialEvaluator::EnsureFluvialResources(rhi::Device& device, uint32_t wor
         CreateChannelTexture(device, 1, DXGI_FORMAT_R32_UINT, L"FluvialMax",
                              m_fluvial.maxScratch);
     if (!ok) {
-        TG_LOG_WARN("川筋マスクの作業リソースを作れませんでした（%u^2）", workResolution);
+        TG_LOG_WARN(ui::Tr("川筋マスクの作業リソースを作れませんでした（%u^2）", "Could not create the channel mask work resources (%u^2)"), workResolution);
         ReleaseFluvialResources(device);
         return false;
     }
@@ -1042,7 +1043,7 @@ bool MaterialEvaluator::EnsureMaskOpTextures(rhi::Device& device, const MaskProg
         device.DeferRelease(m_maskOpTextures[i]);
         if (!CreateChannelTexture(device, resolution, kMaskFormat, L"MaskOp",
                                   m_maskOpTextures[i])) {
-            TG_LOG_WARN("マスクの結果テクスチャを作れませんでした（%u^2）", resolution);
+            TG_LOG_WARN(ui::Tr("マスクの結果テクスチャを作れませんでした（%u^2）", "Could not create the mask result texture (%u^2)"), resolution);
             ok = false;
             continue;
         }
@@ -1149,7 +1150,7 @@ void MaterialEvaluator::EnsureMaskOpThumbnails(rhi::Device& device, size_t opCou
         MaskOpThumbnail thumbnail;
         if (!CreateChannelTexture(device, kMaskOpThumbnailSize, kMaskFormat, L"MaskOpThumbnail",
                                   thumbnail.texture)) {
-            TG_LOG_WARN("マスクのサムネイルを作れませんでした");
+            TG_LOG_WARN(ui::Tr("マスクのサムネイルを作れませんでした", "Could not create the mask thumbnail"));
             break;
         }
         // R を RGB へ配り、A は定数 1（5）。テクスチャ一覧のチャンネル表示と同じ作り。
@@ -1227,7 +1228,7 @@ void MaterialEvaluator::EnsureLayerThumbnails(rhi::Device& device, size_t layerC
         rhi::GpuTexture thumbnail;
         if (!CreateChannelTexture(device, kLayerThumbnailSize, DXGI_FORMAT_R8G8B8A8_UNORM,
                                   L"LayerThumbnail", thumbnail)) {
-            TG_LOG_WARN("結果のサムネイルを作れませんでした");
+            TG_LOG_WARN(ui::Tr("結果のサムネイルを作れませんでした", "Could not create the result thumbnail"));
             break;
         }
         m_layerThumbnails.push_back(std::move(thumbnail));
@@ -1657,7 +1658,7 @@ bool MaterialEvaluator::EnsureMaskHeightRange(rhi::Device& device) {
     }
     if (!CreateChannelTexture(device, 2, DXGI_FORMAT_R32_UINT, L"MaskHeightRange",
                               m_maskHeightRange)) {
-        TG_LOG_WARN("標高マスクの集計用テクスチャを作れませんでした");
+        TG_LOG_WARN(ui::Tr("標高マスクの集計用テクスチャを作れませんでした", "Could not create the elevation mask statistics texture"));
         return false;
     }
     return true;
@@ -2438,7 +2439,7 @@ bool MaterialEvaluator::EnsureSedimentResources(rhi::Device& device, uint32_t re
         CreateChannelTexture(device, 1, DXGI_FORMAT_R32_UINT, L"SedimentMax",
                              m_sediment.maxScratch);
     if (!ok) {
-        TG_LOG_WARN("堆積の作業リソースを作れませんでした（%u^2）", resolution);
+        TG_LOG_WARN(ui::Tr("堆積の作業リソースを作れませんでした（%u^2）", "Could not create the deposition work resources (%u^2)"), resolution);
         ReleaseSedimentResources(device);
         return false;
     }
@@ -2758,7 +2759,7 @@ bool MaterialEvaluator::EnsureSnowResources(rhi::Device& device, uint32_t resolu
         CreateChannelTexture(device, resolution, DXGI_FORMAT_R32G32_FLOAT, L"SnowScratch",
                              m_snow.scratch);
     if (!ok) {
-        TG_LOG_WARN("積雪の作業リソースを作れませんでした（%u^2）", resolution);
+        TG_LOG_WARN(ui::Tr("積雪の作業リソースを作れませんでした（%u^2）", "Could not create the snow work resources (%u^2)"), resolution);
         ReleaseSnowResources(device);
         return false;
     }
@@ -3080,7 +3081,7 @@ bool MaterialEvaluator::EnsureRiverResources(rhi::Device& device, uint32_t resol
         CreateChannelTexture(device, fineResolution, kMaskFormat, L"RiverDepthFine",
                              m_river.depthFine);
     if (!ok) {
-        TG_LOG_WARN("河川の作業リソースを作れませんでした（%u^2）", resolution);
+        TG_LOG_WARN(ui::Tr("河川の作業リソースを作れませんでした（%u^2）", "Could not create the river work resources (%u^2)"), resolution);
         ReleaseRiverResources(device);
         return false;
     }
@@ -3732,7 +3733,7 @@ bool MaterialEvaluator::ApplyHeightLevels(rhi::Device& device, rhi::PipelineCach
     const auto& p = layer.heightLevels;
     if (p.autoInput && !m_heightLevelsRange.IsValid() &&
         !CreateChannelTexture(device, 2, 1, DXGI_FORMAT_R32_UINT, L"HeightLevelsRange", m_heightLevelsRange)) {
-        TG_LOG_WARN("Height Levels の集計用テクスチャを作れませんでした");
+        TG_LOG_WARN(ui::Tr("Height Levels の集計用テクスチャを作れませんでした", "Could not create the Height Levels statistics texture"));
         return false;
     }
     // m はハイト 0〜1 の比へ直す（ハイト 0〜1 の全幅が標高差）。
@@ -4710,7 +4711,7 @@ bool MaterialEvaluator::EnsureDropletResources(rhi::Device& device, uint32_t res
                     CreateChannelTexture(device, 1, DXGI_FORMAT_R32_UINT, L"DropletMax",
                                          m_droplet.maxScratch);
     if (!ok) {
-        TG_LOG_WARN("水滴侵食の作業リソースを作れませんでした（%u^2）", resolution);
+        TG_LOG_WARN(ui::Tr("水滴侵食の作業リソースを作れませんでした（%u^2）", "Could not create the droplet erosion work resources (%u^2)"), resolution);
         ReleaseDropletResources(device);
         return false;
     }
@@ -5329,7 +5330,7 @@ bool MaterialEvaluator::ApplyScatter(rhi::Device& device, rhi::PipelineCache& pi
         double halfCells = std::ceil(double(sizeMeters) * 0.5 / density);
         if (!std::isfinite(halfCells) || halfCells > maxHalfCells) {
             if (!m_scatterBudgetWarned) {
-                TG_LOG_WARN("Scatter Points: 点が GPU の上限を超えるので範囲を縮めます（半幅 %.0f → %.0f マス、群生 %u）。間隔を広げるか、群生の数を減らしてください。",
+                TG_LOG_WARN(ui::Tr("Scatter Points: 点が GPU の上限を超えるので範囲を縮めます（半幅 %.0f → %.0f マス、群生 %u）。間隔を広げるか、群生の数を減らしてください。", "Scatter Points: too many points for the GPU, so the range is reduced (half width %.0f -> %.0f cells, clusters %u). Increase the spacing or reduce the clusters"),
                             std::isfinite(halfCells) ? halfCells : 0.0, maxHalfCells, clusterCount);
                 m_scatterBudgetWarned = true;
             }
@@ -6394,7 +6395,7 @@ void MaterialEvaluator::Update(rhi::Device& device, rhi::PipelineCache& pipeline
     // 前回の記録で定数の置き場を使い切っていたら、倍に広げてから記録する。
     if (m_compute.UploadExhausted()) {
         const uint64_t bytes = m_compute.UploadBytes() * 2;
-        TG_LOG_INFO("合成の評価の定数の置き場を %llu KB へ広げます",
+        TG_LOG_INFO(ui::Tr("合成の評価の定数の置き場を %llu KB へ広げます", "Growing the evaluation constant buffer to %llu KB"),
                     static_cast<unsigned long long>(bytes / 1024));
         // 読み戻しはキューのフェンスを生ポインタで指している。作り直す前に完了を
         // 待って回収し、回収できなかったものは古いフェンスを指したままにしない。

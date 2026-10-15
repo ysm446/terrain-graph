@@ -2,6 +2,7 @@
 
 #include "core/Log.h"
 #include "rhi/ShaderCompiler.h"
+#include "ui/Localization.h"
 
 namespace tg::rhi {
 namespace {
@@ -152,7 +153,7 @@ bool PipelineCache::CreateGlobalRootSignature() {
     const HRESULT hr = D3D12SerializeVersionedRootSignature(&desc, &blob, &errorBlob);
     if (FAILED(hr)) {
         if (errorBlob) {
-            TG_LOG_ERROR("ルートシグネチャのシリアライズに失敗: %s",
+            TG_LOG_ERROR(ui::Tr("ルートシグネチャのシリアライズに失敗: %s", "Failed to serialize the root signature: %s"),
                          static_cast<const char*>(errorBlob->GetBufferPointer()));
         }
         return false;
@@ -306,7 +307,7 @@ ID3D12PipelineState* PipelineCache::GetGraphics(const GraphicsPipelineDesc& desc
     if (desc.rtvFormat1 != DXGI_FORMAT_UNKNOWN) {
         // RTV1 を使うなら RTV0 も必須。歯抜けの MRT は E_INVALIDARG になる。
         if (desc.rtvFormat == DXGI_FORMAT_UNKNOWN) {
-            TG_LOG_ERROR("グラフィックス PSO: RTV0 が UNKNOWN のまま RTV1 は指定できません");
+            TG_LOG_ERROR(ui::Tr("グラフィックス PSO: RTV0 が UNKNOWN のまま RTV1 は指定できません", "Graphics PSO: RTV1 can't be set while RTV0 is UNKNOWN"));
             m_graphicsPipelines.emplace(key, nullptr);
             return nullptr;
         }
@@ -317,7 +318,7 @@ ID3D12PipelineState* PipelineCache::GetGraphics(const GraphicsPipelineDesc& desc
             psoDesc.RTVFormats[2] = desc.rtvFormat2;
         }
     } else if (desc.rtvFormat2 != DXGI_FORMAT_UNKNOWN) {
-        TG_LOG_ERROR("グラフィックス PSO: RTV1 が UNKNOWN のまま RTV2 は指定できません");
+        TG_LOG_ERROR(ui::Tr("グラフィックス PSO: RTV1 が UNKNOWN のまま RTV2 は指定できません", "Graphics PSO: RTV2 can't be set while RTV1 is UNKNOWN"));
         m_graphicsPipelines.emplace(key, nullptr);
         return nullptr;
     } else {

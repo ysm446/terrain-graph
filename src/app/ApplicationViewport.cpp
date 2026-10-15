@@ -451,7 +451,7 @@ void Application::HandleCameraShortcuts(bool itemHovered) {
         if (!ImGui::IsKeyPressed(static_cast<ImGuiKey>(ImGuiKey_0 + i), false)) continue;
         if (io.KeyCtrl) {
             bookmarks[i] = camera.State();
-            TG_LOG_INFO("カメラのブックマーク %d に保存しました", i);
+            TG_LOG_INFO(ui::Tr("カメラのブックマーク %d に保存しました", "Saved camera bookmark %d"), i);
         } else if (bookmarks[i]) {
             // 呼び出すのは視点（注視点・距離・向き・画角）だけ。クリップの設定（自動 / ニア / ファー）は
             // プレビュー設定の値で、ブックマークを保存したときの値で上書きしない。
@@ -461,7 +461,7 @@ void Application::HandleCameraShortcuts(bool itemHovered) {
             state.farZ = camera.State().farZ;
             camera.SetState(state);
         } else {
-            TG_LOG_INFO("ブックマーク %d は空です（Ctrl + %d で保存）", i, i);
+            TG_LOG_INFO(ui::Tr("ブックマーク %d は空です（Ctrl + %d で保存）", "Bookmark %d is empty (Ctrl + %d to save)"), i, i);
         }
         return;
     }

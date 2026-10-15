@@ -3,6 +3,7 @@
 #include "core/PathUtf8.h"
 
 #include "core/Log.h"
+#include "ui/Localization.h"
 
 #include <algorithm>
 #include <climits>
@@ -51,7 +52,7 @@ std::vector<uint8_t> ReadFileBytes(const std::filesystem::path& path) {
     }
     // stb は長さを int で受ける。溢れる大きさは切り詰めて渡さず、読まない。
     if (size > static_cast<std::streamsize>(INT_MAX)) {
-        TG_LOG_ERROR("画像ファイルが大きすぎます (2 GB 超): %s", ToUtf8Display(path).c_str());
+        TG_LOG_ERROR(ui::Tr("画像ファイルが大きすぎます (2 GB 超): %s", "Image file too large (over 2 GB): %s"), ToUtf8Display(path).c_str());
         return {};
     }
     std::vector<uint8_t> bytes(static_cast<size_t>(size));
@@ -104,18 +105,18 @@ bool SavePng(const std::filesystem::path& path, uint32_t width, uint32_t height,
         ::stbi_write_png_to_mem(pixels, static_cast<int>(rowPitch), static_cast<int>(width),
                                 static_cast<int>(height), channels, &pngSize);
     if (png == nullptr || pngSize <= 0) {
-        TG_LOG_ERROR("PNG を書き出せません: %s", ToUtf8Display(path).c_str());
+        TG_LOG_ERROR(ui::Tr("PNG を書き出せません: %s", "Could not write PNG: %s"), ToUtf8Display(path).c_str());
         ::free(png);
         return false;
     }
     const bool written = WriteFileBytes(path, png, static_cast<size_t>(pngSize));
     ::free(png);
     if (!written) {
-        TG_LOG_ERROR("PNG を書き出せません: %s", ToUtf8Display(path).c_str());
+        TG_LOG_ERROR(ui::Tr("PNG を書き出せません: %s", "Could not write PNG: %s"), ToUtf8Display(path).c_str());
         return false;
     }
 
-    TG_LOG_INFO("PNG を書き出しました: %s (%u x %u, %d ch)", ToUtf8Display(path).c_str(), width,
+    TG_LOG_INFO(ui::Tr("PNG を書き出しました: %s (%u x %u, %d ch)", "Wrote PNG: %s (%u x %u, %d ch)"), ToUtf8Display(path).c_str(), width,
                 height, channels);
     return true;
 }
@@ -225,7 +226,7 @@ bool DecodeLdrImage(const std::filesystem::path& path, LdrImage& outImage, std::
     const std::string utf8Path = ToUtf8Display(path);
     const std::vector<uint8_t> bytes = ReadFileBytes(path);
     if (bytes.empty()) {
-        message = FormatMessage("画像を読み込めません: %s (ファイルを開けない)", utf8Path.c_str());
+        message = FormatMessage(ui::Tr("画像を読み込めません: %s (ファイルを開けない)", "Could not load image: %s (can't open the file)"), utf8Path.c_str());
         return false;
     }
 
@@ -235,7 +236,7 @@ bool DecodeLdrImage(const std::filesystem::path& path, LdrImage& outImage, std::
     stbi_uc* data = ::stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()),
                                             &width, &height, &channels, 4);
     if (data == nullptr) {
-        message = FormatMessage("画像を読み込めません: %s (%s)", utf8Path.c_str(), ::stbi_failure_reason());
+        message = FormatMessage(ui::Tr("画像を読み込めません: %s (%s)", "Could not load image: %s (%s)"), utf8Path.c_str(), ::stbi_failure_reason());
         return false;
     }
 
@@ -244,7 +245,7 @@ bool DecodeLdrImage(const std::filesystem::path& path, LdrImage& outImage, std::
     outImage.pixels.assign(data, data + static_cast<size_t>(width) * height * 4);
     ::stbi_image_free(data);
 
-    message = FormatMessage("画像を読み込みました: %s (%d x %d, %d ch)", utf8Path.c_str(), width, height,
+    message = FormatMessage(ui::Tr("画像を読み込みました: %s (%d x %d, %d ch)", "Loaded image: %s (%d x %d, %d ch)"), utf8Path.c_str(), width, height,
                 channels);
     return true;
 }
@@ -286,7 +287,7 @@ bool DecodeHdrImage(const std::filesystem::path& path, HdrImage& outImage, std::
     const std::string utf8Path = ToUtf8Display(path);
     const std::vector<uint8_t> bytes = ReadFileBytes(path);
     if (bytes.empty()) {
-        message = FormatMessage("HDR 画像を読み込めません: %s (ファイルを開けない)", utf8Path.c_str());
+        message = FormatMessage(ui::Tr("HDR 画像を読み込めません: %s (ファイルを開けない)", "Could not load HDR image: %s (can't open the file)"), utf8Path.c_str());
         return false;
     }
 
@@ -296,7 +297,7 @@ bool DecodeHdrImage(const std::filesystem::path& path, HdrImage& outImage, std::
     float* data = ::stbi_loadf_from_memory(bytes.data(), static_cast<int>(bytes.size()),
                                            &width, &height, &channels, 4);
     if (data == nullptr) {
-        message = FormatMessage("HDR 画像を読み込めません: %s (%s)", utf8Path.c_str(), ::stbi_failure_reason());
+        message = FormatMessage(ui::Tr("HDR 画像を読み込めません: %s (%s)", "Could not load HDR image: %s (%s)"), utf8Path.c_str(), ::stbi_failure_reason());
         return false;
     }
 
@@ -305,7 +306,7 @@ bool DecodeHdrImage(const std::filesystem::path& path, HdrImage& outImage, std::
     outImage.pixels.assign(data, data + static_cast<size_t>(width) * height * 4);
     ::stbi_image_free(data);
 
-    message = FormatMessage("HDR 画像を読み込みました: %s (%d x %d, %d ch)", utf8Path.c_str(), width, height,
+    message = FormatMessage(ui::Tr("HDR 画像を読み込みました: %s (%d x %d, %d ch)", "Loaded HDR image: %s (%d x %d, %d ch)"), utf8Path.c_str(), width, height,
                 channels);
     return true;
 }
@@ -316,7 +317,7 @@ bool DecodeExrImage(const std::filesystem::path& path, HdrImage& outImage, std::
     const std::string utf8Path = ToUtf8Display(path);
     const std::vector<uint8_t> bytes = ReadFileBytes(path);
     if (bytes.empty()) {
-        message = FormatMessage("EXR を読み込めません: %s (ファイルを開けない)", utf8Path.c_str());
+        message = FormatMessage(ui::Tr("EXR を読み込めません: %s (ファイルを開けない)", "Could not load EXR: %s (can't open the file)"), utf8Path.c_str());
         return false;
     }
 
@@ -328,8 +329,8 @@ bool DecodeExrImage(const std::filesystem::path& path, HdrImage& outImage, std::
     const int result =
         ::LoadEXRFromMemory(&data, &width, &height, bytes.data(), bytes.size(), &error);
     if (result != TINYEXR_SUCCESS) {
-        message = FormatMessage("EXR を読み込めません: %s (%s)", utf8Path.c_str(),
-                     (error != nullptr) ? error : "原因不明");
+        message = FormatMessage(ui::Tr("EXR を読み込めません: %s (%s)", "Could not load EXR: %s (%s)"), utf8Path.c_str(),
+                     (error != nullptr) ? error : ui::Tr("原因不明", "unknown cause"));
         if (error != nullptr) {
             ::FreeEXRErrorMessage(error);
         }
@@ -341,7 +342,7 @@ bool DecodeExrImage(const std::filesystem::path& path, HdrImage& outImage, std::
     outImage.pixels.assign(data, data + static_cast<size_t>(width) * height * 4);
     ::free(data);
 
-    message = FormatMessage("EXR を読み込みました: %s (%d x %d)", utf8Path.c_str(), width, height);
+    message = FormatMessage(ui::Tr("EXR を読み込みました: %s (%d x %d)", "Loaded EXR: %s (%d x %d)"), utf8Path.c_str(), width, height);
     return true;
 }
 
@@ -366,7 +367,7 @@ bool SaveExr(const std::filesystem::path& path, uint32_t width, uint32_t height,
         return false;
     }
     if (channels != 1 && channels != 3 && channels != 4) {
-        TG_LOG_ERROR("EXR に書けないチャンネル数です: %d", channels);
+        TG_LOG_ERROR(ui::Tr("EXR に書けないチャンネル数です: %d", "Channel count not supported for EXR: %d"), channels);
         return false;
     }
 
@@ -375,8 +376,8 @@ bool SaveExr(const std::filesystem::path& path, uint32_t width, uint32_t height,
     const int size = ::SaveEXRToMemory(pixels, static_cast<int>(width), static_cast<int>(height),
                                        channels, asHalf ? 1 : 0, &buffer, &error);
     if (size <= 0 || buffer == nullptr) {
-        TG_LOG_ERROR("EXR を書き出せません: %s (%s)", ToUtf8Display(path).c_str(),
-                     (error != nullptr) ? error : "不明なエラー");
+        TG_LOG_ERROR(ui::Tr("EXR を書き出せません: %s (%s)", "Could not write EXR: %s (%s)"), ToUtf8Display(path).c_str(),
+                     (error != nullptr) ? error : ui::Tr("不明なエラー", "unknown error"));
         ::FreeEXRErrorMessage(error);
         ::free(buffer);
         return false;
@@ -386,11 +387,11 @@ bool SaveExr(const std::filesystem::path& path, uint32_t width, uint32_t height,
     const bool written = WriteFileBytes(path, buffer, static_cast<size_t>(size));
     ::free(buffer);
     if (!written) {
-        TG_LOG_ERROR("EXR を書き出せません: %s", ToUtf8Display(path).c_str());
+        TG_LOG_ERROR(ui::Tr("EXR を書き出せません: %s", "Could not write EXR: %s"), ToUtf8Display(path).c_str());
         return false;
     }
 
-    TG_LOG_INFO("EXR を書き出しました: %s (%u x %u, %d ch)", ToUtf8Display(path).c_str(), width,
+    TG_LOG_INFO(ui::Tr("EXR を書き出しました: %s (%u x %u, %d ch)", "Wrote EXR: %s (%u x %u, %d ch)"), ToUtf8Display(path).c_str(), width,
                 height, channels);
     return true;
 }

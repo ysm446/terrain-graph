@@ -106,7 +106,7 @@ void Application::RequestTextureRelinkFolder() {
         }
     }
     if (matched == 0) {
-        TG_LOG_WARN("フォルダにリンク切れと同じ名前のファイルがありません: %s",
+        TG_LOG_WARN(ui::Tr("フォルダにリンク切れと同じ名前のファイルがありません: %s", "No files in the folder match the missing links: %s"),
                     ToUtf8Portable(folder).c_str());
     }
 }

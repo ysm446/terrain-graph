@@ -2,6 +2,7 @@
 
 #include "core/Log.h"
 #include "core/PathUtf8.h"
+#include "ui/Localization.h"
 
 #include <Windows.h>
 
@@ -28,7 +29,7 @@ void RevealFileInExplorer(const std::filesystem::path& path) {
         ::ShellExecuteW(nullptr, L"open", L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
     // ShellExecuteW は成功すると 32 より大きい値を返す。
     if (reinterpret_cast<INT_PTR>(result) <= 32) {
-        TG_LOG_WARN("エクスプローラを開けませんでした: %s", ToUtf8Display(target).c_str());
+        TG_LOG_WARN(ui::Tr("エクスプローラを開けませんでした: %s", "Could not open Explorer: %s"), ToUtf8Display(target).c_str());
     }
 }
 

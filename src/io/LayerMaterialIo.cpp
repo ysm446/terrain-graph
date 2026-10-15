@@ -1,5 +1,6 @@
 #include "io/LayerMaterialIo.h"
 #include "graph/SurfacePresetGraph.h"
+#include "ui/Localization.h"
 #include <limits>
 #include <cmath>
 namespace tg::io {
@@ -114,7 +115,7 @@ bool ReadLayerMaterial(const json& body, graph::LayerMaterial& material, std::st
     candidate.displacementMeters = r.Float(body, "displacement");
     candidate.layerBlendRange = r.Float(body, "layerBlendRange");
     const auto& layers = r.Array(body, "materials");
-    if (layers.empty() || layers.size() > 4) { error = "合成材質は1〜4層です"; return false; }
+    if (layers.empty() || layers.size() > 4) { error = ui::Tr("合成材質は1〜4層です", "A layered material must have 1 to 4 layers"); return false; }
     for (const auto& layer : layers) {
         candidate.materials.push_back(ReadPresetMaterial(r, layer, 2));
         if (!graph::ValidatePresetMaterial(candidate.materials.back(), error)) return false;
@@ -124,7 +125,7 @@ bool ReadLayerMaterial(const json& body, graph::LayerMaterial& material, std::st
         candidate.materialGraph.emplace();
         candidate.materialGraph->nextId = r.UInt(g, "nextId");
         const auto& nodes = r.Array(g, "nodes");
-        if (nodes.size() > 32) { error = "合成グラフは最大32ノードです"; return false; }
+        if (nodes.size() > 32) { error = ui::Tr("合成グラフは最大32ノードです", "A layered material graph can have up to 32 nodes"); return false; }
         for (const auto& n : nodes) {
             graph::PresetNode node;
             node.id = r.UInt(n, "id"); node.kind = static_cast<graph::PresetNodeKind>(r.UInt(n, "kind"));
@@ -139,7 +140,7 @@ bool ReadLayerMaterial(const json& body, graph::LayerMaterial& material, std::st
     }
     if (!r.valid || !std::isfinite(candidate.displacementMeters) || candidate.displacementMeters < 0 || candidate.displacementMeters > 10 ||
         !std::isfinite(candidate.layerBlendRange) || candidate.layerBlendRange < 0 || candidate.layerBlendRange > 1) {
-        error = "レイヤーマテリアルの形式・値が不正です"; return false;
+        error = ui::Tr("レイヤーマテリアルの形式・値が不正です", "Invalid layered material format or values"); return false;
     }
     material = std::move(candidate); return true;
 }

@@ -119,7 +119,7 @@ void Application::PrepareRoadBaseTerrain() {
         if (!slot) slot = std::make_unique<RoadBaseSlot>();
         if (slot->evaluator.Resolution() == 0) {
             if (!slot->evaluator.Create(m_device, kResolution, /*asynchronous=*/true)) {
-                TG_LOG_WARN("Road Path の Base の地形の評価器を作れませんでした");
+                TG_LOG_WARN(ui::Tr("Road Path の Base の地形の評価器を作れませんでした", "Could not create the terrain evaluator for the Road Path Base"));
                 continue;
             }
             slot->evaluator.SetTileSize(kResolution);

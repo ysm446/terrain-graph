@@ -188,7 +188,7 @@ void Application::PrepareModelPlaces(std::vector<std::string>& meshKeys) {
                 slot.hash = hash;
                 slot.count = count;
             } else {
-                TG_LOG_ERROR("Model Place の配置を GPU へ上げられませんでした");
+                TG_LOG_ERROR(ui::Tr("Model Place の配置を GPU へ上げられませんでした", "Could not upload the Model Place points to the GPU"));
             }
         }
         if (slot.points.IsValid()) alive.push_back(place.node);
@@ -396,9 +396,9 @@ void Application::ProcessModelWork() {
             m_pendingAssetsSave = true;
             m_assetRefresh = true;
             MarkDocumentChanged(false);
-            TG_LOG_INFO("モデルを読み込みました: %s", ToUtf8Display(path).c_str());
+            TG_LOG_INFO(ui::Tr("モデルを読み込みました: %s", "Loaded model: %s"), ToUtf8Display(path).c_str());
         } else
-            TG_LOG_ERROR("モデルの読み込みに失敗: %s", asset.error.c_str());
+            TG_LOG_ERROR(ui::Tr("モデルの読み込みに失敗: %s", "Could not load the model: %s"), asset.error.c_str());
     }
     m_pendingModels.clear();
     if (m_options.previewModel >= 0 && m_options.previewModel < static_cast<int>(m_models.size())) {
@@ -444,13 +444,13 @@ bool Application::BakeRequestedImpostors() {
                                        m_renderer, m_graph, &m_models, &m_sceneComponents, -1, &m_sceneAtmosphere};
             if (!m_workspace.Contains(path) ||
                 !io::LoadSharedAsset(m_workspace, path, m_device, m_pipelineCache, refs)) {
-                TG_LOG_ERROR("インポスターを焼くモデルを読み込めません: %s", ToUtf8Display(path).c_str());
+                TG_LOG_ERROR(ui::Tr("インポスターを焼くモデルを読み込めません: %s", "Could not load the model for impostor baking: %s"), ToUtf8Display(path).c_str());
                 return false;
             }
             m_materialLibrary.ProcessPendingWork(m_device, m_pipelineCache, m_textureLibrary, false);
             found = std::find_if(m_models.begin(), m_models.end(), matches);
             if (found == m_models.end()) {
-                TG_LOG_ERROR("インポスターを焼くモデルが見つかりません: %s", ToUtf8Display(path).c_str());
+                TG_LOG_ERROR(ui::Tr("インポスターを焼くモデルが見つかりません: %s", "Model for impostor baking not found: %s"), ToUtf8Display(path).c_str());
                 return false;
             }
         }
@@ -468,7 +468,7 @@ bool Application::BakeRequestedImpostors() {
         std::string error;
         if (!m_impostors.Bake(m_device, m_pipelineCache, *asset, m_materialLibrary, m_textureLibrary,
                               colorPath, normalPath, variationPath, result, error)) {
-            TG_LOG_ERROR("インポスターを作れませんでした: %s（%s）", asset->name.c_str(), error.c_str());
+            TG_LOG_ERROR(ui::Tr("インポスターを作れませんでした: %s（%s）", "Could not create the impostor: %s (%s)"), asset->name.c_str(), error.c_str());
             return false;
         }
         asset->impostor = result;
@@ -478,11 +478,11 @@ bool Application::BakeRequestedImpostors() {
         refs.saveSharedAssets = false;
         const auto target = asset->assetPath;
         if (!io::SaveSharedAssets(m_workspace, refs, &target)) {
-            TG_LOG_ERROR("モデルを保存できませんでした: %s", ToUtf8Display(target).c_str());
+            TG_LOG_ERROR(ui::Tr("モデルを保存できませんでした: %s", "Could not save the model: %s"), ToUtf8Display(target).c_str());
             return false;
         }
     }
-    TG_LOG_INFO("インポスターを焼き直しました: %zu モデル", targets.size());
+    TG_LOG_INFO(ui::Tr("インポスターを焼き直しました: %zu モデル", "Rebaked impostors: %zu models"), targets.size());
     return true;
 }
 
@@ -503,7 +503,7 @@ void Application::ProcessImpostorWork() {
             m_assetRefresh = true;
             MarkDocumentChanged(false);
         } else {
-            TG_LOG_ERROR("インポスターを作れませんでした: %s", error.c_str());
+            TG_LOG_ERROR(ui::Tr("インポスターを作れませんでした: %s", "Could not create the impostor: %s"), error.c_str());
         }
     }
     if (auto* asset = find(std::exchange(m_pendingImpostorDelete, 0)); asset && asset->impostor.baked) {
@@ -512,7 +512,7 @@ void Application::ProcessImpostorWork() {
             std::error_code error;
             if (path.empty() || !std::filesystem::exists(path, error)) continue;
             if (!m_workspace.Contains(path) || !io::RetireAsset(m_workspace, io::InspectAssetRelations(m_workspace, path)))
-                TG_LOG_WARN("インポスターの画像を退避できませんでした: %s", ToUtf8Display(path).c_str());
+                TG_LOG_WARN(ui::Tr("インポスターの画像を退避できませんでした: %s", "Could not move the impostor image aside: %s"), ToUtf8Display(path).c_str());
         }
         const auto settings = asset->impostor.settings;
         asset->impostor = {};

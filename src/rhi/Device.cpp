@@ -3,6 +3,7 @@
 #include "core/ImageIo.h"
 
 #include "core/Log.h"
+#include "ui/Localization.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -205,18 +206,18 @@ bool Device::CreateFactoryAndDevice(bool enableDebugLayer, bool gpuValidation) {
         ComPtr<ID3D12Debug> debug;
         if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) {
             debug->EnableDebugLayer();
-            TG_LOG_INFO("D3D12 デバッグレイヤーを有効化しました");
+            TG_LOG_INFO(ui::Tr("D3D12 デバッグレイヤーを有効化しました", "D3D12 debug layer enabled"));
 
             // GPU ベースバリデーションは既定で切る。地形評価や雲の Dispatch に
             // 検証コードが入って最初のフレームが数分経っても終わらない。
             ComPtr<ID3D12Debug1> debug1;
             if (gpuValidation && SUCCEEDED(debug.As(&debug1))) {
                 debug1->SetEnableGPUBasedValidation(TRUE);
-                TG_LOG_INFO("GPU ベースバリデーションを有効化しました");
+                TG_LOG_INFO(ui::Tr("GPU ベースバリデーションを有効化しました", "GPU-based validation enabled"));
             }
             factoryFlags |= DXGI_CREATE_FACTORY_DEBUG;
         } else {
-            TG_LOG_WARN("D3D12 デバッグレイヤーを取得できませんでした（Graphics Tools 未導入の可能性）");
+            TG_LOG_WARN(ui::Tr("D3D12 デバッグレイヤーを取得できませんでした（Graphics Tools 未導入の可能性）", "Could not get the D3D12 debug layer (Graphics Tools may not be installed)"));
         }
     }
 
@@ -260,14 +261,14 @@ bool Device::CreateFactoryAndDevice(bool enableDebugLayer, bool gpuValidation) {
         if (SUCCEEDED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_12_0,
                                         IID_PPV_ARGS(&m_device)))) {
             m_adapter = adapter;
-            TG_LOG_INFO("アダプタ: %ls (VRAM %llu MB)", desc.Description,
+            TG_LOG_INFO(ui::Tr("アダプタ: %ls (VRAM %llu MB)", "Adapter: %ls (VRAM %llu MB)"), desc.Description,
                         static_cast<unsigned long long>(desc.DedicatedVideoMemory / (1024 * 1024)));
             break;
         }
     }
 
     if (!m_device) {
-        TG_LOG_ERROR("D3D12 デバイスを作成できるアダプタが見つかりませんでした");
+        TG_LOG_ERROR(ui::Tr("D3D12 デバイスを作成できるアダプタが見つかりませんでした", "No adapter can create a D3D12 device"));
         return false;
     }
 
@@ -276,7 +277,7 @@ bool Device::CreateFactoryAndDevice(bool enableDebugLayer, bool gpuValidation) {
     if (FAILED(m_device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &shaderModel,
                                              sizeof(shaderModel))) ||
         shaderModel.HighestShaderModel < D3D_SHADER_MODEL_6_6) {
-        TG_LOG_ERROR("シェーダモデル 6.6 に対応していません");
+        TG_LOG_ERROR(ui::Tr("シェーダモデル 6.6 に対応していません", "Shader model 6.6 is not supported"));
         return false;
     }
 
@@ -285,14 +286,14 @@ bool Device::CreateFactoryAndDevice(bool enableDebugLayer, bool gpuValidation) {
     if (FAILED(m_device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &options,
                                              sizeof(options))) ||
         options.ResourceBindingTier < D3D12_RESOURCE_BINDING_TIER_3) {
-        TG_LOG_ERROR("Resource Binding Tier 3 に対応していません（bindless に必要）");
+        TG_LOG_ERROR(ui::Tr("Resource Binding Tier 3 に対応していません（bindless に必要）", "Resource Binding Tier 3 is not supported (required for bindless)"));
         return false;
     }
 
     // 合成パスは R11G11B10F / RG16F / RGBA8 / R8 の UAV を読み書きする。
     // 無条件で保証される typed UAV load は R32 系のみなので、追加フォーマット対応を必須とする。
     if (!options.TypedUAVLoadAdditionalFormats) {
-        TG_LOG_ERROR("Typed UAV Load の追加フォーマットに対応していません（合成パスに必要）");
+        TG_LOG_ERROR(ui::Tr("Typed UAV Load の追加フォーマットに対応していません（合成パスに必要）", "Typed UAV Load additional formats are not supported (required for compositing)"));
         return false;
     }
 
@@ -392,7 +393,7 @@ bool Device::CreateCommandObjects() {
 
     m_fenceEvent = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (m_fenceEvent == nullptr) {
-        TG_LOG_ERROR("フェンス用イベントの作成に失敗しました");
+        TG_LOG_ERROR(ui::Tr("フェンス用イベントの作成に失敗しました", "Failed to create the fence event"));
         return false;
     }
     return true;
@@ -509,7 +510,7 @@ void Device::Resize(uint32_t width, uint32_t height) {
                                                 flags))) {
         // バックバッファは既に手放しているため、続行すると null 参照になる。
         // デバイスロスト相当として描画を止める。
-        TG_LOG_ERROR("スワップチェーンのリサイズに失敗しました。描画を停止します");
+        TG_LOG_ERROR(ui::Tr("スワップチェーンのリサイズに失敗しました。描画を停止します", "Failed to resize the swap chain. Stopping rendering"));
         m_initialized = false;
         return;
     }
@@ -518,7 +519,7 @@ void Device::Resize(uint32_t width, uint32_t height) {
     m_height = height;
     m_frameIndex = m_swapChain->GetCurrentBackBufferIndex();
     if (!CreateBackBufferViews()) {
-        TG_LOG_ERROR("バックバッファビューの再作成に失敗しました。描画を停止します");
+        TG_LOG_ERROR(ui::Tr("バックバッファビューの再作成に失敗しました。描画を停止します", "Failed to recreate the back buffer views. Stopping rendering"));
         m_initialized = false;
     }
 }
@@ -712,7 +713,7 @@ bool Device::CheckDeviceRemoved() {
         if (_wfopen_s(&file, path.c_str(), L"wb") == 0 && file != nullptr) {
             std::fwrite(report.data(), 1, report.size(), file);
             std::fclose(file);
-            TG_LOG_ERROR("デバイスロストの記録を書きました: %ls", path.c_str());
+            TG_LOG_ERROR(ui::Tr("デバイスロストの記録を書きました: %ls", "Wrote the device removed report: %ls"), path.c_str());
             m_deviceRemovedReportPath = path;
         }
     }
@@ -758,7 +759,7 @@ void Device::EndFrame(bool vsync) {
     const UINT presentFlags = (!vsync && m_allowTearing) ? DXGI_PRESENT_ALLOW_TEARING : 0u;
     const HRESULT presentResult = m_swapChain->Present(syncInterval, presentFlags);
     if (presentResult == DXGI_ERROR_DEVICE_REMOVED || presentResult == DXGI_ERROR_DEVICE_RESET) {
-        TG_LOG_ERROR("Present がデバイスロストを返しました (0x%08X)", static_cast<unsigned int>(presentResult));
+        TG_LOG_ERROR(ui::Tr("Present がデバイスロストを返しました (0x%08X)", "Present returned device removed (0x%08X)"), static_cast<unsigned int>(presentResult));
         CheckDeviceRemoved();
         m_initialized = false;
     } else {
@@ -782,7 +783,7 @@ void Device::EndFrame(bool vsync) {
             const D3D12_RANGE writtenRange = {0, 0};
             m_pendingCapture.resource->Unmap(0, &writtenRange);
             if (!saved) {
-                TG_LOG_ERROR("バックバッファの書き出しに失敗しました");
+                TG_LOG_ERROR(ui::Tr("バックバッファの書き出しに失敗しました", "Failed to save the back buffer"));
             }
         }
 
@@ -813,7 +814,7 @@ bool Device::ExecuteImmediate(const std::function<void(ID3D12GraphicsCommandList
     }
     if (m_frameOpen) {
         // 内部で WaitForGpu するため、フレーム記録中には使えない（WaitForGpu と同じ理由）。
-        TG_LOG_ERROR("BeginFrame と EndFrame の間で ExecuteImmediate が呼ばれました（無視します）");
+        TG_LOG_ERROR(ui::Tr("BeginFrame と EndFrame の間で ExecuteImmediate が呼ばれました（無視します）", "ExecuteImmediate called between BeginFrame and EndFrame (ignored)"));
         return false;
     }
     if (!TG_CHECK_HR(m_immediateAllocator->Reset())) {
@@ -842,7 +843,7 @@ void Device::MoveToNextFrame() {
     if (!TG_CHECK_HR(m_commandQueue->Signal(m_fence.Get(), value))) {
         // Signal に失敗するのは実質デバイスロスト時のみ。古いフェンス値のまま続けると、
         // GPU が実行中のアロケータを次の BeginFrame が Reset してしまうため止める。
-        TG_LOG_ERROR("フェンスの Signal に失敗しました。描画を停止します");
+        TG_LOG_ERROR(ui::Tr("フェンスの Signal に失敗しました。描画を停止します", "Fence Signal failed. Stopping rendering"));
         m_initialized = false;
         return;
     }
@@ -858,7 +859,7 @@ void Device::WaitForGpu() {
     if (m_frameOpen) {
         // フレーム記録中に待つと、記録中のコマンドが参照するオブジェクトの
         // フェンス値まで完了扱いになり、削除キューが早回収してしまう。
-        TG_LOG_ERROR("BeginFrame と EndFrame の間で WaitForGpu が呼ばれました（無視します）");
+        TG_LOG_ERROR(ui::Tr("BeginFrame と EndFrame の間で WaitForGpu が呼ばれました（無視します）", "WaitForGpu called between BeginFrame and EndFrame (ignored)"));
         return;
     }
 

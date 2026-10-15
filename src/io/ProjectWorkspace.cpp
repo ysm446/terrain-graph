@@ -4,6 +4,7 @@
 #include "io/SceneComponents.h"
 #include "core/PathUtf8.h"
 #include "core/Log.h"
+#include "ui/Localization.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -85,7 +86,7 @@ bool ProjectWorkspace::WriteJson(const fs::path& path, const json& document) {
         if (stream.fail()) return false;
     }
     if (!MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        TG_LOG_ERROR("保存先を更新できません: %s", ToUtf8Display(path).c_str());
+        TG_LOG_ERROR(ui::Tr("保存先を更新できません: %s", "Cannot update the save destination: %s"), ToUtf8Display(path).c_str());
         fs::remove(temp, error);
         return false;
     }
@@ -130,7 +131,7 @@ bool ProjectWorkspace::Open(const fs::path& root) {
         if (!ReadJson(projectPath, next.m_project) ||
             String(next.m_project, "format") != "terrain-graph.workspace" ||
             !next.m_project.contains("version") || next.m_project["version"] != 1) {
-            TG_LOG_ERROR("ルートのproject.tgprojが対応するプロジェクト形式ではありません");
+            TG_LOG_ERROR(ui::Tr("ルートのproject.tgprojが対応するプロジェクト形式ではありません", "The root project.tgproj is not a supported project format"));
             return false;
         }
     } else {
@@ -162,7 +163,7 @@ bool ProjectWorkspace::Scan() {
         auto target = path;
         if (path.extension() == L".meta") target.replace_extension();
         if (!m_paths.emplace(uid, target).second) {
-            TG_LOG_ERROR("アセットIDが重複しています: %s", ToUtf8Display(path).c_str());
+            TG_LOG_ERROR(ui::Tr("アセットIDが重複しています: %s", "Duplicate asset ID: %s"), ToUtf8Display(path).c_str());
             return false;
         }
         m_knownUids[ToUtf8Portable(Absolute(target))] = uid;
@@ -212,7 +213,7 @@ fs::path ProjectWorkspace::Import(const fs::path& source, const fs::path& direct
     if (target.empty()) return {};
     fs::create_directories(directory, error);
     if (error || !fs::copy_file(source, target, fs::copy_options::none, error)) {
-        TG_LOG_ERROR("素材をコピーできません: %s", ToUtf8Display(source).c_str());
+        TG_LOG_ERROR(ui::Tr("素材をコピーできません: %s", "Cannot copy the source file: %s"), ToUtf8Display(source).c_str());
         return {};
     }
     m_imports[sourceKey] = target;
@@ -390,18 +391,18 @@ bool ProjectWorkspace::SaveScene(const fs::path& path, json& document, bool save
 bool ProjectWorkspace::ReadScene(const fs::path& path, json& document) {
     // 開けない理由は呼び出し側では分からないので、どこで止まったかをここで残す。
     const auto fail = [&](const char* reason) {
-        TG_LOG_ERROR("シーンを開けません（%s）: %s", reason, ToUtf8Display(path).c_str());
+        TG_LOG_ERROR(ui::Tr("シーンを開けません（%s）: %s", "Cannot open the scene (%s): %s"), reason, ToUtf8Display(path).c_str());
         return false;
     };
-    if (!Contains(path)) return fail("ルートの外");
-    if (!Scan()) return fail("ルートの走査に失敗");
-    if (!ReadJson(path, document)) return fail("JSON を読めない");
-    if (String(document, "format") != "terrain-graph.scene") return fail("format が違う");
+    if (!Contains(path)) return fail(ui::Tr("ルートの外", "outside the root"));
+    if (!Scan()) return fail(ui::Tr("ルートの走査に失敗", "failed to scan the root"));
+    if (!ReadJson(path, document)) return fail(ui::Tr("JSON を読めない", "cannot read JSON"));
+    if (String(document, "format") != "terrain-graph.scene") return fail(ui::Tr("format が違う", "wrong format"));
     const int version = ReadInt(document, "version", 0);
-    if (version < 1 || version > 3) return fail("version が未対応");
-    if (version == 3 && !document.contains("atmosphere")) return fail("atmosphere が無い");
-    if (version >= 2 && !ExpandSceneComponents(*this, document)) return fail("部品を展開できない");
-    if (!Expand(document)) return fail("参照アセットを展開できない");
+    if (version < 1 || version > 3) return fail(ui::Tr("version が未対応", "unsupported version"));
+    if (version == 3 && !document.contains("atmosphere")) return fail(ui::Tr("atmosphere が無い", "missing atmosphere"));
+    if (version >= 2 && !ExpandSceneComponents(*this, document)) return fail(ui::Tr("部品を展開できない", "cannot expand components"));
+    if (!Expand(document)) return fail(ui::Tr("参照アセットを展開できない", "cannot expand referenced assets"));
     return true;
 }
 bool ProjectWorkspace::Expand(json& document) {
@@ -409,12 +410,12 @@ bool ProjectWorkspace::Expand(json& document) {
     for (const char* key : {"textures", "materials", "models", "skies"}) {
         if (!document.contains(key)) document[key] = json::array();
         if (!document[key].is_array()) {
-            TG_LOG_ERROR("シーンの \"%s\" が配列ではありません", key);
+            TG_LOG_ERROR(ui::Tr("シーンの \"%s\" が配列ではありません", "Scene \"%s\" is not an array"), key);
             return false;
         }
         for (const auto& entry : document[key]) {
             if (!entry.is_object()) {
-                TG_LOG_ERROR("シーンの \"%s\" にオブジェクトでない要素があります", key);
+                TG_LOG_ERROR(ui::Tr("シーンの \"%s\" にオブジェクトでない要素があります", "Scene \"%s\" contains a non-object element"), key);
                 return false;
             }
         }
@@ -425,7 +426,7 @@ bool ProjectWorkspace::Expand(json& document) {
     std::unordered_map<std::string, int> textureIds, materialIds;
     for (const auto& entry : textures) {
         if (!entry.contains("id") || !entry["id"].is_number_integer()) {
-            TG_LOG_ERROR("シーンのテクスチャに整数の id がありません");
+            TG_LOG_ERROR(ui::Tr("シーンのテクスチャに整数の id がありません", "A scene texture has no integer id"));
             return false;
         }
         const int id = entry["id"].get<int>();
@@ -434,7 +435,7 @@ bool ProjectWorkspace::Expand(json& document) {
     }
     for (const auto& entry : materials) {
         if (!entry.contains("id") || !entry["id"].is_number_integer()) {
-            TG_LOG_ERROR("シーンのマテリアルに整数の id がありません");
+            TG_LOG_ERROR(ui::Tr("シーンのマテリアルに整数の id がありません", "A scene material has no integer id"));
             return false;
         }
         const int id = entry["id"].get<int>();
@@ -464,7 +465,7 @@ bool ProjectWorkspace::Expand(json& document) {
         const auto assetPath = Resolve(ref);
         json body;
         if (assetPath.empty() || !ReadAsset(assetPath, kind, body)) {
-            TG_LOG_ERROR("アセットを読み込めません: %s", String(ref, "path").c_str());
+            TG_LOG_ERROR(ui::Tr("アセットを読み込めません: %s", "Cannot load the asset: %s"), String(ref, "path").c_str());
             return false;
         }
         body["id"] = entry.value("id", json());
@@ -476,7 +477,7 @@ bool ProjectWorkspace::Expand(json& document) {
         if (!read(entry, "model-asset")) return false;
         const auto source = Resolve(entry["source"]);
         if (source.empty()) {
-            TG_LOG_ERROR("モデルの元のファイルが見つかりません: %s（%s）",
+            TG_LOG_ERROR(ui::Tr("モデルの元のファイルが見つかりません: %s（%s）", "Model source file not found: %s (%s)"),
                          String(entry["source"], "path").c_str(), String(entry, "name").c_str());
             return false;
         }
@@ -489,7 +490,7 @@ bool ProjectWorkspace::Expand(json& document) {
                 value = path.empty() ? json() : json(ToUtf8Portable(path));
             }
         if (!entry["materials"].is_array()) {
-            TG_LOG_ERROR("モデルの materials が配列ではありません: %s", String(entry, "name").c_str());
+            TG_LOG_ERROR(ui::Tr("モデルの materials が配列ではありません: %s", "Model materials is not an array: %s"), String(entry, "name").c_str());
             return false;
         }
         for (auto& slot : entry["materials"]) slot = materialId(slot);
@@ -497,7 +498,7 @@ bool ProjectWorkspace::Expand(json& document) {
     // 依存素材を追加するため、vector の参照を保持せずコピーを処理する。
     for (size_t i = 0; i < materials.size(); ++i) {
         if (materials.size() > 4096) {
-            TG_LOG_ERROR("シーンのマテリアルが多すぎます（4096 を超えた。参照が循環している可能性）");
+            TG_LOG_ERROR(ui::Tr("シーンのマテリアルが多すぎます（4096 を超えた。参照が循環している可能性）", "Too many scene materials (over 4096; references may be circular)"));
             return false;
         }
         json entry = materials[i];
@@ -513,7 +514,7 @@ bool ProjectWorkspace::Expand(json& document) {
                 return materialId(ref);
             });
             graph::LayerMaterial parsed; std::string error;
-            if (!valid || !ReadLayerMaterial(entry, parsed, error)) { TG_LOG_ERROR("レイヤーマテリアルを読み込めません: %s", error.c_str()); return false; }
+            if (!valid || !ReadLayerMaterial(entry, parsed, error)) { TG_LOG_ERROR(ui::Tr("レイヤーマテリアルを読み込めません: %s", "Cannot load the layered material: %s"), error.c_str()); return false; }
             entry["_layerMaterial"] = true;
         } else MapTextures(entry, textureId);
         materials[i] = std::move(entry);
@@ -521,7 +522,7 @@ bool ProjectWorkspace::Expand(json& document) {
     for (auto& entry : textures) {
         const auto source = Resolve(entry["source"]);
         if (source.empty()) {
-            TG_LOG_ERROR("テクスチャのファイルが見つかりません: %s", String(entry["source"], "path").c_str());
+            TG_LOG_ERROR(ui::Tr("テクスチャのファイルが見つかりません: %s", "Texture file not found: %s"), String(entry["source"], "path").c_str());
             return false;
         }
         entry["path"] = ToUtf8Portable(source);
@@ -531,7 +532,7 @@ bool ProjectWorkspace::Expand(json& document) {
         if (entry["hdri"].is_object()) {
             const auto source = Resolve(entry["hdri"]);
             if (source.empty()) {
-                TG_LOG_ERROR("スカイの HDRI が見つかりません: %s", String(entry["hdri"], "path").c_str());
+                TG_LOG_ERROR(ui::Tr("スカイの HDRI が見つかりません: %s", "Sky HDRI not found: %s"), String(entry["hdri"], "path").c_str());
                 return false;
             }
             entry["hdri"] = ToUtf8Portable(source);

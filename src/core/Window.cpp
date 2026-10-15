@@ -2,6 +2,7 @@
 
 #include "core/Log.h"
 #include "core/ResourceIds.h"
+#include "ui/Localization.h"
 
 #include <shellapi.h>
 
@@ -44,7 +45,7 @@ bool Window::Create(const wchar_t* title, uint32_t width, uint32_t height) {
     wc.hbrBackground = ::CreateSolidBrush(RGB(23, 23, 28));
     wc.lpszClassName = kWindowClassName;
     if (::RegisterClassExW(&wc) == 0 && ::GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
-        TG_LOG_ERROR("RegisterClassExW に失敗しました (0x%08lX)", ::GetLastError());
+        TG_LOG_ERROR(ui::Tr("RegisterClassExW に失敗しました (0x%08lX)", "RegisterClassExW failed (0x%08lX)"), ::GetLastError());
         return false;
     }
 
@@ -59,7 +60,7 @@ bool Window::Create(const wchar_t* title, uint32_t width, uint32_t height) {
                                rect.right - rect.left, rect.bottom - rect.top,
                                nullptr, nullptr, instance, this);
     if (m_hwnd == nullptr) {
-        TG_LOG_ERROR("CreateWindowExW に失敗しました (0x%08lX)", ::GetLastError());
+        TG_LOG_ERROR(ui::Tr("CreateWindowExW に失敗しました (0x%08lX)", "CreateWindowExW failed (0x%08lX)"), ::GetLastError());
         return false;
     }
 
@@ -128,8 +129,10 @@ void Window::ResizeClient(uint32_t width, uint32_t height) {
 
         if (outerWidth > (monitorInfo.rcWork.right - monitorInfo.rcWork.left) ||
             outerHeight > (monitorInfo.rcWork.bottom - monitorInfo.rcWork.top)) {
-            TG_LOG_WARN("ウィンドウ (%ux%u) がモニタの作業領域に収まりません。"
-                        "はみ出したまま開きます", width, height);
+            TG_LOG_WARN(ui::Tr("ウィンドウ (%ux%u) がモニタの作業領域に収まりません。"
+                               "はみ出したまま開きます",
+                               "Window (%ux%u) doesn't fit the monitor work area. Opening it partly off-screen"),
+                        width, height);
         }
     }
 

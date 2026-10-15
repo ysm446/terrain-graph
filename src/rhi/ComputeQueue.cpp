@@ -2,6 +2,7 @@
 
 #include "core/Log.h"
 #include "rhi/Device.h"
+#include "ui/Localization.h"
 
 namespace tg::rhi {
 
@@ -46,7 +47,7 @@ bool ComputeQueue::Create(Device& device, uint64_t uploadBytes, const wchar_t* d
     }
     m_fenceEvent = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (m_fenceEvent == nullptr) {
-        TG_LOG_ERROR("コンピュートキューのフェンスイベントを作れませんでした");
+        TG_LOG_ERROR(ui::Tr("コンピュートキューのフェンスイベントを作れませんでした", "Could not create the compute queue fence event"));
         return fail();
     }
 
@@ -135,7 +136,7 @@ bool ComputeQueue::Submit(Device& device) {
     // Signal に失敗するのは実質デバイスロストだけなので、キューごと止める。
     m_submittedValue += 1;
     if (!TG_CHECK_HR(m_queue->Signal(m_fence.Get(), m_submittedValue))) {
-        TG_LOG_ERROR("コンピュートキューのフェンスの Signal に失敗しました。このキューを止めます");
+        TG_LOG_ERROR(ui::Tr("コンピュートキューのフェンスの Signal に失敗しました。このキューを止めます", "Compute queue fence Signal failed. Stopping this queue"));
         m_queue.Reset();
         return false;
     }
@@ -171,7 +172,7 @@ UploadAllocation ComputeQueue::Allocate(uint64_t size, uint64_t alignment) {
         return result;
     }
     if (!IsPowerOfTwo(alignment)) {
-        TG_LOG_ERROR("コンピュートキューのアライメント指定が不正です (%llu)",
+        TG_LOG_ERROR(ui::Tr("コンピュートキューのアライメント指定が不正です (%llu)", "Invalid compute queue alignment (%llu)"),
                      static_cast<unsigned long long>(alignment));
         return result;
     }
@@ -179,7 +180,7 @@ UploadAllocation ComputeQueue::Allocate(uint64_t size, uint64_t alignment) {
     if (offset + size > m_uploadBytes) {
         // 1 回だけ知らせる。呼び出し側は広げてやり直す。
         if (!m_uploadExhausted) {
-            TG_LOG_WARN("コンピュートキューの定数の置き場を使い切りました（%llu KB）",
+            TG_LOG_WARN(ui::Tr("コンピュートキューの定数の置き場を使い切りました（%llu KB）", "Compute queue constant space exhausted (%llu KB)"),
                         static_cast<unsigned long long>(m_uploadBytes / 1024));
         }
         m_uploadExhausted = true;

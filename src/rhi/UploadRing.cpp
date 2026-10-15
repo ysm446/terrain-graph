@@ -1,6 +1,7 @@
 #include "rhi/UploadRing.h"
 
 #include "core/Log.h"
+#include "ui/Localization.h"
 
 namespace tg::rhi {
 
@@ -9,7 +10,7 @@ bool UploadRing::Create(ResourceAllocator& allocator, uint64_t bytesPerFrame) {
     // これが揃っていないと、フレーム 1 以降で絶対オフセットのアライメントが崩れる。
     m_bytesPerFrame = AlignUp(bytesPerFrame, D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
     if (m_bytesPerFrame == 0 || m_bytesPerFrame > (UINT64_MAX / kFrameCount)) {
-        TG_LOG_ERROR("アップロードリングのサイズ指定が不正です");
+        TG_LOG_ERROR(ui::Tr("アップロードリングのサイズ指定が不正です", "Invalid upload ring size"));
         return false;
     }
 
@@ -26,7 +27,7 @@ bool UploadRing::Create(ResourceAllocator& allocator, uint64_t bytesPerFrame) {
     }
     m_mapped = static_cast<uint8_t*>(mapped);
 
-    TG_LOG_INFO("アップロードリング: %llu MB (%llu MB x %u フレーム)",
+    TG_LOG_INFO(ui::Tr("アップロードリング: %llu MB (%llu MB x %u フレーム)", "Upload ring: %llu MB (%llu MB x %u frames)"),
                 static_cast<unsigned long long>(total / (1024 * 1024)),
                 static_cast<unsigned long long>(m_bytesPerFrame / (1024 * 1024)), kFrameCount);
     return true;
@@ -55,7 +56,7 @@ UploadAllocation UploadRing::Allocate(uint64_t size, uint64_t alignment) {
     }
     if (!IsPowerOfTwo(alignment) || alignment > D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT) {
         // 0 や非 2 冪を通すと AlignUp が壊れ、無言で確保が重なり合う。
-        TG_LOG_ERROR("アップロードリングのアライメント指定が不正です (%llu)",
+        TG_LOG_ERROR(ui::Tr("アップロードリングのアライメント指定が不正です (%llu)", "Invalid upload ring alignment (%llu)"),
                      static_cast<unsigned long long>(alignment));
         return result;
     }
@@ -66,7 +67,7 @@ UploadAllocation UploadRing::Allocate(uint64_t size, uint64_t alignment) {
         if (!m_overflowReported) {
             const uint64_t remaining =
                 (alignedOffset < m_bytesPerFrame) ? m_bytesPerFrame - alignedOffset : 0;
-            TG_LOG_ERROR("アップロードリングが不足しました (要求 %llu, 残り %llu)",
+            TG_LOG_ERROR(ui::Tr("アップロードリングが不足しました (要求 %llu, 残り %llu)", "Upload ring ran out (requested %llu, remaining %llu)"),
                          static_cast<unsigned long long>(size),
                          static_cast<unsigned long long>(remaining));
             m_overflowReported = true;

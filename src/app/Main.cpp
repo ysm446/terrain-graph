@@ -119,7 +119,7 @@ tg::StartupOptions ParseCommandLine() {
             options.screenshotFrame = static_cast<uint32_t>(::_wtoi(argv[i + 1]));
             ++i;
         } else {
-            TG_LOG_WARN("不明な引数です: %ls", argument.c_str());
+            TG_LOG_WARN(tg::ui::Tr("不明な引数です: %ls", "Unknown argument: %ls"), argument.c_str());
         }
     }
 

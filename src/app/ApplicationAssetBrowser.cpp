@@ -171,7 +171,7 @@ void Application::DrawSceneDuplicateDialog() {
         const auto created = io::DuplicateScene(m_workspace, source, m_sceneDuplicateName, reason);
         if (created.empty()) {
             m_sceneDuplicateError = reason;
-            TG_LOG_ERROR("シーンを複製できませんでした: %s", reason.c_str());
+            TG_LOG_ERROR(ui::Tr("シーンを複製できませんでした: %s", "Could not duplicate the scene: %s"), reason.c_str());
         } else {
             m_pendingAssetReveal = created;
             m_assetRefresh = true;
@@ -631,7 +631,7 @@ void Application::ProcessAssetSelections() {
             }
         }
     }
-    if (!request.result) TG_LOG_ERROR("割り当てるアセットを読み込めません: %s", ToUtf8Display(request.path).c_str());
+    if (!request.result) TG_LOG_ERROR(ui::Tr("割り当てるアセットを読み込めません: %s", "Could not load the asset to assign: %s"), ToUtf8Display(request.path).c_str());
 }
 
 void Application::ProcessAssetWork() {
@@ -639,13 +639,13 @@ void Application::ProcessAssetWork() {
                          m_skyLibrary, m_renderer, m_graph, &m_models, &m_sceneComponents, -1, &m_sceneAtmosphere};
     if (m_pendingWorkEnvironmentSave && !ImGui::IsAnyItemActive()) {
         m_pendingWorkEnvironmentSave = false;
-        if (!io::SaveWorkEnvironment(m_workspace, refs, false)) TG_LOG_ERROR("作業用IBLの設定を保存できませんでした");
+        if (!io::SaveWorkEnvironment(m_workspace, refs, false)) TG_LOG_ERROR(ui::Tr("作業用IBLの設定を保存できませんでした", "Could not save the work IBL settings"));
         m_pendingWorkSkySave = false;
     }
     if (m_pendingAtmosphereSave) {
         m_pendingAtmosphereSave = false;
         const auto directory = m_projectPath.empty() ? m_assetDirectory : m_projectPath.parent_path();
-        if (!io::SaveAtmosphereAsset(m_workspace, refs, directory)) TG_LOG_ERROR("大気散乱スカイを保存できませんでした");
+        if (!io::SaveAtmosphereAsset(m_workspace, refs, directory)) TG_LOG_ERROR(ui::Tr("大気散乱スカイを保存できませんでした", "Could not save the atmospheric sky"));
         else { m_assetRefresh = true; MarkDocumentChanged(); }
     }
 
@@ -668,7 +668,7 @@ void Application::ProcessAssetWork() {
                 m_assetDeleteQueue.erase(m_assetDeleteQueue.begin());
             }
         } else {
-            TG_LOG_WARN("削除できませんでした。対象と参照関係を再確認してください");
+            TG_LOG_WARN(ui::Tr("削除できませんでした。対象と参照関係を再確認してください", "Could not delete. Check the targets and their references"));
             m_pendingAssetDeleteInspect = path;
         }
     }
@@ -681,7 +681,7 @@ void Application::ProcessAssetWork() {
             std::erase(m_selectedAssets, path);
             if (m_assetDirectory == path) m_assetDirectory = path.parent_path();
             m_assetRefresh = true;
-        } else TG_LOG_WARN("フォルダを削除できません。空で、使用中でないことを確認してください");
+        } else TG_LOG_WARN(ui::Tr("フォルダを削除できません。空で、使用中でないことを確認してください", "Could not delete the folder. Make sure it is empty and not in use"));
         if (!m_assetDeleteQueue.empty()) {
             m_pendingAssetDeleteInspect = m_assetDeleteQueue.front();
             m_assetDeleteQueue.erase(m_assetDeleteQueue.begin());
@@ -712,7 +712,7 @@ void Application::ProcessAssetWork() {
             ++count;
         }
         if (count > 0)
-            TG_LOG_INFO("%zu 件を移動しました → %s", count,
+            TG_LOG_INFO(ui::Tr("%zu 件を移動しました → %s", "Moved %zu items → %s"), count,
                         ToUtf8Display(directory.lexically_relative(m_workspace.Root())).c_str());
         m_assetRefresh = true;
     }
@@ -721,7 +721,7 @@ void Application::ProcessAssetWork() {
         const auto renamed = io::RenameAsset(m_workspace, source, m_pendingAssetRenameName);
         if (!renamed.empty() && renamed != source) {
             RelinkAssetPaths(source, renamed);
-            TG_LOG_INFO("名前を変更しました: %s → %s", ToUtf8Display(source.filename()).c_str(),
+            TG_LOG_INFO(ui::Tr("名前を変更しました: %s → %s", "Renamed: %s → %s"), ToUtf8Display(source.filename()).c_str(),
                         ToUtf8Display(renamed.filename()).c_str());
         }
         m_assetRefresh = true;
@@ -748,7 +748,7 @@ void Application::ProcessAssetWork() {
             if (!m_pendingProjectOpen.empty() && m_pendingProjectOpen.extension() == L".tgscene") {
                 nlohmann::json validation;
                 if (!next.ReadScene(m_pendingProjectOpen, validation)) {
-                    TG_LOG_ERROR("シーンを読み込めません。現在のプロジェクトを保持します");
+                    TG_LOG_ERROR(ui::Tr("シーンを読み込めません。現在のプロジェクトを保持します", "Could not load the scene. Keeping the current project"));
                     m_pendingProjectOpen.clear();
                     return;
                 }
@@ -773,7 +773,7 @@ void Application::ProcessAssetWork() {
         CommitMaterialEdit();
         // 新規作成だけを保存し、既存アセットの変更を巻き込まない。
         const fs::path newAssets;
-        if (!io::SaveSharedAssets(m_workspace, refs, &newAssets)) TG_LOG_ERROR("共有アセットを保存できませんでした");
+        if (!io::SaveSharedAssets(m_workspace, refs, &newAssets)) TG_LOG_ERROR(ui::Tr("共有アセットを保存できませんでした", "Could not save the shared assets"));
         m_assetRefresh = true;
         m_assetThumbnails.Invalidate();
     }
@@ -792,7 +792,7 @@ void Application::ProcessAssetWork() {
                     m_graph.MarkDirty(); MarkDocumentChanged(false);
                     m_assetRefresh = true;
                 }
-            } else TG_LOG_ERROR("モデルを読み込めませんでした: %s", ToUtf8Display(path).c_str());
+            } else TG_LOG_ERROR(ui::Tr("モデルを読み込めませんでした: %s", "Could not load the model: %s"), ToUtf8Display(path).c_str());
         }
     }
     // 別のシーンでコピーしたノードの貼り付け。参照の読み込みを伴うのでここで行う。
@@ -808,22 +808,22 @@ void Application::ProcessAssetWork() {
         if (ext == ".tgatmosphere") m_pendingAssetOpen = path;  // 開く経路がそのまま差し替える
         else if (ext == ".tgterrain" || ext == ".tgcloud") {
             const int component = ext == ".tgcloud" ? 1 : 0;
-            const char* name = component ? "雲グラフ" : "地形グラフ";
+            const char* name = component ? ui::Tr("雲グラフ", "cloud graph") : ui::Tr("地形グラフ", "terrain graph");
             bool placed = false;
             if (m_sceneComponents.is_array()) for (const auto& entry : m_sceneComponents) {
                 std::error_code error;
                 if (fs::equivalent(path, m_workspace.Resolve(entry.value("asset", nlohmann::json::object())), error)) placed = true;
             }
-            if (m_componentPreview >= 0) TG_LOG_WARN("先にプレビュー中の編集を保存または終了してください");
-            else if (!m_sceneComponents.is_array()) TG_LOG_WARN("先にシーンを部品へ分離してください");
+            if (m_componentPreview >= 0) TG_LOG_WARN(ui::Tr("先にプレビュー中の編集を保存または終了してください", "Save or finish the edit being previewed first"));
+            else if (!m_sceneComponents.is_array()) TG_LOG_WARN(ui::Tr("先にシーンを部品へ分離してください", "Split the scene into components first"));
             else if (placed) { m_editComponent = -1; OpenComponentEditor(component); }
             else {
                 RefreshSceneDirty();
                 if (m_sceneDirty & (component ? kDirtyCloud : kDirtyTerrain)) {
-                    TG_LOG_INFO("%sに未保存の編集があるため、一時プレビューとして開きます", name);
+                    TG_LOG_INFO(ui::Tr("%sに未保存の編集があるため、一時プレビューとして開きます", "The %s has unsaved edits. Opening it as a temporary preview"), name);
                     m_pendingAssetOpen = path;
                 } else if (!io::LoadSharedAsset(m_workspace, path, m_device, m_pipelineCache, refs)) {
-                    TG_LOG_ERROR("%sを開けませんでした: %s", name, ToUtf8Display(path).c_str());
+                    TG_LOG_ERROR(ui::Tr("%sを開けませんでした: %s", "Could not open the %s: %s"), name, ToUtf8Display(path).c_str());
                 } else {
                     m_editComponent = -1; OpenComponentEditor(component);
                     m_compiledGraphRevision = 0; m_graphStack.MarkDirty();
@@ -833,7 +833,7 @@ void Application::ProcessAssetWork() {
                     m_undoHistory.Clear(); m_documentDirty = false; m_committed = CaptureDocument();
                     MarkSceneSaved(component ? kDirtyCloud : kDirtyTerrain);
                     m_assetRefresh = true;
-                    TG_LOG_INFO("%sを配置しました: %s", name, ToUtf8Display(path.filename()).c_str());
+                    TG_LOG_INFO(ui::Tr("%sを配置しました: %s", "Placed the %s: %s"), name, ToUtf8Display(path.filename()).c_str());
                 }
             }
         }
@@ -843,7 +843,7 @@ void Application::ProcessAssetWork() {
         const auto path = m_pendingAssetOpen; m_pendingAssetOpen.clear();
         const auto ext = Extension(path);
         if (ext == ".tgterrain" || ext == ".tgcloud") {
-            if (m_componentPreview >= 0) { TG_LOG_WARN("先にプレビュー中の編集を保存または終了してください"); return; }
+            if (m_componentPreview >= 0) { TG_LOG_WARN(ui::Tr("先にプレビュー中の編集を保存または終了してください", "Save or finish the edit being previewed first")); return; }
             const int component = ext == ".tgcloud" ? 1 : 0;
             bool placed = false;
             if (m_sceneComponents.is_array()) for (const auto& entry : m_sceneComponents) {
@@ -851,11 +851,11 @@ void Application::ProcessAssetWork() {
                 if (fs::equivalent(path, m_workspace.Resolve(entry.value("asset", nlohmann::json::object())), error)) placed = true;
             }
             if (!placed) {
-                if (!m_sceneComponents.is_array()) { TG_LOG_WARN("先にシーンを部品へ分離してください"); return; }
+                if (!m_sceneComponents.is_array()) { TG_LOG_WARN(ui::Tr("先にシーンを部品へ分離してください", "Split the scene into components first")); return; }
                 m_previewOriginalGraph = m_graph;
                 m_previewOriginalComponents = m_sceneComponents;
                 if (!io::LoadSharedAsset(m_workspace, path, m_device, m_pipelineCache, refs)) {
-                    TG_LOG_ERROR("グラフアセットを開けませんでした"); return;
+                    TG_LOG_ERROR(ui::Tr("グラフアセットを開けませんでした", "Could not open the graph asset")); return;
                 }
                 m_componentPreview = component; m_componentPreviewPath = path;
                 m_previewSavedFingerprint = io::FingerprintScene(refs);
@@ -872,7 +872,7 @@ void Application::ProcessAssetWork() {
                 MarkSceneSaved(kDirtyAtmosphere);
                 m_focusLighting = true; m_pendingWorkEnvironmentSave = true;
                 MarkDocumentChanged();
-            } else TG_LOG_ERROR("大気散乱スカイを開けませんでした");
+            } else TG_LOG_ERROR(ui::Tr("大気散乱スカイを開けませんでした", "Could not open the atmospheric sky"));
             return;
         }
         if (ext == ".tgboundary") {
@@ -899,7 +899,7 @@ void Application::ProcessAssetWork() {
                     m_modelLod = 0; m_showModelPreview = true;
                 }
                 if (ext != ".tgsky") MarkDocumentChanged();
-            } else TG_LOG_ERROR("アセットを開けません: %s", ToUtf8Display(path).c_str());
+            } else TG_LOG_ERROR(ui::Tr("アセットを開けません: %s", "Could not open the asset: %s"), ToUtf8Display(path).c_str());
         } else if (IsImage(ext)) {
             const auto id = m_textureLibrary.Load(m_device, m_pipelineCache, path);
             if (id) {
@@ -925,8 +925,8 @@ void Application::ProcessAssetWork() {
                 m_selectedAssets.clear();
                 SelectAsset(m_assetRevealTarget, false, false);
                 m_settings.Display().showAssetBand = true;
-            } else TG_LOG_WARN("アセットブラウザで表示できないファイルです: %s", ToUtf8Display(path).c_str());
-        } else TG_LOG_WARN("参照元が見つからないか、現在のルート外にあります: %s", ToUtf8Display(request).c_str());
+            } else TG_LOG_WARN(ui::Tr("アセットブラウザで表示できないファイルです: %s", "This file cannot be shown in the asset browser: %s"), ToUtf8Display(path).c_str());
+        } else TG_LOG_WARN(ui::Tr("参照元が見つからないか、現在のルート外にあります: %s", "The source was not found or is outside the current root: %s"), ToUtf8Display(request).c_str());
     }
 
     if (m_assetRefresh) RefreshAssetBrowser();
@@ -1281,14 +1281,14 @@ void Application::DrawAssetBrowser() {
                         body.erase("uid");
                         auto name = io::ProjectWorkspace::String(body, "name");
                         if (name.empty()) name = ToUtf8Display(path.stem());
-                        name += " コピー";
+                        name += ui::Tr(" コピー", " Copy");
                         body["name"] = name;
                         auto copy = m_workspace.UniquePath(path.parent_path(), name, ext.c_str());
                         if (!copy.empty() && m_workspace.SaveAsset(copy, kind, body)) {
                             m_assetRefresh = true;
-                            TG_LOG_INFO("アセットを複製しました: %s", ToUtf8Display(copy.filename()).c_str());
-                        } else TG_LOG_ERROR("アセットを複製できませんでした");
-                    } else TG_LOG_ERROR("複製できない形式です: %s", ToUtf8Display(path.filename()).c_str());
+                            TG_LOG_INFO(ui::Tr("アセットを複製しました: %s", "Duplicated the asset: %s"), ToUtf8Display(copy.filename()).c_str());
+                        } else TG_LOG_ERROR(ui::Tr("アセットを複製できませんでした", "Could not duplicate the asset"));
+                    } else TG_LOG_ERROR(ui::Tr("複製できない形式です: %s", "This format cannot be duplicated: %s"), ToUtf8Display(path.filename()).c_str());
                 }
                 // シーンは部品（地形・雲・空）ごと、新しい名前のフォルダへ複製する。
                 if (ext == ".tgscene" && ImGui::MenuItem(ui::Tr("シーンを複製…", "Duplicate Scene…"))) {
@@ -1335,7 +1335,7 @@ void Application::DrawAssetBrowser() {
                 const auto path = m_workspace.UniquePath(m_assetDirectory, "NewFolder", "");
                 std::error_code error;
                 if (!path.empty()) fs::create_directory(path, error);
-                if (error || path.empty()) TG_LOG_ERROR("フォルダを作成できませんでした");
+                if (error || path.empty()) TG_LOG_ERROR(ui::Tr("フォルダを作成できませんでした", "Could not create the folder"));
                 else {
                     // 仮の名前で作ってすぐ改名に入る（エクスプローラと同じ）。
                     // 一覧は次のフレームで読み直され、その項目に入力欄が付く。
@@ -1348,19 +1348,19 @@ void Application::DrawAssetBrowser() {
             }
             // 空のシーンを作って開く。地形・雲グラフと大気散乱スカイも同じフォルダに一緒に作る。
             if (ImGui::MenuItem(ui::Tr("シーンを作成", "New Scene"))) {
-                const auto path = m_workspace.UniquePath(m_assetDirectory, "新規シーン", ".tgscene");
-                if (path.empty()) TG_LOG_ERROR("シーンを作成できませんでした");
+                const auto path = m_workspace.UniquePath(m_assetDirectory, ui::Tr("新規シーン", "New Scene"), ".tgscene");
+                if (path.empty()) TG_LOG_ERROR(ui::Tr("シーンを作成できませんでした", "Could not create the scene"));
                 else { m_pendingSceneCreate = path; m_pendingProjectNew = true; }
             }
             for (const bool cloud : {false, true}) {
                 if (ImGui::MenuItem(cloud ? ui::Tr("雲グラフを作成", "New Cloud Graph") : ui::Tr("地形グラフを作成", "New Terrain Graph"))) {
                     const auto path = io::CreateGraphAsset(m_workspace, m_assetDirectory, cloud);
-                    if (path.empty()) TG_LOG_ERROR("グラフを作成できませんでした");
+                    if (path.empty()) TG_LOG_ERROR(ui::Tr("グラフを作成できませんでした", "Could not create the graph"));
                     else { m_pendingAssetReveal = path; m_assetRefresh = true; }
                 }
             }
             if (ImGui::MenuItem(ui::Tr("レイヤーマテリアルを作成", "New Layered Material"))) {
-                const auto id = m_materialLibrary.Add("新規レイヤーマテリアル");
+                const auto id = m_materialLibrary.Add(ui::Tr("新規レイヤーマテリアル", "New Layered Material"));
                 auto* asset = m_materialLibrary.FindMutable(id);
                 asset->layerMaterial.emplace(); asset->layerMaterial->name = asset->name;
                 asset->layerMaterial->materials.emplace_back();
@@ -1369,22 +1369,22 @@ void Application::DrawAssetBrowser() {
                 m_showMaterialSphere = true; m_pendingAssetsSave = true; MarkDocumentChanged();
             }
             if (ImGui::MenuItem(ui::Tr("マテリアルを作成", "New Material"))) {
-                const auto id = m_materialLibrary.Add("新規マテリアル");
+                const auto id = m_materialLibrary.Add(ui::Tr("新規マテリアル", "New Material"));
                 auto* asset = m_materialLibrary.FindMutable(id);
                 asset->assetPath = m_workspace.UniquePath(m_assetDirectory, asset->name, ".tgmat");
                 m_selectedMaterial = static_cast<int>(m_materialLibrary.Entries().size()) - 1;
                 m_showMaterialSphere = true; m_pendingAssetsSave = true; MarkDocumentChanged();
             }
             if (ImGui::MenuItem(ui::Tr("大気散乱スカイを作成", "New Atmospheric Sky"))) {
-                auto path = m_workspace.UniquePath(m_assetDirectory, "大気散乱スカイ", ".tgatmosphere");
-                auto body = io::AtmosphereAssetBody(nlohmann::json::object(), "大気散乱スカイ");
+                auto path = m_workspace.UniquePath(m_assetDirectory, ui::Tr("大気散乱スカイ", "Atmospheric Sky"), ".tgatmosphere");
+                auto body = io::AtmosphereAssetBody(nlohmann::json::object(), ui::Tr("大気散乱スカイ", "Atmospheric Sky"));
                 if (!path.empty() && m_workspace.SaveAsset(path, "atmosphere-sky", body)) {
                     m_pendingAssetReveal = path; m_assetRefresh = true;
-                } else TG_LOG_ERROR("大気散乱スカイを作成できませんでした");
+                } else TG_LOG_ERROR(ui::Tr("大気散乱スカイを作成できませんでした", "Could not create the atmospheric sky"));
             }
             if (ImGui::MenuItem(ui::Tr("作業用IBLを作成", "New Work IBL"))) {
                 // 作業用IBLを差し替える。以前のアセットは残す。
-                const auto id = m_skyLibrary.Add("新規作業用IBL");
+                const auto id = m_skyLibrary.Add(ui::Tr("新規作業用IBL", "New Work IBL"));
                 auto* asset = m_skyLibrary.FindMutable(id);
                 asset->assetPath = m_workspace.UniquePath(m_assetDirectory, asset->name, ".tgsky");
                 m_skyLibrary.SetActive(id); m_pendingSkyKeepOnly = true;

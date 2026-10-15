@@ -123,7 +123,7 @@ bool ExpandSceneAtmosphere(ProjectWorkspace& workspace, json& document) {
     const auto path = workspace.Resolve(reference);
     if (path.empty() || !workspace.ReadAsset(path, "atmosphere-sky", body) ||
         !body.contains("settings") || !body["settings"].is_object()) {
-        TG_LOG_ERROR("大気散乱スカイのアセットを読み込めません: %s", ProjectWorkspace::String(reference, "path").c_str());
+        TG_LOG_ERROR(ui::Tr("大気散乱スカイのアセットを読み込めません: %s", "Cannot load the atmospheric sky asset: %s"), ProjectWorkspace::String(reference, "path").c_str());
         return false;
     }
     auto& preview = document["preview"];
@@ -168,7 +168,7 @@ bool AssignGraphComponents(json& graph) {
             for (const auto next : neighbors[index]) if (visited.insert(next).second) group.push_back(next);
         }
         if (cloud && terrain) {
-            TG_LOG_ERROR("地形と雲をまたぐ接続があります。接続を保持するため自動分離を中止しました");
+            TG_LOG_ERROR(ui::Tr("地形と雲をまたぐ接続があります。接続を保持するため自動分離を中止しました", "Some links cross between terrain and clouds. Automatic split aborted to keep them"));
             return false;
         }
         for (const auto index : group) nodes[index]["component"] = cloud ? 1 : 0;
@@ -209,7 +209,7 @@ bool SaveSceneComponents(ProjectWorkspace& workspace, const fs::path& scene, jso
         }
     }
     if (only < 0 || only == 2) {
-        auto body = AtmosphereAssetBody(document.value("preview", json::object()), ToUtf8Display(scene.stem()) + " スカイ");
+        auto body = AtmosphereAssetBody(document.value("preview", json::object()), ToUtf8Display(scene.stem()) + ui::Tr(" スカイ", " Sky"));
         fs::path path;
         const auto reference = document.value("_atmosphereAsset", json());
         if (!reference.is_null()) {
@@ -256,7 +256,7 @@ bool SaveSceneComponents(ProjectWorkspace& workspace, const fs::path& scene, jso
                 part["groups"].push_back(std::move(group));
             }
         // 空の雲も保持する。後でノードを追加できる編集対象になる。
-        json body = {{"name", ToUtf8Display(scene.stem()) + (component ? " 雲" : " 地形")}, {"graph", part}};
+        json body = {{"name", ToUtf8Display(scene.stem()) + (component ? ui::Tr(" 雲", " Clouds") : ui::Tr(" 地形", " Terrain"))}, {"graph", part}};
         for (const auto* key : Tables) body[key] = document.value(key, json::array());
         // 各グラフが直接使う参照だけを持つ。素材の依存画像等はExpandで辿る。
         std::set<int> used[4];
@@ -322,7 +322,7 @@ bool SaveSceneComponents(ProjectWorkspace& workspace, const fs::path& scene, jso
     const auto rollback = [&]() {
         for (const auto& [path, original] : originals) {
             if (!original.is_null()) {
-                if (!ProjectWorkspace::WriteJson(path, original)) TG_LOG_ERROR("コンポーネントの復元に失敗しました。component-backupsを確認してください");
+                if (!ProjectWorkspace::WriteJson(path, original)) TG_LOG_ERROR(ui::Tr("コンポーネントの復元に失敗しました。component-backupsを確認してください", "Failed to restore the components. Check component-backups"));
             } else { std::error_code error; fs::remove(path, error); }
         }
         workspace.Scan();
@@ -355,7 +355,7 @@ bool SaveSceneComponents(ProjectWorkspace& workspace, const fs::path& scene, jso
     if (only < 0) {
         if (!workspace.SetWorkEnvironment(work)) { rollback(); return false; }
         if (!ProjectWorkspace::WriteJson(scene, document)) {
-            if (!workspace.SetWorkEnvironment(previousWork)) TG_LOG_ERROR("作業環境の復元に失敗しました");
+            if (!workspace.SetWorkEnvironment(previousWork)) TG_LOG_ERROR(ui::Tr("作業環境の復元に失敗しました", "Failed to restore the working environment"));
             rollback(); return false;
         }
     }
@@ -455,7 +455,7 @@ bool ExpandSceneComponents(ProjectWorkspace& workspace, json& document) {
 fs::path CreateGraphAsset(ProjectWorkspace& workspace, const fs::path& directory, bool cloud) {
     std::error_code error;
     if (!workspace.Contains(directory) || !fs::is_directory(directory, error) || error) return {};
-    auto path = workspace.UniquePath(directory, cloud ? "新規雲グラフ" : "新規地形グラフ",
+    auto path = workspace.UniquePath(directory, cloud ? ui::Tr("新規雲グラフ", "New Cloud Graph") : ui::Tr("新規地形グラフ", "New Terrain Graph"),
                                      cloud ? ".tgcloud" : ".tgterrain");
     if (path.empty()) return {};
     json body = {{"name", ToUtf8Display(path.stem())},
@@ -482,7 +482,7 @@ fs::path MigrateSceneComponents(ProjectWorkspace& workspace, const fs::path& sou
         paint["file"] = ToUtf8Portable(source.parent_path() / (source.stem().wstring() + L".assets") / FromUtf8(ProjectWorkspace::String(paint, "file")));
     document.erase("sceneUid");
     if (!SaveSceneComponents(workspace, destination, document)) return {};
-    TG_LOG_INFO("元のシーンを保持して分離しました: %s", ToUtf8Display(destination).c_str());
+    TG_LOG_INFO(ui::Tr("元のシーンを保持して分離しました: %s", "Split the scene and kept the original: %s"), ToUtf8Display(destination).c_str());
     return destination;
 }
 
@@ -565,7 +565,7 @@ fs::path DuplicateScene(ProjectWorkspace& workspace, const fs::path& scene, cons
     document["sceneUid"] = ProjectWorkspace::NewId();
     const fs::path destination = target / (newStem + scene.extension().wstring());
     if (!ProjectWorkspace::WriteJson(destination, document)) return fail(ui::Tr("シーンを書き出せません", "Cannot write the scene"));
-    TG_LOG_INFO("シーンを複製しました: %s", ToUtf8Display(destination).c_str());
+    TG_LOG_INFO(ui::Tr("シーンを複製しました: %s", "Duplicated the scene: %s"), ToUtf8Display(destination).c_str());
     return destination;
 }
 }

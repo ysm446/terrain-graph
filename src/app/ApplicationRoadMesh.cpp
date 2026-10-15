@@ -640,11 +640,11 @@ bool Application::SaveBoundary(BoundaryAsset& asset) {
     if (!asset.uid.empty()) body["uid"] = asset.uid;
     std::filesystem::path path = asset.path;
     if (path.empty() || !m_workspace.SaveAsset(path, "boundary-material-asset", body)) {
-        TG_LOG_WARN("境界マテリアルを保存できませんでした: %s", asset.name.c_str());
+        TG_LOG_WARN(ui::Tr("境界マテリアルを保存できませんでした: %s", "Could not save the boundary material: %s"), asset.name.c_str());
         return false;
     }
     asset.dirty = false;
-    TG_LOG_INFO("境界マテリアルを保存しました: %s", asset.name.c_str());
+    TG_LOG_INFO(ui::Tr("境界マテリアルを保存しました: %s", "Saved the boundary material: %s"), asset.name.c_str());
     return true;
 }
 

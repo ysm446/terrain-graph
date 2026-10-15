@@ -1,7 +1,7 @@
 # design-guide — UI の設計ガイド
 
 作成日時: 2026-08-31 14:36
-更新日時: 2026-10-15 10:32
+更新日時: 2026-10-15 10:45
 
 ## ビューポートのホイール: カーソルの下の点へズーム
 
@@ -603,7 +603,7 @@ ImGui は docking ブランチを使う。全体は 1 つのドックスペー�
   ImGui はウィンドウ名を ID に使うので、名前ごと変えるとドッキングの配置が外れる。
   ドッキングの指定（`DockBuilderDockWindow`）と検索（`HiddenWithAssetBand`）は `"###Viewport"` で行う。
   ID を変えたときはドックスペースの版も上げる（固定 ID へ移したときに v20 → v21）。
-- ログ（`TG_LOG_*`）は開発用なので日本語のまま。ステータスバーに流れる通知はログから来るので、今は日本語のまま出る。
+- **ログ（`TG_LOG_*`）も訳す**（ユーザー指定 2026-10-15）。ステータスバーに流れるため。英語モードではログファイルも英語になる。開発用の記録（デバイス消失の device-removed-*.txt、`--report` の読み込みの指摘）は日本語のまま。
 - `ui/Localization.h` は ImGui に依存しないので、graph / compositor / io / renderer の側で作る、**画面に出る文**（評価のエラー文、複製の失敗理由など）にも `ui::Tr` を使う。ログにだけ渡る文は訳さない。
 - ノードの説明とピンの説明は、定義の表（`NodeDefinitions.cpp`）に `ui::LocalizedText` の対で書く（`description.Get()` で今の言語の方）。ノードの名前とピンのラベルは英語の 1 つのまま。カタログ（`--dump-catalog`）は日本語の方を書く。
 - ファイルダイアログの題とフィルタ名はワイド文字列版の `ui::Tr(L"…", L"…")` を使う。
@@ -614,7 +614,7 @@ ImGui は docking ブランチを使う。全体は 1 つのドックスペー�
   `BeginPropertyTable` の widestLabel は、英語で一番長いラベルが日本語と別の行になるときは英語側だけ別の行を渡してよい。
   それでも収まらない訳やボタンは短い言い方を選ぶ（例: 「既定の大きさに戻す」→ Reset Size、「合成解像度」→ Composite Res.、
   「経路をすべて再計算」→ Recompute Routes）。**幅を決めたボタン（`kButtonWidth` 68 / `kWideButtonWidth` 148）は、英語が日本語より長くならないようにする**（目安は 8 / 17 文字）。
-- 新しく作るアセットの既定の名前（「新規マテリアル」など）とファイル名、複製の「 コピー」は、保存されるデータなので今は日本語のまま。
+- **新しく作るアセット・グループの既定の名前とファイル名も、作った時点の言語で付ける**（ユーザー指定 2026-10-15。「新規マテリアル」/ New Material、「〜 のコピー」/ 〜 Copy、「大気散乱スカイ」/ Atmospheric Sky、「既定の空」/ Default Sky など）。既に保存されている名前は変えない。
 - **用語集**（新しい UI を足すときもこれに合わせる）:
   名前 Name / メモ Note / シード Seed / 強さ Strength / 量 Amount / 反転 Invert / 繰り返し長 Repeat Length / 解像度 Resolution /
   形 Shape / 幅 Width / 長さ Length / 高さ Height / 半径 Radius / 反復 Iterations / 中心 Center / 位置 Position（緯度経度は Location）/

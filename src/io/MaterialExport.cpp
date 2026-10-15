@@ -5,6 +5,7 @@
 #include "core/Log.h"
 #include "core/PathUtf8.h"
 #include "rhi/GpuResource.h"
+#include "ui/Localization.h"
 
 #include <DirectXPackedVector.h>
 #include <pix3.h>
@@ -68,7 +69,7 @@ bool ReadbackTexture(rhi::Device& device, rhi::GpuTexture& texture, const Fn& fn
 
     rhi::GpuBuffer readback;
     if (!device.Allocator().CreateReadbackBuffer(totalBytes, L"ExportReadback", readback)) {
-        TG_LOG_ERROR("書き出し用の読み戻しバッファを作れません (%llu バイト)", totalBytes);
+        TG_LOG_ERROR(ui::Tr("書き出し用の読み戻しバッファを作れません (%llu バイト)", "Cannot create the export readback buffer (%llu bytes)"), totalBytes);
         return false;
     }
 
@@ -190,7 +191,7 @@ bool WriteHeightExr(rhi::Device& device, compositor::MaterialEvaluator& evaluato
 uint32_t ExportMaterialTextures(rhi::Device& device, rhi::PipelineCache& pipelineCache,
                                 const ExportRefs& refs, const ExportSettings& settings) {
     if (settings.directory.empty() || settings.baseName.empty() || settings.resolution == 0) {
-        TG_LOG_ERROR("書き出し先か名前が決まっていません");
+        TG_LOG_ERROR(ui::Tr("書き出し先か名前が決まっていません", "The export destination or name is not set"));
         return 0;
     }
 
@@ -205,7 +206,7 @@ uint32_t ExportMaterialTextures(rhi::Device& device, rhi::PipelineCache& pipelin
     // **書き出し専用の評価器。** プレビュー側の解像度には触らない。
     compositor::MaterialEvaluator evaluator;
     if (!evaluator.Create(device, settings.resolution)) {
-        TG_LOG_ERROR("%u^2 の書き出し用バッファを確保できません（VRAM 不足）",
+        TG_LOG_ERROR(ui::Tr("%u^2 の書き出し用バッファを確保できません（VRAM 不足）", "Cannot allocate %u^2 export buffers (out of VRAM)"),
                      settings.resolution);
         return 0;
     }
@@ -255,7 +256,7 @@ uint32_t ExportMaterialTextures(rhi::Device& device, rhi::PipelineCache& pipelin
         if (!submitted || !evaluated || !evaluator.HasPendingPostprocess()) break;
     }
     if (!submitted || !evaluated || evaluator.HasPendingPostprocess()) {
-        TG_LOG_ERROR("書き出し用の合成に失敗しました");
+        TG_LOG_ERROR(ui::Tr("書き出し用の合成に失敗しました", "Compositing for export failed"));
         device.DeferRelease(packed);
         evaluator.Destroy(device);
         return 0;
@@ -318,9 +319,9 @@ uint32_t ExportMaterialTextures(rhi::Device& device, rhi::PipelineCache& pipelin
     evaluator.Destroy(device);
 
     if (written == 0) {
-        TG_LOG_ERROR("書き出せた画像がありません");
+        TG_LOG_ERROR(ui::Tr("書き出せた画像がありません", "No images were exported"));
     } else {
-        TG_LOG_INFO("%u 枚を書き出しました: %s (%u^2)", written,
+        TG_LOG_INFO(ui::Tr("%u 枚を書き出しました: %s (%u^2)", "Exported %u images: %s (%u^2)"), written,
                     ToUtf8Display(settings.directory).c_str(), settings.resolution);
     }
     return written;

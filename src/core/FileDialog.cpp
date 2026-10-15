@@ -41,7 +41,7 @@ ComPtr<IFileDialog> CreateFileDialog(const CLSID& clsid, const wchar_t* title,
                                      const std::vector<FileFilter>& filters) {
     ComPtr<IFileDialog> dialog;
     if (FAILED(::CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) {
-        TG_LOG_ERROR("ファイルダイアログを作成できません");
+        TG_LOG_ERROR(ui::Tr("ファイルダイアログを作成できません", "Could not create the file dialog"));
         return nullptr;
     }
 

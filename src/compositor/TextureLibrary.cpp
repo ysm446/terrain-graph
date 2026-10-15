@@ -3,6 +3,7 @@
 #include "core/ImageIo.h"
 #include "core/PathUtf8.h"
 #include "core/Log.h"
+#include "ui/Localization.h"
 
 #include <pix3.h>
 
@@ -160,7 +161,7 @@ bool TextureLibrary::Relink(rhi::Device& device, rhi::PipelineCache& pipelineCac
     // 別の項目がすでに同じ画像を持っているなら、二重に持たない。
     // 参照の付け替えは呼び出し側の仕事（ここでは断るだけ）。
     if (const TextureId other = FindByPath(path); other != kNoTexture && other != id) {
-        TG_LOG_WARN("同じ画像はすでに読み込まれています: %s", ToUtf8Portable(path).c_str());
+        TG_LOG_WARN(ui::Tr("同じ画像はすでに読み込まれています: %s", "The same image is already loaded: %s"), ToUtf8Portable(path).c_str());
         return false;
     }
 
@@ -168,7 +169,7 @@ bool TextureLibrary::Relink(rhi::Device& device, rhi::PipelineCache& pipelineCac
     // 失敗しても元の項目（リンク切れならそのまま）を壊さない。
     LibraryTexture loaded;
     if (!LoadInto(device, pipelineCache, path, loaded)) {
-        TG_LOG_WARN("テクスチャを読み込めませんでした: %s", ToUtf8Portable(path).c_str());
+        TG_LOG_WARN(ui::Tr("テクスチャを読み込めませんでした: %s", "Could not load the texture: %s"), ToUtf8Portable(path).c_str());
         return false;
     }
 
@@ -179,7 +180,7 @@ bool TextureLibrary::Relink(rhi::Device& device, rhi::PipelineCache& pipelineCac
     loaded.name = defaultName ? ToUtf8Display(path.filename()) : entry->name;
     loaded.missing = false;
     *entry = std::move(loaded);
-    TG_LOG_INFO("テクスチャを繋ぎ直しました: %s", ToUtf8Portable(path).c_str());
+    TG_LOG_INFO(ui::Tr("テクスチャを繋ぎ直しました: %s", "Relinked the texture: %s"), ToUtf8Portable(path).c_str());
     return true;
 }
 

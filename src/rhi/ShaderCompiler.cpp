@@ -1,6 +1,7 @@
 #include "rhi/ShaderCompiler.h"
 
 #include "core/Log.h"
+#include "ui/Localization.h"
 
 #include <cstdio>
 #include <fstream>
@@ -119,7 +120,7 @@ bool ShaderCompiler::Create(const std::filesystem::path& shaderRoot,
         std::error_code ec;
         std::filesystem::create_directories(cacheDirectory, ec);
         if (ec) {
-            TG_LOG_WARN("シェーダキャッシュの保存先を作れません: %ls", cacheDirectory.c_str());
+            TG_LOG_WARN(ui::Tr("シェーダキャッシュの保存先を作れません: %ls", "Could not create the shader cache directory: %ls"), cacheDirectory.c_str());
         } else {
             m_cacheDirectory = cacheDirectory;
         }
@@ -127,7 +128,7 @@ bool ShaderCompiler::Create(const std::filesystem::path& shaderRoot,
 
     std::error_code ec;
     if (!std::filesystem::is_directory(m_root, ec)) {
-        TG_LOG_ERROR("シェーダディレクトリが見つかりません: %ls", m_root.c_str());
+        TG_LOG_ERROR(ui::Tr("シェーダディレクトリが見つかりません: %ls", "Shader directory not found: %ls"), m_root.c_str());
         return false;
     }
 
@@ -141,7 +142,7 @@ bool ShaderCompiler::Create(const std::filesystem::path& shaderRoot,
         return false;
     }
 
-    TG_LOG_INFO("シェーダディレクトリ: %ls", m_root.c_str());
+    TG_LOG_INFO(ui::Tr("シェーダディレクトリ: %ls", "Shader directory: %ls"), m_root.c_str());
     return true;
 }
 
@@ -194,7 +195,7 @@ ComPtr<IDxcBlob> ShaderCompiler::Compile(const std::wstring& relativePath,
 
     ComPtr<IDxcBlobEncoding> sourceBlob;
     if (!TG_CHECK_HR(m_utils->LoadFile(fullPathStr.c_str(), nullptr, &sourceBlob))) {
-        TG_LOG_ERROR("シェーダを読み込めません: %ls", fullPathStr.c_str());
+        TG_LOG_ERROR(ui::Tr("シェーダを読み込めません: %ls", "Could not read the shader: %ls"), fullPathStr.c_str());
         return result;
     }
 
@@ -229,7 +230,7 @@ ComPtr<IDxcBlob> ShaderCompiler::Compile(const std::wstring& relativePath,
     HRESULT status = S_OK;
     compileResult->GetStatus(&status);
     if (FAILED(status)) {
-        TG_LOG_ERROR("シェーダのコンパイルに失敗しました: %ls %ls", relativePath.c_str(),
+        TG_LOG_ERROR(ui::Tr("シェーダのコンパイルに失敗しました: %ls %ls", "Shader compilation failed: %ls %ls"), relativePath.c_str(),
                      entryPoint);
         return result;
     }
@@ -238,7 +239,7 @@ ComPtr<IDxcBlob> ShaderCompiler::Compile(const std::wstring& relativePath,
         return ComPtr<IDxcBlob>();
     }
 
-    TG_LOG_INFO("シェーダをコンパイルしました: %ls %ls (%ls)", relativePath.c_str(), entryPoint,
+    TG_LOG_INFO(ui::Tr("シェーダをコンパイルしました: %ls %ls (%ls)", "Compiled shader: %ls %ls (%ls)"), relativePath.c_str(), entryPoint,
                 targetProfile);
 
     if (!cachePath.empty()) {

@@ -3,6 +3,7 @@
 
 #include "core/Log.h"
 #include "graph/NodeGraph.h"
+#include "ui/Localization.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -47,9 +48,9 @@ std::string PinLabels(const graph::NodeDefinition* definition, graph::PinKind ki
         }
     }
     if (IsVariadic(definition, kind)) {
-        labels += "（番号を増やして足せる）";
+        labels += ui::Tr("（番号を増やして足せる）", " (add more by increasing the number)");
     }
-    return labels.empty() ? "なし" : labels;
+    return labels.empty() ? ui::Tr("なし", "none") : labels;
 }
 
 }  // namespace
@@ -117,13 +118,13 @@ void NormalizeGraphJson(json& graph) {
     const auto resolve = [&](const json& reference, graph::PinKind kind) -> std::optional<int> {
         if (!reference.is_array() || reference.size() != 2 || !reference[0].is_number_integer() ||
             !(reference[1].is_string() || reference[1].is_number_integer())) {
-            TG_LOG_WARN("リンクのピンは [ノード ID, ピン名 か 番号] で書いてください: %s", reference.dump().c_str());
+            TG_LOG_WARN(ui::Tr("リンクのピンは [ノード ID, ピン名 か 番号] で書いてください: %s", "Write link pins as [node ID, pin name or index]: %s"), reference.dump().c_str());
             return std::nullopt;
         }
         const int nodeId = reference[0].get<int>();
         const auto found = nodeById.find(nodeId);
         if (found == nodeById.end()) {
-            TG_LOG_WARN("リンクの先のノード %d がありません", nodeId);
+            TG_LOG_WARN(ui::Tr("リンクの先のノード %d がありません", "Link target node %d does not exist"), nodeId);
             return std::nullopt;
         }
         json& node = *found->second;
@@ -159,8 +160,8 @@ void NormalizeGraphJson(json& graph) {
         if (index && *index < pins.size() && pins[*index].is_number_integer()) {
             return pins[*index].get<int>();
         }
-        TG_LOG_WARN("ノード %d（%s）に%sピン %s がありません（あるのは: %s）", nodeId, kindName.c_str(),
-                    kind == graph::PinKind::Input ? "入力" : "出力", reference[1].dump().c_str(),
+        TG_LOG_WARN(ui::Tr("ノード %d（%s）に%sピン %s がありません（あるのは: %s）", "Node %d (%s) has no %s pin %s (available: %s)"), nodeId, kindName.c_str(),
+                    kind == graph::PinKind::Input ? ui::Tr("入力", "input") : ui::Tr("出力", "output"), reference[1].dump().c_str(),
                     PinLabels(definition, kind).c_str());
         return std::nullopt;
     };

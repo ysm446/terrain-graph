@@ -73,14 +73,14 @@ bool ImGuiLayer::Initialize(Window& window, rhi::Device& device) {
     // DPI 認識自体は有効なままなので、OS によるビットマップ拡大は起きない。
     // 追従させるかは設定で選べる（Application が SetUiScale を呼ぶ）。
     m_monitorScale = ImGui_ImplWin32_GetDpiScaleForHwnd(window.Handle());
-    TG_LOG_INFO("モニタの表示スケール: %.0f%%（UI の拡大率は %.0f%%）", m_monitorScale * 100.0f,
+    TG_LOG_INFO(ui::Tr("モニタの表示スケール: %.0f%%（UI の拡大率は %.0f%%）", "Monitor display scale: %.0f%% (UI scale %.0f%%)"), m_monitorScale * 100.0f,
                 m_uiScale * 100.0f);
 
     // 配色と余白はここで一括して決める。個々のパネルで色を積まない。
     ui::ApplyTheme(m_uiScale);
 
     if (!ImGui_ImplWin32_Init(window.Handle())) {
-        TG_LOG_ERROR("ImGui_ImplWin32_Init に失敗しました");
+        TG_LOG_ERROR(ui::Tr("ImGui_ImplWin32_Init に失敗しました", "ImGui_ImplWin32_Init failed"));
         // 途中で失敗したら、ここまでに作ったものを戻す（Shutdown は未初期化だと何もしない）。
         ImGui::DestroyContext();
         return false;
@@ -98,7 +98,7 @@ bool ImGuiLayer::Initialize(Window& window, rhi::Device& device) {
     info.SrvDescriptorFreeFn = &SrvDescriptorFree;
 
     if (!ImGui_ImplDX12_Init(&info)) {
-        TG_LOG_ERROR("ImGui_ImplDX12_Init に失敗しました");
+        TG_LOG_ERROR(ui::Tr("ImGui_ImplDX12_Init に失敗しました", "ImGui_ImplDX12_Init failed"));
         ImGui_ImplWin32_Shutdown();
         ImGui::DestroyContext();
         return false;
@@ -123,7 +123,7 @@ void ImGuiLayer::SetUiScale(float scale) {
     ui::ApplyTheme(m_uiScale);
     ApplyScaleToStyle();
 
-    TG_LOG_INFO("UI の拡大率を %.0f%% にしました", m_uiScale * 100.0f);
+    TG_LOG_INFO(ui::Tr("UI の拡大率を %.0f%% にしました", "UI scale set to %.0f%%"), m_uiScale * 100.0f);
 }
 
 void ImGuiLayer::SetFontSize(float sizeInPixels) {
@@ -137,7 +137,7 @@ void ImGuiLayer::SetFontSize(float sizeInPixels) {
     // 文字サイズを変えても行の詰まり方は変わらない（高さだけが文字に追従する）。
     ApplyScaleToStyle();
 
-    TG_LOG_INFO("フォントサイズを %.0f px にしました", m_fontSize);
+    TG_LOG_INFO(ui::Tr("フォントサイズを %.0f px にしました", "Font size set to %.0f px"), m_fontSize);
 }
 
 // フォントは 1.92 の動的ラスタライズに任せる。アトラスは作り直さない。
@@ -160,11 +160,11 @@ void ImGuiLayer::LoadFonts() {
     for (const char* path : kCandidates) {
         // 基準サイズで読む。拡大率は FontScaleDpi が掛ける。
         if (io.Fonts->AddFontFromFileTTF(path, kFontAtlasSize) != nullptr) {
-            TG_LOG_INFO("フォントを読み込みました: %s", path);
+            TG_LOG_INFO(ui::Tr("フォントを読み込みました: %s", "Loaded font: %s"), path);
             return;
         }
     }
-    TG_LOG_WARN("日本語フォントが見つかりませんでした。既定フォントを使用します");
+    TG_LOG_WARN(ui::Tr("日本語フォントが見つかりませんでした。既定フォントを使用します", "Japanese font not found. Using the default font"));
     io.Fonts->AddFontDefault();
 }
 

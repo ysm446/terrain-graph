@@ -4,6 +4,7 @@
 
 #include "compositor/MaterialStack.h"
 #include "core/Log.h"
+#include "ui/Localization.h"
 
 #include <algorithm>
 #include <cmath>
@@ -911,7 +912,7 @@ void NodeGraph::Replace(std::vector<Node> nodes, std::vector<Link> links) {
                end->kind != PinKind::Input || start->valueType != end->valueType;
     });
     if (removedLinks > 0) {
-        TG_LOG_WARN("繋げないリンクを %zu 本捨てました（ピンが無い・向きや型が合わない）", removedLinks);
+        TG_LOG_WARN(ui::Tr("繋げないリンクを %zu 本捨てました（ピンが無い・向きや型が合わない）", "Discarded %zu invalid links (missing pins, or wrong direction or type)"), removedLinks);
     }
     RebuildNextGraphId();
     NormalizeMergeInputs();
@@ -919,8 +920,10 @@ void NodeGraph::Replace(std::vector<Node> nodes, std::vector<Link> links) {
     // 循環は接続のときに弾くので、あるなら読み込んだファイルが壊れている。
     // 評価は深さで打ち切るだけなので、黙って読むと結果がおかしい理由が分からない。
     if (const std::vector<GraphId> cycle = FindCycleNodes(); !cycle.empty()) {
-        TG_LOG_WARN("ノードの接続が循環しています（%zu 個のノード）。"
-                    "グラフで赤枠のノードの間の接続を 1 本外してください",
+        TG_LOG_WARN(ui::Tr("ノードの接続が循環しています（%zu 個のノード）。"
+                           "グラフで赤枠のノードの間の接続を 1 本外してください",
+                           "The node connections form a cycle (%zu nodes). "
+                           "Disconnect one link between the nodes outlined in red in the graph"),
                     cycle.size());
     }
 }

@@ -490,7 +490,7 @@ bool Environment::BuildFromHdrFile(rhi::Device& device, rhi::PipelineCache& pipe
 
     m_sourceName = path.filename().string();
     const float scale = SkyLuminanceScale(skyLuminance, m_measuredSkyLuminance);
-    TG_LOG_INFO("HDRI を較正しました: 空の生の値 %.3f を %.0f cd/m^2 とみなす（%.0f 倍）",
+    TG_LOG_INFO(ui::Tr("HDRI を較正しました: 空の生の値 %.3f を %.0f cd/m^2 とみなす（%.0f 倍）", "Calibrated the HDRI: raw sky value %.3f treated as %.0f cd/m^2 (x%.0f)"),
                 m_measuredSkyLuminance, skyLuminance, scale);
     return BuildFromEquirect(device, pipelineCache, scale);
 }

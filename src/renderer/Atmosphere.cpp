@@ -2,6 +2,7 @@
 #include "renderer/CloudShapeCache.h"
 #include "renderer/CloudSpatialIndex.h"
 #include "core/Log.h"
+#include "ui/Localization.h"
 #include <pix3.h>
 #include <cstring>
 #include <algorithm>
@@ -97,11 +98,11 @@ bool Atmosphere::UploadStarCatalog(rhi::Device& device) {
     if (!UploadImmutableBuffer(device,m_stars.stars,L"StarCatalog",stars) ||
         !UploadImmutableBuffer(device,m_stars.cellOffsets,L"StarCells",cells)) {
         device.DeferRelease(stars); device.DeferRelease(cells);
-        TG_LOG_WARN("星表のGPU転送に失敗しました");
+        TG_LOG_WARN(ui::Tr("星表のGPU転送に失敗しました", "Failed to upload the star catalog to the GPU"));
         return false;
     }
     m_starBuffer=std::move(stars); m_starCellBuffer=std::move(cells);
-    TG_LOG_INFO("星表を読み込みました: %zu 星", m_stars.stars.size());
+    TG_LOG_INFO(ui::Tr("星表を読み込みました: %zu 星", "Loaded the star catalog: %zu stars"), m_stars.stars.size());
     return true;
 }
 void Atmosphere::ResetCloudMotion() {
@@ -328,7 +329,7 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
     }
     if (!m_environment.BuildFromAtmosphere(device, pipelines, settings, m_multiScatter.SrvIndex(), m_noise.SrvIndex(), m_skyView, m_cloudLighting.SrvIndex())) {
         m_ready = false;
-        TG_LOG_WARN("大気散乱の環境マップを生成できませんでした");
+        TG_LOG_WARN(ui::Tr("大気散乱の環境マップを生成できませんでした", "Could not generate the atmospheric scattering environment map"));
         return false;
     }
     // 雲を抜いた空の環境（拡散だけ）。雲の編集では変わらないので、空が変わったときだけ作り直す。
@@ -344,7 +345,7 @@ bool Atmosphere::Update(rhi::Device& device, rhi::PipelineCache& pipelines, cons
                 device, pipelines, clear, m_multiScatter.SrvIndex(), m_noise.SrvIndex(), m_skyView,
                 m_cloudLighting.SrvIndex(), true);
         }
-        if (!m_clearEnvironmentValid) TG_LOG_WARN("雲なしの環境マップを生成できませんでした（環境光は雲ありの環境だけで照らします）");
+        if (!m_clearEnvironmentValid) TG_LOG_WARN(ui::Tr("雲なしの環境マップを生成できませんでした（環境光は雲ありの環境だけで照らします）", "Could not generate the cloudless environment map (ambient light uses the cloudy one only)"));
     }
     m_applied = settings;
     m_requested = requested;

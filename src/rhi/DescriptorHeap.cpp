@@ -1,6 +1,7 @@
 #include "rhi/DescriptorHeap.h"
 
 #include "core/Log.h"
+#include "ui/Localization.h"
 
 namespace tg::rhi {
 
@@ -45,7 +46,7 @@ void DescriptorHeap::Destroy() {
 
 DescriptorHandle DescriptorHeap::Allocate() {
     if (m_freeList.empty()) {
-        TG_LOG_ERROR("ディスクリプタヒープが枯渇しました (capacity=%u)", m_capacity);
+        TG_LOG_ERROR(ui::Tr("ディスクリプタヒープが枯渇しました (capacity=%u)", "Descriptor heap exhausted (capacity=%u)"), m_capacity);
         return DescriptorHandle{};
     }
     const uint32_t index = m_freeList.back();
@@ -59,13 +60,13 @@ void DescriptorHeap::Free(const DescriptorHandle& handle) {
         return;
     }
     if (handle.index >= m_capacity) {
-        TG_LOG_ERROR("範囲外のディスクリプタを解放しようとしました (index=%u)", handle.index);
+        TG_LOG_ERROR(ui::Tr("範囲外のディスクリプタを解放しようとしました (index=%u)", "Tried to free an out-of-range descriptor (index=%u)"), handle.index);
         return;
     }
     if (!m_inUse[handle.index]) {
         // 二重解放するとフリーリストに同じスロットが 2 つ積まれ、
         // 以後 2 つの別リソースが同じディスクリプタを共有してしまう。
-        TG_LOG_ERROR("解放済みのディスクリプタを再度解放しようとしました (index=%u)",
+        TG_LOG_ERROR(ui::Tr("解放済みのディスクリプタを再度解放しようとしました (index=%u)", "Tried to free an already freed descriptor (index=%u)"),
                      handle.index);
         return;
     }

@@ -1,6 +1,7 @@
 #include "renderer/StarCatalog.h"
 #include "../../shaders/NightSkyCoordinates.hlsli"
 #include "core/Log.h"
+#include "ui/Localization.h"
 #include <algorithm>
 #include <charconv>
 #include <cmath>
@@ -85,14 +86,14 @@ bool StarCatalog::Parse(std::string_view text) {
 bool StarCatalog::LoadFile(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary);
     if (!file) {
-        TG_LOG_WARN("星表を開けません: %s", path.string().c_str());
+        TG_LOG_WARN(ui::Tr("星表を開けません: %s", "Could not open the star catalog: %s"), path.string().c_str());
         return false;
     }
     std::stringstream buffer;
     buffer << file.rdbuf();
     const std::string text = buffer.str();
     if (!Parse(text)) {
-        TG_LOG_WARN("星表の形式が不正です: %s", path.string().c_str());
+        TG_LOG_WARN(ui::Tr("星表の形式が不正です: %s", "Invalid star catalog format: %s"), path.string().c_str());
         return false;
     }
     return true;
