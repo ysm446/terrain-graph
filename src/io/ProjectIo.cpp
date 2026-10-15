@@ -3585,7 +3585,7 @@ json NodeCatalog() {
         json item;
         item["kind"] = definition.name;
         item["title"] = definition.title;
-        item["description"] = definition.description;
+        item["description"] = definition.description.japanese;  // カタログは言語の設定によらず日本語
         json inputs = json::array(), outputs = json::array();
         for (const graph::PinDefinition& pin : definition.pins) {
             (pin.kind == graph::PinKind::Input ? inputs : outputs)

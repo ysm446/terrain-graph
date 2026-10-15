@@ -59,7 +59,7 @@ void Application::RequestTextureRelink(compositor::TextureId id) {
         return;
     }
     const std::filesystem::path path =
-        ShowOpenFileDialog(L"繋ぎ直すファイルを選ぶ", ImageFileFilters());
+        ShowOpenFileDialog(ui::Tr(L"繋ぎ直すファイルを選ぶ", L"Choose File to Relink"), ImageFileFilters());
     if (!path.empty()) {
         m_pendingTextureRelinks.push_back({id, path});
     }
@@ -71,7 +71,7 @@ void Application::RequestTextureRelink(compositor::TextureId id) {
 // （素材をまとめて別のフォルダへ移すのが普通で、階層は変わりがち）。
 // 同じ名前が複数あるときは最初に見つかったものを使う。
 void Application::RequestTextureRelinkFolder() {
-    const std::filesystem::path folder = ShowPickFolderDialog(L"素材のフォルダを選ぶ");
+    const std::filesystem::path folder = ShowPickFolderDialog(ui::Tr(L"素材のフォルダを選ぶ", L"Choose Texture Folder"));
     if (folder.empty()) {
         return;
     }

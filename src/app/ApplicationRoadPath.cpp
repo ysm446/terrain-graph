@@ -543,7 +543,7 @@ bool Application::DrawRoadPathSettings(graph::Node& node) {
         ui::EndPropertyTable();
     }
     ImGui::BeginDisabled(!valid);
-    if (ui::Button(ui::Tr("縦断ポイントを自動で作成", "Auto Profile Points"), ui::kWideButtonWidth)) {
+    if (ui::Button(ui::Tr("縦断ポイントを自動で作成", "Auto Profile"), ui::kWideButtonWidth)) {
         edit.autoParams.minSpacingMeters = std::max(edit.autoParams.vclMeters, 1.0f);
         const std::vector<graph::RoadVerticalPoint> generated = graph::GenerateVerticalPoints(base, edit.autoParams);
         graph::ReplaceVerticalPoints(road, generated);

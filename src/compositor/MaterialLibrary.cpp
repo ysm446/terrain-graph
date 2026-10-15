@@ -2,6 +2,7 @@
 
 #include "core/Log.h"
 #include "graph/SurfacePresetGraph.h"
+#include "ui/Localization.h"
 #include <cstring>
 
 #include <pix3.h>
@@ -67,12 +68,12 @@ LayerMaterialGpu MaterialLibrary::CompileLayerMaterial(const MaterialAsset& asse
     std::vector<graph::PresetMaterial> layers;
     if (!graph::CompilePresetMaterials(*asset.layerMaterial, layers, error)) return result;
     // 層の上限は LayerMaterialGpu::slots の数。黙って空を返すと UI に理由が出ない。
-    if (layers.size() > 4) { error = "合成材質の層は 4 つまでです"; return result; }
+    if (layers.size() > 4) { error = ui::Tr("合成材質の層は 4 つまでです", "A layered material can have up to 4 layers"); return result; }
     result.blendRange = asset.layerMaterial->layerBlendRange;
     result.displacementMeters = asset.layerMaterial->displacementMeters;
     for (const auto& layer : layers) {
         const auto* source = Find(layer.material);
-        if ((layer.material && !source) || (source && source->layerMaterial)) { error = "合成材質の入力には通常のPBR素材を指定してください"; return {}; }
+        if ((layer.material && !source) || (source && source->layerMaterial)) { error = ui::Tr("合成材質の入力には通常のPBR素材を指定してください", "Use regular PBR materials as layered material inputs"); return {}; }
         // 轍・道路端のマスクは道路の座標で決まる。文脈（LayerMaterialGpu::road）は使う側が入れる
         // （Road Mesh の路面）。Surface では文脈が無いので覆わない（UI で知らせる）。
         auto& g = result.slots[result.count++];

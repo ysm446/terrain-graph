@@ -81,7 +81,7 @@ void ToastQueue::Draw() {
                 ImGui::TextDisabled("%s", toast.detail.c_str());
             }
             if (!toast.revealPath.empty()) {
-                ImGui::TextDisabled("クリックで保存先を開く");
+                ImGui::TextDisabled("%s", ui::Tr("クリックで保存先を開く", "Click to open the save location"));
             }
 
             if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {

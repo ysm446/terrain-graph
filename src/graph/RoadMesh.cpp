@@ -1,5 +1,7 @@
 #include "graph/RoadMesh.h"
 
+#include "ui/Localization.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -25,12 +27,12 @@ bool BuildRoadMesh(const RoadPathSettings& road, const RoadProfileCurve& centerl
     out.indices.clear();
     const auto& points = centerline.points;
     const size_t rows = points.size();
-    if (rows < 2) return fail("中心線の点が足りません");
+    if (rows < 2) return fail(ui::Tr("中心線の点が足りません", "Not enough centerline points"));
     const float width = std::clamp(settings.widthMeters, kRoadMinWidthMeters, kRoadMaxWidthMeters);
     // 幅方向は約 1 m ごと。
     const int columns = std::max(1, static_cast<int>(std::ceil(width)));
     const size_t stride = static_cast<size_t>(columns) + 1;
-    if (rows * stride > kMaxRoadVertices) return fail("道路が長すぎます（頂点が多すぎる）");
+    if (rows * stride > kMaxRoadVertices) return fail(ui::Tr("道路が長すぎます（頂点が多すぎる）", "Road is too long (too many vertices)"));
 
     // 区間の水平な向き。
     std::vector<XMFLOAT2> directions(rows - 1);
@@ -38,7 +40,7 @@ bool BuildRoadMesh(const RoadPathSettings& road, const RoadProfileCurve& centerl
         const float dx = points[i + 1].x - points[i].x;
         const float dz = points[i + 1].z - points[i].z;
         const float length = std::hypot(dx, dz);
-        if (length < 1e-5f) return fail("中心線に長さ 0 の区間があります");
+        if (length < 1e-5f) return fail(ui::Tr("中心線に長さ 0 の区間があります", "Centerline has a zero-length segment"));
         directions[i] = {dx / length, dz / length};
     }
 
@@ -48,7 +50,7 @@ bool BuildRoadMesh(const RoadPathSettings& road, const RoadProfileCurve& centerl
         const XMFLOAT2 before = directions[i == 0 ? 0 : i - 1];
         const XMFLOAT2 after = directions[i + 1 == rows ? rows - 2 : i];
         const float turn = before.x * after.x + before.y * after.y;
-        if (turn < kMinCornerDot) return fail("中心線の角が急すぎます（曲線にするか点を足してください）");
+        if (turn < kMinCornerDot) return fail(ui::Tr("中心線の角が急すぎます（曲線にするか点を足してください）", "Centerline corner is too sharp (use a curve or add points)"));
         XMFLOAT2 forward{before.x + after.x, before.y + after.y};
         const float length = std::hypot(forward.x, forward.y);
         forward = {forward.x / length, forward.y / length};
@@ -86,7 +88,7 @@ bool BuildRoadMesh(const RoadPathSettings& road, const RoadProfileCurve& centerl
             const XMVECTOR across = XMVectorSubtract(XMLoadFloat3(&out.vertices[b].position), pa);
             const XMVECTOR along = XMVectorSubtract(XMLoadFloat3(&out.vertices[d].position), pa);
             const XMVECTOR face = XMVector3Cross(across, along);
-            if (XMVectorGetY(face) <= 1e-7f) return fail("路面が裏返る所があります（バンク角が大きすぎるか、角が急すぎます）");
+            if (XMVectorGetY(face) <= 1e-7f) return fail(ui::Tr("路面が裏返る所があります（バンク角が大きすぎるか、角が急すぎます）", "Road surface flips over (superelevation too large or corner too sharp)"));
             for (const uint32_t index : {a, b, d, e}) {
                 XMFLOAT3& n = out.vertices[index].normal;
                 XMStoreFloat3(&n, XMVectorAdd(XMLoadFloat3(&n), face));
@@ -125,28 +127,28 @@ std::vector<RoadSectionPoint> ShoulderSectionPoints(const RoadShoulderSettings& 
 
 bool ValidateShoulderSection(const std::vector<RoadSectionPoint>& section, std::string* error) {
     const auto fail = [&](const char* message) { if (error) *error = message; return false; };
-    if (section.empty()) return fail("断面の点がありません");
-    if (section.size() > kShoulderMaxSectionPoints) return fail("断面の点が多すぎます");
+    if (section.empty()) return fail(ui::Tr("断面の点がありません", "Section has no points"));
+    if (section.size() > kShoulderMaxSectionPoints) return fail(ui::Tr("断面の点が多すぎます", "Too many section points"));
     RoadSectionPoint previous{0.0f, 0.0f};
     float previousDx = 0.0f, previousDy = 0.0f, previousLength = 0.0f;
     for (const RoadSectionPoint& point : section) {
-        if (!std::isfinite(point.acrossMeters) || !std::isfinite(point.heightMeters)) return fail("断面の点が不正です");
-        if (std::abs(point.heightMeters) > kShoulderMaxSectionHeight) return fail("断面の高さが大きすぎます");
+        if (!std::isfinite(point.acrossMeters) || !std::isfinite(point.heightMeters)) return fail(ui::Tr("断面の点が不正です", "Invalid section point"));
+        if (std::abs(point.heightMeters) > kShoulderMaxSectionHeight) return fail(ui::Tr("断面の高さが大きすぎます", "Section height is too large"));
         const float dx = point.acrossMeters - previous.acrossMeters;
         const float dy = point.heightMeters - previous.heightMeters;
-        if (dx < -1e-5f) return fail("断面の点は外へ向かう順に並べてください（外への距離を減らさない）");
+        if (dx < -1e-5f) return fail(ui::Tr("断面の点は外へ向かう順に並べてください（外への距離を減らさない）", "Order section points outward (Outward Distance must not decrease)"));
         const float length = std::hypot(dx, dy);
-        if (length < 0.005f) return fail("断面の点が近すぎます（5 mm 未満）");
+        if (length < 0.005f) return fail(ui::Tr("断面の点が近すぎます（5 mm 未満）", "Section points are too close (under 5 mm)"));
         // 縦の面で折り返す（上がってすぐ下がる）と面が重なる。
         if (previousLength > 0.0f && (dx * previousDx + dy * previousDy) < -0.95f * length * previousLength)
-            return fail("断面が折り返しています");
+            return fail(ui::Tr("断面が折り返しています", "Section folds back on itself"));
         previous = point;
         previousDx = dx;
         previousDy = dy;
         previousLength = length;
     }
-    if (section.back().acrossMeters < kShoulderMinWidthMeters) return fail("断面の外側の端が内側の端に近すぎます");
-    if (section.back().acrossMeters > kShoulderMaxWidthMeters) return fail("断面の幅が広すぎます");
+    if (section.back().acrossMeters < kShoulderMinWidthMeters) return fail(ui::Tr("断面の外側の端が内側の端に近すぎます", "Section's outer end is too close to its inner end"));
+    if (section.back().acrossMeters > kShoulderMaxWidthMeters) return fail(ui::Tr("断面の幅が広すぎます", "Section is too wide"));
     return true;
 }
 
@@ -218,9 +220,9 @@ bool BuildRoadShoulder(const renderer::MeshData& source, uint32_t sourceStride, 
     outStride = 0;
     if (sourceStride < 2 || source.vertices.size() < static_cast<size_t>(sourceStride) * 2 ||
         source.vertices.size() % sourceStride != 0)
-        return fail("路肩の元になる面がありません");
+        return fail(ui::Tr("路肩の元になる面がありません", "No surface to build the shoulder from"));
     if (edgeColumn >= sourceStride || innerColumn >= sourceStride || edgeColumn == innerColumn)
-        return fail("路肩の端の列が不正です");
+        return fail(ui::Tr("路肩の端の列が不正です", "Invalid shoulder edge column"));
     if (settings.shape == RoadShoulderShape::Section && !ValidateShoulderSection(settings.section, error)) return false;
     const size_t rows = source.vertices.size() / sourceStride;
     const std::vector<RoadSectionPoint> points = ShoulderSectionPoints(settings);
@@ -262,8 +264,8 @@ bool BuildRoadShoulder(const renderer::MeshData& source, uint32_t sourceStride, 
         arc += length;
     }
     const uint32_t stride = static_cast<uint32_t>(columns.size());
-    if (stride < 2) return fail("路肩の断面に幅がありません");
-    if (rows * stride > kMaxRoadVertices) return fail("路肩の頂点が多すぎます");
+    if (stride < 2) return fail(ui::Tr("路肩の断面に幅がありません", "Shoulder section has no width"));
+    if (rows * stride > kMaxRoadVertices) return fail(ui::Tr("路肩の頂点が多すぎます", "Too many shoulder vertices"));
 
     // 外向きは、端から内側の列を引いた水平成分。内側の帯の端が縦の面（縁石の外など）なら、
     // 水平に離れた列までさらに内へ辿る。
@@ -280,7 +282,7 @@ bool BuildRoadShoulder(const renderer::MeshData& source, uint32_t sourceStride, 
             length = std::hypot(ox, oz);
             if (length >= 1e-4f) break;
         }
-        if (length < 1e-4f) return fail("端の幅が 0 の行があります");
+        if (length < 1e-4f) return fail(ui::Tr("端の幅が 0 の行があります", "A row has zero edge width"));
         outwards[row] = {ox / length, oz / length};
     }
 
@@ -325,7 +327,7 @@ bool BuildRoadShoulder(const renderer::MeshData& source, uint32_t sourceStride, 
                 const XMVECTOR face = XMVector3Cross(XMVectorSubtract(XMLoadFloat3(&out.vertices[y].position), px),
                                                      XMVectorSubtract(XMLoadFloat3(&out.vertices[z].position), px));
                 if (XMVectorGetX(XMVector3Dot(face, expected)) <= 1e-9f)
-                    return fail("幅に対してカーブが急すぎて路肩が裏返ります");
+                    return fail(ui::Tr("幅に対してカーブが急すぎて路肩が裏返ります", "Curve is too sharp for the width, so the shoulder flips over"));
                 for (const uint32_t index : {x, y, z}) {
                     XMFLOAT3& n = out.vertices[index].normal;
                     XMStoreFloat3(&n, XMVectorAdd(XMLoadFloat3(&n), face));

@@ -3,6 +3,7 @@
 #include "io/JsonRead.h"
 #include "core/PathUtf8.h"
 #include "core/Log.h"
+#include "ui/Localization.h"
 #include <algorithm>
 #include <map>
 #include <set>
@@ -494,14 +495,14 @@ fs::path DuplicateScene(ProjectWorkspace& workspace, const fs::path& scene, cons
         std::any_of(name.begin(), name.end(), [](char c) {
             return static_cast<unsigned char>(c) < 32 || std::string("<>:\"/\\|?*").find(c) != std::string::npos;
         });
-    if (invalid) { error = "フォルダ名に使えない名前です"; return {}; }
+    if (invalid) { error = ui::Tr("フォルダ名に使えない名前です", "This name cannot be used for a folder"); return {}; }
     json document;
     if (!workspace.Contains(scene) || !workspace.Scan() || !ProjectWorkspace::ReadJson(scene, document) ||
         ProjectWorkspace::String(document, "format") != "terrain-graph.scene") {
-        error = "シーンを読めません"; return {};
+        error = ui::Tr("シーンを読めません", "Cannot read the scene"); return {};
     }
     if (!document.contains("components") || !document["components"].is_array()) {
-        error = "古い形式のシーンです。一度開いて保存してから複製してください"; return {};
+        error = ui::Tr("古い形式のシーンです。一度開いて保存してから複製してください", "This scene uses an old format. Open and save it once before duplicating"); return {};
     }
     std::error_code fsError;
     const fs::path sceneDirectory = scene.parent_path();
@@ -509,7 +510,7 @@ fs::path DuplicateScene(ProjectWorkspace& workspace, const fs::path& scene, cons
     const bool atRoot = fs::equivalent(sceneDirectory, workspace.Root(), fsError) && !fsError;
     const fs::path target = (atRoot ? sceneDirectory : sceneDirectory.parent_path()) / FromUtf8(name);
     if (!workspace.Contains(target) || fs::exists(target, fsError)) {
-        error = "同じ名前のフォルダが既にあります"; return {};
+        error = ui::Tr("同じ名前のフォルダが既にあります", "A folder with the same name already exists"); return {};
     }
     // 元のシーン名で始まるファイルはその部分を、それ以外は頭に新しい名前を付ける。
     const std::wstring oldStem = scene.stem().wstring(), newStem = FromUtf8(name).wstring();
@@ -517,7 +518,7 @@ fs::path DuplicateScene(ProjectWorkspace& workspace, const fs::path& scene, cons
         const std::wstring stem = path.stem().wstring();
         return stem.starts_with(oldStem) ? newStem + stem.substr(oldStem.size()) : newStem + L"_" + stem;
     };
-    if (!fs::create_directories(target, fsError) || fsError) { error = "フォルダを作れません"; return {}; }
+    if (!fs::create_directories(target, fsError) || fsError) { error = ui::Tr("フォルダを作れません", "Cannot create the folder"); return {}; }
     const auto fail = [&](const char* message) {
         fs::remove_all(target, fsError);
         workspace.Scan();  // 作りかけの部品の ID を忘れる
@@ -531,14 +532,14 @@ fs::path DuplicateScene(ProjectWorkspace& workspace, const fs::path& scene, cons
     if (document.contains("atmosphere") && document["atmosphere"].is_object()) references.push_back(&document["atmosphere"]);
     for (json* reference : references) {
         const fs::path source = workspace.Resolve(*reference);
-        if (source.empty()) return fail("シーンの部品が見つかりません");
+        if (source.empty()) return fail(ui::Tr("シーンの部品が見つかりません", "Scene part not found"));
         const bool local = fs::equivalent(source.parent_path(), sceneDirectory, fsError) && !fsError;
         const auto extension = source.extension();
         const char* kind = extension == L".tgterrain" ? "terrain-graph" : extension == L".tgcloud" ? "cloud-graph" :
                            extension == L".tgatmosphere" ? "atmosphere-sky" : nullptr;
         if (!local || kind == nullptr) continue;
         json body;
-        if (!workspace.ReadAsset(source, kind, body)) return fail("シーンの部品を読めません");
+        if (!workspace.ReadAsset(source, kind, body)) return fail(ui::Tr("シーンの部品を読めません", "Cannot read a scene part"));
         const std::wstring stem = renamed(source);
         body.erase("uid");
         body["name"] = ToUtf8Display(fs::path(stem));
@@ -548,22 +549,22 @@ fs::path DuplicateScene(ProjectWorkspace& workspace, const fs::path& scene, cons
                 const fs::path input = workspace.Resolve(paint.value("source", json::object()));
                 const fs::path directory = target / (stem + L".assets");
                 const fs::path output = workspace.UniquePath(directory, "paint", ".png");
-                if (input.empty() || output.empty()) return fail("ペイントが見つかりません");
+                if (input.empty() || output.empty()) return fail(ui::Tr("ペイントが見つかりません", "Paint not found"));
                 fs::create_directories(directory, fsError);
-                if (fsError || !fs::copy_file(input, output, fs::copy_options::none, fsError)) return fail("ペイントをコピーできません");
+                if (fsError || !fs::copy_file(input, output, fs::copy_options::none, fsError)) return fail(ui::Tr("ペイントをコピーできません", "Cannot copy the paint"));
                 paint["source"] = workspace.Reference(output);
-                if (paint["source"].is_null()) return fail("ペイントを登録できません");
+                if (paint["source"].is_null()) return fail(ui::Tr("ペイントを登録できません", "Cannot register the paint"));
             }
         }
         fs::path destination = target / (stem + extension.wstring());
-        if (!workspace.SaveAsset(destination, kind, body)) return fail("シーンの部品を書き出せません");
+        if (!workspace.SaveAsset(destination, kind, body)) return fail(ui::Tr("シーンの部品を書き出せません", "Cannot write a scene part"));
         *reference = {{"path", ToUtf8Portable(destination.lexically_relative(workspace.Root()))},
                       {"uid", ProjectWorkspace::String(body, "uid")}};
     }
     // シーンの ID も振り直す（サムネイルなどは ID で持ち分けるので、元と混ざらない）。
     document["sceneUid"] = ProjectWorkspace::NewId();
     const fs::path destination = target / (newStem + scene.extension().wstring());
-    if (!ProjectWorkspace::WriteJson(destination, document)) return fail("シーンを書き出せません");
+    if (!ProjectWorkspace::WriteJson(destination, document)) return fail(ui::Tr("シーンを書き出せません", "Cannot write the scene"));
     TG_LOG_INFO("シーンを複製しました: %s", ToUtf8Display(destination).c_str());
     return destination;
 }

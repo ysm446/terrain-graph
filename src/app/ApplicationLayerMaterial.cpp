@@ -51,7 +51,7 @@ bool Application::DrawLayerMaterialProperties(compositor::MaterialAsset& asset) 
         m_selectedPresetLayer = static_cast<int>(layers.size()) - 1; layersChanged = true;
     }
     ImGui::SameLine();
-    if (ui::Button(ui::Tr("複製", "Duplicate"), 70)) {
+    if (ui::Button(ui::Tr("複製", "Clone"), 70)) {
         auto layer = layers[m_selectedPresetLayer]; if (!layer.mask) makeMask(layer);
         layers.insert(layers.begin() + m_selectedPresetLayer + 1, layer);
         ++m_selectedPresetLayer; layersChanged = true;

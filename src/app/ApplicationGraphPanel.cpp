@@ -2234,7 +2234,7 @@ void Application::DrawGraphEditor() {
             if (!ImGui::BeginMenu(title)) return;
             for (const graph::NodeKind kind : kinds) {
                 const graph::NodeDefinition* definition = graph::FindNodeDefinition(kind);
-                const std::string label = std::string(definition->title) + " — " + definition->description;
+                const std::string label = std::string(definition->title) + " — " + definition->description.Get();
                 addNodeMenuItem(kind, label.c_str());
             }
             ImGui::EndMenu();
@@ -2675,7 +2675,7 @@ void Application::DrawSceneHierarchy() {
     if (!components) {
         ui::HintText("%s", ui::Tr("旧形式のシーンです。保存済みの元データを残して部品へ分離できます。",
                                   "This scene uses the old format. It can be split into components, keeping the saved original."));
-        if (ui::Button(ui::Tr("部品へ分離…", "Split into Components…"), ui::kWideButtonWidth)) m_pendingComponentMigration = true;
+        if (ui::Button(ui::Tr("部品へ分離…", "Split Components…"), ui::kWideButtonWidth)) m_pendingComponentMigration = true;
     }
     // 行の右クリックに置く改名。ファイルがある行だけ。F2 でも同じ。
     const auto renameMenuItem = [&](const std::filesystem::path& file) {
@@ -2777,8 +2777,8 @@ void Application::DrawSceneHierarchy() {
                 else { m_pendingComponentPlace = path; m_assetRefresh = true; }
             }
             if (ImGui::MenuItem(ui::Tr("入れ替え…", "Replace…"))) {
-                const auto selected = component ? ShowOpenFileDialog(L"雲グラフを選ぶ", {{L"雲グラフ", L"*.tgcloud"}})
-                                               : ShowOpenFileDialog(L"地形グラフを選ぶ", {{L"地形グラフ", L"*.tgterrain"}});
+                const auto selected = component ? ShowOpenFileDialog(ui::Tr(L"雲グラフを選ぶ", L"Choose Cloud Graph"), {{ui::Tr(L"雲グラフ", L"Cloud Graph"), L"*.tgcloud"}})
+                                               : ShowOpenFileDialog(ui::Tr(L"地形グラフを選ぶ", L"Choose Terrain Graph"), {{ui::Tr(L"地形グラフ", L"Terrain Graph"), L"*.tgterrain"}});
                 if (!selected.empty()) m_pendingComponentPlace = selected;
             }
             if (ImGui::MenuItem(ui::Tr("アセットブラウザで表示", "Show in Asset Browser"), nullptr, false, !placed.empty())) m_pendingAssetReveal = placed;
@@ -2816,7 +2816,7 @@ void Application::DrawSceneHierarchy() {
                 } else TG_LOG_ERROR("大気散乱スカイを作成できませんでした");
             }
             if (ImGui::MenuItem(ui::Tr("読み込む…", "Load…"))) {
-                const auto selected = ShowOpenFileDialog(L"大気散乱スカイを読み込む", {{L"大気散乱スカイ", L"*.tgatmosphere"}});
+                const auto selected = ShowOpenFileDialog(ui::Tr(L"大気散乱スカイを読み込む", L"Load Atmospheric Sky"), {{ui::Tr(L"大気散乱スカイ", L"Atmospheric Sky"), L"*.tgatmosphere"}});
                 if (!selected.empty()) m_pendingComponentPlace = selected;
             }
             if (ImGui::MenuItem(ui::Tr("アセットブラウザで表示", "Show in Asset Browser"), nullptr, false, !path.empty())) m_pendingAssetReveal = path;
@@ -2863,7 +2863,7 @@ void Application::DrawGraphPanel() {
         ImGui::SameLine();
         if (ui::Button(ui::Tr("元を保存して配置", "Save and Place"), ui::kWideButtonWidth)) m_pendingPreviewFinish = 1;
         ImGui::SameLine();
-        if (ui::Button(ui::Tr("破棄して戻る", "Discard and Return"), ui::kWideButtonWidth)) m_pendingPreviewFinish = 2;
+        if (ui::Button(ui::Tr("破棄して戻る", "Discard & Return"), ui::kWideButtonWidth)) m_pendingPreviewFinish = 2;
         ImGui::Unindent(panelPadding.x);
     }
     if (m_sceneComponents.is_array()) {

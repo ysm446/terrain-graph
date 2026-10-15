@@ -1,4 +1,5 @@
 #include "graph/SurfacePresetGraph.h"
+#include "ui/Localization.h"
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -41,8 +42,8 @@ bool ValidatePresetMaterial(const PresetMaterial& material, std::string& error) 
     if (!range(material.uvRepeatMeters, 0.01f, 100) || !range(material.roughness, 0, 1) ||
         !range(material.metallic, 0, 1) || !range(material.ambientOcclusion, 0, 1) ||
         material.blendMode > 1 || material.heightGate > 2 || !range(material.heightGateThreshold, 0, 1) ||
-        !range(material.heightGateSoftness, 0.001f, 1)) return fail("マテリアルの寸法・PBR値・合成条件が不正です");
-    for (float channel : material.baseColor) if (!range(channel, 0, 1)) return fail("マテリアル色が不正です");
+        !range(material.heightGateSoftness, 0.001f, 1)) return fail(ui::Tr("マテリアルの寸法・PBR値・合成条件が不正です", "Invalid material size, PBR values or blend conditions"));
+    for (float channel : material.baseColor) if (!range(channel, 0, 1)) return fail(ui::Tr("マテリアル色が不正です", "Invalid material color"));
     if (material.mask) {
         const auto& mask = *material.mask;
         if (static_cast<uint32_t>(mask.shape) > 4 || static_cast<uint32_t>(mask.edgeSide) > 2 ||
@@ -51,7 +52,7 @@ bool ValidatePresetMaterial(const PresetMaterial& material, std::string& error) 
             !range(mask.edgeWidthMeters, 0, 100) || !range(mask.noiseScaleMeters, 0.05f, 100) ||
             !range(mask.threshold, 0, 1) || !range(mask.softness, 0.0001f, 1) ||
             !range(mask.breakupAmount, 0, 1) || !range(mask.breakupScaleMeters, 0.05f, 100) ||
-            !range(mask.strength, 0, 1)) return fail("プリセットの道路マスクが不正です");
+            !range(mask.strength, 0, 1)) return fail(ui::Tr("プリセットの道路マスクが不正です", "Invalid preset road mask"));
     }
     return true;
 }
@@ -61,29 +62,29 @@ bool ValidatePresetGraph(const PresetGraph& graph, std::string& error) {
     error.clear();
     const auto fail = [&](const char* message) { error = message; return false; };
     if (!graph.nextId || graph.nextId > 1000000 || graph.nodes.empty() || graph.nodes.size() > 32)
-        return fail("プリセットグラフのID・ノード数が不正です（最大32ノード）");
+        return fail(ui::Tr("プリセットグラフのID・ノード数が不正です（最大32ノード）", "Invalid preset graph IDs or node count (max 32 nodes)"));
     std::unordered_map<uint32_t, int> state;
     size_t outputs = 0;
     for (const auto& node : graph.nodes) {
         if (!node.id || node.id >= graph.nextId || !state.emplace(node.id, 0).second ||
             static_cast<uint32_t>(node.kind) > 3 || !std::isfinite(node.position[0]) || !std::isfinite(node.position[1]))
-            return fail("プリセットノードのID・種類・位置が不正です");
+            return fail(ui::Tr("プリセットノードのID・種類・位置が不正です", "Invalid preset node ID, type or position"));
         if (!ValidatePresetMaterial(node.settings, error)) return false;
-        if (node.kind == PresetNodeKind::Mask && !node.settings.mask) return fail("マスクノードに設定がありません");
+        if (node.kind == PresetNodeKind::Mask && !node.settings.mask) return fail(ui::Tr("マスクノードに設定がありません", "Mask node has no settings"));
         outputs += node.kind == PresetNodeKind::Output;
         for (uint32_t input = 0; input < 3; ++input) {
             if (!node.inputs[input]) continue;
             const auto* source = Find(graph, node.inputs[input]);
-            if (!source) return fail("接続元のプリセットノードがありません");
+            if (!source) return fail(ui::Tr("接続元のプリセットノードがありません", "Source preset node not found"));
             const bool material = source->kind == PresetNodeKind::Material;
             const bool surface = material || source->kind == PresetNodeKind::Blend;
             const bool valid = (node.kind == PresetNodeKind::Output && input == 0 && surface) ||
                 (node.kind == PresetNodeKind::Blend && ((input == 0 && surface) || (input == 1 && material) ||
                     (input == 2 && source->kind == PresetNodeKind::Mask)));
-            if (!valid) return fail("ピンの種類が一致しません。合成の上層には素材を接続してください");
+            if (!valid) return fail(ui::Tr("ピンの種類が一致しません。合成の上層には素材を接続してください", "Pin types do not match. Connect a material to the blend's top layer"));
         }
     }
-    if (outputs != 1) return fail("プリセットグラフには出力が1つ必要です");
+    if (outputs != 1) return fail(ui::Tr("プリセットグラフには出力が1つ必要です", "The preset graph needs exactly one output"));
     const std::function<bool(uint32_t)> visit = [&](uint32_t id) {
         if (!id || state[id] == 2) return true;
         if (state[id] == 1) return false;
@@ -91,11 +92,11 @@ bool ValidatePresetGraph(const PresetGraph& graph, std::string& error) {
         for (auto input : Find(graph, id)->inputs) if (!visit(input)) return false;
         state[id] = 2; return true;
     };
-    for (const auto& node : graph.nodes) if (!visit(node.id)) return fail("循環する接続は作成できません");
+    for (const auto& node : graph.nodes) if (!visit(node.id)) return fail(ui::Tr("循環する接続は作成できません", "Cannot create a circular connection"));
     // 未出力の枝も、接続する前から4層の制限を検査する。
     for (const auto& node : graph.nodes) if (node.kind == PresetNodeKind::Blend || node.kind == PresetNodeKind::Output) {
         std::vector<PresetMaterial> result;
-        if (!Compile(graph, node.id, result)) return fail("合成できるマテリアルは下地を含めて最大4層です");
+        if (!Compile(graph, node.id, result)) return fail(ui::Tr("合成できるマテリアルは下地を含めて最大4層です", "Up to 4 material layers can be blended, including the base"));
     }
     return true;
 }
@@ -156,7 +157,7 @@ bool CompilePresetMaterials(const LayerMaterial& preset, std::vector<PresetMater
 bool ConnectPresetNodes(PresetGraph& graph, uint32_t source, uint32_t target, uint32_t input, std::string& error) {
     auto candidate = graph;
     auto it = std::find_if(candidate.nodes.begin(), candidate.nodes.end(), [target](const auto& n) { return n.id == target; });
-    if (it == candidate.nodes.end() || input >= 3) { error = "接続先がありません"; return false; }
+    if (it == candidate.nodes.end() || input >= 3) { error = ui::Tr("接続先がありません", "Connection target not found"); return false; }
     it->inputs[input] = source;
     if (!ValidatePresetGraph(candidate, error)) return false;
     graph = std::move(candidate); return true;
@@ -165,7 +166,7 @@ bool AppendPresetLayer(PresetGraph& graph, std::string& error) {
     auto candidate = graph;
     if (!ValidatePresetGraph(candidate, error)) return false;
     if (candidate.nodes.size() + 3 > 32 || candidate.nextId + 3 >= 1000000) {
-        error = "追加できるノード数の上限です"; return false;
+        error = ui::Tr("追加できるノード数の上限です", "Node limit reached"); return false;
     }
     auto output = std::find_if(candidate.nodes.begin(), candidate.nodes.end(), [](const auto& n) { return n.kind == PresetNodeKind::Output; });
     const auto outputId = output->id, previous = output->inputs[0];

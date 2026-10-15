@@ -1391,7 +1391,7 @@ void Application::DrawAssetBrowser() {
                 m_showSkyPreview = true; m_pendingAssetsSave = true; m_renderer.AtmosphericMode() = false;
             }
             if (ImGui::MenuItem(ui::Tr("ファイルを読み込む…", "Import Files…"))) {
-                const auto paths = ShowOpenFilesDialog(L"アセットを読み込む", {{L"画像 / モデル / マテリアル", L"*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.exr;*.hdr;*.fbx;*.tgmat;*.tglayer"}});
+                const auto paths = ShowOpenFilesDialog(ui::Tr(L"アセットを読み込む", L"Import Assets"), {{ui::Tr(L"画像 / モデル / マテリアル", L"Images / Models / Materials"), L"*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.exr;*.hdr;*.fbx;*.tgmat;*.tglayer"}});
                 HandleDroppedFiles(paths);
             }
             ImGui::EndPopup();

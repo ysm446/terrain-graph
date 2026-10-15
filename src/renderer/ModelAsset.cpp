@@ -1,5 +1,7 @@
 #include "renderer/ModelAsset.h"
 
+#include "ui/Localization.h"
+
 #include <ufbx.h>
 
 #include <algorithm>
@@ -65,18 +67,18 @@ float LodStartDistance(const ModelAsset& asset, size_t lod, float fovY) {
 bool LoadModel(const std::filesystem::path& path, ModelAsset& asset) {
     std::ifstream stream(path, std::ios::binary | std::ios::ate);
     if (!stream) {
-        asset.error = "モデルファイルを開けません";
+        asset.error = ui::Tr("モデルファイルを開けません", "Cannot open the model file");
         return false;
     }
     const auto size = stream.tellg();
     if (size <= 0) {
-        asset.error = "モデルファイルが空です";
+        asset.error = ui::Tr("モデルファイルが空です", "The model file is empty");
         return false;
     }
     std::vector<char> bytes(static_cast<size_t>(size));
     stream.seekg(0);
     if (!stream.read(bytes.data(), static_cast<std::streamsize>(bytes.size()))) {
-        asset.error = "モデルファイルを読み取れません";
+        asset.error = ui::Tr("モデルファイルを読み取れません", "Cannot read the model file");
         return false;
     }
     ufbx_load_opts opts{};
@@ -161,7 +163,7 @@ bool LoadModel(const std::filesystem::path& path, ModelAsset& asset) {
                     for (int k = 0; k < 3; ++k) {
                         const float value = (&v.position.x)[k];
                         if (!std::isfinite(value)) {
-                            asset.error = "頂点座標が不正です";
+                            asset.error = ui::Tr("頂点座標が不正です", "Invalid vertex positions");
                             return false;
                         }
                         (&geometry->minimum.x)[k] = std::min((&geometry->minimum.x)[k], value);
@@ -214,7 +216,7 @@ bool LoadModel(const std::filesystem::path& path, ModelAsset& asset) {
     // 番号が飛んでいても段を詰める（_LOD0 と _LOD2 だけなら 2 段）。
     std::erase_if(geometry->lods, [](const ModelLod& level) { return level.triangles == 0; });
     if (geometry->lods.empty() || !geometry->lods[0].triangles) {
-        asset.error = "表示できるメッシュがありません";
+        asset.error = ui::Tr("表示できるメッシュがありません", "No displayable meshes");
         return false;
     }
     asset.path = path;

@@ -87,7 +87,7 @@ void Application::DrawExportWindow() {
         ui::PropertyLabelEmpty("exportPick");
         if (ui::Button(ui::Tr("フォルダを選ぶ…", "Choose Folder…"), ui::kWideButtonWidth)) {
             const std::filesystem::path picked =
-                ShowPickFolderDialog(L"書き出し先を選ぶ", settings.directory);
+                ShowPickFolderDialog(ui::Tr(L"書き出し先を選ぶ", L"Choose Export Folder"), settings.directory);
             if (!picked.empty()) {
                 settings.directory = picked;
             }

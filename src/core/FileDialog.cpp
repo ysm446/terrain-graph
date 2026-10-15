@@ -1,6 +1,7 @@
 #include "core/FileDialog.h"
 
 #include "core/Log.h"
+#include "ui/Localization.h"
 
 #include <Windows.h>
 #include <shobjidl.h>
@@ -60,33 +61,33 @@ ComPtr<IFileDialog> CreateFileDialog(const CLSID& clsid, const wchar_t* title,
 
 std::vector<FileFilter> ImageFileFilters() {
     return {
-        {L"画像 (*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.exr)",
+        {ui::Tr(L"画像 (*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.exr)", L"Images (*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.exr)"),
          L"*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.exr"},
         {L"OpenEXR (*.exr)", L"*.exr"},
-        {L"すべてのファイル (*.*)", L"*.*"},
+        {ui::Tr(L"すべてのファイル (*.*)", L"All Files (*.*)"), L"*.*"},
     };
 }
 
 std::vector<FileFilter> HdriFileFilters() {
     return {
         {L"Radiance HDR (*.hdr)", L"*.hdr"},
-        {L"すべてのファイル (*.*)", L"*.*"},
+        {ui::Tr(L"すべてのファイル (*.*)", L"All Files (*.*)"), L"*.*"},
     };
 }
 
 std::vector<FileFilter> ProjectFileFilters() {
     return {
-        {L"terrain-graph プロジェクト (*.tgproj)", L"*.tgproj"},
-        {L"material-mixer プロジェクト (*.mmproj)", L"*.mmproj"},
-        {L"すべてのファイル (*.*)", L"*.*"},
+        {ui::Tr(L"terrain-graph プロジェクト (*.tgproj)", L"terrain-graph Project (*.tgproj)"), L"*.tgproj"},
+        {ui::Tr(L"material-mixer プロジェクト (*.mmproj)", L"material-mixer Project (*.mmproj)"), L"*.mmproj"},
+        {ui::Tr(L"すべてのファイル (*.*)", L"All Files (*.*)"), L"*.*"},
     };
 }
 
 std::vector<FileFilter> MaterialFileFilters() {
     return {
-        {L"terrain-graph マテリアル (*.tgmat)", L"*.tgmat"},
-        {L"material-mixer マテリアル (*.mmmat)", L"*.mmmat"},
-        {L"すべてのファイル (*.*)", L"*.*"},
+        {ui::Tr(L"terrain-graph マテリアル (*.tgmat)", L"terrain-graph Material (*.tgmat)"), L"*.tgmat"},
+        {ui::Tr(L"material-mixer マテリアル (*.mmmat)", L"material-mixer Material (*.mmmat)"), L"*.mmmat"},
+        {ui::Tr(L"すべてのファイル (*.*)", L"All Files (*.*)"), L"*.*"},
     };
 }
 

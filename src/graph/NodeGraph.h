@@ -7,6 +7,7 @@
 #include "graph/RoadMarking.h"
 #include "graph/RoadMesh.h"
 #include "graph/RoadPath.h"
+#include "ui/Localization.h"
 
 #include <array>
 #include <cstdint>
@@ -187,8 +188,9 @@ struct PinDefinition {
     PinKind kind = PinKind::Input;
     ValueType valueType = ValueType::Material;
     const char* label = "";
-    // 何を繋ぐ / 何が出るか（ノードビューでピンに載せたときのツールチップ）。空なら型ごとの一般的な説明を出す。
-    const char* description = "";
+    // 何を繋ぐ / 何が出るか（ノードビューでピンに載せたときのツールチップ）。日本語と英語の対。
+    // 空なら型ごとの一般的な説明を出す。
+    ui::LocalizedText description = {"", ""};
 };
 
 // ノードの静的な定義。種類・保存名・表示名・ピン構成をテーブルで持ち、
@@ -198,8 +200,8 @@ struct NodeDefinition {
     const char* name = "";   // 保存名（ファイルには enum の数値ではなくこれを書く）
     const char* title = "";  // 表示名
     std::span<const PinDefinition> pins;
-    // 何をするノードかの一文。追加メニュー（「表示名 — 説明」）とノードカタログに出す。
-    const char* description = "";
+    // 何をするノードかの一文（日本語と英語の対）。追加メニュー（「表示名 — 説明」）とノードカタログに出す。
+    ui::LocalizedText description = {"", ""};
 };
 
 struct Pin {

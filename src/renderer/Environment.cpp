@@ -3,6 +3,7 @@
 
 #include "core/ImageIo.h"
 #include "core/Log.h"
+#include "ui/Localization.h"
 
 #include <pix3.h>
 
@@ -354,7 +355,7 @@ bool Environment::BuildFromAtmosphere(rhi::Device& device, rhi::PipelineCache& p
         TransitionIfNeeded(commands, skyView, kShaderReadState);
         PIXEndEvent(commands);
     })) return false;
-    m_sourceName = "大気散乱スカイ";
+    m_sourceName = ui::Tr("大気散乱スカイ", "Atmospheric Sky");
     return BuildFromEquirect(device, pipelineCache, 1.0f, irradianceOnly);
 }
 
@@ -403,7 +404,7 @@ bool Environment::BuildFromSky(rhi::Device& device, rhi::PipelineCache& pipeline
         return false;
     }
 
-    m_sourceName = "手続き的な空";
+    m_sourceName = ui::Tr("手続き的な空", "Procedural Sky");
     m_measuredSkyLuminance = 0.0f;
     // 空は EnvSky が cd/m^2 で書き込んでいるので、ここでの較正は要らない。
     return BuildFromEquirect(device, pipelineCache, 1.0f);

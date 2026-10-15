@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-10-15 09:41
+更新日時: 2026-10-15 10:32
 
 ## UI の日本語 / English 切り替え — 段階 1（2026-10-15 08:48）
 
@@ -29,9 +29,18 @@
 - 訳していないもの: ノードの定義（表示名・説明・ピンのラベル。`NodeDefinitions.cpp`。追加メニューの説明やピンのツールチップに出る）、graph / compositor 側で作るエラー文（`BuildRoadBaseline` の `fail`、`ValidateShoulderSection`、`CompileLayerMaterial`、`ExtractPresetLayers`、モデル読み込みの `asset.error`）、新しく置くノードの既定の名前（`DefaultLayerFor` など。保存データ）。
 - 検証: Debug ビルド（警告 0）、CTest 6 件。tengudake で Snow Cover / Model Scatter / Path / Surface を `--select-node` で選び、英語でラベルが列に収まること、日本語の見た目が変わっていないことを目視（`data/screenshots/p3-*.png`）。「流量補正」「侵食履歴の影響」の誤訳（どちらも Flow Volume）を直した。ほかのノード（雲・道路・湖など）の英語の画面は未目視。
 
-残り:
-- 段階 4: ノードの説明文、ツールチップ、トースト、確認ダイアログ（`BeginPopupModal` の名前は ID を兼ねるので `###` にする）、ファイルダイアログの題名。
-- 判断待ち: ステータスバーに流れる通知（`TG_LOG_*` 由来）は日本語のまま。
+段階 4（済、2026-10-15 10:32）: サブエージェント 3 本で並行に訳した。
+- ノードの定義: `PinDefinition::description` / `NodeDefinition::description` を `ui::LocalizedText` にし（`NodeGraph.h` が `ui/Localization.h` を読む）、説明 128 個を日英の対に。`PinDescription()` は今の言語の方を返す。カタログ（`ProjectIo.cpp`）は `.japanese`。
+- ライブラリ側で作る画面に出る文: `RoadMesh` / `RoadMarking` / `RoadPath` / `SurfacePresetGraph` のエラー、`MaterialLibrary` の layerError、`DuplicateScene` の失敗理由、`ModelAsset` の読み込みエラー、`Environment` の空の名前、トーストの「クリックで保存先を開く」。ログにだけ渡る文（インポスターの焼き込み、画像のデコード、`ReadLayerMaterial` など）は訳していない。
+- ファイルダイアログ: ワイド文字列版の `ui::Tr(L"…", L"…")` を足し、題とフィルタ名（`FileDialog.cpp` の既定のフィルタを含む）を訳した。GPU のデバイス消失のメッセージボックスも。
+- スクリーンショット・書き出しのトースト（`Application.cpp` / `ApplicationFileWork.cpp`）。
+- 言語の変数を `std::atomic` に（モデルの読み込みが別スレッドで `ui::Tr` を呼ぶため）。
+- 英語でボタンからはみ出す訳を短くした（Recompute Routes、Split Components…、Discard & Return、To Clothoid、Auto Profile、Clone）。
+- 検証: Debug ビルド（警告 0）、CTest 6 件。tengudake の Road Mesh / Road Path を英語で撮って目視（`data/screenshots/p4-*.png`）。追加メニューの説明・ピンのツールチップ・ファイルダイアログは未目視（ヘッドレスで開けない）。
+
+残り（ユーザーの判断待ち）:
+- ステータスバーに流れる通知（`TG_LOG_*` 由来。インポスターや画像の読み込み失敗もここに出る）は日本語のまま。
+- 新しく作るアセット・ノードの既定の名前とファイル名（「新規マテリアル」「〜 のコピー」「大気散乱スカイ」など）は日本語のまま。
 
 検証: Debug ビルド（警告 0）。`--screenshot-ui --show-settings --language ja / en` で tengudake を開き、メニュー・タブ・設定・統計が両方の言語で出ること、ドッキングの配置が保たれることを目視（`data/screenshots/lang-ja.png` / `lang-en.png`）。英語でボタンからはみ出した「Reset to Default Size」は「Reset Size」にした。
 **注意（今回の変更とは無関係）**: kiso-komagatake を `--screenshot-ui` で開くと DEVICE_HUNG（0x887A0006、MaskOpThumbnails の付近）で落ちる。変更前の Release ビルド（08:28）でも同じだったので既存の問題。未調査。

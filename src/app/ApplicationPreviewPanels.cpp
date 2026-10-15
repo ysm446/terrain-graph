@@ -376,7 +376,7 @@ void Application::DrawLightingPanel() {
             DrawAssetPathRow(ui::Tr("ファイル", "File"), path, m_pendingAssetReveal);
             ui::PropertyLabelEmpty("sceneSkyActions");
             if (ui::Button(ui::Tr("読み込む…", "Load…"), ui::kWideButtonWidth)) {
-                const auto selected = ShowOpenFileDialog(L"大気散乱スカイを読み込む", {{L"大気散乱スカイ", L"*.tgatmosphere"}});
+                const auto selected = ShowOpenFileDialog(ui::Tr(L"大気散乱スカイを読み込む", L"Load Atmospheric Sky"), {{ui::Tr(L"大気散乱スカイ", L"Atmospheric Sky"), L"*.tgatmosphere"}});
                 if (!selected.empty()) m_pendingAssetOpen = selected;
             }
             ImGui::SameLine();

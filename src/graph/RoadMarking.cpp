@@ -1,5 +1,7 @@
 #include "graph/RoadMarking.h"
 
+#include "ui/Localization.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -121,7 +123,7 @@ bool BuildRoadMarkings(const renderer::MeshData& road, uint32_t stride, const Ro
     const auto fail = [&](const char* message) { if (error) *error = message; return false; };
     for (auto& m : out) m = {};
     if (stride < 2 || road.vertices.size() < static_cast<size_t>(stride) * 2 || road.vertices.size() % stride != 0)
-        return fail("路面が作られていません");
+        return fail(ui::Tr("路面が作られていません", "Road surface has not been built"));
     RoadSurface surface;
     surface.mesh = &road;
     surface.stride = stride;
@@ -130,12 +132,12 @@ bool BuildRoadMarkings(const renderer::MeshData& road, uint32_t stride, const Ro
     surface.distances.resize(surface.rows);
     for (size_t row = 0; row < surface.rows; ++row) surface.distances[row] = surface.At(row, 0).uv.y;
     const float total = surface.distances.back();
-    if (!(total > 0.0f)) return fail("路面の延長が 0 です");
+    if (!(total > 0.0f)) return fail(ui::Tr("路面の延長が 0 です", "Road surface length is 0"));
 
     if (!std::isfinite(settings.liftMeters) || settings.liftMeters < 0.0f || settings.liftMeters > 0.1f)
-        return fail("浮かせる量は 0〜0.1 m にしてください");
+        return fail(ui::Tr("浮かせる量は 0〜0.1 m にしてください", "Lift must be 0 to 0.1 m"));
     if (!std::isfinite(settings.uvRepeatMeters) || settings.uvRepeatMeters < 0.1f || settings.uvRepeatMeters > 100.0f)
-        return fail("繰り返し長は 0.1〜100 m にしてください");
+        return fail(ui::Tr("繰り返し長は 0.1〜100 m にしてください", "Repeat Length must be 0.1 to 100 m"));
 
     // 引く線（左端からの横位置、幅、破線か、種類）。
     struct Strip {
@@ -153,9 +155,9 @@ bool BuildRoadMarkings(const renderer::MeshData& road, uint32_t stride, const Ro
     if (edge.enabled) {
         const float inset = settings.edgeInsetMeters;
         if (!std::isfinite(inset) || inset < edge.widthMeters * 0.5f)
-            return fail("外側線が道路の外に出ます。端からの距離を線の幅の半分以上にしてください");
+            return fail(ui::Tr("外側線が道路の外に出ます。端からの距離を線の幅の半分以上にしてください", "Edge line extends off the road. Set Edge Line Inset to at least half the line width"));
         if (inset + edge.widthMeters * 0.5f > surface.width * 0.5f)
-            return fail("外側線が中心を越えています。端からの距離を小さくしてください");
+            return fail(ui::Tr("外側線が中心を越えています。端からの距離を小さくしてください", "Edge line crosses the center. Reduce Edge Line Inset"));
         strips.push_back({inset, edge.widthMeters, edge.dashed, RoadMarkingKind::Edge});
         strips.push_back({surface.width - inset, edge.widthMeters, edge.dashed, RoadMarkingKind::Edge});
     }
@@ -165,19 +167,19 @@ bool BuildRoadMarkings(const renderer::MeshData& road, uint32_t stride, const Ro
 
     for (size_t i = 0; i < strips.size(); ++i) {
         const Strip& s = strips[i];
-        if (!std::isfinite(s.width) || s.width < 0.05f || s.width > 1.0f) return fail("線の幅は 0.05〜1 m にしてください");
+        if (!std::isfinite(s.width) || s.width < 0.05f || s.width > 1.0f) return fail(ui::Tr("線の幅は 0.05〜1 m にしてください", "Line width must be 0.05 to 1 m"));
         if (s.kind != RoadMarkingKind::Edge && lanes.laneWidthMeters < s.width * 2.0f)
-            return fail("車線の幅に対して線が太すぎます。車線数か線の幅を見直してください");
+            return fail(ui::Tr("車線の幅に対して線が太すぎます。車線数か線の幅を見直してください", "Lines are too wide for the lane width. Check the lane count or line width"));
         if (s.center - s.width * 0.5f < -1e-4f || s.center + s.width * 0.5f > surface.width + 1e-4f)
-            return fail("線が道路の外に出ます。線の幅か端からの距離を見直してください");
+            return fail(ui::Tr("線が道路の外に出ます。線の幅か端からの距離を見直してください", "A line extends off the road. Check the line width or Edge Line Inset"));
         for (size_t j = 0; j < i; ++j)
             if (std::abs(s.center - strips[j].center) < (s.width + strips[j].width) * 0.5f)
-                return fail("線どうしが重なります。線の幅か端からの距離を見直してください");
+                return fail(ui::Tr("線どうしが重なります。線の幅か端からの距離を見直してください", "Lines overlap. Check the line width or Edge Line Inset"));
     }
     const bool dashed = std::any_of(strips.begin(), strips.end(), [](const Strip& s) { return s.dashed; });
     if (dashed && (!std::isfinite(settings.dashLengthMeters) || settings.dashLengthMeters < 0.1f ||
                    !std::isfinite(settings.dashGapMeters) || settings.dashGapMeters < 0.0f))
-        return fail("破線の長さは 0.1 m 以上、間隔は 0 m 以上にしてください");
+        return fail(ui::Tr("破線の長さは 0.1 m 以上、間隔は 0 m 以上にしてください", "Dash Length must be at least 0.1 m and Dash Gap at least 0 m"));
 
     for (const Strip& s : strips) {
         renderer::MeshData& target = out[static_cast<size_t>(s.kind)];
@@ -189,10 +191,10 @@ bool BuildRoadMarkings(const renderer::MeshData& road, uint32_t stride, const Ro
                 const float end = std::min(start + settings.dashLengthMeters, total);
                 if (end - start < 1e-3f) break;
                 AddStrip(surface, settings, s.center, s.width, start, end, target);
-                if (target.vertices.size() > kMaxMarkingVertices) return fail("区画線の頂点が多すぎます");
+                if (target.vertices.size() > kMaxMarkingVertices) return fail(ui::Tr("区画線の頂点が多すぎます", "Too many lane marking vertices"));
             }
         }
-        if (target.vertices.size() > kMaxMarkingVertices) return fail("区画線の頂点が多すぎます");
+        if (target.vertices.size() > kMaxMarkingVertices) return fail(ui::Tr("区画線の頂点が多すぎます", "Too many lane marking vertices"));
     }
     return true;
 }

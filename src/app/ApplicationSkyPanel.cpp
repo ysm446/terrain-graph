@@ -152,7 +152,7 @@ void Application::DrawSkyPreviewWindow() {
             ui::PropertyLabelEmpty("hdrPick");
             if (ui::Button(ui::Tr("HDRI を選ぶ…", "Choose HDRI…"), ui::kWideButtonWidth)) {
                 const std::filesystem::path path =
-                    ShowOpenFileDialog(L"HDRI を選ぶ", HdriFileFilters());
+                    ShowOpenFileDialog(ui::Tr(L"HDRI を選ぶ", L"Choose HDRI"), HdriFileFilters());
                 if (!path.empty()) {
                     sky.hdriPath = path;
                     changed = true;

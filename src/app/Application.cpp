@@ -268,7 +268,8 @@ void Application::RequestScreenshot() {
     if (error) {
         TG_LOG_ERROR("スクリーンショットの保存先を作れませんでした: %s",
                      ToUtf8Display(directory).c_str());
-        m_toasts.Push("スクリーンショットを保存できませんでした", "保存先を作れません");
+        m_toasts.Push(ui::Tr("スクリーンショットを保存できませんでした", "Could not save the screenshot"),
+                      ui::Tr("保存先を作れません", "Could not create the folder"));
         return;
     }
 
@@ -277,14 +278,14 @@ void Application::RequestScreenshot() {
         path, [this](bool success, const std::filesystem::path& saved, uint32_t width,
                      uint32_t height) {
             if (!success) {
-                m_toasts.Push("スクリーンショットを保存できませんでした",
+                m_toasts.Push(ui::Tr("スクリーンショットを保存できませんでした", "Could not save the screenshot"),
                               ToUtf8Display(saved.filename()));
                 return;
             }
             char detail[160] = {};
             std::snprintf(detail, sizeof(detail), "%u x %u  %s", width, height,
                           ToUtf8Display(saved.filename()).c_str());
-            m_toasts.Push("スクリーンショットを保存しました", detail, saved);
+            m_toasts.Push(ui::Tr("スクリーンショットを保存しました", "Screenshot saved"), detail, saved);
             TG_LOG_INFO("スクリーンショットを保存しました: %s", ToUtf8Display(saved).c_str());
         });
 }
@@ -298,20 +299,22 @@ void Application::SaveViewportScreenshot() {
     if (error) {
         TG_LOG_ERROR("スクリーンショットの保存先を作れませんでした: %s",
                      ToUtf8Display(directory).c_str());
-        m_toasts.Push("スクリーンショットを保存できませんでした", "保存先を作れません");
+        m_toasts.Push(ui::Tr("スクリーンショットを保存できませんでした", "Could not save the screenshot"),
+                      ui::Tr("保存先を作れません", "Could not create the folder"));
         return;
     }
 
     const std::filesystem::path path = directory / FromUtf8(ScreenshotFileName(true));
     m_device.WaitForGpu();
     if (!m_renderer.SaveOutputToPng(m_device, path)) {
-        m_toasts.Push("スクリーンショットを保存できませんでした", ToUtf8Display(path.filename()));
+        m_toasts.Push(ui::Tr("スクリーンショットを保存できませんでした", "Could not save the screenshot"),
+                      ToUtf8Display(path.filename()));
         return;
     }
     char detail[160] = {};
     std::snprintf(detail, sizeof(detail), "%u x %u  %s", m_renderer.Width(), m_renderer.Height(),
                   ToUtf8Display(path.filename()).c_str());
-    m_toasts.Push("ビューポートを保存しました", detail, path);
+    m_toasts.Push(ui::Tr("ビューポートを保存しました", "Viewport saved"), detail, path);
     TG_LOG_INFO("ビューポートのスクリーンショットを保存しました: %s", ToUtf8Display(path).c_str());
 }
 
@@ -578,10 +581,12 @@ int Application::Run() {
                 if (!m_deviceLostNotified && !Headless()) {
                     m_deviceLostNotified = true;
                     std::wstring text =
-                        L"GPU のデバイスが失われたため、描画を止めました（GPU ドライバの内部エラーなど）。\n"
-                        L"アプリを終了して、起動し直してください。保存していない変更は保存できません。";
+                        ui::Tr(L"GPU のデバイスが失われたため、描画を止めました（GPU ドライバの内部エラーなど）。\n"
+                               L"アプリを終了して、起動し直してください。保存していない変更は保存できません。",
+                               L"The GPU device was lost, so rendering has stopped (e.g. an internal GPU driver error).\n"
+                               L"Quit the app and start it again. Unsaved changes cannot be saved.");
                     if (!m_device.DeviceRemovedReportPath().empty())
-                        text += L"\n\n記録: " + m_device.DeviceRemovedReportPath();
+                        text += ui::Tr(L"\n\n記録: ", L"\n\nReport: ") + m_device.DeviceRemovedReportPath();
                     MessageBoxW(m_window.Handle(), text.c_str(), L"terrain-graph", MB_OK | MB_ICONERROR);
                 }
                 // 自動の撮影・書き出しは、撮れないまま待ち続けないよう失敗で終える。

@@ -1,7 +1,7 @@
 # design-guide — UI の設計ガイド
 
 作成日時: 2026-08-31 14:36
-更新日時: 2026-10-15 09:41
+更新日時: 2026-10-15 10:32
 
 ## ビューポートのホイール: カーソルの下の点へズーム
 
@@ -604,11 +604,16 @@ ImGui は docking ブランチを使う。全体は 1 つのドックスペー�
   ドッキングの指定（`DockBuilderDockWindow`）と検索（`HiddenWithAssetBand`）は `"###Viewport"` で行う。
   ID を変えたときはドックスペースの版も上げる（固定 ID へ移したときに v20 → v21）。
 - ログ（`TG_LOG_*`）は開発用なので日本語のまま。ステータスバーに流れる通知はログから来るので、今は日本語のまま出る。
+- `ui/Localization.h` は ImGui に依存しないので、graph / compositor / io / renderer の側で作る、**画面に出る文**（評価のエラー文、複製の失敗理由など）にも `ui::Tr` を使う。ログにだけ渡る文は訳さない。
+- ノードの説明とピンの説明は、定義の表（`NodeDefinitions.cpp`）に `ui::LocalizedText` の対で書く（`description.Get()` で今の言語の方）。ノードの名前とピンのラベルは英語の 1 つのまま。カタログ（`--dump-catalog`）は日本語の方を書く。
+- ファイルダイアログの題とフィルタ名はワイド文字列版の `ui::Tr(L"…", L"…")` を使う。
+- 言語の変数は `std::atomic`（別スレッドで作る文からも読むため）。
 - 開発用の書き出し（`--screenshot-ui`、カタログ、レポート）は、設定によらず日本語で動く。
   `--language en` / `ja` でその起動だけ切り替えられる（設定には書かない）。`--show-settings` で設定ウィンドウを開いて始める。
 - **英語では文字が横に伸びる。** 英語のときはラベル列を `kLabelColumnWidthEnglish`（144）に広げる（日本語は `kLabelColumnWidth` の 108 のまま）。
   `BeginPropertyTable` の widestLabel は、英語で一番長いラベルが日本語と別の行になるときは英語側だけ別の行を渡してよい。
-  それでも収まらない訳やボタンは短い言い方を選ぶ（例: 「既定の大きさに戻す」→ Reset Size、「合成解像度」→ Composite Res.）。
+  それでも収まらない訳やボタンは短い言い方を選ぶ（例: 「既定の大きさに戻す」→ Reset Size、「合成解像度」→ Composite Res.、
+  「経路をすべて再計算」→ Recompute Routes）。**幅を決めたボタン（`kButtonWidth` 68 / `kWideButtonWidth` 148）は、英語が日本語より長くならないようにする**（目安は 8 / 17 文字）。
 - 新しく作るアセットの既定の名前（「新規マテリアル」など）とファイル名、複製の「 コピー」は、保存されるデータなので今は日本語のまま。
 - **用語集**（新しい UI を足すときもこれに合わせる）:
   名前 Name / メモ Note / シード Seed / 強さ Strength / 量 Amount / 反転 Invert / 繰り返し長 Repeat Length / 解像度 Resolution /

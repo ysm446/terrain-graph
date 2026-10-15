@@ -30,7 +30,7 @@ namespace tg {
 // ProcessPendingFileWork がフレームの外で行う（GPU 待機を伴うため）。
 void Application::RequestOpenProject() {
     const std::filesystem::path path =
-        ShowPickFolderDialog(L"プロジェクトのルートフォルダを開く", m_workspace.Root());
+        ShowPickFolderDialog(ui::Tr(L"プロジェクトのルートフォルダを開く", L"Open Project Root Folder"), m_workspace.Root());
     if (!path.empty()) {
         m_pendingRoot = path;
     }
@@ -48,7 +48,7 @@ void Application::RequestSaveProject(bool saveAs) {
         return;
     }
     const std::filesystem::path path = ShowSaveFileDialog(
-        L"シーンを保存", {{L"Terrain Graph シーン", L"*.tgscene"}}, L"tgscene",
+        ui::Tr(L"シーンを保存", L"Save Scene"), {{ui::Tr(L"Terrain Graph シーン", L"Terrain Graph Scene"), L"*.tgscene"}}, L"tgscene",
         m_projectPath.extension() == L".tgscene" ? m_projectPath :
             m_workspace.Root() / L"Scenes" / (m_projectPath.empty() ? L"Untitled.tgscene" : m_projectPath.stem().wstring() + L".tgscene"));
     if (!path.empty() && m_workspace.Contains(path)) {
@@ -264,7 +264,7 @@ void Application::DrawFileMenu() {
         RequestOpenProject();
     }
     if (ImGui::MenuItem(ui::Tr("シーンを開く…", "Open Scene…"))) {
-        m_pendingProjectOpen = ShowOpenFileDialog(L"シーンを開く", {{L"シーン / 旧プロジェクト", L"*.tgscene;*.tgproj;*.mmproj"}});
+        m_pendingProjectOpen = ShowOpenFileDialog(ui::Tr(L"シーンを開く", L"Open Scene"), {{ui::Tr(L"シーン / 旧プロジェクト", L"Scene / Legacy Project"), L"*.tgscene;*.tgproj;*.mmproj"}});
     }
     DrawRecentMenu();
     if (ImGui::MenuItem(ui::Tr("保存済みシーンを部品に分離…", "Split Saved Scene into Components…"), nullptr, false,
@@ -697,7 +697,9 @@ void Application::ProcessPendingFileWork() {
         const uint32_t written =
             io::ExportMaterialTextures(m_device, m_pipelineCache, refs, m_exportSettings);
         if (written > 0) {
-            m_toasts.Push("テクスチャを " + std::to_string(written) + " 枚書き出しました");
+            m_toasts.Push(ui::CurrentLanguage() == ui::Language::English
+                              ? "Exported " + std::to_string(written) + " textures"
+                              : "テクスチャを " + std::to_string(written) + " 枚書き出しました");
             m_showExport = false;
         }
     }

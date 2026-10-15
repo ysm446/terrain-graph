@@ -1613,7 +1613,7 @@ bool Application::DrawPathSettings(graph::Node& node) {
                               ui::Tr("エッジ %zu 本（古い %zu 本）", "%zu edges (%zu stale)"), routedEdges,
                               graph::CountStalePathRoutes(path));
             ui::PropertyLabelEmpty("pathRouteAll");
-            if (ui::Button(ui::Tr("経路をすべて再計算", "Recompute All Routes"), ui::kWideButtonWidth)) {
+            if (ui::Button(ui::Tr("経路をすべて再計算", "Recompute Routes"), ui::kWideButtonWidth)) {
                 RecomputePathRoutes(node, true, nullptr);
             }
             ui::PropertyEnd();
@@ -1904,7 +1904,7 @@ bool Application::DrawPathSettings(graph::Node& node) {
                                       "%.1f m");
                     ui::PropertyLabelEmpty("pathFitClothoid");
                     ImGui::BeginDisabled(!fittable);
-                    if (ui::Button(ui::Tr("クロソイドの制御点に変換", "Convert to Clothoid"), ui::kWideButtonWidth)) {
+                    if (ui::Button(ui::Tr("クロソイドの制御点に変換", "To Clothoid"), ui::kWideButtonWidth)) {
                         graph::PathClothoidFitOptions options;
                         options.toleranceMeters = m_pathFitToleranceMeters;
                         options.clothoidRatio = clothoidRatio;

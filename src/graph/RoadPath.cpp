@@ -1,5 +1,7 @@
 #include "graph/RoadPath.h"
 
+#include "ui/Localization.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -109,10 +111,10 @@ bool BuildRoadBaseline(const RoadPathSettings& road, float sizeMeters, const Roa
                        RoadProfileCurve& outBaseline, std::string* error) {
     const auto fail = [&](const char* message) { if (error) *error = message; return false; };
     const PathSettings& path = road.path;
-    if (sizeMeters <= 0.0f) return fail("地形の大きさが決まっていません");
+    if (sizeMeters <= 0.0f) return fail(ui::Tr("地形の大きさが決まっていません", "Terrain size is not set"));
     const auto strands = BuildPathStrands(path);
     if (strands.size() != 1 || strands.front().closed || strands.front().points.size() != path.points.size())
-        return fail("分岐・閉ループ・孤立点のない 1 本の線が必要です");
+        return fail(ui::Tr("分岐・閉ループ・孤立点のない 1 本の線が必要です", "Needs a single line with no branches, closed loops or isolated points"));
 
     // 曲線を割った標本を実寸へ。蛇行は掛けない（sizeMeters を渡さない）。
     std::vector<PlanSample> plan;
@@ -121,7 +123,7 @@ bool BuildRoadBaseline(const RoadPathSettings& road, float sizeMeters, const Roa
                            sample.heightOffsetMeters};
         if (plan.empty() || std::hypot(p.x - plan.back().x, p.z - plan.back().z) > 1e-4f) plan.push_back(p);
     }
-    if (plan.size() < 2) return fail("線の点が足りません");
+    if (plan.size() < 2) return fail(ui::Tr("線の点が足りません", "Not enough points on the line"));
 
     // 平面の道のりで等間隔に割り直す。曲線の標本は制御点の区間ごとなので、長い区間では
     // 間隔が広く、地形の高さを拾い損ねる。
@@ -150,7 +152,7 @@ bool BuildRoadBaseline(const RoadPathSettings& road, float sizeMeters, const Roa
     };
     for (size_t i = 0; i < count; ++i) emit(static_cast<float>(i) * step);
     if (total - static_cast<float>(count - 1) * step > 1e-3f) emit(total);
-    if (centers.size() < 2) return fail("線が短すぎます");
+    if (centers.size() < 2) return fail(ui::Tr("線が短すぎます", "Line is too short"));
     outBaseline = BuildRoadProfileCurve(centers);
     return true;
 }
