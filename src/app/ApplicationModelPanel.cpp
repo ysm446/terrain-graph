@@ -615,11 +615,12 @@ void Application::DrawModelPreviewWindow() {
     ImGui::EndChild();
     ImGui::Separator();
     ImGui::BeginChild("modelProperties", ImVec2(0, 0));
-    ui::HintText("%s", ui::Tr("左ドラッグ: 回転 / 中・Shift+左ドラッグ: パン / ホイール: ズーム",
-                               "Left-drag: orbit / Middle or Shift+left-drag: pan / Wheel: zoom"));
-    ui::HintText("%s", ui::Tr("プレビュー上で F: 中央へフォーカス / A: 全体表示。寸法の単位はm",
-                               "Over the preview, F: focus center / A: frame all. Dimensions are in m"));
     if (preview && ui::Button(ui::Tr("視点を戻す", "Reset View"), ui::kWideButtonWidth)) preview->ResetView();
+    ImGui::SameLine();
+    ui::HelpMarker(ui::Tr("左ドラッグ: 回転 / 中・Shift+左ドラッグ: パン / ホイール: ズーム" "\n"
+                   "プレビュー上で F: 中央へフォーカス / A: 全体表示。寸法の単位はm",
+                   "Left-drag: orbit / Middle or Shift+left-drag: pan / Wheel: zoom" "\n"
+                   "Over the preview, F: focus center / A: frame all. Dimensions are in m"));
     bool changed = false;
     if (ui::BeginPropertyTable("modelBasic")) {
         char name[256];
@@ -652,7 +653,8 @@ void Application::DrawModelPreviewWindow() {
     // インポスターを焼いてあれば、メッシュの段の後ろにインポスターの段を足す。
     if (asset.geometry && (asset.geometry->lods.size() > 1 || asset.impostor.baked)) {
         const size_t count = asset.geometry->lods.size() + (asset.impostor.baked ? 1 : 0);
-        ui::SectionHeader("LOD");
+        ui::SectionHeader("LOD",
+                          ui::Tr("Model Scatter の「LOD 自動」で使います", "Used by \"Auto LOD\" in Model Scatter"));
         if (ui::BeginPropertyTable("modelLods", ui::Tr("インポスターの画面サイズ", "Impostor Screen Size"))) {
             renderer::ModelAsset defaults;
             defaults.geometry = asset.geometry;
@@ -690,11 +692,12 @@ void Application::DrawModelPreviewWindow() {
             distances += text;
         }
         ui::HintText("%s", distances.c_str());
-        ui::HintText("%s", ui::Tr("Model Scatter の「LOD 自動」で使います", "Used by \"Auto LOD\" in Model Scatter"));
     }
     if (asset.geometry) DrawImpostorSection(asset);
     if (asset.geometry) {
-        ui::SectionHeader(ui::Tr("マテリアルスロット", "Material Slots"));
+        ui::SectionHeader(ui::Tr("マテリアルスロット", "Material Slots"),
+                          ui::Tr("既存のマテリアルアセットを割り当てます。未割り当てはグレーで表示します",
+                          "Assigns existing material assets. Unassigned slots show in gray"));
         if (ui::BeginPropertyTable("modelMaterials")) {
             for (size_t i = 0; i < asset.geometry->slots.size(); ++i) {
                 ImGui::PushID(static_cast<int>(i));
@@ -704,8 +707,6 @@ void Application::DrawModelPreviewWindow() {
             }
             ui::EndPropertyTable();
         }
-        ui::HintText("%s", ui::Tr("既存のマテリアルアセットを割り当てます。未割り当てはグレーで表示します",
-                                   "Assigns existing material assets. Unassigned slots show in gray"));
     }
     if (changed) {
         MarkDocumentChanged(false);
@@ -728,7 +729,9 @@ void Application::DrawImpostorSection(renderer::ModelAsset& asset) {
             if (values[i] == value) return i;
         return 1;
     };
-    ui::SectionHeader(ui::Tr("インポスター", "Impostor"));
+    ui::SectionHeader(ui::Tr("インポスター", "Impostor"),
+                      ui::Tr("画像はモデルの横に「名前_Impostor_C.png / _N.png / _V.png」で保存します",
+                      "Images are saved next to the model as \"Name_Impostor_C.png / _N.png / _V.png\""));
     if (ui::BeginPropertyTable("modelImpostor", ui::Tr("インポスターで表示", "Show Impostor"))) {
         int range = impostor.settings.fullSphere ? 1 : 0;
         if (ui::PropertyCombo(ui::Tr("範囲", "Range"), &range, ui::Tr(kRangeLabels).data(), IM_ARRAYSIZE(kRangeLabels), 0,
@@ -793,8 +796,6 @@ void Application::DrawImpostorSection(renderer::ModelAsset& asset) {
         ImGui::SameLine();
         if (ui::Button(ui::Tr("削除", "Delete"), ui::kButtonWidth)) ImGui::OpenPopup("###DeleteImpostor");
     }
-    ui::HintText("%s", ui::Tr("画像はモデルの横に「名前_Impostor_C.png / _N.png / _V.png」で保存します",
-                               "Images are saved next to the model as \"Name_Impostor_C.png / _N.png / _V.png\""));
     if (ImGui::BeginPopupModal(ui::Tr("インポスターの削除###DeleteImpostor", "Delete Impostor###DeleteImpostor"), nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted(asset.name.c_str());

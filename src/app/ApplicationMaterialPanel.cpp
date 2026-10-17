@@ -125,7 +125,11 @@ bool Application::DrawMaterialProperties(compositor::MaterialAsset& asset) {
         ui::EndPropertyTable();
     }
 
-    ui::SectionHeader(ui::Tr("マップ", "Maps"));
+    ui::SectionHeader(ui::Tr("マップ", "Maps"),
+                      ui::Tr("ORD は AO=R / ラフネス=G / ハイト=B に割り当てる（Megascans の並び）" "\n"
+                      "ハイトはレイヤーの「ハイトのソース」をテクスチャにすると効く",
+                      "ORD assigns AO=R / Roughness=G / Height=B (the Megascans layout)" "\n"
+                      "Height takes effect when the layer's height source is set to Texture"));
     if (ui::BeginPropertyTable("materialMapRows")) {
         changed |= DrawTextureSlotRow(ui::Tr("ベースカラー", "Base Color"), asset.baseColor, m_textureLibrary, m_pendingAssetReveal);
         changed |= DrawTextureSlotRow(ui::Tr("法線", "Normal"), asset.normal, m_textureLibrary, m_pendingAssetReveal);
@@ -164,11 +168,10 @@ bool Application::DrawMaterialProperties(compositor::MaterialAsset& asset) {
 
         ui::EndPropertyTable();
     }
-    ui::HintText("%s", ui::Tr("ORD は AO=R / ラフネス=G / ハイト=B に割り当てる（Megascans の並び）", "ORD assigns AO=R / Roughness=G / Height=B (the Megascans layout)"));
-    ui::HintText("%s", ui::Tr("ハイトはレイヤーの「ハイトのソース」をテクスチャにすると効く", "Height takes effect when the layer's height source is set to Texture"));
 
     // 不透明度（アルファ抜き）。モデルと道路の帯（Lane Marking など）に効く。地形のレイヤー合成には使わない。
-    ui::SectionHeader(ui::Tr("不透明度", "Opacity"));
+    ui::SectionHeader(ui::Tr("不透明度", "Opacity"),
+                      ui::Tr("不透明度はマップから読み、無ければベースカラーのアルファを使う。地形のレイヤー合成には効かない", "Opacity is read from the map, or from the base color alpha if there is none. It does not affect terrain layer blending"));
     if (ui::BeginPropertyTable("materialOpacityRows", ui::Tr("不透明度マップ", "Opacity Map"))) {
         static const compositor::MaterialAsset kDefaultAsset;
         static const ui::LocalizedText kBlendModes[] = {
@@ -200,10 +203,10 @@ bool Application::DrawMaterialProperties(compositor::MaterialAsset& asset) {
         }
         ui::EndPropertyTable();
     }
-    ui::HintText("%s", ui::Tr("不透明度はマップから読み、無ければベースカラーのアルファを使う。地形のレイヤー合成には効かない", "Opacity is read from the map, or from the base color alpha if there is none. It does not affect terrain layer blending"));
 
     // モデルに割り当てたときだけ効く設定。地形のレイヤー合成には使わない。
-    ui::SectionHeader(ui::Tr("モデル", "Model"));
+    ui::SectionHeader(ui::Tr("モデル", "Model"),
+                      ui::Tr("両面はモデルの描画だけに効く", "Two-Sided only affects model rendering"));
     if (ui::BeginPropertyTable("materialModelRows")) {
         static const compositor::MaterialAsset kDefaultAsset;
         changed |= ui::PropertyBool(
@@ -211,10 +214,13 @@ bool Application::DrawMaterialProperties(compositor::MaterialAsset& asset) {
             ui::Tr("裏面も描く。裏から見たときは法線を反転して陰影を付ける。葉のカードなど厚みの無い面に使う", "Also draws back faces, flipping the normal for shading when seen from behind. For thin surfaces like leaf cards"));
         ui::EndPropertyTable();
     }
-    ui::HintText("%s", ui::Tr("両面はモデルの描画だけに効く", "Two-Sided only affects model rendering"));
 
     // 配置の点の色むら（散布の Variation）への応え方。モデルの配置だけに効く。
-    ui::SectionHeader(ui::Tr("色むら", "Color Variation"));
+    ui::SectionHeader(ui::Tr("色むら", "Color Variation"),
+                      ui::Tr("散布の Variation に繋いだマスクの値（0〜1）で色を寄せる。0.5 で調整なし" "\n"
+                      "葉のマテリアルに設定し、幹は既定のままにする。インポスターは作り直すと反映される",
+                      "Shifts the color by the mask value (0-1) connected to Scatter's Variation. 0.5 means no change" "\n"
+                      "Set it on leaf materials and leave trunks at the default. Impostors pick it up when rebuilt"));
     if (ui::BeginPropertyTable("materialVariationRows", ui::Tr("0 側の彩度", "Brightness at 0"))) {
         static const compositor::ColorVariation kDefaultVariation;
         auto& variation = asset.colorVariation;
@@ -247,8 +253,6 @@ bool Application::DrawMaterialProperties(compositor::MaterialAsset& asset) {
             ui::Tr("株ごとの乱数で色むらの値をずらす幅（±）。同じ場所の株どうしにも差を付ける", "Per-plant random shift of the variation value (±). Differentiates plants in the same spot"), "%.2f");
         ui::EndPropertyTable();
     }
-    ui::HintText("%s", ui::Tr("散布の Variation に繋いだマスクの値（0〜1）で色を寄せる。0.5 で調整なし", "Shifts the color by the mask value (0-1) connected to Scatter's Variation. 0.5 means no change"));
-    ui::HintText("%s", ui::Tr("葉のマテリアルに設定し、幹は既定のままにする。インポスターは作り直すと反映される", "Set it on leaf materials and leave trunks at the default. Impostors pick it up when rebuilt"));
 
     return changed;
 }
@@ -375,7 +379,6 @@ void Application::DrawMaterialSphereWindow() {
 
     ImGui::Separator();
 
-    ui::HintText("%s", ui::Tr("ドラッグ: 回転 / ホイール: ズーム / L＋ドラッグ: 光源", "Drag: rotate / Wheel: zoom / L+Drag: light"));
 
     // 表示だけの設定。マテリアルの設定とは区切り線で分ける。
     if (ui::BeginPropertyTable("materialSphereViewRows")) {
@@ -429,6 +432,8 @@ void Application::DrawMaterialSphereWindow() {
     }
     ImGui::SameLine();
     if (ui::Button(ui::Tr("光源を戻す", "Reset Light"), ui::kWideButtonWidth)) m_materialSphere.ResetLight();
+    ImGui::SameLine();
+    ui::HelpMarker(ui::Tr("ドラッグ: 回転 / ホイール: ズーム / L＋ドラッグ: 光源", "Drag: rotate / Wheel: zoom / L+Drag: light"));
 
     ImGui::EndChild();
     ImGui::SameLine();

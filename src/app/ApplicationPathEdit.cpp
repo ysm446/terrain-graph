@@ -1994,12 +1994,6 @@ bool Application::DrawPathSettings(graph::Node& node) {
         }
     }
 
-    ui::HintText("%s", ui::Tr("ビューポートで編集する（操作はビューポートの下に出る）。"
-                              "地形はプレビュー中のものに沿う。Base に繋いだ地形を見るには、"
-                              "このノードをダブルクリック",
-                              "Edit in the viewport (the controls are shown at its bottom). "
-                              "Points follow the previewed terrain. To see the terrain connected "
-                              "to Base, double-click this node"));
     return changed;
 }
 

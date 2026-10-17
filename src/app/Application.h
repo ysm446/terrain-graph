@@ -410,6 +410,7 @@ private:
     bool Headless() const;
     // 選択したノードの設定の行（グラフのパネルの下半分）。selected が nullptr なら案内だけ。
     void DrawNodeProperties(graph::Node* selected);
+    std::string NodeHelpText(const graph::Node& node) const;
     // --evaluate-report: 評価が落ち着いたか（本体の評価・雲や雪煙のマスク・配置の点の数まで）。
     bool EvaluationSettled(bool evaluationIdle);
     // --evaluate-report: レポートを書く。書けなければ偽。reportOk は問題が無かったか。

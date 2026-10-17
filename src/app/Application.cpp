@@ -1348,7 +1348,13 @@ void Application::DrawSettingsWindow() {
     io::UiSettings& ui = m_settings.Ui();
     bool changed = false;
 
-    ui::SectionHeader("UI");
+    ui::SectionHeader("UI",
+                      ui::Tr("拡大するとウィンドウも同じ倍率で大きくなる（作業面積は変わらない）" "\n"
+                      "パネルの幅は ini にピクセルで残る。ずれたら ウィンドウ > レイアウトをリセット",
+                      "Scaling up also enlarges the window by the same factor "
+                      "(the working area stays the same)" "\n"
+                      "Panel widths are kept in pixels in the ini. "
+                      "If they drift, use Window > Reset Layout"));
     if (ui::BeginPropertyTable("settingsUiRows")) {
         // 言語の名前はどちらの言語でも訳さない（読めない言語に切り替えても戻せるように）。
         static const char* const kLanguageLabels[] = {"日本語", "English"};
@@ -1404,12 +1410,6 @@ void Application::DrawSettingsWindow() {
                                           "Row heights follow the text size"));
         ui::EndPropertyTable();
     }
-    ui::HintText("%s", ui::Tr("拡大するとウィンドウも同じ倍率で大きくなる（作業面積は変わらない）",
-                              "Scaling up also enlarges the window by the same factor "
-                              "(the working area stays the same)"));
-    ui::HintText("%s", ui::Tr("パネルの幅は ini にピクセルで残る。ずれたら ウィンドウ > レイアウトをリセット",
-                              "Panel widths are kept in pixels in the ini. "
-                              "If they drift, use Window > Reset Layout"));
 
     ui::SectionHeader(ui::Tr("ウィンドウ", "Window"));
     if (ui::BeginPropertyTable("settingsWindowRows")) {

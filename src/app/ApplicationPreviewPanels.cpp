@@ -236,7 +236,9 @@ void Application::DrawMaterialPanel() {
             ui::EndPropertyTable();
         }
 
-        ui::SectionHeader(ui::Tr("ボリューム雲", "Volumetric Clouds"));
+        ui::SectionHeader(ui::Tr("ボリューム雲", "Volumetric Clouds"),
+                          ui::Tr("大気散乱スカイで使用。雲の形と配置は雲ノードで設定します",
+                          "Used by the Atmospheric Sky. Cloud shape and placement are set with cloud nodes"));
         if (ui::BeginPropertyTable("volumeCloudQuality", ui::Tr("レイマーチ品質", "Ray March Quality"))) {
             ui::PropertyBool(ui::Tr("雲を描画", "Draw Clouds"), &m_renderer.ShowClouds(), renderer::kPreviewDefaults.showClouds,
                 ui::Tr("雲と雲影をまとめて表示・非表示にします。ノードと天球の雲設定は保持します",
@@ -273,12 +275,12 @@ void Application::DrawMaterialPanel() {
                        "Draws clouds beyond the far start distance of Cloud Weather Layer in a separate quarter-resolution pass. When off, all distances are integrated at the same resolution, which costs more."));
             ui::EndPropertyTable();
         }
-        ui::HintText("%s", ui::Tr("大気散乱スカイで使用。雲の形と配置は雲ノードで設定します",
-                                  "Used by the Atmospheric Sky. Cloud shape and placement are set with cloud nodes"));
 
         // **レンズの値はここに出さない。** 焦点距離も F 値もカメラの節が持っていて、
         // すぐ上に見えている。同じ値を並べると、どちらが効いているのか分からなくなる。
-        ui::SectionHeader(ui::Tr("被写界深度", "Depth of Field"));
+        ui::SectionHeader(ui::Tr("被写界深度", "Depth of Field"),
+                          ui::Tr("ボケ量は焦点距離・F 値・ピント距離で決まる。ワールドの 1 単位 = 1m",
+                          "Bokeh depends on focal length, F-stop and focus distance. 1 world unit = 1 m"));
         renderer::DofSettings& dof = m_renderer.Dof();
         const renderer::DofSettings kDefaultDof;
         if (ui::BeginPropertyTable("dofRows")) {
@@ -344,8 +346,6 @@ void Application::DrawMaterialPanel() {
             ImGui::EndDisabled();
             ui::EndPropertyTable();
         }
-        ui::HintText("%s", ui::Tr("ボケ量は焦点距離・F 値・ピント距離で決まる。ワールドの 1 単位 = 1m",
-                                  "Bokeh depends on focal length, F-stop and focus distance. 1 world unit = 1 m"));
     }
     ImGui::End();
 }
@@ -391,7 +391,9 @@ void Application::DrawLightingPanel() {
             auto& sky = m_renderer.AtmosphericSettings();
             const renderer::CelestialSettings celestialDefaults;
             const renderer::AtmosphereSettings skyDefaults;
-            ui::SectionHeader(ui::Tr("観測地と日時", "Location & Time"));
+            ui::SectionHeader(ui::Tr("観測地と日時", "Location & Time"),
+                              dateTimeMode ? ui::Tr("太陽・月・星空の回転は日時から計算しています。屈折と大気減光は含みません。",
+                              "The sun, moon and star rotation are computed from the date and time. Refraction and atmospheric extinction are not included.") : nullptr);
             if (ui::BeginPropertyTable("celestialRows", ui::Tr("UTC オフセット", "Celestial Mode"))) {
                 static const ui::LocalizedText kCelestialModes[] = {{"手動", "Manual"}, {"緯度経度と日時", "Lat/Long & Time"}};
                 int mode = static_cast<int>(celestial.mode);
@@ -427,8 +429,6 @@ void Application::DrawLightingPanel() {
                 ImGui::EndDisabled();
                 ui::EndPropertyTable();
             }
-            if (dateTimeMode) ui::HintText("%s", ui::Tr("太陽・月・星空の回転は日時から計算しています。屈折と大気減光は含みません。",
-                                                        "The sun, moon and star rotation are computed from the date and time. Refraction and atmospheric extinction are not included."));
         }
         renderer::LightSettings& light = m_renderer.Light();
 
@@ -497,7 +497,7 @@ void Application::DrawLightingPanel() {
         }
         // 近景マテリアル。Surface の「近景の 1 周の長さ」で貼り直す範囲（カメラからの距離）。
         ui::SectionHeader(ui::Tr("近景マテリアル", "Near Material"));
-        if (ui::BeginPropertyTable("nearMaterialRows")) {
+        if (ui::BeginPropertyTable("nearMaterialRows", ui::Tr("合成結果へ戻る距離", "Composite Beyond"))) {
             ui::PropertyBool(ui::Tr("近景マテリアル", "Near Material"), &m_renderer.NearMaterial(), renderer::kPreviewDefaults.nearMaterial,
                              ui::Tr("カメラの近くで、Surface のマテリアルを「近景の 1 周の長さ」で貼り直す。"
                                     "切ると合成結果だけを貼る",
@@ -571,7 +571,9 @@ void Application::DrawLightingPanel() {
                                          "0 is dark, 1 reflects strongly. Does not change the color or reflectance of terrain materials."));
                 ui::EndPropertyTable();
             }
-            ui::SectionHeader(ui::Tr("月と星空", "Moon & Stars"));
+            ui::SectionHeader(ui::Tr("月と星空", "Moon & Stars"),
+                              ui::Tr("夜景は露出を調整してください。昼の露出では月明かりの地形は暗く写ります。",
+                              "Adjust exposure for night scenes. With daytime exposure, moonlit terrain looks dark."));
             if (ui::BeginPropertyTable("nightSkyRows", ui::Tr("満月時の照度", "Star Brightness"))) {
                 bool night = sky.nightEnabled != 0;
                 if (ui::PropertyBool(ui::Tr("夜空を有効", "Night Sky"), &night, defaults.nightEnabled != 0,
@@ -613,8 +615,6 @@ void Application::DrawLightingPanel() {
                 ImGui::EndDisabled();
                 ui::EndPropertyTable();
             }
-            ui::HintText("%s", ui::Tr("夜景は露出を調整してください。昼の露出では月明かりの地形は暗く写ります。",
-                                      "Adjust exposure for night scenes. With daytime exposure, moonlit terrain looks dark."));
             ui::SectionHeader(ui::Tr("環境光", "Ambient Light"));
             if (ui::BeginPropertyTable("atmosphericEnvironmentRows", ui::Tr("スカイライト強度", "Skylight"))) {
                 ui::PropertyFloat(ui::Tr("スカイライト強度", "Skylight"), &m_renderer.AtmosphericEnvironmentIntensity(),
@@ -627,7 +627,9 @@ void Application::DrawLightingPanel() {
                                          "Values other than 1 are corrections for lighting balance. This is not GI, which computes local bounce light from terrain."));
                 ui::EndPropertyTable();
             }
-            ui::SectionHeader(ui::Tr("雲", "Clouds"));
+            ui::SectionHeader(ui::Tr("雲", "Clouds"),
+                              ui::Tr("太陽に合わせて空・環境光・雲影が変わります",
+                              "The sky, ambient light and cloud shadows follow the sun"));
             const bool nodeCloud = m_graph.CompileCloud().hasOutput;
             if (nodeCloud) ui::HintText("%s", ui::Tr("雲はグラフの Cloud Noise・Cloud Layer・Cloud Output で設定します",
                                                      "Clouds are set with Cloud Noise, Cloud Layer and Cloud Output in the graph"));
@@ -738,8 +740,6 @@ void Application::DrawLightingPanel() {
                 }
                 ui::EndPropertyTable();
             }
-            ui::HintText("%s", ui::Tr("太陽に合わせて空・環境光・雲影が変わります",
-                                      "The sky, ambient light and cloud shadows follow the sun"));
         }
 
         ui::SectionHeader(ui::Tr("露出", "Exposure"));
@@ -800,7 +800,9 @@ void Application::DrawLightingPanel() {
         // **環境そのもの（何を空にするか）はシーンの天球（1 つ）が持つ。**
         // ここに残すのは、天球ではなく見え方に属する設定だけ。差し替えの入口だけ置く。
         if (!m_renderer.AtmosphericMode()) {
-            ui::SectionHeader(ui::Tr("作業用IBL", "Work IBL"));
+            ui::SectionHeader(ui::Tr("作業用IBL", "Work IBL"),
+                              ui::Tr("作業用IBLの設定は「作業用IBL」ウィンドウで行う。.tgskyを開いてもシーンのスカイは変更しない",
+                              "Work IBL settings are in the \"Work IBL\" window. Opening a .tgsky does not change the scene sky"));
             if (ui::BeginPropertyTable("iblRows")) {
                 const renderer::SkyAsset* activeSky = m_skyLibrary.Active();
                 ui::PropertyLabel(ui::Tr("天球", "Sky"));
@@ -828,8 +830,6 @@ void Application::DrawLightingPanel() {
                 ImGui::EndDisabled();
                 ui::EndPropertyTable();
             }
-            ui::HintText("%s", ui::Tr("作業用IBLの設定は「作業用IBL」ウィンドウで行う。.tgskyを開いてもシーンのスカイは変更しない",
-                                      "Work IBL settings are in the \"Work IBL\" window. Opening a .tgsky does not change the scene sky"));
         }
 
         ui::SectionHeader(ui::Tr("トーンマップ", "Tone Mapping"));

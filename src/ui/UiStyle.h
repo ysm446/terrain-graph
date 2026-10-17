@@ -108,6 +108,10 @@ void EndPropertyTable();
 
 // セクション見出し。プロパティテーブルの外で呼ぶ。
 void SectionHeader(const char* label);
+// 説明付きの見出し。見出しの文字の右に「?」の印を置き、載せると help をツールチップで出す。
+// 節の使い方・繋ぎ方・出力の意味のような**変わらない説明**はここに載せ、行を取らない。
+// help が空なら印を出さない（条件付きの説明をそのまま渡せる）。
+void SectionHeader(const char* label, const char* help);
 
 // 行を開き、ラベル列を描いて値列へ移動する。既製の行で表せないウィジェットを
 // 自分で置きたいときに使う。ID を積むので、行の終わりで PropertyEnd() を呼ぶこと。
@@ -238,8 +242,13 @@ bool SaveIconButton(const char* id, float size, const char* tooltip);
 ImU32 WarnColor();
 ImU32 ErrorColor();
 
-// 補助テキスト。操作の説明や単位の目安を 1 行で添えるときに使う。
+// 補助テキスト。**今の状態**（繋がっていない、未保存、結果の数など）を 1 行で添えるときに使う。
+// 変わらない説明は SectionHeader(label, help) か HelpMarker() に載せ、行を取らない。
 void HintText(const char* format, ...);
+
+// 「?」の印。載せると help をツールチップで出す。見出しの無い行に説明を添えるときに、
+// 前の部品の右（SameLine）に置く。help が空なら何も描かない。
+void HelpMarker(const char* help);
 
 // 左右の区画の境界。呼び出し側で左右の余白とSameLineを配置する。
 bool VerticalSplitter(const char* id, float* width, float minWidth, float maxWidth, float height);

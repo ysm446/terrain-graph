@@ -42,8 +42,8 @@ bool Application::DrawLayerMaterialProperties(compositor::MaterialAsset& asset) 
     const auto makeMask = [](graph::PresetMaterial& layer) {
         layer.mask.emplace(); layer.mask->shape = graph::RoadMaskShape::Constant; layer.mask->breakupAmount = 0;
     };
-    ui::SectionHeader(ui::Tr("レイヤー", "Layers"));
-    ui::HintText("%s", ui::Tr("上の行ほど上層です。ドラッグで順序を変更できます（最大4層）", "Higher rows are upper layers. Drag to reorder (up to 4 layers)"));
+    ui::SectionHeader(ui::Tr("レイヤー", "Layers"),
+                      ui::Tr("上の行ほど上層です。ドラッグで順序を変更できます（最大4層）", "Higher rows are upper layers. Drag to reorder (up to 4 layers)"));
     ImGui::BeginDisabled(readOnly);
     ImGui::BeginDisabled(layers.size() >= 4);
     if (ui::Button(ui::Tr("追加", "Add"), 70)) {
@@ -119,8 +119,8 @@ bool Application::DrawLayerMaterialProperties(compositor::MaterialAsset& asset) 
         m_selectedPresetLayer = moveTo; layersChanged = true;
     }
     auto& p = layers[m_selectedPresetLayer];
-    ui::SectionHeader(m_selectedPresetLayer == 0 ? ui::Tr("下地の設定", "Base Settings") : ui::Tr("選択レイヤーの設定", "Selected Layer"));
-    ui::HintText("%s", ui::Tr("マテリアルを選択、またはアセットから下の欄へドロップして割り当て", "Select a material, or drop one from the assets onto the field below to assign it"));
+    ui::SectionHeader(m_selectedPresetLayer == 0 ? ui::Tr("下地の設定", "Base Settings") : ui::Tr("選択レイヤーの設定", "Selected Layer"),
+                      ui::Tr("マテリアルを選択、またはアセットから下の欄へドロップして割り当て", "Select a material, or drop one from the assets onto the field below to assign it"));
     ImGui::PushID(m_selectedPresetLayer);
     if (ui::BeginPropertyTable("layerAssetLayer", ui::Tr("高さのしきい値", "Lane Center Offset"))) {
         layersChanged |= ui::PropertyBool(ui::Tr("表示", "Visible"), &p.enabled, true, ui::Tr("下地を隠すと定数マテリアルを表示します", "Hiding the base shows the constant material"));

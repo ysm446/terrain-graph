@@ -2963,13 +2963,22 @@ void Application::DrawGraphPanel() {
         // 出力が 2 つ以上あるノードは、どちらを見ているのかも出す。
         const graph::Pin* previewPin = m_graph.FindPin(m_previewGraphPin);
         if (ui::BeginPropertyTable("graphPreviewRow")) {
+            ui::PropertyLabel(ui::Tr("プレビュー", "Preview"));
             if (previewPin != nullptr && previewNode != nullptr &&
                 previewNode->outputs.size() > 1) {
-                ui::PropertyValue(ui::Tr("プレビュー", "Preview"), ui::Tr("%s（%s）", "%s (%s)"), previewName,
-                                  previewPin->label.c_str());
+                ImGui::Text(ui::Tr("%s（%s）", "%s (%s)"), previewName, previewPin->label.c_str());
             } else {
-                ui::PropertyValue(ui::Tr("プレビュー", "Preview"), "%s", previewName);
+                ImGui::TextUnformatted(previewName);
             }
+            // 切り替え方は行の右の「?」に載せる（行を取らない）。
+            ImGui::SameLine();
+            ui::HelpMarker(ui::Tr("出力ピンをクリック（またはノードをダブルクリック）で、"
+                           "ビューポートに出す出力を切り替える。Output ノードは選ぶだけで出力へ戻る。"
+                           "Mask の出力を選ぶと、そのマスクが白黒で貼られる",
+                           "Click an output pin (or double-click a node) to switch the output shown in the viewport. "
+                           "Selecting the Output node returns to the output. "
+                           "Choosing a Mask output shows that mask in black and white"));
+            ui::PropertyEnd();
             ui::EndPropertyTable();
         }
         if (previewNode != nullptr) {
@@ -2977,12 +2986,6 @@ void Application::DrawGraphPanel() {
                 SetPreviewGraphNode(0);
             }
         }
-        ui::HintText("%s", ui::Tr("出力ピンをクリック（またはノードをダブルクリック）で、"
-                                  "ビューポートに出す出力を切り替える。Output ノードは選ぶだけで出力へ戻る。"
-                                  "Mask の出力を選ぶと、そのマスクが白黒で貼られる",
-                                  "Click an output pin (or double-click a node) to switch the output shown in the viewport. "
-                                  "Selecting the Output node returns to the output. "
-                                  "Choosing a Mask output shows that mask in black and white"));
         ImGui::Spacing();
     }
 
@@ -2990,7 +2993,14 @@ void Application::DrawGraphPanel() {
     if (m_selectedGraphNode == 0 && m_selectedGraphGroup != 0) {
         for (graph::NodeGroup& group : m_graph.MutableGroups()) {
             if (group.id != m_selectedGraphGroup) continue;
-            ui::SectionHeader(ui::Tr("グループ", "Group"));
+            ui::SectionHeader(ui::Tr("グループ", "Group"),
+                              ui::Tr("ダブルクリックで畳む / 開く。"
+                              "枠の中にあるノードがこのグループの中身。見出しを掴むと中のノードごと動き、縁を掴むと大きさが変わる。"
+                              "Delete で枠だけを消す（中のノードは残る）。評価には影響しない",
+                              "Double-click to collapse / expand. "
+                              "Nodes inside the frame belong to this group. Drag the title to move it with its nodes, "
+                              "drag the edges to resize. "
+                              "Delete removes only the frame (the nodes stay). No effect on evaluation"));
             if (ui::BeginPropertyTable("graphGroupRows")) {
                 char name[128] = {};
                 std::snprintf(name, sizeof(name), "%s", group.name.c_str());
@@ -3009,17 +3019,19 @@ void Application::DrawGraphPanel() {
                 }
                 ui::EndPropertyTable();
             }
-            ui::HintText("%s", ui::Tr("ダブルクリックで畳む / 開く。"
-                                      "枠の中にあるノードがこのグループの中身。見出しを掴むと中のノードごと動き、縁を掴むと大きさが変わる。"
-                                      "Delete で枠だけを消す（中のノードは残る）。評価には影響しない",
-                                      "Double-click to collapse / expand. "
-                                      "Nodes inside the frame belong to this group. Drag the title to move it with its nodes, "
-                                      "drag the edges to resize. "
-                                      "Delete removes only the frame (the nodes stay). No effect on evaluation"));
         }
     }
 
     graph::Node* selected = m_graph.FindMutableNode(m_selectedGraphNode);
+    // ノードの名前と、その横の「?」に説明（NodeHelpText）。説明の行を取らない。
+    if (selected != nullptr) {
+        const std::string help = NodeHelpText(*selected);
+        ImGui::TextUnformatted(NodeDisplayName(*selected));
+        if (!help.empty()) {
+            ImGui::SameLine();
+            ui::HelpMarker(help.c_str());
+        }
+    }
     // メモはどの種類のノードにも共通。評価には使わないので、確定しても再評価しない。
     if (selected != nullptr && ui::BeginPropertyTable("graphNodeNote")) {
         if (ui::PropertyTextMultiline(ui::Tr("メモ", "Note"), selected->note, 3,
@@ -3105,6 +3117,283 @@ bool Application::DrawModelSlotRow(const char* label, uint64_t& model, graph::Gr
     return changed;
 }
 
+// 選択したノードの説明。グラフのパネルでノード名の横の「?」に載せる（行を取らない）。
+// 繋ぎ方・出力の意味・注意を書く。ここに無い種類は、定義の一文（追加メニューと同じ）を出す。
+std::string Application::NodeHelpText(const graph::Node& node) const {
+    std::string usage;
+    switch (node.kind) {
+        case graph::NodeKind::Mountain:
+            usage = ui::Tr("画像なしで地形を生成する。Result を侵食・Surface・Output へ接続する",
+                           "Generates terrain without an image. Connect Result to erosion, Surface, or Output");
+            break;
+        case graph::NodeKind::MaskImage:
+            usage = ui::Tr("レイヤーの Mask 入力へ繋ぐと、白い所にだけそのレイヤーが乗る。"
+                           "効き方（係数 / カーブ / レベル）はレイヤー側で決める",
+                           "Connect to a layer's Mask input to apply that layer only where the mask is white. The layer decides how it applies (factor / curve / levels)");
+            break;
+        case graph::NodeKind::MaskNoise:
+            usage = ui::Tr("下地に依らないノイズをマスクにする。"
+                           "周波数は整数へ丸めて使うので、出力は必ずタイルする",
+                           "Turns noise independent of the base into a mask. Frequencies are rounded to integers, so the output always tiles");
+            break;
+        case graph::NodeKind::MaskFlowline:
+            usage = ui::Tr("Base の地形に沿って粒子を流し、通った場所をマスクにする。地形の高さは変えない。"
+                           "Source は発生範囲と強さ、Outflow は途中で流れを弱める範囲を指定する",
+                           "Flows particles over the Base terrain and masks where they pass. The terrain height is unchanged. Source sets where and how strongly they spawn; Outflow sets where the flow weakens along the way");
+            break;
+        case graph::NodeKind::WindField:
+            usage = ui::Tr("Base の地形の周囲の風を粗い 3D 格子で近似する。Speed は地表から鉛直半セル上の風速、"
+                           "Spindrift は風下の稜線で風速がしきい値を"
+                           "超える所。Wind は 3D の速度場で、今は繋ぐ先がない。Spindrift を Snow Plume の Source に繋ぐと雪煙になる。"
+                           "矢印の根元は風を取得した位置、向きは空中の風向、長さは風速（入力風速の 2 倍で頭打ち）。"
+                           "斜面に沿う流れや粒子の軌跡ではない。最後に評価した風を表示する"
+                           "（Speed か Spindrift の接続が必要）",
+                           "Approximates the wind around the Base terrain on a coarse 3D grid. Speed is the wind speed half a cell above the ground; Spindrift is where the wind exceeds the threshold on leeward ridges. Wind is the 3D velocity field and has nothing to connect to yet. Connect Spindrift to a Snow Plume's Source for blowing snow. Arrows start where the wind was sampled, point in the wind direction aloft, and their length is the speed (capped at 2x the input speed). They are not flow along slopes or particle paths. Shows the last evaluated wind (needs Speed or Spindrift connected)");
+            break;
+        case graph::NodeKind::MaskFluvial:
+            usage = ui::Tr("下地の高さから水の集まる所（川筋）を作る。"
+                           "Base にどこまでのハイトを使うかを繋ぐ",
+                           "Builds where water collects (channels) from the base height. Connect the height to use to Base");
+            break;
+        case graph::NodeKind::MaskHeight:
+            usage = ui::Tr("下地の標高帯（m）をマスクにする。"
+                           "0 m は地形の一番低い所で、標高差 m が一番高い所。"
+                           "Base にどこまでのハイトを使うかを繋ぐ",
+                           "Masks an elevation band (m) of the base. 0 m is the lowest point of the terrain and the elevation range in m is the highest. Connect the height to use to Base");
+            break;
+        case graph::NodeKind::MaskSlope:
+            usage = ui::Tr("下地の傾斜（角度）をマスクにする。"
+                           "Base にどこまでのハイトを使うかを繋ぐ",
+                           "Masks the base slope (angle). Connect the height to use to Base");
+            break;
+        case graph::NodeKind::MaskCurvature:
+            usage = ui::Tr("下地の凹凸をマスクにする。周りの平均と比べて、"
+                           "高い所（尾根）か低い所（谷）を拾う。"
+                           "Base にどこまでのハイトを使うかを繋ぐ",
+                           "Masks the base relief. Picks points higher (ridges) or lower (valleys) than the surrounding average. Connect the height to use to Base");
+            break;
+        case graph::NodeKind::MaskLevels:
+            usage = ui::Tr("入力のマスクの黒点 / 白点 / ガンマを整える", "Adjusts the black point / white point / gamma of the input mask");
+            break;
+        case graph::NodeKind::MaskBlur:
+            usage = ui::Tr("入力のマスクをぼかす。境界のギザギザや、"
+                           "しきい値で二値になったマスクを馴染ませるのに使う",
+                           "Blurs the input mask. Use it to smooth jagged edges or masks made binary by a threshold");
+            break;
+        case graph::NodeKind::MaskBlend:
+            usage = ui::Tr("マスク 2 枚を合成する。片方だけ繋いだときはそれを通す", "Blends two masks. With only one connected, it passes that one through");
+            break;
+        case graph::NodeKind::MaskPath:
+            usage = ui::Tr("Path 入力の線を、点ごとの幅とフェザーでマスクにする。"
+                           "形はパスの点が持ち、ここでは調整だけ",
+                           "Masks the Path input's lines using each point's width and feather. The points hold the shape; this node only adjusts it");
+            break;
+        case graph::NodeKind::MaskArea:
+            usage = ui::Tr("Path 入力の閉じた鎖を多角形とみなし、内側を 1 にする。"
+                           "輪の中に輪を描けば穴になる。開いた鎖と点ごとの幅は読まない",
+                           "Treats the Path input's closed chains as polygons and sets their inside to 1. A loop inside a loop makes a hole. Open chains and point widths are ignored");
+            break;
+        case graph::NodeKind::MaskMesh:
+            usage = ui::Tr("Mesh 入力（Road Mesh か Shoulder）のメッシュを地形平面へ投影し、三角形の内側を 1 にする。"
+                           "鎖のどこに繋いでも路面と路肩をまとめた足跡になる。反転して Model Scatter のマスクに掛けると、"
+                           "道路の上に植生が生えなくなる",
+                           "Projects the Mesh input (Road Mesh or Shoulder) onto the terrain plane and sets the inside of its triangles to 1. Wherever it connects in the chain, the footprint covers both road surface and shoulders. Invert it and use it as a Model Scatter mask to keep vegetation off the road");
+            break;
+        case graph::NodeKind::Sediment:
+            usage = ui::Tr("重力で土砂を再分配する。谷底に厚く積もり、尾根は痩せる。"
+                           "Emission 入力で供給する場所を絞れる（「地形を土砂にする」を切り、"
+                           "粘性を下げると、注ぎ口から流した液体になる）。"
+                           "Mask 出力は積もった厚みなので、堆積した所へ別のマテリアルを乗せられる",
+                           "Redistributes sediment by gravity. It piles up in valley floors and thins the ridges. "
+                           "The Emission input limits where it is supplied (turn off Convert Terrain "
+                           "and lower Viscosity to get liquid poured from a spout). "
+                           "The Mask output is the deposited thickness, so you can put another material on the deposits");
+            break;
+        case graph::NodeKind::MeanderingRivers:
+            usage = ui::Tr("Base に地形、Path に上流から下流へ向く開いた線を接続する。"
+                           "分岐・閉じた線・途中で向きが反転する線には対応しない。"
+                           "Result は地形、River は河床の範囲。水面は生成しない。",
+                           "Connect the terrain to Base and an open line running from upstream to downstream to Path. "
+                           "Branches, closed lines, and lines that reverse direction are not supported. "
+                           "Result is the terrain and River is the riverbed area. No water surface is generated.");
+            break;
+        case graph::NodeKind::Lake:
+            usage = ui::Tr("窪みに水を溜めて水面の高さへ変形する。Lake は湖の範囲、Depth は水深（m）、"
+                           "Water Level は周囲へ延長した水位（Height と同じ 0〜1 基準）。"
+                           "「水を描く」が入なら、水の色・波・波打ち際はこのノードが付ける。"
+                           "波の大きさや波打ち際の細かい設定は Sea のものを使う（Sea が無ければ既定）",
+                           "Pools water in basins and raises the terrain to the water surface. Lake is the lake area, Depth is the water depth (m), "
+                           "Water Level is the water level extended outward (same 0-1 scale as Height). "
+                           "With Paint Water on, this node adds the water color, waves, and shoreline. "
+                           "Wave size and detailed shoreline settings come from Sea (defaults if there is no Sea)");
+            break;
+        case graph::NodeKind::Snow:
+            usage = ui::Tr("雪を降らせ、急な雪面から低い所へ滑らせて溜める。"
+                           "Mask 入力で降らせる場所を絞れる（Mask Height を繋げば雪線になる。"
+                           "滑った雪はマスクの外へも出る）。"
+                           "Mask 出力は雪の被覆なので、積もった所へ雪のマテリアルを乗せられる",
+                           "Drops snow and lets it slide from steep snow surfaces down to collect in low spots. "
+                           "The Mask input limits where it falls (connect Mask Height for a snow line; "
+                           "sliding snow can leave the mask). "
+                           "The Mask output is the snow coverage, so you can put a snow material where it piled up");
+            break;
+        case graph::NodeKind::River:
+            usage = ui::Tr("川筋から河床を掘り、下流へ単調に下がる水面を張る。盆地は湖になる。"
+                           "Water は水面の被覆、Bank は河原（岩・砂利を置く帯）、Depth は水深。"
+                           "「水を描く」が切のときは、後ろの Surface で水の色を付ける"
+                           "（その Surface はハイトを定数にすること。水面の形は River が決める）。"
+                           "水の上に Surface を重ねると、そこは陸として扱い、流れは消える",
+                           "Carves a riverbed along the channels and fills it with water that steadily descends downstream. Basins become lakes. "
+                           "Water is the water coverage, Bank is the shore (a band for rocks and gravel), Depth is the water depth. "
+                           "With Paint Water off, color the water with a later Surface "
+                           "(set that Surface's height to a constant; River decides the water shape). "
+                           "Where a Surface is layered over the water, it is treated as land and the flow disappears");
+            break;
+        case graph::NodeKind::Scatter:
+            usage = ui::Tr("群生は Points 出力だけに効く。地面に作る形と Mask 出力は親の点だけ",
+                           "Clusters only affect the Points output. The ground shape and Mask output use parent points only");
+            usage += "\n";
+            usage += ui::Tr("Mask 入力で散布する範囲を絞れる（明るい所ほど置かれる）",
+                            "The Mask input limits the scatter area (brighter areas get more)");
+            usage += "\n";
+            usage += ui::Tr("Mask 出力は分布、Unique は個体ごとの乱数。"
+                            "高さ 0 のまま Mask だけを使ってもよい",
+                            "The Mask output is the distribution; Unique is a random value per instance. "
+                            "You can leave Height at 0 and use only the Mask");
+            break;
+        case graph::NodeKind::RoadGrading:
+            usage = ui::Tr("Mesh 入力に Road Mesh / Shoulder か、Model Place の Pad（建物の敷地）を繋ぐ。"
+                           "Road は路面や敷地の下（平らな幅まで）、Cut は切土の法面、Fill は盛土の法面。"
+                           "Road Path の Base は、この Grading より手前の地形に繋ぐこと"
+                           "（均した後の地形に繋ぐと、道路が自分で均した地形を読み直して循環する）",
+                           "Connect Road Mesh / Shoulder or a Model Place Pad (building lot) to the Mesh input. "
+                           "Road is under the road or pad (out to Flat Width), Cut is the cut embankment, Fill is the fill embankment. "
+                           "Connect Road Path's Base to terrain before this Grading "
+                           "(connecting it to the graded terrain makes the road re-read its own grading and loop)");
+            break;
+        case graph::NodeKind::HeightLevels:
+            usage = ui::Tr("Mask の白い所だけに効く（黒い所は元の高さのまま）",
+                           "Affects only the white areas of the Mask (black areas keep their original height)");
+            break;
+        case graph::NodeKind::MultiScaleErosion:
+            usage = ui::Tr("粗い地形から段階的に谷筋を作る。開始解像度より細かな元の凹凸は再構成される。"
+                           "Mask は結果を適用する範囲（白で適用）。",
+                           "Builds valleys in stages starting from a coarse terrain. Original detail finer than Start Resolution is reconstructed. "
+                           "The Mask is where the result applies (white applies).");
+            break;
+        case graph::NodeKind::Droplet:
+            usage = ui::Tr("水滴を落として斜面を下らせ、運べる量より少なければ削り、多ければ積む"
+                           "（terrain-editor の Droplet Erosion）。Flow は水の通った量（谷筋に砂利）、"
+                           "Deposit は積もった量（谷底や扇状地に土）。地形の変更は差分で足すので、"
+                           "素材の凹凸は壊さない",
+                           "Drops droplets that run downhill, eroding when carrying less than capacity and depositing when carrying more "
+                           "(terrain-editor's Droplet Erosion). Flow is how much water passed (gravel in valleys), "
+                           "Deposit is how much settled (soil on valley floors and fans). Terrain changes are added as a difference, "
+                           "so material detail is preserved");
+            break;
+        case graph::NodeKind::Crumbling:
+            usage = ui::Tr("発生源（Emission 入力）の明るい所から岩片を生み、斜面を下らせて積む。"
+                           "Mask は岩屑の厚み、Unique は岩片ごとの乱数を出す",
+                           "Spawns rock fragments from bright areas of the source (Emission input) and lets them roll downhill and pile up. "
+                           "Mask outputs the debris thickness; Unique outputs a random value per fragment");
+            break;
+        case graph::NodeKind::Blur:
+            usage = ui::Tr("下地のハイトをぼかし、ぼかした形から法線を作り直す。"
+                           "素材の法線ディテールを載せるなら、このノードより後ろに繋ぐ",
+                           "Blurs the base height and rebuilds the normals from the blurred shape. "
+                           "To add material normal detail, connect it after this node");
+            break;
+        case graph::NodeKind::Path:
+            usage = ui::Tr("ビューポートで編集する（操作はビューポートの下に出る）。"
+                           "地形はプレビュー中のものに沿う。Base に繋いだ地形を見るには、"
+                           "このノードをダブルクリック",
+                           "Edit in the viewport (the controls are shown at its bottom). "
+                           "Points follow the previewed terrain. To see the terrain connected "
+                           "to Base, double-click this node");
+            break;
+        case graph::NodeKind::RoadPath:
+            usage = ui::Tr("ビューポートで編集する（操作はビューポートの下に出る）。"
+                           "地形はプレビュー中のものに沿う。Base に繋いだ地形を見るには、"
+                           "このノードをダブルクリック",
+                           "Edit in the viewport (the controls are shown at its bottom). "
+                           "Points follow the previewed terrain. To see the terrain connected "
+                           "to Base, double-click this node");
+            break;
+        case graph::NodeKind::CloudMerge:
+            usage = ui::Tr("接続した形状を同じ座標で統合します。接続すると次の空き入力が増えます。同じ形状の重複接続は1回だけ。入れ子の滑らかさは最大値を全体へ適用します。", "Merges the connected shapes in the same coordinates. Connecting adds the next free input. Duplicate connections of the same shape count once. For nested merges, the largest smoothness applies to all.");
+            break;
+        case graph::NodeKind::CloudWeatherLayer:
+            usage = ui::Tr("雲量と雲種のマップで広域の雲層を作ります。Coverage / Type にマスクを接続すると場所ごとに変わり、未接続はスライダーの値を全域に使います。Volume を Cloud Output へ接続。", "Builds a wide cloud layer from coverage and cloud type maps. Connecting masks to Coverage / Type varies them by location; unconnected inputs use the slider value everywhere. Connect Volume to Cloud Output.");
+            break;
+        case graph::NodeKind::CloudShapeGenerate:
+            usage = ui::Tr("単独の積雲を球の集合として生成。Shape を Cloud Replicate / Cloud Merge / Cloud Noise へ接続します。", "Generates a single cumulus as a set of spheres. Connect Shape to Cloud Replicate / Cloud Merge / Cloud Noise.");
+            break;
+        case graph::NodeKind::CloudMapGenerate:
+            usage = ui::Tr("近傍点を結ぶ線から雲底と上向きの球列を生成。Shape を Cloud Replicate または Cloud Noise へ接続します。", "Generates cloud bases and upward sphere columns from lines joining nearby points. Connect Shape to Cloud Replicate or Cloud Noise.");
+            break;
+        case graph::NodeKind::CloudAnimation:
+            usage = ui::Tr("Cloud Noise → Cloud Animation → Cloud Output と接続します。指定範囲の雲を水平に循環させます。範囲外の元形状は使いません。", "Connect Cloud Noise → Cloud Animation → Cloud Output. Cycles clouds horizontally within the range. Source shapes outside the range are not used.");
+            usage += "\n";
+            usage += ui::Tr("高さは入力の雲を維持します。複数接続時は出力に近い Animation の設定を使います。再生位置は保存しません。", "Keeps the input clouds' heights. With several connected, the Animation nearest the output wins. The playback position is not saved.");
+            break;
+        case graph::NodeKind::CloudTransform:
+            usage = ui::Tr("Shape を接続すると、形状全体を移動できます。軸を左ドラッグで移動、Esc で取消。Alt + ドラッグは視点操作です。", "Connect Shape to move the whole shape. Left-drag an axis to move, Esc to cancel. Alt + drag controls the view.");
+            break;
+        case graph::NodeKind::CloudNoise:
+            usage = ui::Tr("形状を一体にしてノイズと密度を評価します。Volume をCloud Output へ接続。", "Combines the shapes into one and evaluates noise and density. Connect Volume to Cloud Output.");
+            break;
+        case graph::NodeKind::Cloud:
+            usage = ui::Tr("Volume をCloud Output へ接続して表示。太陽と照明はライティング設定を共有します", "Connect Volume to Cloud Output to display. Sun and lighting are shared with the lighting settings");
+            break;
+        case graph::NodeKind::CloudLayer:
+            usage = ui::Tr("Distribution にマスクを接続：白に雲、黒は空。未接続は全面。マスク全体を雲層の範囲に割り当てます", "Connect a mask to Distribution: clouds where white, clear sky where black. Unconnected covers everywhere. Maps the whole mask to the cloud layer range");
+            usage += "\n";
+            usage += ui::Tr("Volume をCloud Output へ接続して表示。太陽と照明はライティング設定を共有します", "Connect Volume to Cloud Output to display. Sun and lighting are shared with the lighting settings");
+            break;
+        case graph::NodeKind::SnowPlume:
+            usage = ui::Tr("Source のマスクが強い所から、風下へ半透明の帯を伸ばして雪煙を描く。"
+                           "Wind Field の Spindrift を繋ぐと、稜線の風下から出て Wind Field の風に流れる。"
+                           "ビューポートだけの表示で、合成結果や書き出しには入らない",
+                           "Draws blowing snow as translucent ribbons stretching downwind from where the Source mask is strong. With a Wind Field's Spindrift connected, they start on the lee of ridges and follow the Wind Field. Viewport only; not included in the composite or exports");
+            break;
+        case graph::NodeKind::ModelScatter:
+            usage = ui::Tr("Crumbling の Points を接続し、Instances をModel Outputへ接続します", "Connect Crumbling's Points, and connect Instances to Model Output");
+            break;
+        case graph::NodeKind::ModelPlace:
+            usage = ui::Tr("建物などのモデルを 1 つずつ置く。Instances を Model Output（Model Merge を挟める）へ、"
+                           "Pad（敷地）を Grading / Mask Mesh の Mesh へ繋ぐ",
+                           "Places models such as buildings one by one. Connect Instances to Model Output (Model Merge can go in between), and Pad to the Mesh input of Grading / Mask Mesh");
+            break;
+        case graph::NodeKind::ModelMerge:
+            usage = ui::Tr("複数のInstancesをまとめます。接続すると入力が増え、各Model Scatterの設定を保持します", "Combines several Instances. Connecting adds inputs, and each Model Scatter keeps its settings");
+            break;
+        case graph::NodeKind::ModelOutput:
+            usage = ui::Tr("Model Scatter / Model Place / Model Merge のInstancesを接続します。ハイトマップとは独立してモデルを描画します", "Connect Instances from Model Scatter / Model Place / Model Merge. Models are drawn independently of the heightmap");
+            break;
+        case graph::NodeKind::Terrain:
+            usage = ui::Tr("地形グラフの Output に繋いだ結果を Result に出します。Mask Slope / Mask Height などの "
+                           "Base に繋ぐと、雲グラフのマスクを実際の地形から作れます",
+                           "Outputs what is connected to the terrain graph's Output as Result. Connect it to the Base of Mask Slope / Mask Height and so on to build cloud graph masks from the actual terrain");
+            break;
+        case graph::NodeKind::CloudOutput:
+            usage = ui::Tr("Cloud Noise の Volume を接続して表示します。Cloud Animation を挟むと移動できます。未接続なら雲は表示しません", "Connect Cloud Noise's Volume to display it. Insert Cloud Animation to move clouds. Nothing is shown when unconnected");
+            usage += "\n";
+            usage += ui::Tr("保存済みの Cloud / Cloud Layer (Legacy) も引き続き表示できます", "Saved Cloud / Cloud Layer (Legacy) nodes still display");
+            break;
+        case graph::NodeKind::Output:
+            usage = ui::Tr("出力ノード。「マテリアル」へ繋いだチェーンがプレビューになる", "Output node. The chain connected to \"Material\" is previewed");
+            break;
+        default:
+            break;
+    }
+    if (usage.empty()) {
+        if (const graph::NodeDefinition* definition = graph::FindNodeDefinition(node.kind)) {
+            usage = definition->description.Get();
+        }
+    }
+    return usage;
+}
+
 // 選択したノードの設定の行。グラフのパネルのほか、ノードカタログと評価のレポートが
 // ノードの複製を渡して描き、行の範囲と既定値を記録する（ui::SetPropertyRecorder）。
 void Application::DrawNodeProperties(graph::Node* selected) {
@@ -3186,8 +3475,6 @@ void Application::DrawNodeProperties(graph::Node* selected) {
                     ui::Tr("同じ設定とシードで同じ山並みを再生成する", "The same settings and seed regenerate the same ranges"));
                 ui::EndPropertyTable();
             }
-            ui::HintText("%s", ui::Tr("画像なしで地形を生成する。Result を侵食・Surface・Output へ接続する",
-                                      "Generates terrain without an image. Connect Result to erosion, Surface, or Output"));
         } else {
             changed |= DrawLayerSettings(settings->layer, isBase, isSource, maskFromNode,
                                          m_graph.MaskSourceResolves(*selected), pathUvConnected);
@@ -3197,7 +3484,13 @@ void Application::DrawNodeProperties(graph::Node* selected) {
         // プレビュー設定ではなくここに置くのは、実寸が見え方の設定ではなく
         // 読み込んだデータそのものの性質だから。
         if (isSource) {
-            ui::SectionHeader(ui::Tr("スケール", "Scale"));
+            ui::SectionHeader(ui::Tr("スケール", "Scale"),
+                              isMountain
+                              ? ui::Tr("生成する地形の実寸。標高差はハイト 0〜1 の換算幅で、実際の起伏は形によって変わる",
+                                       "Real size of the generated terrain. Elevation Range is the span of heights 0-1; "
+                                       "the actual relief depends on the shape")
+                              : ui::Tr("読み込んだ地形の実寸。プレビュー設定の平面のサイズと変位量はこれに従う",
+                                       "Real size of the loaded terrain. Plane size and displacement in the preview settings follow it"));
             if (ui::BeginPropertyTable("graphNodeScaleRows")) {
                 const graph::TerrainScale defaults = isMountain ? graph::MakeMountainNodeSettings().scale : graph::TerrainScale{};
                 changed |= ui::PropertyFloat(
@@ -3223,12 +3516,6 @@ void Application::DrawNodeProperties(graph::Node* selected) {
                                   settings->scale.baseElevationMeters + settings->scale.heightMeters);
                 ui::EndPropertyTable();
             }
-            ui::HintText("%s", isMountain
-                ? ui::Tr("生成する地形の実寸。標高差はハイト 0〜1 の換算幅で、実際の起伏は形によって変わる",
-                         "Real size of the generated terrain. Elevation Range is the span of heights 0-1; "
-                         "the actual relief depends on the shape")
-                : ui::Tr("読み込んだ地形の実寸。プレビュー設定の平面のサイズと変位量はこれに従う",
-                         "Real size of the loaded terrain. Plane size and displacement in the preview settings follow it"));
 
             // 現実の場所。記録だけで評価には効かない。外部のツールや LLM が
             // OSM などから周辺の情報を引く手がかりにする。
@@ -3290,91 +3577,45 @@ void Application::DrawNodeProperties(graph::Node* selected) {
     } else if (auto* mask = std::get_if<graph::MaskNodeSettings>(&selected->settings)) {
         bool changed = false;
         const char* header = ui::Tr("マスク画像", "Mask Image");
-        const char* hint =
-            ui::Tr("レイヤーの Mask 入力へ繋ぐと、白い所にだけそのレイヤーが乗る。"
-                   "効き方（係数 / カーブ / レベル）はレイヤー側で決める",
-                   "Connect to a layer's Mask input to apply that layer only where the mask is white. The layer decides how it applies (factor / curve / levels)");
         switch (selected->kind) {
             case graph::NodeKind::MaskNoise:
                 header = ui::Tr("ノイズ", "Noise");
-                hint = ui::Tr("下地に依らないノイズをマスクにする。"
-                              "周波数は整数へ丸めて使うので、出力は必ずタイルする",
-                              "Turns noise independent of the base into a mask. Frequencies are rounded to integers, so the output always tiles");
                 break;
             case graph::NodeKind::MaskFlowline:
                 header = ui::Tr("流跡", "Flowline");
-                hint = ui::Tr("Base の地形に沿って粒子を流し、通った場所をマスクにする。地形の高さは変えない。"
-                              "Source は発生範囲と強さ、Outflow は途中で流れを弱める範囲を指定する",
-                              "Flows particles over the Base terrain and masks where they pass. The terrain height is unchanged. Source sets where and how strongly they spawn; Outflow sets where the flow weakens along the way");
                 break;
             case graph::NodeKind::WindField:
                 header = ui::Tr("風の場", "Wind Field");
-                hint = ui::Tr("Base の地形の周囲の風を粗い 3D 格子で近似する。Speed は地表から鉛直半セル上の風速、"
-                              "Spindrift は風下の稜線で風速がしきい値を"
-                              "超える所。Wind は 3D の速度場で、今は繋ぐ先がない。Spindrift を Snow Plume の Source に繋ぐと雪煙になる。"
-                              "矢印の根元は風を取得した位置、向きは空中の風向、長さは風速（入力風速の 2 倍で頭打ち）。"
-                              "斜面に沿う流れや粒子の軌跡ではない。最後に評価した風を表示する"
-                              "（Speed か Spindrift の接続が必要）",
-                              "Approximates the wind around the Base terrain on a coarse 3D grid. Speed is the wind speed half a cell above the ground; Spindrift is where the wind exceeds the threshold on leeward ridges. Wind is the 3D velocity field and has nothing to connect to yet. Connect Spindrift to a Snow Plume's Source for blowing snow. Arrows start where the wind was sampled, point in the wind direction aloft, and their length is the speed (capped at 2x the input speed). They are not flow along slopes or particle paths. Shows the last evaluated wind (needs Speed or Spindrift connected)");
                 break;
             case graph::NodeKind::MaskFluvial:
                 header = ui::Tr("川筋", "Channels");
-                hint = ui::Tr("下地の高さから水の集まる所（川筋）を作る。"
-                              "Base にどこまでのハイトを使うかを繋ぐ",
-                              "Builds where water collects (channels) from the base height. Connect the height to use to Base");
                 break;
             case graph::NodeKind::MaskHeight:
                 header = ui::Tr("標高", "Elevation");
-                hint = ui::Tr("下地の標高帯（m）をマスクにする。"
-                              "0 m は地形の一番低い所で、標高差 m が一番高い所。"
-                              "Base にどこまでのハイトを使うかを繋ぐ",
-                              "Masks an elevation band (m) of the base. 0 m is the lowest point of the terrain and the elevation range in m is the highest. Connect the height to use to Base");
                 break;
             case graph::NodeKind::MaskSlope:
                 header = ui::Tr("傾斜", "Slope");
-                hint = ui::Tr("下地の傾斜（角度）をマスクにする。"
-                              "Base にどこまでのハイトを使うかを繋ぐ",
-                              "Masks the base slope (angle). Connect the height to use to Base");
                 break;
             case graph::NodeKind::MaskCurvature:
                 header = ui::Tr("曲率", "Curvature");
-                hint = ui::Tr("下地の凹凸をマスクにする。周りの平均と比べて、"
-                              "高い所（尾根）か低い所（谷）を拾う。"
-                              "Base にどこまでのハイトを使うかを繋ぐ",
-                              "Masks the base relief. Picks points higher (ridges) or lower (valleys) than the surrounding average. Connect the height to use to Base");
                 break;
             case graph::NodeKind::MaskLevels:
                 header = ui::Tr("レベル", "Levels");
-                hint = ui::Tr("入力のマスクの黒点 / 白点 / ガンマを整える", "Adjusts the black point / white point / gamma of the input mask");
                 break;
             case graph::NodeKind::MaskBlur:
                 header = ui::Tr("ぼかし", "Blur");
-                hint = ui::Tr("入力のマスクをぼかす。境界のギザギザや、"
-                              "しきい値で二値になったマスクを馴染ませるのに使う",
-                              "Blurs the input mask. Use it to smooth jagged edges or masks made binary by a threshold");
                 break;
             case graph::NodeKind::MaskBlend:
                 header = ui::Tr("合成", "Blend");
-                hint = ui::Tr("マスク 2 枚を合成する。片方だけ繋いだときはそれを通す", "Blends two masks. With only one connected, it passes that one through");
                 break;
             case graph::NodeKind::MaskPath:
                 header = ui::Tr("パスの足跡", "Path Footprint");
-                hint = ui::Tr("Path 入力の線を、点ごとの幅とフェザーでマスクにする。"
-                              "形はパスの点が持ち、ここでは調整だけ",
-                              "Masks the Path input's lines using each point's width and feather. The points hold the shape; this node only adjusts it");
                 break;
             case graph::NodeKind::MaskArea:
                 header = ui::Tr("パスの面", "Path Area");
-                hint = ui::Tr("Path 入力の閉じた鎖を多角形とみなし、内側を 1 にする。"
-                              "輪の中に輪を描けば穴になる。開いた鎖と点ごとの幅は読まない",
-                              "Treats the Path input's closed chains as polygons and sets their inside to 1. A loop inside a loop makes a hole. Open chains and point widths are ignored");
                 break;
             case graph::NodeKind::MaskMesh:
                 header = ui::Tr("メッシュの足跡", "Mesh Footprint");
-                hint = ui::Tr("Mesh 入力（Road Mesh か Shoulder）のメッシュを地形平面へ投影し、三角形の内側を 1 にする。"
-                              "鎖のどこに繋いでも路面と路肩をまとめた足跡になる。反転して Model Scatter のマスクに掛けると、"
-                              "道路の上に植生が生えなくなる",
-                              "Projects the Mesh input (Road Mesh or Shoulder) onto the terrain plane and sets the inside of its triangles to 1. Wherever it connects in the chain, the footprint covers both road surface and shoulders. Invert it and use it as a Model Scatter mask to keep vegetation off the road");
                 break;
             default:
                 break;
@@ -3427,7 +3668,6 @@ void Application::DrawNodeProperties(graph::Node* selected) {
             }
             ui::EndPropertyTable();
         }
-        ui::HintText("%s", hint);
         // Mask Mesh の足跡は、繋いだ鎖の形ができてから届く。何も繋いでいない / まだ無いときは知らせる。
         if (selected->kind == graph::NodeKind::MaskMesh) {
             const graph::Node* meshNode = m_graph.FindUpstreamNodeForPin(selected->inputs.front().id);
@@ -3483,7 +3723,6 @@ void Application::DrawNodeProperties(graph::Node* selected) {
     } else if (auto* cloudMerge = std::get_if<graph::CloudMergeSettings>(&selected->settings)) {
         const graph::CloudMergeSettings defaults;
         bool changed = false;
-        ui::HintText("%s", ui::Tr("接続した形状を同じ座標で統合します。接続すると次の空き入力が増えます。同じ形状の重複接続は1回だけ。入れ子の滑らかさは最大値を全体へ適用します。", "Merges the connected shapes in the same coordinates. Connecting adds the next free input. Duplicate connections of the same shape count once. For nested merges, the largest smoothness applies to all."));
         if (ui::BeginPropertyTable("CloudMergeRows", ui::Tr("横方向のばらつき", "Join Smoothness"))) {
             changed |= ui::PropertyFloat(ui::Tr("つなぎの滑らかさ", "Join Smoothness"), &cloudMerge->smoothness, 0.0f, 500.0f, defaults.smoothness, ui::Tr("値はメートル単位。形状の膨らみは最大でこの1/4。", "In meters. Shapes swell by at most 1/4 of this."), "%.0f m");
             ui::EndPropertyTable();
@@ -3492,7 +3731,6 @@ void Application::DrawNodeProperties(graph::Node* selected) {
     } else if (auto* weather = std::get_if<graph::CloudWeatherSettings>(&selected->settings)) {
         const graph::CloudWeatherSettings defaults;
         bool changed=false;
-        ui::HintText("%s", ui::Tr("雲量と雲種のマップで広域の雲層を作ります。Coverage / Type にマスクを接続すると場所ごとに変わり、未接続はスライダーの値を全域に使います。Volume を Cloud Output へ接続。", "Builds a wide cloud layer from coverage and cloud type maps. Connecting masks to Coverage / Type varies them by location; unconnected inputs use the slider value everywhere. Connect Volume to Cloud Output."));
         ui::SectionHeader(ui::Tr("動き", "Motion"));
         if (ui::BeginPropertyTable("CloudWeatherMotionRows", ui::Tr("積乱雲の広がり", "Pattern Speed Ratio"))) {
             float position = m_renderer.WeatherLoopPosition(static_cast<uint32_t>(selected->id), weather->loopPosition);
@@ -3565,7 +3803,6 @@ void Application::DrawNodeProperties(graph::Node* selected) {
     } else if (auto* generate = std::get_if<graph::CloudShapeGenerateSettings>(&selected->settings)) {
         const graph::CloudShapeGenerateSettings defaults;
         bool changed=false;
-        ui::HintText("%s", ui::Tr("単独の積雲を球の集合として生成。Shape を Cloud Replicate / Cloud Merge / Cloud Noise へ接続します。", "Generates a single cumulus as a set of spheres. Connect Shape to Cloud Replicate / Cloud Merge / Cloud Noise."));
         if (ui::BeginPropertyTable("CloudShapeGenerateRows", ui::Tr("二次形状の繰り返し", "Secondary Iterations"))) {
             static const ui::LocalizedText kSpecies[]={{"Humilis（扁平）", "Humilis (Flat)"},{"Mediocris（中程度）", "Mediocris (Medium)"},
                                                        {"Congestus（塔状）", "Congestus (Towering)"}};
@@ -3608,7 +3845,6 @@ void Application::DrawNodeProperties(graph::Node* selected) {
     } else if (auto* map = std::get_if<graph::CloudMapSettings>(&selected->settings)) {
         const graph::CloudMapSettings defaults;
         bool changed=false;
-        ui::HintText("%s", ui::Tr("近傍点を結ぶ線から雲底と上向きの球列を生成。Shape を Cloud Replicate または Cloud Noise へ接続します。", "Generates cloud bases and upward sphere columns from lines joining nearby points. Connect Shape to Cloud Replicate or Cloud Noise."));
         if (ui::BeginPropertyTable("CloudMapRows", ui::Tr("接続線 / 成長ライン", "Edges / Growth Lines"))) {
             changed |= ui::PropertyInt(ui::Tr("ポイント数", "Points"), &map->pointCount, 0, 10000, defaults.pointCount, ui::Tr("指定範囲へ一様ランダムに散布します。", "Scatters points uniformly at random over the range."));
             changed |= ui::PropertyInt(ui::Tr("シード", "Seed"), &map->seed, 0, 10000, defaults.seed);
@@ -3644,7 +3880,6 @@ void Application::DrawNodeProperties(graph::Node* selected) {
     } else if (auto* animation = std::get_if<graph::CloudAnimationSettings>(&selected->settings)) {
         const graph::CloudAnimationSettings defaults;
         bool changed=false;
-        ui::HintText("%s", ui::Tr("Cloud Noise → Cloud Animation → Cloud Output と接続します。指定範囲の雲を水平に循環させます。範囲外の元形状は使いません。", "Connect Cloud Noise → Cloud Animation → Cloud Output. Cycles clouds horizontally within the range. Source shapes outside the range are not used."));
         if (ui::BeginPropertyTable("CloudAnimationRows", ui::Tr("模様の速度比", "Pattern Speed Ratio"))) {
             changed |= ui::PropertyBool(ui::Tr("再生", "Play"), &animation->playing, defaults.playing, ui::Tr("オフで現在位置に一時停止します。", "When off, pauses at the current position."));
             changed |= ui::PropertyFloat(ui::Tr("中心 X", "Center X"), &animation->centerX, -100000, 100000, defaults.centerX, ui::Tr("方向は0°が+Z、90°が+X。範囲はワールド座標で指定します。", "Direction 0° is +Z, 90° is +X. The range is in world coordinates."), "%.1f m");
@@ -3667,12 +3902,10 @@ void Application::DrawNodeProperties(graph::Node* selected) {
             ui::PropertyEnd();
             ui::EndPropertyTable();
         }
-        ui::HintText("%s", ui::Tr("高さは入力の雲を維持します。複数接続時は出力に近い Animation の設定を使います。再生位置は保存しません。", "Keeps the input clouds' heights. With several connected, the Animation nearest the output wins. The playback position is not saved."));
         if (changed) { m_graph.MarkCloudDirty(); MarkDocumentChanged(false); }
     } else if (auto* transform = std::get_if<graph::CloudTransformSettings>(&selected->settings)) {
         const graph::CloudTransformSettings defaults;
         bool changed=false;
-        ui::HintText("%s", ui::Tr("Shape を接続すると、形状全体を移動できます。軸を左ドラッグで移動、Esc で取消。Alt + ドラッグは視点操作です。", "Connect Shape to move the whole shape. Left-drag an axis to move, Esc to cancel. Alt + drag controls the view."));
         if (ui::BeginPropertyTable("CloudTransformRows", ui::Tr("移動 X", "Placement Guides"))) {
             changed |= ui::PropertyFloat(ui::Tr("移動 X", "Offset X"), &transform->translateX, -10000, 10000, defaults.translateX, ui::Tr("元形状からの移動量。", "Offset from the source shape."), "%.1f m");
             changed |= ui::PropertyFloat(ui::Tr("移動 Y", "Offset Y"), &transform->translateY, -10000, 10000, defaults.translateY, ui::Tr("元形状からの移動量。", "Offset from the source shape."), "%.1f m");
@@ -3684,7 +3917,6 @@ void Application::DrawNodeProperties(graph::Node* selected) {
     } else if (auto* cloudNoise = std::get_if<graph::CloudNoiseSettings>(&selected->settings)) {
         const graph::CloudNoiseSettings defaults;
         bool changed = false;
-        ui::HintText("%s", ui::Tr("形状を一体にしてノイズと密度を評価します。Volume をCloud Output へ接続。", "Combines the shapes into one and evaluates noise and density. Connect Volume to Cloud Output."));
         if (ui::BeginPropertyTable("CloudNoiseRows", ui::Tr("横方向のばらつき", "Edge Displacement"))) {
             static const ui::LocalizedText kNoiseTypes[] = {{"Perlin（従来）", "Perlin (Legacy)"}, {"Perlin fBM", "Perlin fBM"},
                                                             {"Perlin-Worley", "Perlin-Worley"}};
@@ -3736,9 +3968,8 @@ void Application::DrawNodeProperties(graph::Node* selected) {
             defaults.centerY = 500.0f;
             defaults.noiseScale = 1500.0f;
             defaults.motionMode = 1;
-            ui::HintText("%s", ui::Tr("Distribution にマスクを接続：白に雲、黒は空。未接続は全面。マスク全体を雲層の範囲に割り当てます", "Connect a mask to Distribution: clouds where white, clear sky where black. Unconnected covers everywhere. Maps the whole mask to the cloud layer range"));
         }
-        ui::SectionHeader(ui::Tr("動き", "Motion"));
+        ui::SectionHeader(ui::Tr("動き", "Motion"), ui::Tr("再生中の環境光・反射は固定し、停止後に更新します", "Ambient light and reflections are frozen during playback and update after it stops"));
         if (ui::BeginPropertyTable("cloudMotionRows")) {
             changed |= ui::PropertyBool(ui::Tr("再生", "Play"), &cloud->animate, defaults.animate,
                 ui::Tr("風で雲を動かします。オフでその位置に一時停止します。", "Moves clouds with the wind. When off, pauses at the current position."));
@@ -3764,7 +3995,6 @@ void Application::DrawNodeProperties(graph::Node* selected) {
             ui::PropertyEnd();
             ui::EndPropertyTable();
         }
-        ui::HintText("%s", ui::Tr("再生中の環境光・反射は固定し、停止後に更新します", "Ambient light and reflections are frozen during playback and update after it stops"));
         ui::SectionHeader(ui::Tr("ライティング", "Lighting"));
         if (ui::BeginPropertyTable("cloudLightingRows")) {
             changed |= ui::PropertyFloat("Indirect Light", &cloud->indirectLight, 0.0f, 1.0f, defaults.indirectLight,
@@ -3828,7 +4058,6 @@ void Application::DrawNodeProperties(graph::Node* selected) {
             changed |= ui::PropertyInt(ui::Tr("シード", "Seed"), &cloud->seed, 0, 10000, defaults.seed);
             ui::EndPropertyTable();
         }
-        ui::HintText("%s", ui::Tr("Volume をCloud Output へ接続して表示。太陽と照明はライティング設定を共有します", "Connect Volume to Cloud Output to display. Sun and lighting are shared with the lighting settings"));
         if (!m_renderer.AtmosphericMode() && ui::Button(ui::Tr("大気散乱へ切替", "Use Atmospheric"), ui::kWideButtonWidth)) {
             // ライティングの方式はアンドゥの写しに入らないので段は積まず、未保存の判定だけ映す。
             m_renderer.AtmosphericMode() = true;
@@ -3841,10 +4070,6 @@ void Application::DrawNodeProperties(graph::Node* selected) {
     } else if (auto* plume = std::get_if<graph::SnowPlumeSettings>(&selected->settings)) {
         const graph::SnowPlumeSettings defaults;
         bool changed = false;
-        ui::HintText("%s", ui::Tr("Source のマスクが強い所から、風下へ半透明の帯を伸ばして雪煙を描く。"
-                                  "Wind Field の Spindrift を繋ぐと、稜線の風下から出て Wind Field の風に流れる。"
-                                  "ビューポートだけの表示で、合成結果や書き出しには入らない",
-                                  "Draws blowing snow as translucent ribbons stretching downwind from where the Source mask is strong. With a Wind Field's Spindrift connected, they start on the lee of ridges and follow the Wind Field. Viewport only; not included in the composite or exports"));
         const auto compiled = m_graph.CompileSnowPlumes();
         const auto found = std::find_if(compiled.begin(), compiled.end(),
                                         [&](const auto& c) { return c.node == selected->id; });
@@ -3920,7 +4145,6 @@ void Application::DrawNodeProperties(graph::Node* selected) {
         if (changed) MarkDocumentChanged(false);
     } else if (auto* scatter = std::get_if<graph::ModelScatterSettings>(&selected->settings)) {
         bool changed = false;
-        ui::HintText("%s", ui::Tr("Crumbling の Points を接続し、Instances をModel Outputへ接続します", "Connect Crumbling's Points, and connect Instances to Model Output"));
         if (ui::BeginPropertyTable("modelScatterSettings", ui::Tr("Scale マスクの最小倍率", "LOD Distance Scale"))) {
             changed |= ui::PropertyInt(ui::Tr("シード", "Seed"),&scatter->seed,0,1000000,1);
             changed |= ui::PropertyFloat(ui::Tr("描画距離", "Draw Distance"), &scatter->maxDistance, 0, 100000, 0,
@@ -3983,9 +4207,6 @@ void Application::DrawNodeProperties(graph::Node* selected) {
     } else if (auto* place = std::get_if<graph::ModelPlaceSettings>(&selected->settings)) {
         bool changed = false;
         const graph::ModelPlaceSettings defaults;
-        ui::HintText("%s", ui::Tr("建物などのモデルを 1 つずつ置く。Instances を Model Output（Model Merge を挟める）へ、"
-                                  "Pad（敷地）を Grading / Mask Mesh の Mesh へ繋ぐ",
-                                  "Places models such as buildings one by one. Connect Instances to Model Output (Model Merge can go in between), and Pad to the Mesh input of Grading / Mask Mesh"));
         if (ui::BeginPropertyTable("modelPlaceSettings", ui::Tr("LOD 距離の倍率", "LOD Distance Scale"))) {
             changed |= DrawModelSlotRow(ui::Tr("モデル", "Model"), place->model, selected->id, 0);
             changed |= ui::PropertyFloat(ui::Tr("接地オフセット", "Ground Offset"), &place->offset, -10000, 10000, defaults.offset,
@@ -4072,22 +4293,15 @@ void Application::DrawNodeProperties(graph::Node* selected) {
             ui::EndPropertyTable();
         }
         if (changed) { m_graph.MarkDirty(); MarkDocumentChanged(false); }
-    } else if (selected->kind == graph::NodeKind::ModelMerge) {
-        ui::HintText("%s", ui::Tr("複数のInstancesをまとめます。接続すると入力が増え、各Model Scatterの設定を保持します", "Combines several Instances. Connecting adds inputs, and each Model Scatter keeps its settings"));
-    } else if (selected->kind == graph::NodeKind::ModelOutput) {
-        ui::HintText("%s", ui::Tr("Model Scatter / Model Place / Model Merge のInstancesを接続します。ハイトマップとは独立してモデルを描画します", "Connect Instances from Model Scatter / Model Place / Model Merge. Models are drawn independently of the heightmap"));
+    } else if (selected->kind == graph::NodeKind::ModelMerge || selected->kind == graph::NodeKind::ModelOutput) {
+        // 設定を持たない。説明はノード名の横の「?」（NodeHelpText）。
     } else if (selected->kind == graph::NodeKind::Terrain) {
-        ui::HintText("%s", ui::Tr("地形グラフの Output に繋いだ結果を Result に出します。Mask Slope / Mask Height などの "
-                                  "Base に繋ぐと、雲グラフのマスクを実際の地形から作れます",
-                                  "Outputs what is connected to the terrain graph's Output as Result. Connect it to the Base of Mask Slope / Mask Height and so on to build cloud graph masks from the actual terrain"));
         // CompileLayers は何も繋がっていなくてもベースのレイヤーを 1 つ出す（空にはならない）ので、
         // 実寸を持つチェーンの根があるかで判定する。
         if (m_graph.FindChainScale(0) == nullptr) {
             ui::HintText("%s", ui::Tr("地形グラフの Output に何も繋がっていないので、Result は空になる", "Nothing is connected to the terrain graph's Output, so Result is empty"));
         }
     } else if (selected->kind == graph::NodeKind::CloudOutput) {
-        ui::HintText("%s", ui::Tr("Cloud Noise の Volume を接続して表示します。Cloud Animation を挟むと移動できます。未接続なら雲は表示しません", "Connect Cloud Noise's Volume to display it. Insert Cloud Animation to move clouds. Nothing is shown when unconnected"));
-        ui::HintText("%s", ui::Tr("保存済みの Cloud / Cloud Layer (Legacy) も引き続き表示できます", "Saved Cloud / Cloud Layer (Legacy) nodes still display"));
         if (!m_renderer.AtmosphericMode() && ui::Button(ui::Tr("大気散乱へ切替", "Use Atmospheric"), ui::kWideButtonWidth)) {
             // ライティングの方式はアンドゥの写しに入らないので段は積まず、未保存の判定だけ映す（他の切替と同じ）。
             m_renderer.AtmosphericMode() = true; m_pendingWorkEnvironmentSave = true;
@@ -4127,7 +4341,6 @@ void Application::DrawNodeProperties(graph::Node* selected) {
             MarkDocumentChanged(false);
         }
     } else {
-        ui::HintText("%s", ui::Tr("出力ノード。「マテリアル」へ繋いだチェーンがプレビューになる", "Output node. The chain connected to \"Material\" is previewed"));
     }
 }
 

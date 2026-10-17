@@ -93,13 +93,14 @@ void Application::DrawSkyPreviewWindow() {
     ImGui::Separator();
 
     ImGui::BeginChild("skyPropertyPane", ImVec2(0.0f, 0.0f));
-    ui::HintText("%s", ui::Tr("ドラッグで回す / ホイールで寄る。露出はビューポートと同じ",
-                              "Drag to rotate / wheel to zoom. Exposure matches the viewport"));
     if (ui::Button(ui::Tr("視点を戻す", "Reset View"), ui::kWideButtonWidth)) {
         m_skySphere.ResetView();
     }
-    ui::HintText("%s", ui::Tr("地形・マテリアル確認用のIBLです。シーンの大気散乱スカイとは別に保存します",
-                              "IBL for checking terrain and materials. Saved separately from the scene's Atmospheric Sky"));
+    ImGui::SameLine();
+    ui::HelpMarker(ui::Tr("地形・マテリアル確認用のIBLです。シーンの大気散乱スカイとは別に保存します" "\n"
+                   "ドラッグで回す / ホイールで寄る。露出はビューポートと同じ",
+                   "IBL for checking terrain and materials. Saved separately from the scene's Atmospheric Sky" "\n"
+                   "Drag to rotate / wheel to zoom. Exposure matches the viewport"));
 
     renderer::SkyDefinition& sky = active->sky;
     const renderer::SkyDefinition kDefaultSkyDefinition;
@@ -145,7 +146,9 @@ void Application::DrawSkyPreviewWindow() {
     }
 
     if (sky.source == renderer::SkySource::Hdri) {
-        ui::SectionHeader("HDRI");
+        ui::SectionHeader("HDRI",
+                          ui::Tr("エクスプローラから .hdr を落としても、選択中の天球に入る",
+                          "Dropping a .hdr from Explorer also loads it into the selected sky"));
         if (ui::BeginPropertyTable("skyHdriRows")) {
             DrawAssetPathRow(ui::Tr("ファイル", "File"), sky.hdriPath, m_pendingAssetReveal);
 
@@ -174,8 +177,6 @@ void Application::DrawSkyPreviewWindow() {
                 "%.0f cd/m2", ImGuiSliderFlags_Logarithmic);
             ui::EndPropertyTable();
         }
-        ui::HintText("%s", ui::Tr("エクスプローラから .hdr を落としても、選択中の天球に入る",
-                                  "Dropping a .hdr from Explorer also loads it into the selected sky"));
     } else {
         ui::SectionHeader(ui::Tr("手続き的な空", "Procedural Sky"));
         if (ui::BeginPropertyTable("skyProceduralRows")) {

@@ -629,6 +629,55 @@ void SectionHeader(const char* label) {
     ImGui::SeparatorText(label);
 }
 
+namespace {
+
+// 「?」の印を size 角で描く。coverLine が真なら、下を通る線（見出しの罫線）を地の色で隠す。
+void DrawHelpMarker(const char* help, float size, bool coverLine) {
+    ImGui::PushID(help);
+    const ImVec2 min = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("##help", ImVec2(size, size));
+    const bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImVec2 center(min.x + size * 0.5f, min.y + size * 0.5f);
+    const float radius = size * 0.42f;
+    if (coverLine) {
+        draw->AddCircleFilled(center, radius + Scaled(2.0f), ImGui::GetColorU32(ImGuiCol_WindowBg));
+    }
+    const ImU32 color = ImGui::GetColorU32(hovered ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+    draw->AddCircle(center, radius, color, 0, Scaled(1.0f));
+    // 「?」は ASCII の字形なので、どのフォントでも出る。
+    const ImVec2 glyph = ImGui::CalcTextSize("?");
+    draw->AddText(ImVec2(center.x - glyph.x * 0.5f, center.y - glyph.y * 0.5f), color, "?");
+    if (hovered) {
+        ImGui::BeginTooltip();
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * kTooltipWrapRatio);
+        ImGui::TextUnformatted(help);
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
+    }
+    ImGui::PopID();
+}
+
+}  // namespace
+
+void SectionHeader(const char* label, const char* help) {
+    ImGui::SeparatorText(label);
+    if (help == nullptr || help[0] == '\0') {
+        return;
+    }
+    // 見出しの文字のすぐ右に印を重ねる（行は増やさない）。SeparatorText は左寄せ
+    // （SeparatorTextAlign.x = 0）なので、文字は左端から SeparatorTextPadding.x の所に出る。
+    const ImVec2 after = ImGui::GetCursorScreenPos();
+    const ImVec2 min = ImGui::GetItemRectMin();
+    const ImVec2 max = ImGui::GetItemRectMax();
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float size = ImGui::GetTextLineHeight();
+    const float x = min.x + style.SeparatorTextPadding.x + ImGui::CalcTextSize(label).x + style.ItemInnerSpacing.x;
+    ImGui::SetCursorScreenPos(ImVec2(x, min.y + (max.y - min.y - size) * 0.5f));
+    DrawHelpMarker(help, size, true);
+    ImGui::SetCursorScreenPos(after);
+}
+
 void PropertyLabel(const char* label, const char* tooltip) {
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(0);
@@ -1216,6 +1265,21 @@ CaptionEdit GridCaptionInput(const char* id, char* buffer, size_t bufferSize, fl
     const float rest = 2.0f * ImGui::GetTextLineHeightWithSpacing() - (ImGui::GetCursorPosY() - startY) - spacing;
     if (rest > 0.0f) ImGui::Dummy(ImVec2(width, rest));
     return result;
+}
+
+void HelpMarker(const char* help) {
+    if (help == nullptr || help[0] == '\0') {
+        return;
+    }
+    const float size = ImGui::GetTextLineHeight();
+    // 同じ行の前の部品（文字やボタン）の縦の中心に揃える。前の部品が別の行なら何もしない。
+    const ImVec2 previousMin = ImGui::GetItemRectMin();
+    const ImVec2 previousMax = ImGui::GetItemRectMax();
+    const ImVec2 cursor = ImGui::GetCursorScreenPos();
+    if (cursor.y >= previousMin.y && cursor.y <= previousMax.y) {
+        ImGui::SetCursorScreenPos(ImVec2(cursor.x, previousMin.y + (previousMax.y - previousMin.y - size) * 0.5f));
+    }
+    DrawHelpMarker(help, size, false);
 }
 
 void HintText(const char* format, ...) {

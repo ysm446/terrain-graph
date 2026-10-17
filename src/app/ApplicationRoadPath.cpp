@@ -210,7 +210,15 @@ bool Application::DrawRoadPathSettings(graph::Node& node) {
         scale != nullptr ? scale->baseElevationMeters + 0.5f * m_renderer.DisplacementScale() : 0.0f;
 
     // --- 縦断 -----------------------------------------------------------------
-    ui::SectionHeader(ui::Tr("縦断", "Profile"));
+    ui::SectionHeader(ui::Tr("縦断", "Profile"),
+                      ui::Tr("図の空いた所をクリックで縦断ポイントを追加、菱形をクリックで選び、ドラッグで位置と高さを"
+                      "動かす（Delete で削除、Esc で選択を外す）。ポイントが無ければ道路の高さは地形に沿う。"
+                      "置くと、両端とポイントの間の勾配を縦断曲線でつなぐ（地形との差が切土・盛土になる）",
+                      "Click an empty spot in the chart to add a profile point. Click a diamond "
+                      "to select it and drag to move its position and height (Delete removes, "
+                      "Esc deselects). Without points the road height follows the terrain. "
+                      "With points, the grades between the ends and the points are joined by "
+                      "vertical curves (the difference from the terrain becomes cut and fill)"));
     if (!valid) {
         ui::HintText(ui::Tr("縦断とバンク角は、分岐・閉ループ・孤立点のない 1 本の線で求める（%s）",
                             "Profile and superelevation need a single line with no branches, "
@@ -569,17 +577,12 @@ bool Application::DrawRoadPathSettings(graph::Node& node) {
     }
     ImGui::EndDisabled();
     if (!edit.autoReport.empty()) ui::HintText("%s", edit.autoReport.c_str());
-    ui::HintText("%s", ui::Tr("図の空いた所をクリックで縦断ポイントを追加、菱形をクリックで選び、ドラッグで位置と高さを"
-                              "動かす（Delete で削除、Esc で選択を外す）。ポイントが無ければ道路の高さは地形に沿う。"
-                              "置くと、両端とポイントの間の勾配を縦断曲線でつなぐ（地形との差が切土・盛土になる）",
-                              "Click an empty spot in the chart to add a profile point. Click a diamond "
-                              "to select it and drag to move its position and height (Delete removes, "
-                              "Esc deselects). Without points the road height follows the terrain. "
-                              "With points, the grades between the ends and the points are joined by "
-                              "vertical curves (the difference from the terrain becomes cut and fill)"));
 
     // --- バンク角 --------------------------------------------------------------
-    ui::SectionHeader(ui::Tr("バンク角", "Superelevation"));
+    ui::SectionHeader(ui::Tr("バンク角", "Superelevation"),
+                      ui::Tr("ポイントが無ければ、傾きは曲率・設計速度・摩擦係数から自動で決まる",
+                      "Without points, the tilt is set automatically from curvature, "
+                      "design speed, and friction"));
     if (ui::BeginPropertyTable("roadBankRows")) {
         changed |= ui::PropertyBool(ui::Tr("バンク角を付ける", "Bank Curves"), &road.bankEnabled, defaults.bankEnabled,
                                     ui::Tr("カーブで路面を内側へ傾ける。切ると手動のポイントがあっても水平のまま",
@@ -660,9 +663,6 @@ bool Application::DrawRoadPathSettings(graph::Node& node) {
         changed = true;
     }
     ImGui::EndDisabled();
-    ui::HintText("%s", ui::Tr("ポイントが無ければ、傾きは曲率・設計速度・摩擦係数から自動で決まる",
-                              "Without points, the tilt is set automatically from curvature, "
-                              "design speed, and friction"));
 
     if (removeId != 0 && graph::DeleteRoadProfilePoint(road, removeId)) {
         changed = true;

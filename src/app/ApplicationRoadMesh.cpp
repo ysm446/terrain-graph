@@ -544,7 +544,11 @@ bool Application::DrawRoadMeshSettings(graph::Node& node) {
         ui::EndPropertyTable();
     }
 
-    ui::SectionHeader(ui::Tr("材質", "Material"));
+    ui::SectionHeader(ui::Tr("材質", "Material"),
+                      ui::Tr("Material か Layered Material を選ぶ。路面の座標（左端からの横位置、始点からの道のり）で貼る。"
+                      "Layered Material は層ごとの繰り返し長を使う。なしなら灰色で塗る",
+                      "Choose a Material or Layered Material. Mapped by road coordinates (offset from the left edge, "
+                      "distance from the start). Layered Material uses each layer's repeat length. None paints gray"));
     if (ui::BeginPropertyTable("roadMeshMaterialRows")) {
         changed |= DrawMaterialSlotRow(ui::Tr("材質", "Material"), mesh.material, m_materialLibrary, m_pendingAssetReveal, true, true);
         const compositor::MaterialAsset* asset = m_materialLibrary.Find(mesh.material);
@@ -557,10 +561,6 @@ bool Application::DrawRoadMeshSettings(graph::Node& node) {
         }
         ui::EndPropertyTable();
     }
-    ui::HintText("%s", ui::Tr("Material か Layered Material を選ぶ。路面の座標（左端からの横位置、始点からの道のり）で貼る。"
-                               "Layered Material は層ごとの繰り返し長を使う。なしなら灰色で塗る",
-                               "Choose a Material or Layered Material. Mapped by road coordinates (offset from the left edge, "
-                               "distance from the start). Layered Material uses each layer's repeat length. None paints gray"));
 
     DrawRoadNodeStatus(node.id, ui::Tr("Road Path を繋ぎ、Mesh Output へ繋ぐと描く",
                                        "Connect a Road Path and connect to Mesh Output to draw"));
@@ -744,7 +744,17 @@ void Application::DrawBoundaryPreviewWindow() {
 
     // --- 下: 設定 ---
     ImGui::BeginChild("boundaryPropertyPane", ImVec2(0.0f, 0.0f));
-    ui::SectionHeader(ui::Tr("境界マテリアル", "Boundary Material"));
+    // 画像の向きとマスクの意味。見出しの「?」に載せる。
+    const std::string boundaryHelp = std::string(boundary->alongU
+                                                 ? ui::Tr("画像の V が内側（路面）から外へ横切る向き、U が道に沿って繰り返す向き",
+                                                          "Image V runs across from the inner side (road) outward; U repeats along the road")
+                                                 : ui::Tr("画像の U（左 → 右）が内側（路面）から外へ横切る向き、V が道に沿って繰り返す向き",
+                                                          "Image U (left to right) runs across from the inner side (road) outward; V repeats along the road")) +
+                                     "\n" + ui::Tr("マスクの白が内側の帯（路面）、黒が路肩。設定はこのファイルを使うすべての路肩に効き、"
+                                             "「ファイルへ保存」でファイルへ書く",
+                                             "White in the mask is the inner strip (road), black the shoulder. Settings affect every shoulder "
+                                             "using this file; \"Save to File\" writes them");
+    ui::SectionHeader(ui::Tr("境界マテリアル", "Boundary Material"), boundaryHelp.c_str());
     if (!boundary->error.empty()) {
         ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(ui::WarnColor()), "%s", boundary->error.c_str());
     } else if (ui::BeginPropertyTable("boundaryWindowRows", ui::Tr("繰り返しの向き", "Reference Height"))) {
@@ -753,15 +763,6 @@ void Application::DrawBoundaryPreviewWindow() {
         DrawBoundaryAssetRows(*boundary);
         ui::EndPropertyTable();
     }
-    ui::HintText("%s", boundary->alongU
-                           ? ui::Tr("画像の V が内側（路面）から外へ横切る向き、U が道に沿って繰り返す向き",
-                                    "Image V runs across from the inner side (road) outward; U repeats along the road")
-                           : ui::Tr("画像の U（左 → 右）が内側（路面）から外へ横切る向き、V が道に沿って繰り返す向き",
-                                    "Image U (left to right) runs across from the inner side (road) outward; V repeats along the road"));
-    ui::HintText("%s", ui::Tr("マスクの白が内側の帯（路面）、黒が路肩。設定はこのファイルを使うすべての路肩に効き、"
-                               "「ファイルへ保存」でファイルへ書く",
-                               "White in the mask is the inner strip (road), black the shoulder. Settings affect every shoulder "
-                               "using this file; \"Save to File\" writes them"));
     ImGui::EndChild();
     ImGui::End();
 }
@@ -862,10 +863,11 @@ bool Application::DrawShoulderSection(graph::RoadShoulderSettings& shoulder) {
         changed = true;
     }
     ImGui::EndDisabled();
-    ui::HintText("%s", ui::Tr("内側の端 (0, 0) から外へ向かう順に並べる。向きが大きく変わる点は稜線を立て、"
-                               "区間は約 1 m ごとに割る。材質は断面に沿った長さで貼る",
-                               "Order points outward from the inner edge (0, 0). Sharp turns get hard edges, "
-                               "segments are split about every 1 m. Materials map by length along the section"));
+    ImGui::SameLine();
+    ui::HelpMarker(ui::Tr("内側の端 (0, 0) から外へ向かう順に並べる。向きが大きく変わる点は稜線を立て、"
+                   "区間は約 1 m ごとに割る。材質は断面に沿った長さで貼る",
+                   "Order points outward from the inner edge (0, 0). Sharp turns get hard edges, "
+                   "segments are split about every 1 m. Materials map by length along the section"));
     return changed;
 }
 
@@ -905,7 +907,12 @@ bool Application::DrawLaneMarkingSettings(graph::Node& node) {
         ImGui::PopID();
     }
 
-    ui::SectionHeader(ui::Tr("共通", "Common"));
+    ui::SectionHeader(ui::Tr("共通", "Common"),
+                      ui::Tr("材質が無ければ白で塗る。不透明度（切り抜き・半透明）の Material なら、かすれた所を抜く"
+                      "（半透明もいまは切り抜きで描く）。車線の並びは Road Mesh の車線数と走行側で決まる",
+                      "Without a material, paints white. A Material with opacity (cutout / translucent) cuts out "
+                      "worn areas (translucent is drawn as cutout for now). Lane layout follows the Road Mesh "
+                      "lanes and driving side"));
     if (ui::BeginPropertyTable("laneMarkingCommonRows", ui::Tr("長さの向きを U に", "Edge Line Inset"))) {
         changed |= ui::PropertyFloat(ui::Tr("外側線の位置", "Edge Line Inset"), &marking.edgeInsetMeters, 0.0f, 5.0f, defaults.edgeInsetMeters,
                                      ui::Tr("外側線の中心の、路面の端からの距離（m）",
@@ -929,11 +936,6 @@ bool Application::DrawLaneMarkingSettings(graph::Node& node) {
                                            "Runs image U (horizontal) along the line. For wide line images (such as 2048×256)"));
         ui::EndPropertyTable();
     }
-    ui::HintText("%s", ui::Tr("材質が無ければ白で塗る。不透明度（切り抜き・半透明）の Material なら、かすれた所を抜く"
-                               "（半透明もいまは切り抜きで描く）。車線の並びは Road Mesh の車線数と走行側で決まる",
-                               "Without a material, paints white. A Material with opacity (cutout / translucent) cuts out "
-                               "worn areas (translucent is drawn as cutout for now). Lane layout follows the Road Mesh "
-                               "lanes and driving side"));
 
     DrawRoadNodeStatus(node.id, ui::Tr("Road Mesh（か、その先の Shoulder）を繋ぎ、Mesh Output へ繋ぐと描く",
                                        "Connect a Road Mesh (or a Shoulder beyond it) and connect to Mesh Output to draw"));
@@ -1013,7 +1015,10 @@ bool Application::DrawShoulderSettings(graph::Node& node) {
     }
     if (shoulder.shape == graph::RoadShoulderShape::Section) changed |= DrawShoulderSection(shoulder);
 
-    ui::SectionHeader(ui::Tr("材質", "Material"));
+    ui::SectionHeader(ui::Tr("材質", "Material"),
+                      ui::Tr("路肩の座標（内側の端から断面に沿った長さ、始点からの道のり）で貼る。なしなら砂利色の灰色で塗る",
+                      "Mapped by shoulder coordinates (length along the section from the inner edge, distance "
+                      "from the start). None paints gravel gray"));
     if (ui::BeginPropertyTable("shoulderMaterialRows")) {
         changed |= DrawMaterialSlotRow(ui::Tr("材質", "Material"), shoulder.material, m_materialLibrary, m_pendingAssetReveal, true, true);
         const compositor::MaterialAsset* asset = m_materialLibrary.Find(shoulder.material);
@@ -1024,9 +1029,6 @@ bool Application::DrawShoulderSettings(graph::Node& node) {
         }
         ui::EndPropertyTable();
     }
-    ui::HintText("%s", ui::Tr("路肩の座標（内側の端から断面に沿った長さ、始点からの道のり）で貼る。なしなら砂利色の灰色で塗る",
-                               "Mapped by shoulder coordinates (length along the section from the inner edge, distance "
-                               "from the start). None paints gravel gray"));
 
     // --- 内側の境界（境界マテリアル） ---
     ui::SectionHeader(ui::Tr("内側の境界", "Inner Boundary"));
@@ -1041,7 +1043,11 @@ bool Application::DrawShoulderSettings(graph::Node& node) {
     // --- 区間（道のりで材質・境界を切り替える） ---
     // 上の材質・内側の境界は最初の区間。切替位置から先を別の材質・境界にし、切替位置を中心に
     // 移行距離の幅でなめらかにつなぐ（SurfaceLayout の区間の移植）。
-    ui::SectionHeader(ui::Tr("区間", "Spans"));
+    ui::SectionHeader(ui::Tr("区間", "Spans"),
+                      ui::Tr("区間 1 は上の材質と内側の境界。区間を足すと、切替位置から先を別の材質・境界にする。"
+                      "材質と境界マテリアルは 1 本の路肩でそれぞれ 4 種類まで",
+                      "Span 1 uses the material and inner boundary above. Added spans switch to another material "
+                      "or boundary from their switch point. Up to 4 materials and 4 boundary materials per shoulder"));
     const auto statusFound = m_roadNodeStatus.find(node.id);
     const float roadLength = statusFound != m_roadNodeStatus.end() && statusFound->second.lengthMeters > 0.0f
                                  ? statusFound->second.lengthMeters : 1000.0f;
@@ -1108,10 +1114,6 @@ bool Application::DrawShoulderSettings(graph::Node& node) {
         changed = true;
     }
     ImGui::EndDisabled();
-    ui::HintText("%s", ui::Tr("区間 1 は上の材質と内側の境界。区間を足すと、切替位置から先を別の材質・境界にする。"
-                               "材質と境界マテリアルは 1 本の路肩でそれぞれ 4 種類まで",
-                               "Span 1 uses the material and inner boundary above. Added spans switch to another material "
-                               "or boundary from their switch point. Up to 4 materials and 4 boundary materials per shoulder"));
 
     DrawRoadNodeStatus(node.id, ui::Tr("Road Mesh（か内側の Shoulder）を繋ぎ、Mesh Output へ繋ぐと描く",
                                        "Connect a Road Mesh (or an inner Shoulder) and connect to Mesh Output to draw"));

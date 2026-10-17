@@ -189,14 +189,6 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                 "%.2f");
             ui::EndPropertyTable();
         }
-        ui::HintText("%s", ui::Tr("重力で土砂を再分配する。谷底に厚く積もり、尾根は痩せる。"
-                                  "Emission 入力で供給する場所を絞れる（「地形を土砂にする」を切り、"
-                                  "粘性を下げると、注ぎ口から流した液体になる）。"
-                                  "Mask 出力は積もった厚みなので、堆積した所へ別のマテリアルを乗せられる",
-                                  "Redistributes sediment by gravity. It piles up in valley floors and thins the ridges. "
-                                  "The Emission input limits where it is supplied (turn off Convert Terrain "
-                                  "and lower Viscosity to get liquid poured from a spout). "
-                                  "The Mask output is the deposited thickness, so you can put another material on the deposits"));
         return changed;
     }
 
@@ -219,12 +211,6 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
             changed |= ui::PropertyFloat(ui::Tr("流域の深さ", "Basin Depth"), &p.basinDepth, 0.0f, 1000.0f, d.basinDepth, ui::Tr("川の基準高から流域を下げる距離", "How far the basin is lowered from the river's base height"), "%.2f m");
             ui::EndPropertyTable();
         }
-        ui::HintText("%s", ui::Tr("Base に地形、Path に上流から下流へ向く開いた線を接続する。"
-            "分岐・閉じた線・途中で向きが反転する線には対応しない。"
-            "Result は地形、River は河床の範囲。水面は生成しない。",
-            "Connect the terrain to Base and an open line running from upstream to downstream to Path. "
-            "Branches, closed lines, and lines that reverse direction are not supported. "
-            "Result is the terrain and River is the riverbed area. No water surface is generated."));
         return changed;
     }
     // 湖は給水マスクを受けて水を移動し、水面まで地形を持ち上げる。
@@ -262,14 +248,6 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
             ui::EndPropertyTable();
         }
         changed |= DrawWaterAppearance(layer, kDefaultLakeLayer, true, "lakeWaterRows");
-        ui::HintText("%s", ui::Tr("窪みに水を溜めて水面の高さへ変形する。Lake は湖の範囲、Depth は水深（m）、"
-                                  "Water Level は周囲へ延長した水位（Height と同じ 0〜1 基準）。"
-                                  "「水を描く」が入なら、水の色・波・波打ち際はこのノードが付ける。"
-                                  "波の大きさや波打ち際の細かい設定は Sea のものを使う（Sea が無ければ既定）",
-                                  "Pools water in basins and raises the terrain to the water surface. Lake is the lake area, Depth is the water depth (m), "
-                                  "Water Level is the water level extended outward (same 0-1 scale as Height). "
-                                  "With Paint Water on, this node adds the water color, waves, and shoreline. "
-                                  "Wave size and detailed shoreline settings come from Sea (defaults if there is no Sea)"));
         return changed;
     }
     // 積雪も合成レイヤーではなく「下地のハイトへ雪を積む加工」。
@@ -459,14 +437,6 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                 ImGuiSliderFlags_Logarithmic);
             ui::EndPropertyTable();
         }
-        ui::HintText("%s", ui::Tr("雪を降らせ、急な雪面から低い所へ滑らせて溜める。"
-                                  "Mask 入力で降らせる場所を絞れる（Mask Height を繋げば雪線になる。"
-                                  "滑った雪はマスクの外へも出る）。"
-                                  "Mask 出力は雪の被覆なので、積もった所へ雪のマテリアルを乗せられる",
-                                  "Drops snow and lets it slide from steep snow surfaces down to collect in low spots. "
-                                  "The Mask input limits where it falls (connect Mask Height for a snow line; "
-                                  "sliding snow can leave the mask). "
-                                  "The Mask output is the snow coverage, so you can put a snow material where it piled up"));
         return changed;
     }
 
@@ -600,7 +570,11 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
         }
         changed |= DrawWaterAppearance(layer, kDefaultRiverLayer, false, "riverWaterRows");
         // 流れは合成に焼かず、地形の描画が水面へ下流へ流れる模様を重ねる。
-        ui::SectionHeader(ui::Tr("流れ", "Flow"));
+        ui::SectionHeader(ui::Tr("流れ", "Flow"),
+                          ui::Tr("流れの波は地形の描画で動かす（合成結果や書き出すテクスチャには入らない）。"
+                          "向きは水面の傾きから決まる。River が複数あるときは、最初の有効な 1 つの設定を使う",
+                          "Flow waves are animated by the terrain renderer (not baked into the composite or exported textures). "
+                          "Their direction comes from the water surface slope. With several Rivers, the first enabled one's settings are used"));
         if (ui::BeginPropertyTable("layerRiverFlowRows")) {
             changed |= ui::PropertyFloat(
                 ui::Tr("波の強さ", "Wave Strength"), &layer.river.flowWaveStrength, 0.0f, 1.0f, riverDefaults.flowWaveStrength,
@@ -623,20 +597,6 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                        "Density of white water on rapids (where the water surface is steep). 0 means no foam"), "%.2f");
             ui::EndPropertyTable();
         }
-        ui::HintText("%s", ui::Tr("流れの波は地形の描画で動かす（合成結果や書き出すテクスチャには入らない）。"
-                                  "向きは水面の傾きから決まる。River が複数あるときは、最初の有効な 1 つの設定を使う",
-                                  "Flow waves are animated by the terrain renderer (not baked into the composite or exported textures). "
-                                  "Their direction comes from the water surface slope. With several Rivers, the first enabled one's settings are used"));
-        ui::HintText("%s", ui::Tr("川筋から河床を掘り、下流へ単調に下がる水面を張る。盆地は湖になる。"
-                                  "Water は水面の被覆、Bank は河原（岩・砂利を置く帯）、Depth は水深。"
-                                  "「水を描く」が切のときは、後ろの Surface で水の色を付ける"
-                                  "（その Surface はハイトを定数にすること。水面の形は River が決める）。"
-                                  "水の上に Surface を重ねると、そこは陸として扱い、流れは消える",
-                                  "Carves a riverbed along the channels and fills it with water that steadily descends downstream. Basins become lakes. "
-                                  "Water is the water coverage, Bank is the shore (a band for rocks and gravel), Depth is the water depth. "
-                                  "With Paint Water off, color the water with a later Surface "
-                                  "(set that Surface's height to a constant; River decides the water shape). "
-                                  "Where a Surface is layered over the water, it is treated as land and the flow disappears"));
         return changed;
     }
 
@@ -788,15 +748,6 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
             }
             ui::EndPropertyTable();
         }
-        if (layer.scatter.clusterCount > 0)
-            ui::HintText("%s", ui::Tr("群生は Points 出力だけに効く。地面に作る形と Mask 出力は親の点だけ",
-                                      "Clusters only affect the Points output. The ground shape and Mask output use parent points only"));
-        ui::HintText("%s", ui::Tr("Mask 入力で散布する範囲を絞れる（明るい所ほど置かれる）",
-                                  "The Mask input limits the scatter area (brighter areas get more)"));
-        ui::HintText("%s", ui::Tr("Mask 出力は分布、Unique は個体ごとの乱数。"
-                                  "高さ 0 のまま Mask だけを使ってもよい",
-                                  "The Mask output is the distribution; Unique is a random value per instance. "
-                                  "You can leave Height at 0 and use only the Mask"));
         return changed;
     }
 
@@ -914,14 +865,6 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                                                 "Cut / fill amount (m) at which the Cut / Fill masks reach 1"), "%.2f m");
             ui::EndPropertyTable();
         }
-        ui::HintText("%s", ui::Tr("Mesh 入力に Road Mesh / Shoulder か、Model Place の Pad（建物の敷地）を繋ぐ。"
-                                  "Road は路面や敷地の下（平らな幅まで）、Cut は切土の法面、Fill は盛土の法面。"
-                                  "Road Path の Base は、この Grading より手前の地形に繋ぐこと"
-                                  "（均した後の地形に繋ぐと、道路が自分で均した地形を読み直して循環する）",
-                                  "Connect Road Mesh / Shoulder or a Model Place Pad (building lot) to the Mesh input. "
-                                  "Road is under the road or pad (out to Flat Width), Cut is the cut embankment, Fill is the fill embankment. "
-                                  "Connect Road Path's Base to terrain before this Grading "
-                                  "(connecting it to the graded terrain makes the road re-read its own grading and loop)"));
         return changed;
     }
 
@@ -972,8 +915,6 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                                          ImGuiSliderFlags_Logarithmic);
             ui::EndPropertyTable();
         }
-        ui::HintText("%s", ui::Tr("Mask の白い所だけに効く（黒い所は元の高さのまま）",
-                                  "Affects only the white areas of the Mask (black areas keep their original height)"));
         return changed;
     }
 
@@ -1089,10 +1030,6 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                                                     "In final grid cells. Radius that halves from wide to narrow. 1 gives only thin channels"));
             ui::EndPropertyTable();
         }
-        ui::HintText("%s", ui::Tr("粗い地形から段階的に谷筋を作る。開始解像度より細かな元の凹凸は再構成される。"
-                                  "Mask は結果を適用する範囲（白で適用）。",
-                                  "Builds valleys in stages starting from a coarse terrain. Original detail finer than Start Resolution is reconstructed. "
-                                  "The Mask is where the result applies (white applies)."));
         return changed;
     }
     if (layer.kind == compositor::LayerKind::Droplet) {
@@ -1191,14 +1128,6 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                                        dropletDefaults.seed, ui::Tr("水滴の落とし方の乱数", "Random seed for dropping droplets"));
             ui::EndPropertyTable();
         }
-        ui::HintText("%s", ui::Tr("水滴を落として斜面を下らせ、運べる量より少なければ削り、多ければ積む"
-                                  "（terrain-editor の Droplet Erosion）。Flow は水の通った量（谷筋に砂利）、"
-                                  "Deposit は積もった量（谷底や扇状地に土）。地形の変更は差分で足すので、"
-                                  "素材の凹凸は壊さない",
-                                  "Drops droplets that run downhill, eroding when carrying less than capacity and depositing when carrying more "
-                                  "(terrain-editor's Droplet Erosion). Flow is how much water passed (gravel in valleys), "
-                                  "Deposit is how much settled (soil on valley floors and fans). Terrain changes are added as a difference, "
-                                  "so material detail is preserved"));
         return changed;
     }
 
@@ -1268,10 +1197,6 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                                        ui::Tr("発生位置とばらつきの種", "Seed for spawn positions and variation"));
             ui::EndPropertyTable();
         }
-        ui::HintText("%s", ui::Tr("発生源（Emission 入力）の明るい所から岩片を生み、斜面を下らせて積む。"
-                                  "Mask は岩屑の厚み、Unique は岩片ごとの乱数を出す",
-                                  "Spawns rock fragments from bright areas of the source (Emission input) and lets them roll downhill and pile up. "
-                                  "Mask outputs the debris thickness; Unique outputs a random value per fragment"));
         return changed;
     }
 
@@ -1310,14 +1235,14 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                                               "(effective radius is about Radius x sqrt(Iterations))"));
             ui::EndPropertyTable();
         }
-        ui::HintText("%s", ui::Tr("下地のハイトをぼかし、ぼかした形から法線を作り直す。"
-                                  "素材の法線ディテールを載せるなら、このノードより後ろに繋ぐ",
-                                  "Blurs the base height and rebuilds the normals from the blurred shape. "
-                                  "To add material normal detail, connect it after this node"));
         return changed;
     }
 
-    ui::SectionHeader(ui::Tr("基本", "General"));
+    ui::SectionHeader(ui::Tr("基本", "General"),
+                      (!isShape && layer.material != compositor::kNoMaterialAsset)
+                      ? ui::Tr("色とサーフェスの値はマテリアル側で決まる",
+                                                        "Color and surface values come from the material")
+                      : nullptr);
     if (ui::BeginPropertyTable("layerBasicRows")) {
         char nameBuffer[128] = {};
         std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", layer.name.c_str());
@@ -1363,15 +1288,15 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
         }
         ui::EndPropertyTable();
     }
-    if (!isShape && layer.material != compositor::kNoMaterialAsset) {
-        ui::HintText("%s", ui::Tr("色とサーフェスの値はマテリアル側で決まる",
-                                  "Color and surface values come from the material"));
-    }
 
     // パス UV。UV Path に繋いだパスに沿った帯の座標で貼る。地形の UV は使わないので
     // UV スケールの代わりにここを出す。幅は Path の点が持つ。
     if (pathUv) {
-        ui::SectionHeader(ui::Tr("パス UV", "Path UV"));
+        ui::SectionHeader(ui::Tr("パス UV", "Path UV"),
+                          ui::Tr("UV Path のパスに沿って素材を貼る。進行方向が模様の縦（既定）または横。"
+                          "幅とフェザーは Path の点が持ち、帯の外には乗らない",
+                          "Applies the material along the UV Path's path. The path runs along the pattern's vertical (default) or horizontal axis. "
+                          "Width and feather come from the Path points; nothing is applied outside the strip"));
         if (ui::BeginPropertyTable("layerPathUvRows")) {
             changed |= ui::PropertyFloat(ui::Tr("繰り返し長", "Repeat Length"), &layer.pathUv.repeatMeters, 0.5f, 20000.0f,
                                          defaults.pathUv.repeatMeters,
@@ -1449,10 +1374,6 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
             }
             ui::EndPropertyTable();
         }
-        ui::HintText("%s", ui::Tr("UV Path のパスに沿って素材を貼る。進行方向が模様の縦（既定）または横。"
-                                  "幅とフェザーは Path の点が持ち、帯の外には乗らない",
-                                  "Applies the material along the UV Path's path. The path runs along the pattern's vertical (default) or horizontal axis. "
-                                  "Width and feather come from the Path points; nothing is applied outside the strip"));
     }
 
     if (isLiquid) {
@@ -1523,7 +1444,11 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
             ui::EndPropertyTable();
         }
         // 波打ち際も描画で動かす。泡の筋は水際からの距離で進み、岸の形に沿って岸へ向かう。
-        ui::SectionHeader(ui::Tr("波打ち際", "Shoreline"));
+        ui::SectionHeader(ui::Tr("波打ち際", "Shoreline"),
+                          ui::Tr("波と波打ち際は地形の描画で動かす（合成結果や書き出すテクスチャには入らない）。"
+                          "Sea が複数あるときは、最初の有効な 1 つの設定を使う",
+                          "Waves and shoreline are animated by the terrain renderer (not baked into the composite or exported textures). "
+                          "With several Seas, the first enabled one's settings are used"));
         if (ui::BeginPropertyTable("layerLiquidShoreRows")) {
             changed |= ui::PropertyFloat(ui::Tr("泡の量", "Foam Amount"), &layer.liquid.shoreFoam, 0.0f, 1.0f,
                                          defaults.liquid.shoreFoam,
@@ -1544,12 +1469,12 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                                          ui::Tr("泡の筋が出る、水際からの幅（m）", "Width (m) from the water's edge where foam lines appear"), "%.0f m");
             ui::EndPropertyTable();
         }
-        ui::HintText("%s", ui::Tr("波と波打ち際は地形の描画で動かす（合成結果や書き出すテクスチャには入らない）。"
-                                  "Sea が複数あるときは、最初の有効な 1 つの設定を使う",
-                                  "Waves and shoreline are animated by the terrain renderer (not baked into the composite or exported textures). "
-                                  "With several Seas, the first enabled one's settings are used"));
         // Mask 出力（Water / Depth / Shore）の目盛り。
-        ui::SectionHeader(ui::Tr("マスク出力", "Mask Output"));
+        ui::SectionHeader(ui::Tr("マスク出力", "Mask Output"),
+                          ui::Tr("Water は水面の範囲（水の中が 1）、Depth は水深、Shore は水際の帯。"
+                          "この Sea より後ろのノードで使う",
+                          "Water is the water area (1 inside the water), Depth is the water depth, Shore is the band at the water's edge. "
+                          "Use them in nodes after this Sea"));
         if (ui::BeginPropertyTable("layerLiquidMaskRows")) {
             changed |= ui::PropertyFloat(ui::Tr("Depth の深さ", "Depth Range"), &layer.liquid.maskDepthMeters, 0.1f, 100.0f,
                                          defaults.liquid.maskDepthMeters,
@@ -1561,22 +1486,24 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                                                 "Width (m) of the Shore band. 1 at the water's edge, 0 at this distance on both the land and water sides"), "%.1f m");
             ui::EndPropertyTable();
         }
-        ui::HintText("%s", ui::Tr("Water は水面の範囲（水の中が 1）、Depth は水深、Shore は水際の帯。"
-                                  "この Sea より後ろのノードで使う",
-                                  "Water is the water area (1 inside the water), Depth is the water depth, Shore is the band at the water's edge. "
-                                  "Use them in nodes after this Sea"));
     } else if (layeredMaterial) {
-        ui::SectionHeader(ui::Tr("ハイト", "Height"));
+        ui::SectionHeader(ui::Tr("ハイト", "Height"),
+                          ui::Tr("ハイトと法線はレイヤーマテリアル内部で合成する。変位量は材質側で設定する",
+                          "Height and normals are blended inside the Layered Material. Set displacement on the material"));
         if (ui::BeginPropertyTable("layerHeightRows")) {
             changed |= ui::PropertyFloat(ui::Tr("基準の高さ", "Base Height"), &layer.heightBase, -2.0f, 2.0f, defaults.heightBase,
                                          ui::Tr("合成材質を置く基準の高さ。起伏の実寸は材質側の変位量で決まる",
                                                 "Base height at which the layered material is placed. The actual relief comes from the material's displacement"));
             ui::EndPropertyTable();
         }
-        ui::HintText("%s", ui::Tr("ハイトと法線はレイヤーマテリアル内部で合成する。変位量は材質側で設定する",
-                                  "Height and normals are blended inside the Layered Material. Set displacement on the material"));
     } else {
-        ui::SectionHeader(ui::Tr("ハイト", "Height"));
+        ui::SectionHeader(ui::Tr("ハイト", "Height"),
+                          // ハイトは 0〜1 の正規化値。**何 m かは下の「スケール」の標高差**が決める。
+                          isSource ? ui::Tr("画像の 0〜1 がハイトの全幅。実際の高さ（m）はスケールの標高差で決まる",
+                                                                "The image's 0-1 range is the full height range. The actual height (m) comes from the Scale's elevation range")
+                          : isShape ? ui::Tr("下地の高さへ加算し、0〜1 に切り詰める。細部は下のレイヤーのまま残る",
+                                                                "Adds to the base height and clamps to 0-1. Detail from the layers below is kept")
+                          : nullptr);
         if (ui::BeginPropertyTable("layerHeightRows")) {
             int heightSource = static_cast<int>(layer.heightSource);
             if (ui::PropertyCombo(ui::Tr("ソース", "Source"), &heightSource, ui::Tr(kValueSourceLabels).data(),
@@ -1622,20 +1549,40 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
             }
             ui::EndPropertyTable();
         }
-        if (isSource) {
-            // ハイトは 0〜1 の正規化値。**何 m かは下の「スケール」の標高差**が決める。
-            ui::HintText("%s", ui::Tr("画像の 0〜1 がハイトの全幅。実際の高さ（m）はスケールの標高差で決まる",
-                                      "The image's 0-1 range is the full height range. The actual height (m) comes from the Scale's elevation range"));
-        } else if (isShape) {
-            ui::HintText("%s", ui::Tr("下地の高さへ加算し、0〜1 に切り詰める。細部は下のレイヤーのまま残る",
-                                      "Adds to the base height and clamps to 0-1. Detail from the layers below is kept"));
-        }
     }
 
     // マスクは「下地と競合させるための不透明度」なので、
     // 入力を持たないソース（ハイトマップ）では意味を持たない。行ごと出さない。
     if (!isSource) {
-        ui::SectionHeader(ui::Tr("マスク", "Mask"));
+        ui::SectionHeader(ui::Tr("マスク", "Mask"),
+                          isBase ? ui::Tr("一番下のレイヤーは下地なのでマスクは効かない",
+                          "The bottom layer is the base, so the mask has no effect") : nullptr);
+        // ソースごとの読み方。ソースの行のツールチップに足す。
+        const char* sourceHint = nullptr;
+        switch (layer.mask.source) {
+            case compositor::MaskSource::Slope:
+                sourceHint = ui::Tr("急な面ほど 1 に近づく", "Steeper surfaces approach 1");
+                break;
+            case compositor::MaskSource::Curvature:
+                sourceHint = ui::Tr("0.5 が平坦。凸で大、凹で小", "0.5 is flat. Higher on convex, lower on concave");
+                break;
+            case compositor::MaskSource::Cavity:
+                sourceHint = ui::Tr("窪んでいるほど 1 に近づく", "Deeper hollows approach 1");
+                break;
+            case compositor::MaskSource::Height:
+                sourceHint = ui::Tr("下地が高いほど 1 に近づく", "Higher base areas approach 1");
+                break;
+            default:
+                break;
+        }
+        std::string sourceTooltip = ui::Tr("マスクは被覆率。1.0 で全面を覆い、"
+                                           "中間はこのレイヤーの起伏の高い所から順に出る",
+                                           "The mask is coverage. 1.0 covers everything; "
+                                           "in between, this layer shows up starting from its highest relief");
+        if (sourceHint != nullptr) {
+            sourceTooltip += "\n";
+            sourceTooltip += sourceHint;
+        }
         if (ui::BeginPropertyTable("layerMaskRows")) {
             // Mask 入力にノードが繋がっているときは、そちらが出どころ。
             if (maskFromNode) {
@@ -1645,10 +1592,7 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
                 if (ui::PropertyCombo(ui::Tr("ソース", "Source"), &maskSource, ui::Tr(kMaskSourceLabels).data(),
                                       IM_ARRAYSIZE(kMaskSourceLabels),
                                       static_cast<int>(kDefaultLayer.mask.source),
-                                      ui::Tr("マスクは被覆率。1.0 で全面を覆い、"
-                                             "中間はこのレイヤーの起伏の高い所から順に出る",
-                                             "The mask is coverage. 1.0 covers everything; "
-                                             "in between, this layer shows up starting from its highest relief"))) {
+                                      sourceTooltip.c_str())) {
                     layer.mask.source = static_cast<compositor::MaskSource>(maskSource);
                     changed = true;
                 }
@@ -1680,30 +1624,12 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
             ui::EndPropertyTable();
         }
 
-        if (isBase) {
-            ui::HintText("%s", ui::Tr("一番下のレイヤーは下地なのでマスクは効かない",
-                                      "The bottom layer is the base, so the mask has no effect"));
-        }
-        switch (layer.mask.source) {
-            case compositor::MaskSource::Slope:
-                ui::HintText("%s", ui::Tr("急な面ほど 1 に近づく", "Steeper surfaces approach 1"));
-                break;
-            case compositor::MaskSource::Curvature:
-                ui::HintText("%s", ui::Tr("0.5 が平坦。凸で大、凹で小", "0.5 is flat. Higher on convex, lower on concave"));
-                break;
-            case compositor::MaskSource::Cavity:
-                ui::HintText("%s", ui::Tr("窪んでいるほど 1 に近づく", "Deeper hollows approach 1"));
-                break;
-            case compositor::MaskSource::Height:
-                ui::HintText("%s", ui::Tr("下地が高いほど 1 に近づく", "Higher base areas approach 1"));
-                break;
-            default:
-                break;
-        }
     }
 
     if (layer.mask.source == compositor::MaskSource::Paint) {
-        ui::SectionHeader(ui::Tr("ペイント", "Paint"));
+        ui::SectionHeader(ui::Tr("ペイント", "Paint"),
+                          ui::Tr("左ドラッグで塗る / 右ドラッグで消す / Alt + 左ドラッグで視点を回す",
+                          "Left-drag to paint / right-drag to erase / Alt + left-drag to orbit the view"));
         changed |= DrawPaintSection(layer);
     }
 
@@ -1836,8 +1762,6 @@ bool Application::DrawPaintSection(compositor::MaterialLayer& layer) {
         ui::EndPropertyTable();
     }
 
-    ui::HintText("%s", ui::Tr("左ドラッグで塗る / 右ドラッグで消す / Alt + 左ドラッグで視点を回す",
-                              "Left-drag to paint / right-drag to erase / Alt + left-drag to orbit the view"));
     return changed;
 }
 

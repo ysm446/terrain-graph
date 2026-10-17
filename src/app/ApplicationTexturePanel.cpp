@@ -216,7 +216,9 @@ void Application::DrawTexturePreviewWindow() {
     ImGui::Separator();
 
     ImGui::BeginChild("texturePropertyPane", ImVec2(0.0f, 0.0f));
-    ui::SectionHeader(ui::Tr("選択中", "Selected"));
+    ui::SectionHeader(ui::Tr("選択中", "Selected"),
+                      ui::Tr("一覧のサムネイルをマテリアルのマップ欄へドラッグすると割り当てられる",
+                      "Drag a thumbnail from the list onto a material map slot to assign it"));
     if (ui::BeginPropertyTable("textureRows")) {
         // ORD のように 1 枚へ複数のマップを詰めたテクスチャは、RGB のまま見ても
         // 意味が読めない。チャンネルを分けて確かめられるようにする。
@@ -268,8 +270,6 @@ void Application::DrawTexturePreviewWindow() {
         }
         ui::EndPropertyTable();
     }
-    ui::HintText("%s", ui::Tr("一覧のサムネイルをマテリアルのマップ欄へドラッグすると割り当てられる",
-                               "Drag a thumbnail from the list onto a material map slot to assign it"));
     ImGui::EndChild();
 
     ImGui::End();
