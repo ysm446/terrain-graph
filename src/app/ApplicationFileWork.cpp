@@ -151,8 +151,15 @@ void Application::HandleShortcuts() {
 
     // F12 はコンテンツ領域のスクリーンショット。修飾キーは要らないので先に見る。
     // 実際の撮影はフレームの終わり（EndFrame）で行う。
-    if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_F12, false)) {
-        m_screenshotPending = true;
+    // Shift + F12 は UI を 100% で描いた大きさで撮る（ProcessUnscaledScreenshot）。
+    // その撮影の途中（ウィンドウを縮めている間）は、どちらも受け付けない。
+    if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_F12, false) &&
+        m_unscaledScreenshot.stage == UnscaledScreenshotStage::None) {
+        if (io.KeyShift) {
+            m_unscaledScreenshot.stage = UnscaledScreenshotStage::Requested;
+        } else {
+            m_screenshotPending = true;
+        }
     }
     // F9 はビューポートだけ（UI なし）のスクリーンショット。
     if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_F9, false)) {

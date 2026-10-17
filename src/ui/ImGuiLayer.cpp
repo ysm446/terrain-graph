@@ -6,6 +6,7 @@
 #include "ui/UiStyle.h"
 
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <imgui_impl_dx12.h>
 #include <imgui_impl_win32.h>
 
@@ -112,7 +113,7 @@ bool ImGuiLayer::Initialize(Window& window, rhi::Device& device) {
     return true;
 }
 
-void ImGuiLayer::SetUiScale(float scale) {
+void ImGuiLayer::SetUiScale(float scale, bool announce) {
     const float clamped = std::clamp(scale, 0.5f, 4.0f);
     if (std::abs(clamped - m_uiScale) < 0.001f) {
         return;
@@ -123,7 +124,57 @@ void ImGuiLayer::SetUiScale(float scale) {
     ui::ApplyTheme(m_uiScale);
     ApplyScaleToStyle();
 
-    TG_LOG_INFO(ui::Tr("UI の拡大率を %.0f%% にしました", "UI scale set to %.0f%%"), m_uiScale * 100.0f);
+    if (announce) {
+        TG_LOG_INFO(ui::Tr("UI の拡大率を %.0f%% にしました", "UI scale set to %.0f%%"), m_uiScale * 100.0f);
+    }
+}
+
+void ImGuiLayer::ScaleLayout(float factor) {
+    ImGuiContext& g = *GImGui;
+    const auto scaled = [factor](ImVec2 value) { return ImVec2(value.x * factor, value.y * factor); };
+    m_savedLayout.clear();
+
+    // ドックの分割。位置は毎フレーム親から決まるので、大きさだけ縮める。
+    for (int i = 0; i < g.DockContext.Nodes.Data.Size; ++i) {
+        auto* node = static_cast<ImGuiDockNode*>(g.DockContext.Nodes.Data[i].val_p);
+        if (node == nullptr) {
+            continue;
+        }
+        m_savedLayout.push_back({node->ID, true, ImVec2(), node->Size, node->SizeRef});
+        node->Size = scaled(node->Size);
+        node->SizeRef = scaled(node->SizeRef);
+    }
+
+    // 浮いているウィンドウ。ドックに入っているものはノードが、子やポップアップは親が大きさを決める。
+    const ImVec2 origin = ImGui::GetMainViewport()->Pos;
+    for (ImGuiWindow* window : g.Windows) {
+        if (window->DockIsActive ||
+            (window->Flags & (ImGuiWindowFlags_ChildWindow | ImGuiWindowFlags_Popup |
+                              ImGuiWindowFlags_Tooltip)) != 0) {
+            continue;
+        }
+        m_savedLayout.push_back({window->ID, false, window->Pos, window->Size, window->SizeFull});
+        window->Pos = ImVec2(origin.x + (window->Pos.x - origin.x) * factor,
+                             origin.y + (window->Pos.y - origin.y) * factor);
+        window->Size = scaled(window->Size);
+        window->SizeFull = scaled(window->SizeFull);
+    }
+}
+
+void ImGuiLayer::RestoreLayout() {
+    for (const SavedLayoutItem& item : m_savedLayout) {
+        if (item.dockNode) {
+            if (ImGuiDockNode* node = ImGui::DockBuilderGetNode(item.id)) {
+                node->Size = item.size;
+                node->SizeRef = item.sizeRef;
+            }
+        } else if (ImGuiWindow* window = ImGui::FindWindowByID(item.id)) {
+            window->Pos = item.pos;
+            window->Size = item.size;
+            window->SizeFull = item.sizeRef;
+        }
+    }
+    m_savedLayout.clear();
 }
 
 void ImGuiLayer::SetFontSize(float sizeInPixels) {

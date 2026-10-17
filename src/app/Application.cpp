@@ -74,18 +74,20 @@ std::filesystem::path ResolveScreenshotDirectory() {
 }
 
 // 撮った時刻をそのままファイル名にする。連番だと前回の続きが分からない。
-// ビューポートだけの撮影は `_viewport` を付けて、F12 の画面全体と見分ける。
-std::string ScreenshotFileName(bool viewportOnly = false) {
+// ビューポートだけの撮影は `_viewport`、UI を 100% で描いた撮影（Shift + F12）は `_100` を付けて、
+// F12 の画面全体と見分ける。
+std::string ScreenshotFileName(const char* suffix = "") {
     const std::time_t now = std::time(nullptr);
     std::tm local = {};
     ::localtime_s(&local, &now);
     char buffer[64] = {};
-    std::strftime(buffer, sizeof(buffer),
-                  viewportOnly ? "terrain_graph_%Y%m%d_%H%M%S_viewport.png"
-                               : "terrain_graph_%Y%m%d_%H%M%S.png",
-                  &local);
-    return buffer;
+    std::strftime(buffer, sizeof(buffer), "terrain_graph_%Y%m%d_%H%M%S", &local);
+    return std::string(buffer) + suffix + ".png";
 }
+
+// Shift + F12 の撮影で、縮めてから撮るまでに描くフレーム数。配置の計算し直し・
+// ビューポートの作り直し・雲の蓄積が追いつくのを待つ。
+constexpr uint32_t kUnscaledScreenshotSettleFrames = 30;
 
 }  // namespace
 
@@ -261,7 +263,7 @@ void Application::Shutdown() {
 
 // F12 の撮影。バックバッファをそのまま読み戻すので、
 // 手前に別のウィンドウが重なっていても、画面外へはみ出していても欠けない。
-void Application::RequestScreenshot() {
+void Application::RequestScreenshot(bool unscaled) {
     const std::filesystem::path directory = ResolveScreenshotDirectory();
     std::error_code error;
     std::filesystem::create_directories(directory, error);
@@ -273,7 +275,7 @@ void Application::RequestScreenshot() {
         return;
     }
 
-    const std::filesystem::path path = directory / FromUtf8(ScreenshotFileName());
+    const std::filesystem::path path = directory / FromUtf8(ScreenshotFileName(unscaled ? "_100" : ""));
     m_device.RequestBackBufferCapture(
         path, [this](bool success, const std::filesystem::path& saved, uint32_t width,
                      uint32_t height) {
@@ -290,6 +292,58 @@ void Application::RequestScreenshot() {
         });
 }
 
+// Shift + F12 の撮影。UI を 100% で描いたときの大きさで撮る。
+//
+// 150% の画面で撮った絵を縮めると文字がぼやけるので、**撮る間だけ実際に 100% で描く。**
+// 設定で拡大率を変えたときと同じく、UI の拡大率とウィンドウの大きさを一緒に縮める
+// （作業面積が同じなので、パネルの並びは画面と同じになる）。ドックの幅はピクセルで残るので、
+// 配置も同じ比率で縮める。撮り終えたら、拡大率・配置・ウィンドウの位置と大きさを元へ戻す。
+// 拡大率とウィンドウの大きさを変えるので、フレームの外で呼ぶ。
+void Application::ProcessUnscaledScreenshot() {
+    UnscaledScreenshot& shot = m_unscaledScreenshot;
+    switch (shot.stage) {
+        case UnscaledScreenshotStage::None:
+            return;
+        case UnscaledScreenshotStage::Requested: {
+            shot.scale = m_imgui.UiScale();
+            shot.frames = 0;
+            shot.stage = UnscaledScreenshotStage::Settling;
+            if (std::abs(shot.scale - 1.0f) < 0.001f) {
+                // もう 100% で描いている。縮めずにそのまま撮る。
+                shot.frames = kUnscaledScreenshotSettleFrames;
+                return;
+            }
+            shot.placement = m_window.Placement();
+            const auto unscaled = [&shot](uint32_t size) {
+                return std::max(1u, static_cast<uint32_t>(
+                                        std::lround(static_cast<float>(size) / shot.scale)));
+            };
+            const uint32_t width = unscaled(m_device.Width());
+            const uint32_t height = unscaled(m_device.Height());
+            m_imgui.ScaleLayout(1.0f / shot.scale);
+            m_imgui.SetUiScale(1.0f, false);
+            m_window.ResizeClient(width, height);
+            return;
+        }
+        case UnscaledScreenshotStage::Settling:
+            // 縮めた直後は、配置の計算・ビューポートの作り直し・雲の蓄積が追いついていない。
+            if (shot.frames++ >= kUnscaledScreenshotSettleFrames) {
+                m_screenshotPending = true;
+                shot.stage = UnscaledScreenshotStage::Restoring;
+            }
+            return;
+        case UnscaledScreenshotStage::Restoring:
+            // 撮影は前のフレームの終わりで済んでいる。
+            if (std::abs(shot.scale - 1.0f) >= 0.001f) {
+                m_imgui.SetUiScale(shot.scale, false);
+                m_imgui.RestoreLayout();
+                m_window.RestorePlacement(shot.placement);
+            }
+            shot.stage = UnscaledScreenshotStage::None;
+            return;
+    }
+}
+
 // F9 の撮影。UI を除いたビューポートの描画結果（トーンマップ後）だけを書き出す。
 // 読み戻しは同期なので、フレームを送り終えてから GPU を待って呼ぶ。
 void Application::SaveViewportScreenshot() {
@@ -304,7 +358,7 @@ void Application::SaveViewportScreenshot() {
         return;
     }
 
-    const std::filesystem::path path = directory / FromUtf8(ScreenshotFileName(true));
+    const std::filesystem::path path = directory / FromUtf8(ScreenshotFileName("_viewport"));
     m_device.WaitForGpu();
     if (!m_renderer.SaveOutputToPng(m_device, path)) {
         m_toasts.Push(ui::Tr("スクリーンショットを保存できませんでした", "Could not save the screenshot"),
@@ -389,6 +443,7 @@ int Application::Run() {
 
         // UI の拡大率はスタイル・フォントとウィンドウの大きさに効く。フレームの外で。
         ApplyUiScale();
+        ProcessUnscaledScreenshot();
 
         // プロジェクトとマテリアルの読み書きも GPU 待機を伴うため、フレームの外で。
         // 他の保留処理より先に行う（読み込みが中身を丸ごと入れ替えるため）。
@@ -734,7 +789,7 @@ int Application::Run() {
             m_device.RequestBackBufferCapture(m_options.uiScreenshotPath);
         } else if (m_screenshotPending) {
             m_screenshotPending = false;
-            RequestScreenshot();
+            RequestScreenshot(m_unscaledScreenshot.stage == UnscaledScreenshotStage::Restoring);
         }
 
         m_device.EndFrame(m_options.benchmarkFrames == 0 && m_settings.Display().vsync);
@@ -1312,6 +1367,10 @@ void Application::ApplyUiScale() {
     // （作業面積は拡大率で決まるもので、文字の大小で動かすものではない）。
     m_imgui.SetFontSize(static_cast<float>(m_settings.Ui().fontSize));
 
+    // Shift + F12 の撮影が拡大率を一時的に 100% にしている間は、設定の値へ戻さない。
+    if (m_unscaledScreenshot.stage != UnscaledScreenshotStage::None) {
+        return;
+    }
     const float desired = DesiredUiScale();
     if (std::abs(desired - m_imgui.UiScale()) < 0.001f) {
         return;

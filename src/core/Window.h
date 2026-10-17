@@ -43,6 +43,11 @@ public:
     // （スクリーンショットや録画の解像度を固定するのが目的なので）。
     void ResizeClient(uint32_t width, uint32_t height);
 
+    // 位置・大きさ・最大化の状態。一時的に大きさを変えて元へ戻すときに使う
+    // （ResizeClient は最大化を解除し、位置も作業領域へ寄せるので、大きさだけ戻しても戻らない）。
+    WINDOWPLACEMENT Placement() const;
+    void RestorePlacement(const WINDOWPLACEMENT& placement);
+
     // 溜まっているメッセージを処理する。終了要求が来ていたら false を返す。
     bool PumpMessages();
 

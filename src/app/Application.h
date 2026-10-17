@@ -126,7 +126,10 @@ public:
 private:
     void PollShaderHotReload();
     // F12 で撮ったスクリーンショットの書き出しを要求する。撮れたら通知を出す。
-    void RequestScreenshot();
+    // unscaled は Shift + F12（UI を 100% で描いて撮った）とき。ファイル名で見分ける。
+    void RequestScreenshot(bool unscaled = false);
+    // Shift + F12 の撮影を 1 段進める。フレームの外で毎フレーム呼ぶ。
+    void ProcessUnscaledScreenshot();
     // F9 で撮ったビューポート（UI なし）を書き出す。撮れたら通知を出す。
     void SaveViewportScreenshot();
     void DrawUi();
@@ -1264,6 +1267,16 @@ private:
     ui::ToastQueue m_toasts;
     // F12 が押されたフレームに立つ。EndFrame で撮ってから下ろす。
     bool m_screenshotPending = false;
+    // Shift + F12 の撮影。UI を 100% で描いたときの大きさで撮る。UI の拡大率とウィンドウを
+    // 一時的に縮め、配置と描画が落ち着いてから撮って元へ戻す（ProcessUnscaledScreenshot）。
+    enum class UnscaledScreenshotStage { None, Requested, Settling, Restoring };
+    struct UnscaledScreenshot {
+        UnscaledScreenshotStage stage = UnscaledScreenshotStage::None;
+        float scale = 1.0f;          // 撮る前の UI の拡大率
+        WINDOWPLACEMENT placement{};  // 撮る前のウィンドウの位置・大きさ・最大化
+        uint32_t frames = 0;         // 縮めてから描いたフレーム数
+    };
+    UnscaledScreenshot m_unscaledScreenshot;
     // F9 が押されたフレームに立つ。フレームを送り終えてからビューポートだけを撮る。
     bool m_viewportScreenshotPending = false;
 

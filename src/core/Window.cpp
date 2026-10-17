@@ -140,6 +140,27 @@ void Window::ResizeClient(uint32_t width, uint32_t height) {
                    SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
+WINDOWPLACEMENT Window::Placement() const {
+    WINDOWPLACEMENT placement = {};
+    placement.length = sizeof(placement);
+    if (m_hwnd == nullptr || !::GetWindowPlacement(m_hwnd, &placement)) {
+        placement.length = 0;
+    }
+    return placement;
+}
+
+void Window::RestorePlacement(const WINDOWPLACEMENT& placement) {
+    if (m_hwnd == nullptr || placement.length != sizeof(placement)) {
+        return;
+    }
+    WINDOWPLACEMENT restored = placement;
+    // 撮る前が最小化ということはないが、念のため最小化へは戻さない。
+    if (restored.showCmd == SW_SHOWMINIMIZED || restored.showCmd == SW_MINIMIZE) {
+        restored.showCmd = SW_SHOWNORMAL;
+    }
+    ::SetWindowPlacement(m_hwnd, &restored);
+}
+
 void Window::SetTitle(const wchar_t* title) {
     if (m_hwnd != nullptr && title != nullptr) {
         ::SetWindowTextW(m_hwnd, title);
