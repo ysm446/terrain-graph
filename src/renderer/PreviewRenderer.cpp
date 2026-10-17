@@ -178,6 +178,9 @@ struct MeshConstants {
     float nearFadeStart;
     float nearFadeEnd;
     float terrainSizeMeters;
+    // 中景の段の倍率（1 なら中景なし）。HLSL 側と同じく 16 バイトの行に収める。
+    float nearStageRatio;
+    float nearStagePad[3];
     // Surface の ID ごと: ベースカラーの SRV、法線の SRV、近景の 1 周の長さ（m。float のビット）、フラグ。
     uint32_t nearLayers[compositor::kNearLayerCount][4];
 };
@@ -906,6 +909,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
         constants.nearFadeEnd = std::max(m_nearFadeEnd, 1.0f);
         constants.nearFadeStart = std::clamp(m_nearFadeStart, 0.0f, constants.nearFadeEnd - 0.5f);
         constants.terrainSizeMeters = m_planeSize;
+        constants.nearStageRatio = std::clamp(m_nearStageRatio, 1.0f, 16.0f);
         const compositor::NearLayerTable& nearLayers = m_evaluator.NearLayers();
         for (uint32_t id = 0; id < compositor::kNearLayerCount; ++id) {
             constants.nearLayers[id][0] = nearLayers[id].baseColorSrv;

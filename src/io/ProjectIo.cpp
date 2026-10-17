@@ -2963,6 +2963,7 @@ json WritePreview(renderer::PreviewRenderer& renderer) {
     node["nearMaterial"] = renderer.NearMaterial();
     node["nearFadeStart"] = renderer.NearFadeStart();
     node["nearFadeEnd"] = renderer.NearFadeEnd();
+    node["nearStageRatio"] = renderer.NearStageRatio();
     node["lightingMode"] = renderer.AtmosphericMode() ? "atmospheric" : "ibl";
     const auto& atmosphere = renderer.AtmosphericSettings();
     const auto& sun = renderer.AtmosphericLight();
@@ -3194,6 +3195,8 @@ void ReadPreview(const json& node, renderer::PreviewRenderer& renderer) {
     renderer.NearMaterial() = ReadBool(node, "nearMaterial", renderer::kPreviewDefaults.nearMaterial);
     renderer.NearFadeStart() = std::max(ReadFloat(node, "nearFadeStart", renderer::kPreviewDefaults.nearFadeStart), 0.0f);
     renderer.NearFadeEnd() = std::max(ReadFloat(node, "nearFadeEnd", renderer::kPreviewDefaults.nearFadeEnd), 1.0f);
+    // 中景の段は後から足したので、保存の無い古いシーンは 1（中景なし。前と同じ見た目）。
+    renderer.NearStageRatio() = std::clamp(ReadFloat(node, "nearStageRatio", 1.0f), 1.0f, 16.0f);
 
     // 節が丸ごと欠けていても既定値で埋める。file-format.md の「欠けているキーは
     // 既定値で埋める」に合わせる（節ごと飛ばすと前のプロジェクトの値が残る）。

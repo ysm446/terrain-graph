@@ -508,10 +508,19 @@ void Application::DrawLightingPanel() {
                               renderer::kPreviewDefaults.nearFadeStart,
                               ui::Tr("カメラからこの距離（m）までは近景マテリアルだけを貼る",
                                      "Up to this distance (m) from the camera, only the near material is applied"), "%.0f m");
-            ui::PropertyFloat(ui::Tr("合成結果へ戻る距離", "Composite Beyond"), &m_renderer.NearFadeEnd(), 1.0f, 2000.0f,
+            ui::PropertyFloat(ui::Tr("中景の倍率", "Mid-Range Scale"), &m_renderer.NearStageRatio(), 1.0f, 8.0f,
+                              renderer::kPreviewDefaults.nearStageRatio,
+                              ui::Tr("近景だけの距離から先は、距離がこの倍になるごとに模様の 1 周もこの倍にして貼り続ける"
+                                     "（4 なら 40 m で 2 m、160 m で 8 m、640 m で 32 m）。1 で中景なし",
+                                     "Beyond the near-only range, the pattern repeat grows by this factor each time the distance does "
+                                     "(with 4: 2 m at 40 m, 8 m at 160 m, 32 m at 640 m). 1 turns the mid range off"), "%.1fx");
+            ui::PropertyFloat(ui::Tr("合成結果へ戻る距離", "Composite Beyond"), &m_renderer.NearFadeEnd(), 1.0f, 5000.0f,
                               renderer::kPreviewDefaults.nearFadeEnd,
-                              ui::Tr("カメラからこの距離（m）より先は合成結果だけを貼る。上の距離との間で入れ替える",
-                                     "Beyond this distance (m) from the camera, only the composite is applied. Blends between this and the distance above"), "%.0f m");
+                              ui::Tr("カメラからこの距離（m）より先は合成結果だけを貼る。中景があるときはこの距離の半分から、"
+                                     "無いときは近景だけの距離から入れ替える",
+                                     "Beyond this distance (m) from the camera, only the composite is applied. With the mid range, "
+                                     "blends from half this distance; without it, from the near-only range"), "%.0f m",
+                              ImGuiSliderFlags_Logarithmic);
             ImGui::EndDisabled();
             ui::EndPropertyTable();
         }

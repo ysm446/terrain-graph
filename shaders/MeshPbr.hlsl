@@ -112,6 +112,10 @@ struct MeshConstants
     float nearFadeStart;       // ここまでは近景だけ（カメラからの距離 m）
     float nearFadeEnd;         // ここから先は合成結果だけ（m）。0 なら近景なし
     float terrainSizeMeters;   // 地形の一辺（m）
+    // 中景の段の倍率。近景だけの距離から先は、距離がこの倍になるごとに模様の 1 周もこの倍にする。
+    // 1 なら中景なし（近景の 1 段だけ）。
+    float nearStageRatio;
+    float3 nearStagePad;
     // Surface の ID ごと: x = ベースカラーの SRV（無ければ近景なし）、y = 法線の SRV、
     // z = 近景の 1 周の長さ（m。float のビット）、w = フラグ（bit0: 法線の緑を反転）
     uint4 nearLayers[32];
@@ -184,13 +188,17 @@ float SampleMaterialScalarLevel(Texture2D<float> map, float2 uv)
 //   掛ける。色むら・ティント・雪の縁など、合成が作った大きな色の分布がそのまま残り、遠景と色がつながる。
 //   平均色は、テクスチャの一番小さいミップ。
 // - 法線は、近景の法線を重みで弱めて RNM で重ねる（lerp しない）。
+// - **中景の段**: 近景だけの距離から先は、距離が nearStageRatio 倍になるごとに模様の 1 周も同じ倍にする
+//   （画面上の模様の大きさがおよそ一定になる）。隣り合う 2 つの段（倍率 stageScale と、その ratio 倍）を
+//   stageBlend で混ぜる。stageBlend が 0 なら 1 段だけ読む。
 struct NearMaterialSample
 {
     float3 colorScale;  // 合成結果のベースカラーへ掛ける倍率（近景なしで 1）
     float3 normal;      // 合成結果の法線へ RNM で重ねるタンジェント空間法線（近景なしで +Z）
 };
 
-NearMaterialSample SampleNearMaterial(float2 uv, float2 uvDx, float2 uvDy, float amount)
+NearMaterialSample SampleNearMaterial(float2 uv, float2 uvDx, float2 uvDy, float amount, float stageScale,
+                                      float stageBlend)
 {
     NearMaterialSample result;
     result.colorScale = float3(1.0f, 1.0f, 1.0f);
@@ -262,23 +270,34 @@ NearMaterialSample SampleNearMaterial(float2 uv, float2 uvDx, float2 uvDy, float
         {
             continue;
         }
-        const float repeat = g_mesh.terrainSizeMeters / tileMeters;
-        const float2 nearUv = uv * repeat;
         Texture2D<float4> colorMap = ResourceDescriptorHeap[entry.x];
-        const float3 color = colorMap.SampleGrad(g_samplerAnisoWrap, nearUv, uvDx * repeat, uvDy * repeat).rgb;
         // 一番小さいミップ = テクスチャ全体の平均色。
         const float3 average = max(colorMap.SampleLevel(g_samplerLinearWrap, float2(0.5f, 0.5f), 16.0f).rgb, 1e-3f);
-        colorScale += clamp(color / average, 0.0f, 4.0f) * weight;
-        if (entry.y != kInvalidTextureIndex)
+        // 段 0 が今の段（1 周 = 近景の 1 周 × stageScale）、段 1 がその次の段（さらに ratio 倍）。
+        for (int stage = 0; stage < 2; ++stage)
         {
-            Texture2D<float4> normalMap = ResourceDescriptorHeap[entry.y];
-            float3 tangentNormal =
-                normalMap.SampleGrad(g_samplerAnisoWrap, nearUv, uvDx * repeat, uvDy * repeat).rgb * 2.0f - 1.0f;
-            if ((entry.w & 1u) != 0u)
+            const float stageWeight = (stage == 0) ? 1.0f - stageBlend : stageBlend;
+            if (stageWeight <= 0.0f)
             {
-                tangentNormal.y = -tangentNormal.y;
+                continue;
             }
-            result.normal = ReorientNormal(result.normal, FlattenNormal(normalize(tangentNormal), weight * amount));
+            const float scale = (stage == 0) ? stageScale : stageScale * g_mesh.nearStageRatio;
+            const float repeat = g_mesh.terrainSizeMeters / (tileMeters * scale);
+            const float2 nearUv = uv * repeat;
+            const float3 color = colorMap.SampleGrad(g_samplerAnisoWrap, nearUv, uvDx * repeat, uvDy * repeat).rgb;
+            colorScale += clamp(color / average, 0.0f, 4.0f) * weight * stageWeight;
+            if (entry.y != kInvalidTextureIndex)
+            {
+                Texture2D<float4> normalMap = ResourceDescriptorHeap[entry.y];
+                float3 tangentNormal =
+                    normalMap.SampleGrad(g_samplerAnisoWrap, nearUv, uvDx * repeat, uvDy * repeat).rgb * 2.0f - 1.0f;
+                if ((entry.w & 1u) != 0u)
+                {
+                    tangentNormal.y = -tangentNormal.y;
+                }
+                result.normal = ReorientNormal(result.normal,
+                                               FlattenNormal(normalize(tangentNormal), weight * amount * stageWeight));
+            }
         }
         covered += weight;
     }
@@ -1019,11 +1038,28 @@ PsOutput PsMain(VsOutput input)
             const float2 uvDx = ddx(uv);
             const float2 uvDy = ddy(uv);
             const float cameraDistance = length(g_mesh.cameraPosition - input.worldPosition);
+            // 中景の段があるときは、合成結果へ戻るのは最後の半分の距離だけ（それまでは段を大きくして続ける）。
+            // 段が無い（倍率 1）ときは、近景だけの距離から入れ替える（前と同じ）。
+            const bool staged = g_mesh.nearStageRatio > 1.0f;
+            const float fadeStart =
+                staged ? max(g_mesh.nearFadeStart, g_mesh.nearFadeEnd * 0.5f) : g_mesh.nearFadeStart;
             const float nearAmount =
-                (1.0f - smoothstep(g_mesh.nearFadeStart, g_mesh.nearFadeEnd, cameraDistance)) * saturate(surface.a);
+                (1.0f - smoothstep(fadeStart, g_mesh.nearFadeEnd, cameraDistance)) * saturate(surface.a);
+            // 段: 近景だけの距離を 0 段目として、距離が ratio 倍になるごとに 1 段進む。
+            // 各段の後ろ半分で次の段へ混ぜる（前半は 1 段だけ読むので、読む量が倍になる区間は半分）。
+            float stageScale = 1.0f;
+            float stageBlend = 0.0f;
+            if (staged && cameraDistance > g_mesh.nearFadeStart)
+            {
+                const float stage = log2(cameraDistance / max(g_mesh.nearFadeStart, 1.0f)) / log2(g_mesh.nearStageRatio);
+                const float whole = floor(stage);
+                stageScale = pow(g_mesh.nearStageRatio, whole);
+                stageBlend = smoothstep(0.5f, 1.0f, stage - whole);
+            }
             if (nearAmount > 0.0f)
             {
-                const NearMaterialSample nearSample = SampleNearMaterial(uv, uvDx, uvDy, nearAmount);
+                const NearMaterialSample nearSample =
+                    SampleNearMaterial(uv, uvDx, uvDy, nearAmount, stageScale, stageBlend);
                 baseColor *= nearSample.colorScale;
                 tangentNormal = ReorientNormal(tangentNormal, nearSample.normal);
             }

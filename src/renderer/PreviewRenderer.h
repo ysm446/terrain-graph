@@ -199,7 +199,10 @@ struct PreviewDefaults {
     // 近景マテリアル（カメラの近くで、Surface のマテリアルを人間のスケールで貼り直す）。
     bool nearMaterial = true;
     float nearFadeStart = 40.0f;   // ここまでは近景だけ（m）
-    float nearFadeEnd = 120.0f;    // ここから先は合成結果だけ（m）
+    float nearFadeEnd = 1000.0f;   // ここから先は合成結果だけ（m）
+    // 中景の段の倍率。近景だけの距離から先は、距離がこの倍になるごとに模様の 1 周もこの倍にする
+    // （40 m で 2 m、160 m で 8 m、640 m で 32 m）。1 なら中景なし。保存の無い古いシーンは 1。
+    float nearStageRatio = 4.0f;
     bool showClouds = true;
     // マスクのプレビューで、0 か 1 に張り付いた所へ斜線を引くか。
     bool maskSaturationHatch = false;
@@ -370,6 +373,7 @@ public:
     bool& NearMaterial() { return m_nearMaterial; }
     float& NearFadeStart() { return m_nearFadeStart; }
     float& NearFadeEnd() { return m_nearFadeEnd; }
+    float& NearStageRatio() { return m_nearStageRatio; }
     DofSettings& Dof() { return m_dof; }
     const DofSettings& Dof() const { return m_dof; }
     // 実際にピント面として使う距離。注視点に合わせる設定ならカメラの距離。
@@ -519,6 +523,7 @@ private:
     bool m_nearMaterial = kPreviewDefaults.nearMaterial;
     float m_nearFadeStart = kPreviewDefaults.nearFadeStart;
     float m_nearFadeEnd = kPreviewDefaults.nearFadeEnd;
+    float m_nearStageRatio = kPreviewDefaults.nearStageRatio;
     uint32_t m_shadowResolutionApplied = 0;  // 今の影のテクスチャの一辺（0 はまだ作っていない）
     DofSettings m_dof;
     SceneShadowData m_instanceShadows;
