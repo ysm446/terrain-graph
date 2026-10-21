@@ -1,7 +1,7 @@
 # remote-control — 起動中のアプリを LLM から操作する口（MCP）
 
 作成日時: 2026-10-21 13:20
-更新日時: 2026-10-21 13:20
+更新日時: 2026-10-21 14:40
 
 起動中の terrain-graph を、LLM（Claude Code などの MCP クライアント）が操作するための仕組み。
 計画は [plan.md](../plan/plan.md) の「LLM がアプリを動かしてノードを組める仕組み」の段階 5。
@@ -56,7 +56,7 @@ MCP サーバは、ツール名をそのまま `method` に、引数を `params`
 | 名前 | いつ処理するか | 内容 |
 |---|---|---|
 | `get_status` | フレームの前 | シーン、編集中のグラフ、未保存の項目、アンドゥの段数、選択、評価が落ち着いているか、地形の実寸、カメラ |
-| `get_graph` | フレームの前 | ノード（入出力ピンと繋がっている先）、リンク、グループ。`component`、`include_settings`、`nodes` で絞る |
+| `get_graph` | フレームの前 | ノード、リンク、グループ。既定は短い形（下の「get_graph の形」）。`component`、`nodes` で絞る |
 | `get_node` | フレームの中 | 1 ノードの `settings`（保存と同じ形）と `parameters`（UI の行：表示名・型・範囲・単位・説明・今の値） |
 | `list_node_kinds` | フレームの前 | 置ける種類（kind・表示名・説明・置けるグラフ・ピン） |
 | `describe_node_kind` | フレームの中 | 種類 1 つのカタログ項目（既定値・列挙・`parameters`）。初回は設定の行を描いて調べる（Debug で約 2 秒） |
@@ -80,6 +80,22 @@ MCP サーバは、ツール名をそのまま `method` に、引数を `params`
 - **ワールド座標**: m。原点が地形の中心、X 東・Y 上・Z 南。高さ 0 は地形のハイト 0.5 の所
   （標高は `get_status` の `terrain.baseElevationMeters` + ハイト × `heightMeters`）。
 - **ノードの position**: グラフの画面上の座標（評価には効かない）。
+
+### get_graph の形
+
+ノードが百数十個のグラフでも一度に読めるよう、既定は短い形にする（天狗岳の 155 ノードで約 18 KB）。
+
+```json
+{"nodes": [{"id": 43, "kind": "maskBlend", "component": "terrain", "note": "岩の分布を除く。"},
+           {"id": 47, "kind": "surface", "component": "terrain", "name": "Grass", "note": "植生（芝）のマテリアルを割り当てる。"}, …],
+ "links": [[33, "Mask", 43, "Foreground"], [88, "Mask", 43, "Background"], …],
+ "groups": [], "format": "…"}
+```
+
+- ノードは `id`・`kind`・`component`（`component` で絞ったときは出さない）・レイヤーの `name`・`bypass`・メモの先頭 40 文字。
+- リンクは `[出力ノード, 出力ピン名, 入力ノード, 入力ピン名]`。
+- `detail: true`（か `include_settings: true`）で、ノードごとの入出力ピン（型と繋がっている先）・位置・メモの全文を出す
+  詳しい形になる。大きくなるので `nodes` で絞って使う。
 
 ### get_node のパス
 
@@ -110,7 +126,7 @@ Path / Road Path の点とエッジは数千になることがあるので、既
 | `set_path_points` | `node`, `points: [{id, u?, v?, width?, …}]` | 点を動かす・値を変える |
 | `set_path_style` | `node`, `edges`（ID の配列か `"all"`）, `style` | エッジの設定（書いたキーだけ変える） |
 | `delete_path_elements` | `node`, `points?`, `edges?` | 点・エッジを消す。鎖の途中の点は、両隣を繋ぎ直して消える（UI と同じ） |
-| `select` | `node`, `preview?` | 操作の後、UI でそのノードを選ぶ。`preview: true` ならビューポートの表示もそのノードへ移す |
+| `select` | `node`, `preview?` | 操作の後、UI でそのノードを選ぶ。`preview: true` ならビューポートの表示もそのノードへ移す。選択と表示はアンドゥにも未保存にも数えない |
 | `arrange` | `mode`: `overlaps` / `all` | ノードの重なりを解消 / 全体を左から右へ並べ直す。次のフレームにグラフのパネルで行うので、**アンドゥは別の段**になる |
 
 `style` のキーはファイルのエッジと同じ: `curve`（`line` / `quadratic` / `cubic` / `clothoid`）、`rounding`、
@@ -136,11 +152,14 @@ Path / Road Path の点とエッジは数千になることがあるので、既
 成功:
 
 ```json
-{"applied": true,
+{"applied": true, "undoStep": true,
  "created": {"n1": 820, "b1": 822},
  "results": [{"op": "create_node", "node": 820, "key": "n1"}, {"op": "connect", "from": [33, "Mask"], "to": [822, "Foreground"]}, …],
  "warnings": []}
 ```
+
+`undoStep` はアンドゥの段が増えたか。`select` と `arrange` だけの操作列では偽で、未保存にもならない
+（`arrange` は次のフレームにグラフのパネルが行い、そちらで別の段を積む）。
 
 失敗（`error`）: メッセージは `ops[添字]: 理由`、`data` は `{"applied": false, "failedOp": 添字, "op": "connect", "note": …}`。
 グラフは操作列の前のまま（作りかけのノードも残らない）。UI の範囲の検査で失敗したときは `failedOp` が無い。

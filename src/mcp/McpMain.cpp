@@ -181,10 +181,12 @@ json Tools() {
         "作業の最初に呼ぶ。",
         Schema(), true);
     add("get_graph",
-        "ノードグラフ。ノード（id・kind・名前・位置・入出力ピンと繋がっている先）とリンク（from: [ノード, 出力ピン名], "
-        "to: [ノード, 入力ピン名]）とグループ。設定の中身は include_settings か get_node で見る。",
+        "ノードグラフ。既定は短い形: ノードは id・kind・名前・メモの先頭、リンクは [出力ノード, 出力ピン名, 入力ノード, "
+        "入力ピン名] の配列、とグループ。detail: true でノードごとの入出力ピン（型と繋がっている先）・位置・メモの全文。"
+        "設定の中身は get_node（か include_settings）で見る。",
         Schema({{"component", {{"type", "string"}, {"enum", {"terrain", "cloud", "all"}}, {"description", "どのグラフか（既定 all）"}}},
-                {"include_settings", {{"type", "boolean"}, {"description", "各ノードの設定（保存と同じ形）も入れる。大きくなる"}}},
+                {"detail", {{"type", "boolean"}, {"description", "詳しい形（ピンの型・位置・メモの全文）。大きくなるので nodes で絞って使う"}}},
+                {"include_settings", {{"type", "boolean"}, {"description", "各ノードの設定（保存と同じ形）も入れる（詳しい形になる）。大きくなる"}}},
                 {"nodes", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"description", "このノードだけ"}}}}),
         true);
     add("get_node",

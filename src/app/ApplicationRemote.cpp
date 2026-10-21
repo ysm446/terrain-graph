@@ -90,6 +90,20 @@ bool ReadVector(const json* value, size_t size, float* out) {
     return true;
 }
 
+// get_graph の短い形に載せるメモの長さ（文字数）。
+constexpr size_t kNoteSummaryLength = 40;
+
+// UTF-8 の文字列を、文字の途中で切らずに maxChars 文字までにする。切ったら "…" を付ける。
+std::string TruncateUtf8(const std::string& text, size_t maxChars) {
+    size_t chars = 0;
+    for (size_t i = 0; i < text.size(); ++i) {
+        // 続きのバイト（10xxxxxx）は文字の頭ではない。
+        if ((static_cast<unsigned char>(text[i]) & 0xC0) == 0x80) continue;
+        if (chars++ == maxChars) return text.substr(0, i) + "…";
+    }
+    return text;
+}
+
 const char* ComponentName(int component) {
     return component == 1 ? "cloud" : "terrain";
 }
@@ -200,6 +214,9 @@ private:
         json warnings = json::array();
         int autoPlaced = 0;
         bool arrangeAll = false, arrangeOverlaps = false;
+        // 文書（グラフ）を変える操作があったか。選択と並べ直しの要求だけなら、未保存にもアンドゥにもしない
+        // （並べ直しは次のフレームにグラフのパネルが行い、そちらで段を積む）。
+        bool changed = false;
     };
 
     // --- 1 回で済む要求（フレームの外） ---
@@ -620,13 +637,25 @@ json RemoteCommands::Graph(const json& params, std::string& error) {
     if (const json* nodes = Member(params, "nodes"); nodes != nullptr && nodes->is_array()) {
         for (const json& id : *nodes) if (id.is_number_integer()) only.insert(id.get<int>());
     }
+    // 既定は短い形（ノードは id・種類・名前・メモの先頭、リンクは 1 行の配列）。百数十ノードのグラフでも
+    // LLM が一度に読める大きさにする。ピンの型・位置・つながりの詳細は detail（か get_node）で見る。
+    const bool detail = BoolOf(params, "detail", false) || settings;
     std::set<graph::GraphId> included;
     json nodes = json::array();
     for (const graph::Node& node : m_app.m_graph.Nodes()) {
         if (component >= 0 && node.component != component) continue;
         if (!only.empty() && !only.contains(node.id)) continue;
         included.insert(node.id);
-        nodes.push_back(NodeSummary(node, settings));
+        if (detail) {
+            nodes.push_back(NodeSummary(node, settings));
+            continue;
+        }
+        json item = {{"id", node.id}, {"kind", KindName(node)}};
+        if (component < 0) item["component"] = ComponentName(node.component);
+        if (const auto* layer = std::get_if<graph::LayerNodeSettings>(&node.settings)) item["name"] = layer->layer.name;
+        if (graph::IsBypassed(node)) item["bypass"] = true;
+        if (!node.note.empty()) item["note"] = TruncateUtf8(node.note, kNoteSummaryLength);
+        nodes.push_back(std::move(item));
     }
     json links = json::array();
     for (const graph::Link& link : m_app.m_graph.Links()) {
@@ -634,7 +663,14 @@ json RemoteCommands::Graph(const json& params, std::string& error) {
         const graph::Pin* end = m_app.m_graph.FindPin(link.endPin);
         if (start == nullptr || end == nullptr) continue;
         if (!included.contains(start->nodeId) && !included.contains(end->nodeId)) continue;
-        links.push_back({{"id", link.id}, {"from", PinReference(link.startPin)}, {"to", PinReference(link.endPin)}});
+        if (detail) {
+            links.push_back({{"id", link.id}, {"from", PinReference(link.startPin)}, {"to", PinReference(link.endPin)}});
+        } else {
+            // [出力ノード, 出力ピン, 入力ノード, 入力ピン]
+            json from = PinReference(link.startPin), to = PinReference(link.endPin);
+            if (from.is_null() || to.is_null()) continue;
+            links.push_back(json::array({from[0], from[1], to[0], to[1]}));
+        }
     }
     json groups = json::array();
     for (const graph::NodeGroup& group : m_app.m_graph.Groups()) {
@@ -644,6 +680,10 @@ json RemoteCommands::Graph(const json& params, std::string& error) {
     }
     const std::vector<graph::GraphId>& cycle = m_app.GraphCycleNodes();
     json result = {{"nodes", std::move(nodes)}, {"links", std::move(links)}, {"groups", std::move(groups)}};
+    if (!detail) {
+        result["format"] = "短い形。links は [出力ノード, 出力ピン, 入力ノード, 入力ピン]、note は先頭だけ。"
+                           "ピンの型・位置・メモの全文は detail: true か get_node で見る";
+    }
     if (!cycle.empty()) result["cycleNodes"] = cycle;
     return result;
 }
@@ -945,9 +985,11 @@ bool RemoteCommands::ApplyOps(Job& job) {
     }
 
     // 確定。1 つの要求をアンドゥの 1 段にする（このフレームの終わりで畳まれる）。
-    app.m_graph.MarkDirty();
-    app.MarkDocumentChanged(true);
-    app.m_remoteLogMark = app.m_remoteLogSequence;
+    if (context.changed) {
+        app.m_graph.MarkDirty();
+        app.MarkDocumentChanged(true);
+        app.m_remoteLogMark = app.m_remoteLogSequence;
+    }
     for (const auto& [id, preview] : context.selects) {
         const graph::Node* node = app.m_graph.FindNode(id);
         if (node == nullptr) continue;
@@ -958,12 +1000,15 @@ bool RemoteCommands::ApplyOps(Job& job) {
     }
     if (context.arrangeAll) app.m_pendingGraphArrange = true;
     else if (context.arrangeOverlaps) app.m_pendingGraphSpread = true;
-    TG_LOG_INFO(ui::Tr("遠隔操作: %zu 個の操作を実行しました（Ctrl+Z で戻せる）", "Remote control: applied %zu operations (Ctrl+Z to undo)"),
-                ops->size());
+    if (context.changed) {
+        TG_LOG_INFO(ui::Tr("遠隔操作: %zu 個の操作を実行しました（Ctrl+Z で戻せる）", "Remote control: applied %zu operations (Ctrl+Z to undo)"),
+                    ops->size());
+    }
     json created = json::object();
     for (const auto& [key, id] : context.keys) created[key] = id;
-    job.result = {{"applied", true}, {"results", std::move(results)}, {"created", std::move(created)},
-                  {"warnings", std::move(context.warnings)}};
+    // undoStep: この要求でアンドゥの段が増えたか（選択だけなら偽。arrange は次のフレームに別の段を積む）。
+    job.result = {{"applied", true}, {"undoStep", context.changed}, {"results", std::move(results)},
+                  {"created", std::move(created)}, {"warnings", std::move(context.warnings)}};
     return true;
 }
 
@@ -1002,6 +1047,7 @@ std::string RemoteCommands::CheckRanges(const OpContext& context) {
 bool RemoteCommands::RunOp(const json& op, OpContext& context, json& result, std::string& error) {
     const std::string name = StringOf(op, "op").value_or("");
     result = {{"op", name}};
+    if (name != "select" && name != "arrange") context.changed = true;
     if (name == "create_node") return OpCreateNode(op, context, result, error);
     if (name == "delete_node") return OpDeleteNode(op, context, result, error);
     if (name == "set_params") return OpSetParams(op, context, result, error);
