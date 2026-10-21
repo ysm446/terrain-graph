@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <string>
 
 namespace tg::io {
 
@@ -64,6 +65,15 @@ struct DisplaySettings {
     float clearColor[4] = {0.09f, 0.09f, 0.11f, 1.0f};
 };
 
+// 遠隔操作（設定ウィンドウの「遠隔操作」節）。起動中のアプリを MCP サーバなどから操作する口。
+// 仕様は docs/reference/remote-control.md。
+struct RemoteSettings {
+    // 名前付きパイプを開くか。既定は開かない（使う人が有効にしたときだけ）。
+    bool enabled = false;
+    // パイプの名前（\\.\pipe\ の後ろ）。設定ウィンドウには出さず、settings.json で変える。
+    std::string pipeName = "terrain-graph";
+};
+
 // 設定ファイル（`settings.json`）の読み書き。
 //
 // 値を変えたら Save() を呼ぶ。書けなくても動作は続ける（次回に持ち越せないだけ）。
@@ -78,9 +88,13 @@ public:
     DisplaySettings& Display() { return m_display; }
     const DisplaySettings& Display() const { return m_display; }
 
+    RemoteSettings& Remote() { return m_remote; }
+    const RemoteSettings& Remote() const { return m_remote; }
+
 private:
     UiSettings m_ui;
     DisplaySettings m_display;
+    RemoteSettings m_remote;
 };
 
 }  // namespace tg::io

@@ -11,6 +11,7 @@
 #include "compositor/MaterialLibrary.h"
 #include "compositor/PaintMask.h"
 #include "compositor/TextureLibrary.h"
+#include "graph/NodeGraph.h"
 #include "renderer/Camera.h"
 #include "renderer/PreviewRenderer.h"
 #include "ui/UiStyle.h"
@@ -293,6 +294,31 @@ inline const compositor::MaterialLayer& DefaultLayerFor(compositor::LayerKind ki
             return kDefaultScatterLayer;
         default:
             return kDefaultLayer;
+    }
+}
+
+// 編集中のグラフ（0 地形 / 1 雲）の追加メニューに出す種類か。遠隔操作のノードの作成も同じ判定を通す。
+// Terrain は雲グラフ専用（地形グラフの結果を雲グラフへ持ち込むノード）。
+inline bool NodeKindOffered(graph::NodeKind kind, int component) {
+    const graph::NodeDefinition* definition = graph::FindNodeDefinition(kind);
+    const std::string name = definition ? definition->name : "";
+    if (component == 0 && (name.starts_with("cloud") || name == "terrain")) return false;
+    if (component == 1 && !name.starts_with("cloud") && !name.starts_with("mask") && name != "path" &&
+        name != "terrain" && name != "windField") return false;
+    return true;
+}
+
+// 追加メニューから置いたノードの初期値（レイヤーの既定値と、名前の通し番号）。
+// 遠隔操作のノードの作成も同じものを通す。nodeCount は置いた後のグラフのノード数。
+inline void ApplyNewNodeDefaults(graph::Node& node, size_t nodeCount) {
+    if (auto* settings = std::get_if<graph::LayerNodeSettings>(&node.settings)) {
+        // 追加時の初期値は旧レイヤーパネルと同じ既定値を使う。
+        if (node.kind != graph::NodeKind::Mountain) {
+            settings->layer = (node.kind == graph::NodeKind::Heightmap)
+                                  ? kDefaultHeightmapLayer
+                                  : DefaultLayerFor(graph::LayerKindFor(node.kind));
+        }
+        settings->layer.name += " " + std::to_string(nodeCount);
     }
 }
 

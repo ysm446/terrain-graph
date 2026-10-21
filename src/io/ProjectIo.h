@@ -121,6 +121,9 @@ bool ReadNodeJson(const graph::Node& base, const nlohmann::json& settings, graph
 // ノードの設定のうち列挙のキー（"." 区切り）と、取れる値（保存に書く名前）。
 nlohmann::json EnumFieldsOf(const graph::Node& node);
 
+// ピンの型の名前（ノードカタログと遠隔操作の出力で使う。"Material" / "Mask" など）。
+const char* ValueTypeName(graph::ValueType type);
+
 // ノードカタログ。種類ごとの保存名・表示名・ピン（名前と型）・既定の設定（保存と同じ形）と、
 // 設定のうち列挙のキーが取る値。定義表と保存処理から作るので、コードとずれない。
 // スクリプトや LLM がグラフを書くときの資料にする（--dump-catalog）。GPU は使わない。

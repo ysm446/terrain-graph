@@ -45,6 +45,7 @@ fs::path AppDataDirectory() {
 void AppSettings::Load() {
     m_ui = UiSettings{};
     m_display = DisplaySettings{};
+    m_remote = RemoteSettings{};
 
     std::ifstream stream(SettingsPath(), std::ios::binary);
     if (!stream.is_open()) {
@@ -146,6 +147,24 @@ void AppSettings::Load() {
             }
         }
     }
+
+    if (const auto remote = document.find("remote");
+        remote != document.end() && remote->is_object()) {
+        if (const auto enabled = remote->find("enabled");
+            enabled != remote->end() && enabled->is_boolean()) {
+            m_remote.enabled = enabled->get<bool>();
+        }
+        // パイプ名に使える文字だけ（壊れた値なら既定のまま）。
+        if (const auto name = remote->find("pipeName"); name != remote->end() && name->is_string()) {
+            const std::string value = name->get<std::string>();
+            const bool valid = !value.empty() && value.size() <= 200 &&
+                std::all_of(value.begin(), value.end(), [](char c) {
+                    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                           c == '-' || c == '_' || c == '.';
+                });
+            if (valid) m_remote.pipeName = value;
+        }
+    }
 }
 
 bool AppSettings::Save() const {
@@ -177,11 +196,16 @@ bool AppSettings::Save() const {
     display["clearColor"] = {m_display.clearColor[0], m_display.clearColor[1],
                              m_display.clearColor[2]};
 
+    json remote;
+    remote["enabled"] = m_remote.enabled;
+    remote["pipeName"] = m_remote.pipeName;
+
     json document;
     document["format"] = kFormat;
     document["version"] = kVersion;
     document["ui"] = std::move(ui);
     document["display"] = std::move(display);
+    document["remote"] = std::move(remote);
 
     // 一時ファイルへ書いてから置き換える（書きかけの settings.json を残さない）。
     // 壊れた文字列が混ざっていても例外を出さない（不正な UTF-8 は置換文字にする）のは WriteJson 側。

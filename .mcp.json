@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "terrain-graph": {
+      "command": "build/bin/Release/terrain_graph_mcp.exe",
+      "args": []
+    }
+  }
+}

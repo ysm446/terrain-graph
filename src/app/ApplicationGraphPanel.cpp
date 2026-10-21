@@ -2181,15 +2181,7 @@ void Application::DrawGraphEditor() {
         ImGui::TextDisabled("%s", ui::Tr("ノードを追加", "Add Node"));
         ImGui::Separator();
         // 編集中のグラフ（地形 / 雲）に出す種類か。
-        const auto offered = [&](graph::NodeKind kind) {
-            const auto* definition = graph::FindNodeDefinition(kind);
-            const std::string name = definition ? definition->name : "";
-            // Terrain は雲グラフ専用（地形グラフの結果を雲グラフへ持ち込むノード）。
-            if (m_editComponent == 0 && (name.starts_with("cloud") || name == "terrain")) return false;
-            if (m_editComponent == 1 && !name.starts_with("cloud") && !name.starts_with("mask") && name != "path" &&
-                name != "terrain" && name != "windField") return false;
-            return true;
-        };
+        const auto offered = [&](graph::NodeKind kind) { return NodeKindOffered(kind, m_editComponent); };
         // Cloud Output は 1 つだけ。コンパイルは項目ごとではなくポップアップごとに 1 回。
         const bool cloudOutputExists = m_graph.CompileCloud().hasOutput;
         const auto addNodeMenuItem = [&](graph::NodeKind kind, const char* label) {
@@ -2204,16 +2196,7 @@ void Application::DrawGraphEditor() {
                 TG_LOG_WARN(ui::Tr("ノードを追加できませんでした（種類の定義が見つかりません）", "Could not add the node (type definition not found)"));
                 return;
             }
-            if (auto* settings = std::get_if<graph::LayerNodeSettings>(&node->settings)) {
-                // 追加時の初期値は旧レイヤーパネルと同じ既定値を使う。
-                if (kind != graph::NodeKind::Mountain) {
-                    settings->layer = (kind == graph::NodeKind::Heightmap)
-                                          ? kDefaultHeightmapLayer
-                                          : DefaultLayerFor(graph::LayerKindFor(kind));
-                }
-                settings->layer.name +=
-                    " " + std::to_string(m_graph.Nodes().size());
-            }
+            ApplyNewNodeDefaults(*node, m_graph.Nodes().size());
             node->component = std::max(0, m_editComponent);
             node->posX = m_graphAddNodeAt.x;
             node->posY = m_graphAddNodeAt.y;

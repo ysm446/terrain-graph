@@ -125,6 +125,9 @@ set(tg_sources
     src/app/ApplicationRoadMesh.cpp
     src/app/ApplicationReport.cpp
     src/app/ApplicationProbe.cpp
+    src/app/ApplicationRemote.cpp
+    src/app/RemoteServer.cpp
+    src/app/RemoteServer.h
     src/app/UndoHistory.cpp
     src/app/UndoHistory.h
     src/core/Log.cpp
@@ -308,6 +311,14 @@ add_custom_command(TARGET terrain_graph POST_BUILD
     COMMAND_EXPAND_LISTS
     COMMENT "dxil.dll を配置"
 )
+
+# --- MCP サーバ -----------------------------------------------------------
+# 起動中のアプリを LLM から操作する MCP サーバ（stdio）。要求を名前付きパイプでアプリへ渡すだけなので、
+# GPU も UI も使わない。仕様は docs/reference/remote-control.md。
+add_executable(terrain_graph_mcp src/mcp/McpMain.cpp)
+target_compile_definitions(terrain_graph_mcp PRIVATE TG_APP_VERSION="${PROJECT_VERSION}")
+target_include_directories(terrain_graph_mcp PRIVATE "${Stb_INCLUDE_DIR}")
+target_link_libraries(terrain_graph_mcp PRIVATE tg_common_options nlohmann_json::nlohmann_json)
 
 # --- テスト ---------------------------------------------------------------
 # UI の相互作用（ドラッグ、ホバー）は `--screenshot-ui` では確認できない。

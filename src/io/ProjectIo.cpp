@@ -3571,14 +3571,19 @@ void SetGraphReadIssueSink(std::vector<GraphReadIssue>* sink) {
     g_graphReadIssues = sink;
 }
 
+namespace {
+const char* const kValueTypeNames[] = {"Material", "Mask", "Path", "Volume", "",
+                                       "CloudShape", "Points", "Instances", "Wind",
+                                       "RoadPath", "Mesh"};
+}  // namespace
+
+const char* ValueTypeName(graph::ValueType type) {
+    const auto index = static_cast<size_t>(type);
+    return index < std::size(kValueTypeNames) ? kValueTypeNames[index] : "";
+}
+
 json NodeCatalog() {
-    static const char* const kValueTypeNames[] = {"Material", "Mask", "Path", "Volume", "",
-                                                  "CloudShape", "Points", "Instances", "Wind",
-                                                  "RoadPath", "Mesh"};
-    const auto typeName = [](graph::ValueType type) {
-        const auto index = static_cast<size_t>(type);
-        return index < std::size(kValueTypeNames) ? kValueTypeNames[index] : "";
-    };
+    const auto typeName = [](graph::ValueType type) { return ValueTypeName(type); };
     const TextureWriter noTexture = [](compositor::TextureId) { return json(); };
     const auto noMaterial = [](compositor::MaterialAssetId) { return json(); };
     const auto noPaint = [](compositor::PaintMaskId) { return json(); };

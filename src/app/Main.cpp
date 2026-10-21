@@ -26,6 +26,7 @@ namespace {
 //                       [--screenshot <path>] [--screenshot-ui <path>]
 //                       [--screenshot-frame <n>] [--gpu-validation]
 //                       [--bake-impostors <model.tgmodel | all>]...
+//                       [--remote-control] [--remote-pipe <name>]
 tg::StartupOptions ParseCommandLine() {
     tg::StartupOptions options;
 
@@ -115,6 +116,24 @@ tg::StartupOptions ParseCommandLine() {
             options.selectNode = ::_wtoi(argv[++i]);
         } else if (argument == L"--channel-preview" && (i + 1) < argc) {
             options.channelPreview = ::_wtoi(argv[++i]);
+        } else if (argument == L"--remote-control") {
+            options.remoteControl = true;
+        } else if (argument == L"--remote-pipe" && (i + 1) < argc) {
+            // パイプ名は ASCII の英数字と -_. だけ受ける（RemoteSettings と同じ）。
+            const std::wstring name = argv[++i];
+            std::string ascii;
+            bool valid = !name.empty() && name.size() <= 200;
+            for (const wchar_t c : name) {
+                valid = valid && ((c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z') || (c >= L'0' && c <= L'9') ||
+                                  c == L'-' || c == L'_' || c == L'.');
+                ascii += static_cast<char>(c);
+            }
+            if (valid) {
+                options.remoteControl = true;
+                options.remotePipe = ascii;
+            } else {
+                TG_LOG_WARN(tg::ui::Tr("パイプの名前に使えない文字があります: %ls", "The pipe name has invalid characters: %ls"), name.c_str());
+            }
         } else if (argument == L"--screenshot-frame" && (i + 1) < argc) {
             options.screenshotFrame = static_cast<uint32_t>(::_wtoi(argv[i + 1]));
             ++i;

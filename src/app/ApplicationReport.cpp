@@ -46,7 +46,8 @@ bool Application::EvaluationSettled(bool evaluationIdle) {
     return true;
 }
 
-bool Application::WriteEvaluationReport(bool timedOut, bool& reportOk) {
+json Application::BuildEvaluationReport(bool timedOut, bool live,
+                                        const std::vector<std::pair<LogLevel, std::string>>& logEntries) {
     json errors = json::array();
     json warnings = json::array();
     const auto addIssue = [](json& list, graph::GraphId node, const std::string& message) {
@@ -55,7 +56,8 @@ bool Application::WriteEvaluationReport(bool timedOut, bool& reportOk) {
         list.push_back(std::move(item));
     };
     if (timedOut) addIssue(errors, 0, "評価が時間内に落ち着かなかった（結果は途中のもの）");
-    if (m_projectPath.empty()) addIssue(errors, 0, "シーンを読み込めていない");
+    // 起動中のアプリ（遠隔操作）では、まだ保存していない新規シーンでもよい。
+    if (m_projectPath.empty() && !live) addIssue(errors, 0, "シーンを読み込めていない");
 
     // --- ノード ---------------------------------------------------------
     const std::vector<graph::GraphId>& cycle = GraphCycleNodes();
@@ -185,7 +187,7 @@ bool Application::WriteEvaluationReport(bool timedOut, bool& reportOk) {
 
     // --- ログ -----------------------------------------------------------
     json log = json::array();
-    for (const auto& [level, text] : m_reportLog) {
+    for (const auto& [level, text] : logEntries) {
         log.push_back({{"level", level == LogLevel::Error ? "error" : "warn"}, {"message", text}});
         addIssue(level == LogLevel::Error ? errors : warnings, 0, text);
     }
@@ -215,17 +217,20 @@ bool Application::WriteEvaluationReport(bool timedOut, bool& reportOk) {
     report["places"] = std::move(places);
     report["nodes"] = std::move(nodes);
     report["log"] = std::move(log);
+    report["ok"] = errors.empty();
+    report["errors"] = std::move(errors);
+    report["warnings"] = std::move(warnings);
+    return report;
+}
 
+bool Application::WriteEvaluationReport(bool timedOut, bool& reportOk) {
+    json report = BuildEvaluationReport(timedOut, false, m_reportLog);
     if (!m_options.reportThumbnailPath.empty()) {
         const std::filesystem::path thumbnail = std::filesystem::absolute(m_options.reportThumbnailPath);
         if (m_renderer.SaveOutputToPng(m_device, thumbnail, 512)) report["thumbnail"] = ToUtf8Portable(thumbnail);
-        else addIssue(warnings, 0, "サムネイルを書けなかった");
+        else report["warnings"].push_back({{"message", "サムネイルを書けなかった"}});
     }
-
-    reportOk = errors.empty();
-    report["ok"] = reportOk;
-    report["errors"] = std::move(errors);
-    report["warnings"] = std::move(warnings);
+    reportOk = report["ok"].get<bool>();
 
     const std::filesystem::path path = std::filesystem::absolute(m_options.reportPath);
     if (!io::ProjectWorkspace::WriteJson(path, report)) {

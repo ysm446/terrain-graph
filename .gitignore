@@ -20,6 +20,7 @@ vcpkg_installed/
 data/
 docs/reference/*
 !docs/reference/overhang-editing.md
+!docs/reference/remote-control.md
 
 # Python のキャッシュ（Blender のスクリプトを実行すると tools/blender/ にできる）
 __pycache__/

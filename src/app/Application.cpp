@@ -213,6 +213,8 @@ bool Application::Initialize(const StartupOptions& options) {
 }
 
 void Application::Shutdown() {
+    // 待ち受けのスレッドを先に止める（返事を待っている要求は、接続ごと捨てる）。
+    m_remote.Stop();
     // シンクは this を掴んでいる。破棄より先に必ず外す。
     SetLogSink({});
     io::SetGraphReadIssueSink(nullptr);
@@ -408,6 +410,9 @@ int Application::Run() {
             m_sceneSwitchDialog = true;
         }
         if (m_window.IsMinimized()) {
+            // 最小化している間はフレームを描かないので、遠隔操作の要求は進められない。待たせずに断る。
+            FailRemoteJobs(ui::Tr("ウィンドウが最小化されているため処理できません。元の大きさに戻してください",
+                                  "The window is minimized, so the request cannot run. Restore the window"));
             ::WaitMessage();
             continue;
         }
@@ -456,6 +461,9 @@ int Application::Run() {
         ProcessModelWork();
         // 経路探索用の地形（Path ノードの Base）の焼き直しも GPU 待機を伴うため、フレームの外で。
         ProcessPendingPathRoutes();
+        // 遠隔操作。読み込みや保存の要求の後に回す（それらの終わりを待つ要求があるため）。
+        UpdateRemoteServer();
+        ProcessRemoteJobs(RemotePhase::BeforeFrame);
 
         // 開発用: 数フレーム描いてから合成結果を書き出して終了する。
         if (!m_options.exportDirectory.empty() && m_frameCounter >= m_options.screenshotFrame) {
@@ -801,6 +809,12 @@ int Application::Run() {
             m_viewportScreenshotPending = false;
             SaveViewportScreenshot();
         }
+        if (m_remote.Running()) {
+            // 評価が落ち着いたフレームが続いた数（get_evaluation と screenshot が待つ）。
+            m_remoteEvaluationIdle = evaluationIdle;
+            m_remoteSettledFrames = EvaluationSettled(evaluationIdle) ? m_remoteSettledFrames + 1 : 0;
+            ProcessRemoteJobs(RemotePhase::AfterFrame);
+        }
         ++m_frameCounter;
         if (m_options.benchmarkFrames && evaluationIdle && m_frameCounter >= 120) {
             if (!benchmarkStartFrame) {
@@ -1134,6 +1148,10 @@ void Application::DrawUi() {
     // 入力・ドラッグ中は作業用コピーだけを更新。フォーカスが外れたら一度反映する。
     if (!ImGui::IsAnyItemActive()) CommitMaterialEdit();
 
+    // 遠隔操作の編集。パネルの描画の後、アンドゥの段を畳む前に行い、1 つの要求を 1 段にする。
+    // 使う人がウィジェットを掴んでいる間は次のフレームへ回す（その段に混ざらないように）。
+    if (!ImGui::IsAnyItemActive()) ProcessRemoteJobs(RemotePhase::InFrame);
+
     // --- アンドゥの段を畳む -------------------------------------------------
     // パネルは変更を見つけると m_documentDirty を立てるだけにしておき、
     // ここで 1 フレームぶんをまとめて 1 段にする。
@@ -1253,6 +1271,12 @@ void Application::PushStatus(LogLevel level, const char* text) {
         return;
     }
     if (!m_options.reportPath.empty() && level != LogLevel::Info) m_reportLog.emplace_back(level, text);
+    // 遠隔操作の口を開いている間は、操作の結果に添えるためにログを控える（古いものから捨てる）。
+    if (m_remote.Running()) {
+        constexpr size_t kRemoteLogLimit = 500;
+        m_remoteLog.push_back({++m_remoteLogSequence, level, text});
+        if (m_remoteLog.size() > kRemoteLogLimit) m_remoteLog.pop_front();
+    }
     m_status.text = text;
     m_status.level = level;
     m_status.time = std::chrono::steady_clock::now();
@@ -1273,6 +1297,25 @@ void Application::DrawStatusBar() {
                                     ImGui::GetFrameHeight(), kFlags)) {
         if (ImGui::BeginMenuBar()) {
             // --- 左: いまのモードと直近の通知 -------------------------------
+            // 遠隔操作（MCP）の口を開いている間は、外から編集されうることを常に見せる。
+            // 待ち受け中は控えめに、繋がっている間と依頼を処理している間はモードと同じ色で。
+            if (m_remote.Running()) {
+                const bool busy = !m_remoteJobs.empty();
+                const bool connected = m_remote.Connected();
+                if (busy || connected) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_CheckMark));
+                else ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_TextDisabled));
+                ImGui::TextUnformatted(busy ? ui::Tr("MCP 操作中…", "MCP working…")
+                                       : connected ? ui::Tr("MCP 接続中", "MCP connected") : "MCP");
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(ui::Tr("遠隔操作の口を開いています（\\\\.\\pipe\\%ls）。%s\n設定 > 遠隔操作 で閉じられる",
+                                             "The remote control pipe is open (\\\\.\\pipe\\%ls). %s\nClose it in Settings > Remote Control"),
+                                      m_remotePipe.c_str(),
+                                      connected ? ui::Tr("MCP サーバが繋いでいる", "An MCP server is connected")
+                                                : ui::Tr("MCP サーバの接続を待っている", "Waiting for an MCP server"));
+                }
+                ImGui::TextDisabled("|");
+            }
             // モードでビューポートの操作が変わるので、常に見える場所へ出す。
             if (const compositor::MaterialLayer* paintLayer = CurrentPaintLayer();
                 paintLayer != nullptr) {
@@ -1397,7 +1440,7 @@ void Application::DrawSettingsWindow() {
         return;
     }
 
-    ImGui::SetNextWindowSize(ImVec2(ui::Scaled(460.0f), ui::Scaled(500.0f)),
+    ImGui::SetNextWindowSize(ImVec2(ui::Scaled(460.0f), ui::Scaled(620.0f)),
                              ImGuiCond_FirstUseEver);
     if (!ImGui::Begin(ui::Tr("設定###Settings", "Settings###Settings"), &m_showSettings)) {
         ImGui::End();
@@ -1553,6 +1596,31 @@ void Application::DrawSettingsWindow() {
             // design-guide の「設定ウィンドウ」に従い、変えたらその場で書く。
             // 直接編集しているので、ここで写し戻す必要はない。
             changed = true;
+        }
+        ui::EndPropertyTable();
+    }
+
+    ui::SectionHeader(ui::Tr("遠隔操作", "Remote Control"),
+                      ui::Tr("起動中のアプリを LLM（MCP サーバ terrain_graph_mcp.exe）から操作する口。"
+                             "名前付きパイプでこの PC の中からだけ受ける" "\n"
+                             "ノードの作成・設定・接続、パスの編集、評価の結果とスクリーンショットを頼める。"
+                             "編集はアンドゥに積まれ、未保存になる",
+                             "Lets an LLM (the MCP server terrain_graph_mcp.exe) operate the running app "
+                             "through a named pipe, from this PC only" "\n"
+                             "It can create, set and connect nodes, edit paths, and read evaluation results "
+                             "and screenshots. Edits go on the undo history and stay unsaved"));
+    if (ui::BeginPropertyTable("settingsRemoteRows")) {
+        const io::RemoteSettings defaults;
+        changed |= ui::PropertyBool(ui::Tr("有効", "Enabled"), &m_settings.Remote().enabled, defaults.enabled,
+                                    ui::Tr("パイプを開いて要求を受け付ける", "Open the pipe and accept requests"));
+        if (m_remote.Running()) {
+            // 起動引数（--remote-control）で開いたときは、設定が切れていても開いている。
+            ui::PropertyValue(ui::Tr("状態", "State"), "%s%s",
+                              m_remote.Connected() ? ui::Tr("接続中", "Connected") : ui::Tr("待ち受け中", "Listening"),
+                              m_options.remoteControl ? ui::Tr("（起動引数）", " (command line)") : "");
+            ui::PropertyValue(ui::Tr("パイプ", "Pipe"), "\\\\.\\pipe\\%ls", m_remotePipe.c_str());
+        } else if (!m_remoteError.empty()) {
+            ui::PropertyValue(ui::Tr("状態", "State"), "%s", m_remoteError.c_str());
         }
         ui::EndPropertyTable();
     }

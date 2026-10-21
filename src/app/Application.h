@@ -13,6 +13,7 @@
 #include "core/Window.h"
 #include "graph/NodeGraph.h"
 #include "app/UndoHistory.h"
+#include "app/RemoteServer.h"
 #include "io/AppSettings.h"
 #include "io/MaterialExport.h"
 #include "io/ProjectIo.h"
@@ -35,6 +36,7 @@
 
 #include <array>
 #include <chrono>
+#include <deque>
 #include <filesystem>
 #include <map>
 #include <optional>
@@ -114,6 +116,10 @@ struct StartupOptions {
     bool showSettings = false;
     // 開発用。UI の言語をこの起動だけ切り替える（"ja" / "en"。設定には書かない）。空なら設定のまま。
     std::string language;
+    // 遠隔操作の口をこの起動だけ開く（--remote-control。設定には書かない）。
+    // remotePipe はパイプの名前（--remote-pipe。指定すると開く）。空なら設定の名前。
+    bool remoteControl = false;
+    std::string remotePipe;
 };
 
 // アプリ本体。ウィンドウ、デバイス、UI の生存期間とフレームループを持つ。
@@ -418,6 +424,10 @@ private:
     bool EvaluationSettled(bool evaluationIdle);
     // --evaluate-report: レポートを書く。書けなければ偽。reportOk は問題が無かったか。
     bool WriteEvaluationReport(bool timedOut, bool& reportOk);
+    // レポートの中身（--evaluate-report と遠隔操作の get_evaluation で共通）。live は起動中のアプリから
+    // 頼まれたとき（未保存の新規シーンをエラーにしない）。logEntries はレポートに載せる警告とエラーのログ。
+    nlohmann::json BuildEvaluationReport(bool timedOut, bool live,
+                                         const std::vector<std::pair<LogLevel, std::string>>& logEntries);
     // 読み込みから溜めた警告とエラー（--evaluate-report のときだけ）。
     std::vector<std::pair<LogLevel, std::string>> m_reportLog;
     // 読み込みで読まなかった / 直した設定（io::SetGraphReadIssueSink の記録先）。
@@ -445,6 +455,50 @@ private:
     int m_probeId = 0;
     uint32_t m_reportSettledFrames = 0;
     std::chrono::steady_clock::time_point m_reportStart = std::chrono::steady_clock::now();
+
+    // --- 遠隔操作（ApplicationRemote.cpp。仕様は docs/reference/remote-control.md） ---
+    // 名前付きパイプで受けた要求（MCP サーバから）を、UI と同じ処理を通して実行する。
+    // 編集はフレームの中（UI の描画の後、アンドゥの段を畳む前）で行うので、アンドゥに積まれ、未保存になる。
+    // 要求の処理の中身は RemoteCommands（ApplicationRemote.cpp）にまとめてある。
+    friend class RemoteCommands;
+    enum class RemotePhase { BeforeFrame, InFrame, AfterFrame };
+    struct RemoteJob {
+        uint64_t ticket = 0;
+        nlohmann::json id;      // 要求の id（返事にそのまま付ける）
+        std::string method;
+        nlohmann::json params;
+        int stage = 0;          // フレームをまたぐ要求の進み具合
+        std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+        nlohmann::json scratch = nlohmann::json::object();  // 段の間で持ち越す値
+        bool finished = false;
+        nlohmann::json result;
+        std::string error;
+    };
+    // 設定と起動引数に合わせて口を開く / 閉じる。フレームの外で毎フレーム呼ぶ。
+    void UpdateRemoteServer();
+    // 届いた要求を取り込み、その段で進められるものを進める。終わったものは返事を書く。
+    void ProcessRemoteJobs(RemotePhase phase);
+    // 進めずに失敗で返す（最小化中など、フレームを描けないとき）。
+    void FailRemoteJobs(const char* reason);
+    // 遠隔操作が開いているか（設定か起動引数）。
+    bool RemoteControlWanted() const;
+    RemoteServer m_remote;
+    std::wstring m_remotePipe;  // 開いているパイプの名前（開いていなければ空）
+    std::string m_remoteError;  // 開けなかった理由（設定ウィンドウに出す）
+    std::wstring m_remoteAttemptedPipe;  // 最後に開こうとした名前（開けなかった名前で毎フレーム試さない）
+    std::deque<RemoteJob> m_remoteJobs;
+    uint32_t m_remoteSettledFrames = 0;
+    bool m_remoteEvaluationIdle = false;
+    // 遠隔操作のためのログの控え（警告とエラー、と情報）。通し番号で「この操作の後」を切り出す。
+    struct RemoteLogEntry {
+        uint64_t sequence = 0;
+        LogLevel level = LogLevel::Info;
+        std::string text;
+    };
+    std::deque<RemoteLogEntry> m_remoteLog;
+    uint64_t m_remoteLogSequence = 0;
+    // 直近の apply_ops を実行したときのログの通し番号。get_evaluation はこれより後のログを載せる。
+    uint64_t m_remoteLogMark = 0;
     // 設定から決まる UI の拡大率。追従なら Windows の表示スケール。
     float DesiredUiScale() const;
     // 拡大率を掛けた既定のクライアント領域。1920x1080 を拡大率倍したもの。
