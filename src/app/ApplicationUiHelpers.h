@@ -423,6 +423,9 @@ inline const char* TextureFormatLabel(const compositor::LibraryTexture& entry) {
 
 // ステータスバーの通知を残す時間（秒）。情報だけが時間で消える。
 inline constexpr float kStatusHoldSeconds = 6.0f;
+// MCP の依頼が終わった後、ステータスバーにその内容を残す時間（秒）。多くの依頼は 1 フレームで終わるので、
+// 残さないと何をしたのか読めない。
+inline constexpr float kRemoteActivityHoldSeconds = 3.0f;
 
 // ビューポートの背景色の既定値（設定の行の「既定へ戻す」用）。io::AppSettings の clearColor の初期値と揃えること。
 inline constexpr float kDefaultClearColor[3] = {0.09f, 0.09f, 0.11f};

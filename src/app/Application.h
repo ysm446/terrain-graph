@@ -36,6 +36,7 @@
 
 #include <array>
 #include <chrono>
+#include <ctime>
 #include <deque>
 #include <filesystem>
 #include <map>
@@ -467,6 +468,7 @@ private:
         nlohmann::json id;      // 要求の id（返事にそのまま付ける）
         std::string method;
         nlohmann::json params;
+        std::string label;      // 何をしているか（ステータスバーに出す。受け取ったときに作る）
         int stage = 0;          // フレームをまたぐ要求の進み具合
         std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
         nlohmann::json scratch = nlohmann::json::object();  // 段の間で持ち越す値
@@ -487,6 +489,14 @@ private:
     std::string m_remoteError;  // 開けなかった理由（設定ウィンドウに出す）
     std::wstring m_remoteAttemptedPipe;  // 最後に開こうとした名前（開けなかった名前で毎フレーム試さない）
     std::deque<RemoteJob> m_remoteJobs;
+    // 終わった依頼の控え（新しいものが後ろ）。ステータスバーに直近のものを少し残し、ホバーで並べる。
+    struct RemoteActivity {
+        std::time_t time = 0;  // 終わった時刻（表示用）
+        std::chrono::steady_clock::time_point finished;
+        std::string label;
+        std::string error;     // 失敗したときの理由（成功なら空）
+    };
+    std::deque<RemoteActivity> m_remoteActivity;
     uint32_t m_remoteSettledFrames = 0;
     bool m_remoteEvaluationIdle = false;
     // 遠隔操作のためのログの控え（警告とエラー、と情報）。通し番号で「この操作の後」を切り出す。

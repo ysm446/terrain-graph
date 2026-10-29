@@ -1299,20 +1299,52 @@ void Application::DrawStatusBar() {
             // --- 左: いまのモードと直近の通知 -------------------------------
             // 遠隔操作（MCP）の口を開いている間は、外から編集されうることを常に見せる。
             // 待ち受け中は控えめに、繋がっている間と依頼を処理している間はモードと同じ色で。
+            // 依頼を処理している間はその内容を出し、終わった後も少し残す（多くは 1 フレームで終わる）。
             if (m_remote.Running()) {
                 const bool busy = !m_remoteJobs.empty();
                 const bool connected = m_remote.Connected();
-                if (busy || connected) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_CheckMark));
-                else ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_TextDisabled));
-                ImGui::TextUnformatted(busy ? ui::Tr("MCP 操作中…", "MCP working…")
-                                       : connected ? ui::Tr("MCP 接続中", "MCP connected") : "MCP");
+                const RemoteActivity* recent = nullptr;
+                if (!busy && !m_remoteActivity.empty() &&
+                    std::chrono::duration<float>(std::chrono::steady_clock::now() - m_remoteActivity.back().finished).count() <
+                        kRemoteActivityHoldSeconds)
+                    recent = &m_remoteActivity.back();
+                std::string text;
+                if (busy) text = "MCP: " + m_remoteJobs.front().label + "…";
+                else if (recent != nullptr)
+                    text = "MCP: " + recent->label + (recent->error.empty() ? "" : ui::Tr("（失敗）", " (failed)"));
+                else text = connected ? ui::Tr("MCP 接続中", "MCP connected") : "MCP";
+                ImU32 color = ImGui::GetColorU32((busy || connected) ? ImGuiCol_CheckMark : ImGuiCol_TextDisabled);
+                if (recent != nullptr && !recent->error.empty()) color = ui::WarnColor();
+                ImGui::PushStyleColor(ImGuiCol_Text, color);
+                ImGui::TextUnformatted(text.c_str());
                 ImGui::PopStyleColor();
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip(ui::Tr("遠隔操作の口を開いています（\\\\.\\pipe\\%ls）。%s\n設定 > 遠隔操作 で閉じられる",
-                                             "The remote control pipe is open (\\\\.\\pipe\\%ls). %s\nClose it in Settings > Remote Control"),
-                                      m_remotePipe.c_str(),
-                                      connected ? ui::Tr("MCP サーバが繋いでいる", "An MCP server is connected")
-                                                : ui::Tr("MCP サーバの接続を待っている", "Waiting for an MCP server"));
+                if (ImGui::IsItemHovered() && ImGui::BeginTooltip()) {
+                    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 40.0f);
+                    ImGui::Text(ui::Tr("遠隔操作の口を開いています（\\\\.\\pipe\\%ls）。%s\n設定 > 遠隔操作 で閉じられる",
+                                       "The remote control pipe is open (\\\\.\\pipe\\%ls). %s\nClose it in Settings > Remote Control"),
+                                m_remotePipe.c_str(),
+                                connected ? ui::Tr("MCP サーバが繋いでいる", "An MCP server is connected")
+                                          : ui::Tr("MCP サーバの接続を待っている", "Waiting for an MCP server"));
+                    // 直近の依頼（新しいものが上）。失敗は理由を添えて警告の色で。
+                    if (!m_remoteActivity.empty()) {
+                        ImGui::Separator();
+                        for (auto it = m_remoteActivity.rbegin(); it != m_remoteActivity.rend(); ++it) {
+                            std::tm local = {};
+                            ::localtime_s(&local, &it->time);
+                            char clock[16] = {};
+                            std::strftime(clock, sizeof(clock), "%H:%M:%S", &local);
+                            if (it->error.empty()) {
+                                ImGui::Text("%s  %s", clock, it->label.c_str());
+                            } else {
+                                ImGui::PushStyleColor(ImGuiCol_Text, ui::WarnColor());
+                                ImGui::Text(ui::Tr("%s  %s（失敗: %s）", "%s  %s (failed: %s)"), clock, it->label.c_str(),
+                                            it->error.c_str());
+                                ImGui::PopStyleColor();
+                            }
+                        }
+                    }
+                    ImGui::PopTextWrapPos();
+                    ImGui::EndTooltip();
                 }
                 ImGui::TextDisabled("|");
             }

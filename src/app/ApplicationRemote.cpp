@@ -341,6 +341,79 @@ std::string ReplyLine(const json& id, const json* result, const std::string& err
     return reply.dump(-1, ' ', false, json::error_handler_t::replace);
 }
 
+// apply_ops の操作列を「追加 2・接続 3」のように数える（出てきた順）。
+std::string SummarizeOps(const json& params) {
+    const json* ops = Member(params, "ops");
+    if (ops == nullptr || !ops->is_array()) return {};
+    std::vector<std::pair<std::string, int>> counts;
+    for (const json& op : *ops) {
+        const std::string name = StringOf(op, "op").value_or("?");
+        std::string word = name;
+        if (name == "create_node") word = ui::Tr("追加", "add");
+        else if (name == "delete_node") word = ui::Tr("削除", "delete");
+        else if (name == "set_params") word = ui::Tr("設定", "set");
+        else if (name == "connect") word = ui::Tr("接続", "connect");
+        else if (name == "disconnect") word = ui::Tr("切断", "disconnect");
+        else if (name == "set_bypass") word = ui::Tr("バイパス", "bypass");
+        else if (name == "set_note") word = ui::Tr("メモ", "note");
+        else if (name == "move_node") word = ui::Tr("移動", "move");
+        else if (name == "add_path" || name == "set_path_points" || name == "set_path_style" ||
+                 name == "delete_path_elements") word = ui::Tr("パス", "path");
+        else if (name == "select") word = ui::Tr("選択", "select");
+        else if (name == "arrange") word = ui::Tr("整列", "arrange");
+        const auto it = std::find_if(counts.begin(), counts.end(), [&](const auto& entry) { return entry.first == word; });
+        if (it != counts.end()) ++it->second;
+        else counts.emplace_back(word, 1);
+    }
+    std::string text;
+    for (const auto& [word, count] : counts) {
+        if (!text.empty()) text += ui::Tr("・", ", ");
+        text += count > 1 ? Printf("%s %d", word.c_str(), count) : word;
+    }
+    return text;
+}
+
+// ステータスバーに出す「何をしているか」。知らない操作は名前のまま。
+std::string RemoteJobLabel(const std::string& method, const json& params) {
+    if (method == "get_status") return ui::Tr("状態を確認", "Checking status");
+    if (method == "get_graph") return ui::Tr("グラフを読む", "Reading graph");
+    if (method == "get_node") {
+        const std::optional<double> node = NumberOf(params, "node");
+        return node ? Printf(ui::Tr("ノード #%d の設定を読む", "Reading node #%d"), static_cast<int>(*node))
+                    : std::string(ui::Tr("ノードの設定を読む", "Reading node"));
+    }
+    if (method == "list_node_kinds") return ui::Tr("ノードの種類の一覧を読む", "Listing node kinds");
+    if (method == "describe_node_kind")
+        return Printf(ui::Tr("ノードの種類 %s を調べる", "Describing node kind %s"),
+                      StringOf(params, "kind").value_or("?").c_str());
+    if (method == "apply_ops") {
+        const std::string summary = SummarizeOps(params);
+        return summary.empty() ? std::string(ui::Tr("グラフを編集", "Editing graph"))
+                               : Printf(ui::Tr("グラフを編集（%s）", "Editing graph (%s)"), summary.c_str());
+    }
+    if (method == "get_evaluation")
+        return BoolOf(params, "wait", true) ? ui::Tr("評価を待つ", "Waiting for evaluation")
+                                            : ui::Tr("評価の結果を読む", "Reading evaluation");
+    if (method == "screenshot") return ui::Tr("スクリーンショットを撮る", "Taking screenshot");
+    if (method == "get_camera") return ui::Tr("カメラを読む", "Reading camera");
+    if (method == "set_camera") return ui::Tr("カメラを動かす", "Moving camera");
+    if (method == "sample_terrain") {
+        const json* points = Member(params, "points");
+        const int count = (points != nullptr && points->is_array()) ? static_cast<int>(points->size()) : 0;
+        return Printf(ui::Tr("地形の標高を調べる（%d 点）", "Sampling terrain (%d points)"), count);
+    }
+    if (method == "recompute_routes") return ui::Tr("経路を計算", "Computing routes");
+    if (method == "undo") return ui::Tr("元に戻す", "Undo");
+    if (method == "redo") return ui::Tr("やり直す", "Redo");
+    if (method == "save_scene") return ui::Tr("シーンを保存", "Saving scene");
+    if (method == "list_assets") return ui::Tr("アセットの一覧を読む", "Listing assets");
+    if (method == "get_log") return ui::Tr("ログを読む", "Reading log");
+    return method;
+}
+
+// ステータスバーのホバーに並べる、終わった依頼の数。
+constexpr size_t kRemoteActivityLimit = 12;
+
 }  // namespace
 
 void Application::FailRemoteJobs(const char* reason) {
@@ -372,6 +445,7 @@ void Application::ProcessRemoteJobs(RemotePhase phase) {
         job.method = method->get<std::string>();
         const json* params = Member(message, "params");
         job.params = (params != nullptr && params->is_object()) ? *params : json::object();
+        job.label = RemoteJobLabel(job.method, job.params);
         m_remoteJobs.push_back(std::move(job));
     }
     RemoteCommands commands(*this);
@@ -392,6 +466,8 @@ void Application::ProcessRemoteJobs(RemotePhase phase) {
         const json* errorData = Member(it->scratch, "errorData");
         m_remote.Reply(it->ticket, it->error.empty() ? ReplyLine(it->id, &it->result, {}, json())
                                                      : ReplyLine(it->id, nullptr, it->error, errorData ? *errorData : json()));
+        m_remoteActivity.push_back({std::time(nullptr), std::chrono::steady_clock::now(), it->label, it->error});
+        if (m_remoteActivity.size() > kRemoteActivityLimit) m_remoteActivity.pop_front();
         it = m_remoteJobs.erase(it);
     }
 }
