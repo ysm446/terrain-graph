@@ -297,5 +297,5 @@ docs/
 | [docs/design/design-guide.md](docs/design/design-guide.md) | UI のレイアウト、配色、プロパティ行 |
 | [docs/design/node-graph.md](docs/design/node-graph.md) | ノードグラフのデータモデル、評価、エディタ UI |
 | [docs/reference/file-format.md](docs/reference/file-format.md) | `.tgproj` / `.tgmat` のファイル形式 |
-| [docs/changelog.md](docs/changelog.md) | 変更履歴 |
+| [CHANGELOG.md](CHANGELOG.md) | 変更履歴 |
 | [AGENTS.md](AGENTS.md) / [CLAUDE.md](CLAUDE.md) | 作業ルール |

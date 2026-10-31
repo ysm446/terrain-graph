@@ -1,7 +1,7 @@
 # Changelog
 
 作成日時: 2026-08-31 06:18
-更新日時: 2026-10-22 10:03
+更新日時: 2026-10-31 22:36
 
 ## 未リリース — 起動中のアプリを LLM から操作する（MCP。2026-10-21）
 
@@ -11,7 +11,7 @@
 - LLM の編集は手で編集したときと同じ処理を通り、1 回の依頼が Ctrl+Z の 1 段になる。シーンは未保存になる（保存は頼まれたときだけ）。
   途中で失敗した依頼は何も変えない。
 - Claude Code ではリポジトリの `.mcp.json` で登録される（Release の EXE を使う）。使い方と操作の一覧は
-  [remote-control.md](reference/remote-control.md)。
+  [remote-control.md](docs/reference/remote-control.md)。
 - 設定ウィンドウの最初の大きさを縦に少し広げた。
 - **ステータスバーに、MCP が何をしているかを出す**（2026-10-22）。処理中は「MCP: グラフを編集（追加 2・接続 3）…」のように依頼の内容を出し、終わった後も 3 秒残す（失敗した依頼は警告の色で「（失敗）」を付ける）。載せると直近 12 件の依頼を時刻と成否つきで並べる。
 
@@ -662,7 +662,7 @@
 
 ## 未リリース — 雲と環境光
 
-- 雲層より上の地形・配置モデル・雪煙を、雲を抜いた空の環境光で照らすようにした。環境マップは原点から 1 回だけ撮るので、これまでは雲海の上の山頂まで雲の下の環境光で照らされていた。「プレビュー設定 > 雲と環境光」に「遮蔽の強さ」「遷移の幅」「高さのオフセット」を追加（保存名 `cloudAmbientOcclusion` / `cloudAmbientTransition` / `cloudAmbientHeightOffset`）。大気散乱スカイで雲があるシーンは見た目が変わる（以前の見た目に戻すには「高さのオフセット」を大きく上げ、全体を雲ありの環境にする。「遮蔽の強さ」0 は逆に全体を雲なしの環境にする）。課題と方針は [cloud-ambient-light.md](reference/cloud-ambient-light.md)。
+- 雲層より上の地形・配置モデル・雪煙を、雲を抜いた空の環境光で照らすようにした。環境マップは原点から 1 回だけ撮るので、これまでは雲海の上の山頂まで雲の下の環境光で照らされていた。「プレビュー設定 > 雲と環境光」に「遮蔽の強さ」「遷移の幅」「高さのオフセット」を追加（保存名 `cloudAmbientOcclusion` / `cloudAmbientTransition` / `cloudAmbientHeightOffset`）。大気散乱スカイで雲があるシーンは見た目が変わる（以前の見た目に戻すには「高さのオフセット」を大きく上げ、全体を雲ありの環境にする。「遮蔽の強さ」0 は逆に全体を雲なしの環境にする）。課題と方針は [cloud-ambient-light.md](docs/reference/cloud-ambient-light.md)。
 
 ## 未リリース — Snow Plume（稜線の雪煙）
 
@@ -1066,7 +1066,7 @@
 - 3D直線に沿う球配置と楕円体をマージし、ノイズを加えて一つの雲として描画。
 - 既存の雲塊・雲層とは別の5ノード。最大32個の形状と設定の保存に対応。
 - 雲の寸法をカメラの描画範囲へ反映し、小さな地面と大きな雲の組み合わせで生じた粗い描画を修正。
-- 直線の数値編集のみで、曲線・ハンドル・アニメーションは未対応。詳細は [手続き雲](design/procedural-clouds.md)。
+- 直線の数値編集のみで、曲線・ハンドル・アニメーションは未対応。詳細は [手続き雲](docs/design/procedural-clouds.md)。
 
 
 ### 2026-09-11 10:41 — 雲なしのゴッドレイと地形の遮蔽
@@ -1093,26 +1093,26 @@
 
 - 雲塊・雲層の「形と配置」に「ノイズの種類」を追加。Perlin fBM と Perlin-Worley を切り替えられる。
 - Perlin-Worley は形状に反転 Worley を合成し、細部の侵食にも Worley を使う。本体・影・環境へ共通で反映する。
-- 設定の保存に対応。既存プロジェクトと既定値は従来の Perlin fBM を維持する。詳細は [雲の仕様](design/volumetric-clouds.md#ノイズの選択)。
+- 設定の保存に対応。既存プロジェクトと既定値は従来の Perlin fBM を維持する。詳細は [雲の仕様](docs/design/volumetric-clouds.md#ノイズの選択)。
 
 ### 2026-09-11 06:31 — Meandering Rivers を追加
 
 - Base の地形と Path から川筋を蛇行させ、流域と河床を生成するノードを追加。
 - 川幅、反復、地形の影響、流域、深さを編集でき、Result と River マスクを出力する。
-- 設定・接続の保存に対応。中核機能の移植で、蛇行後の Path 出力・三日月湖・履歴は未対応。詳細は [仕様](design/meandering-rivers.md)。
+- 設定・接続の保存に対応。中核機能の移植で、蛇行後の Path 出力・三日月湖・履歴は未対応。詳細は [仕様](docs/design/meandering-rivers.md)。
 
 ### 2026-09-10 22:12 — Mask Flowline を追加
 
 - マスク系に地形の斜面に沿った流跡を生成するノードを追加。地形の高さは変更しない。
 - Source / Outflow マスク、発生数・密度、長さ、摩擦、傾斜による制限、出力圧縮に対応。
-- 設定と接続の保存・読み込みに対応。仕様と制限は [Mask Flowline](design/mask-flowline.md)。
+- 設定と接続の保存・読み込みに対応。仕様と制限は [Mask Flowline](docs/design/mask-flowline.md)。
 
 ### 2026-09-10 17:46 — Lake ノードを追加
 
 - 湖の水移動・水面平坦化・水位延長を GPU compute で実装。
 - 水量、給水マスク、最適化段数、境界からの流出、基準スケールに対応。
 - 地形出力に加え、湖の範囲・水深・水位を独立して出力。設定と接続を保存できる。
-- 仕様と差異は [Lake](design/lake.md) を参照。
+- 仕様と差異は [Lake](docs/design/lake.md) を参照。
 
 ### 2026-09-10 12:24 — 雲の描画を軽量化
 
@@ -1269,13 +1269,13 @@
 - ライティングに「環境マップ (IBL) / 大気散乱スカイ」のモード切替を追加。従来の天球・ライト設定は保持。
 - 太陽に連動する大気散乱、PBR 環境光・反射、ボリューム雲と雲影、専用設定の保存・読み込みに対応。
 - 移植元の固定高度・色補正・深度復元を見直し、散乱結果と周期密度をキャッシュ。
-- 詳細と近似の範囲は [大気散乱スカイ](design/atmospheric-sky.md)。
+- 詳細と近似の範囲は [大気散乱スカイ](docs/design/atmospheric-sky.md)。
 
 ### 2026-09-09 11:36 — Snow Cover
 
 - 独立ノード Snow Cover を追加。厚い積雪・薄雪・降雪線・風による降雪補正・融雪に対応。
 - 薄雪の Fluvial Advection、被覆・雪深・流動量の出力、設定とカーブの保存・読み込みを実装。
-- 計算方法と制限は [Snow Cover](reference/snow-cover.md) に記録。
+- 計算方法と制限は [Snow Cover](docs/reference/snow-cover.md) に記録。
 
 ### 2026-09-09 05:43 — Fluvial Erosion / Flatten Borders
 
@@ -1755,7 +1755,7 @@
 - **川筋から河床を掘り、下流へ単調に下がる水面を張る加工。** `Result` に加えて
   `Water`（水面の被覆）/ `Bank`（河原）/ `Depth`（水深）の 3 つの Mask を出す。
   `Seed` 入力で川の出どころを絞れる。設計は
-  [reference/river-node.md](reference/river-node.md)。
+  [reference/river-node.md](docs/reference/river-node.md)。
 - 水面は窪み埋め（Planchon–Darboux 法）そのもので、**盆地は自然に湖になる**。
   Lake ノードは要らない。
 - 幅は流量で決まる（`主流の幅` を基準に `(Q / Qmax)^幅の伸び`）。
@@ -1883,7 +1883,7 @@
 
 ### 2026-09-03 17:30 — ノードのリファレンスを追加
 
-- **[reference/nodes.md](reference/nodes.md)** を追加した。ノード 12 種類それぞれの
+- **[reference/nodes.md](docs/reference/nodes.md)** を追加した。ノード 12 種類それぞれの
   役割・ピン・パラメータ（既定値つき）と、レイヤーノードに共通する設定
   （ハイト / マスク / 合成）をまとめてある。
 
@@ -2229,7 +2229,7 @@
 - material-mixer からフォークし、名前を **terrain-graph** に変えた。
   レイヤースタック方式を廃止し、合成の組み立てをノードグラフへ置き換えていく
   （グラフの仕組みは terrain-editor から移植。計画は
-  [plan.md](plan/plan.md) の「方針の転換」）。
+  [plan.md](docs/plan/plan.md) の「方針の転換」）。
 - 表に出る名前と内部の識別子をそろえて変更。
   実行ファイルは `terrain_graph.exe`、ウィンドウのタイトルは `Terrain Graph`、
   `namespace mm` → `namespace tg`、`MM_*` → `TG_*`（HLSL 含む）。
@@ -2346,8 +2346,8 @@
     汀線の柔らかさはフェザーで調整する。
 - プロパティは種類に応じて出し分ける（シェイプに色は無い、水面は水位とフェザーだけ、など）。
 - ファイル形式を**版 3** に上げた（`kind` の追加。旧ファイルは全レイヤーをサーフェス
-  として読む）。仕様は [reference/file-format.md](reference/file-format.md)、
-  設計は [design/compositing.md](design/compositing.md) の「レイヤーの種類」。
+  として読む）。仕様は [reference/file-format.md](docs/reference/file-format.md)、
+  設計は [design/compositing.md](docs/design/compositing.md) の「レイヤーの種類」。
 - 確認: 岩（サーフェス）+ シェイプ + 水面の 3 枚で、山肌に岩の細部が残ること、
   水位 0.5 → 0.62 で水上の地形の形が 1 テクセルも変わらないことをスクリーンショットで確認。
 
@@ -2420,7 +2420,7 @@
   ほぼ全域にピントが合ってしまう（29mm・F1.8・3.2m で錯乱円が 1 画素に届かない）。
 - 深度を SRV としても読めるように、深度バッファを TYPELESS で作り直した。
 - 設定はプロジェクトの `preview.depthOfField` に保存する。
-- **ワールドの 1 単位を 1m と決めた**（[design/rendering.md](design/rendering.md)）。
+- **ワールドの 1 単位を 1m と決めた**（[design/rendering.md](docs/design/rendering.md)）。
   これまで単位を決める必要が無かったが、被写界深度が距離を実寸として扱うため確定させた。
   根拠は平面のプレビューメッシュが 2m 角であること
   （**Megascans のサーフェスが 2m 角で作られているものが多い**のに合わせてある）。
@@ -2572,7 +2572,7 @@
   右クリックで開かずに閉じる。約 6 秒で消えるが、マウスを乗せている間は消えない。
   - 通知は汎用の仕組み（`ui::ToastQueue`）にしてあり、他の用途にも使える。
   - **撮影するフレームには通知を描かない。** 直前の通知が写り込まないようにする。
-- 作法は [design/design-guide.md](design/design-guide.md) の「通知トースト」に記録した。
+- 作法は [design/design-guide.md](docs/design/design-guide.md) の「通知トースト」に記録した。
 
 ### 2026-09-01 10:15 — テクスチャ一覧に名前を出し、合成解像度に 4096 を足した
 
@@ -2598,7 +2598,7 @@
   明るく、地面素材のアルベド（0.1〜0.3）から外れていた。**
   カラーピッカーがリニア値をそのまま表示していた頃に、
   「薄い灰色に見える」値として選ばれたものと思われる。
-- 根拠は [design/compositing.md](design/compositing.md) に記録した。
+- 根拠は [design/compositing.md](docs/design/compositing.md) に記録した。
 - **既存のプロジェクトの見た目は変わらない。** ベースカラーは保存時に必ず
   書き出されるため、保存済みの値がそのまま読み込まれる。
   新しく作るレイヤーだけが 0.18 で始まる。
@@ -2615,7 +2615,7 @@
 - **保存されている値も描画結果も変わらない。** 変わるのはピッカーでの見え方だけで、
   これまで実際に描かれていた色が正しく表示されるようになった。
 - 変換式は `core/ColorSpace.h` に置き、`shaders/Common.hlsli` と揃えた。
-  規約は [design/design-guide.md](design/design-guide.md) の「色空間」に記録した。
+  規約は [design/design-guide.md](docs/design/design-guide.md) の「色空間」に記録した。
 - **マテリアルの「ベースカラー」を「ティント」へ改名した。** 同じパネルの
   「マップ」節にもベースカラー（テクスチャ）の行があり、
   どちらが掛ける色なのか名前から分からなかった。
@@ -2659,7 +2659,7 @@ GPU ベースバリデーションが「レイアウトが COMMON」と報告す
   なのに、既定が 0.5 だった。**Megascans などのマップを割り当てると、
   既定のままアルベドが半分に暗くなっていた。**
 - 乗算の中立値である 1.0 を既定にした。根拠は
-  [design/compositing.md](design/compositing.md) に記録した。
+  [design/compositing.md](docs/design/compositing.md) に記録した。
 - **既存のプロジェクトの見た目は変わらない。** `baseColorTint` は保存時に必ず
   書き出されるため、保存済みの値（0.5）がそのまま読み込まれる。
   新しく作るマテリアルだけが 1.0 で始まる。
@@ -2691,7 +2691,7 @@ GPU ベースバリデーションが「レイアウトが COMMON」と報告す
   同じマテリアルがビューポートとサムネイルで違う粗さに見えることがあった。
 - 値は Filament / Frostbite と同じ 0.045（`Brdf.hlsli` の
   `kMinPerceptualRoughness`）。根拠は
-  [design/rendering.md](design/rendering.md) の「ラフネスの下限」を参照。
+  [design/rendering.md](docs/design/rendering.md) の「ラフネスの下限」を参照。
 - 見た目が変わるのはラフネス 0.05 未満の極端に滑らかな設定だけ。
 
 ### 2026-09-01 07:43 — Application.cpp を責務別に分割した（内部変更）
@@ -3118,7 +3118,7 @@ GPU ベースバリデーションが「レイアウトが COMMON」と報告す
 - **マテリアル単体の書き出しと読み込み**（`.mmmat`）。
   マテリアルパネルの「書き出し…」「読み込み…」から、プロジェクト間で持ち回れる。
   読み込むと参照している画像も自動で読み込まれ、既に持っている画像は読み直さない。
-- 形式は JSON で、値は名前で書いてある（[docs/reference/file-format.md](reference/file-format.md)）。
+- 形式は JSON で、値は名前で書いてある（[docs/reference/file-format.md](docs/reference/file-format.md)）。
   手で開いて読める。壊れたファイルは断り、画像が見つからないときは
   その割り当てだけ「なし」にして残りを読む。
 - 起動オプション `--project <path>` を追加（起動時にプロジェクトを開く）。
@@ -3191,7 +3191,7 @@ GPU ベースバリデーションが「レイアウトが COMMON」と報告す
   UI もその面へ 1:1 で載せるので、モニタの表示スケールで作業面積が変わらない。
 - 開発用オプション `--screenshot-ui <path>` を追加。
   UI 込みのウィンドウ全体を PNG に書き出す。画面キャプチャに頼らずに見た目を確認できる。
-- UI のルールを [docs/design/design-guide.md](design/design-guide.md) にまとめた。
+- UI のルールを [docs/design/design-guide.md](docs/design/design-guide.md) にまとめた。
 
 ### 2026-08-31 13:32 — M4b: ペイントマスク（ブラシ）
 
