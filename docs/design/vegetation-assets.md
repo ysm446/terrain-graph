@@ -1,7 +1,7 @@
 # vegetation-assets — 植生アセットのルール
 
 作成日時: 2026-09-24 15:00
-更新日時: 2026-10-06 02:10
+更新日時: 2026-10-31 19:04
 
 草・低木・樹木など、Model Scatter で地形に並べる植生モデルを作るときの決まりごと。
 這い松（マット状の低木、`tools/blender/make_haimatsu.py`、出力は `data/Models/Haimatsu/`）、
@@ -17,6 +17,12 @@
 共通の部品は `tools/blender/vegetation.py`。数値の正は生成スクリプトの定数で、ここには意味と目安を書く。
 どの樹種をシーンのどこに置くか（標高帯・代用・配置の制限）は [scene-authoring.md](scene-authoring.md) の 5 章。
 生成したモデルは `tools/blender/render_preview.py` で LOD を並べて描き、既存の樹種と見比べる。
+
+## 西伊豆専用の低い夏の笹（2026-10-31 19:04）
+
+`data/Scenes/nishiizu/Vegetation/Hakonedake_Low_nishiizu_Var1〜3.fbx`。既存ハコネダケの全LODをBlenderへ取り込み、ワールド変換適用後にZだけ0.48倍。幅約2.6〜3.1 m、LOD0高さ約0.85〜0.87 m。参考写真の低い連続した笹原に合わせ、均等縮小で生じた群落の穴を避けた。共有FBX・テクスチャは維持し、西伊豆専用モデルだけ参照を変更。専用葉素材の調整後、インポスター3種を再焼成した。
+
+再生成: `blender -b --factory-startup --python-exit-code 1 --python data/Test/nishiizu-summer-qa/low_bamboo.py`（スクリプトのrootは作業環境の絶対パス）。配置2.6 m間隔、点の直径3.8〜4.2 m、倍率0.95〜1.05、描画2400 m。旧距離指定LOD 12/35/90 mはアプリで画面占有率へ変換して保存。BlenderのLOD0/2とアプリの3視点を確認。負荷計測は[progress.md](../plan/progress.md)参照。
 
 ## 西伊豆のイヌツゲ（2026-09-29 04:55）
 
