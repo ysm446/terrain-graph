@@ -176,16 +176,6 @@ SkyAssetId SkyLibrary::Add(const std::string& name) {
     return m_entries.back().id;
 }
 
-SkyAssetId SkyLibrary::Duplicate(const SkyAsset& source) {
-    // サムネイルは複製せず、作り直しに任せる（GPU リソースは持ち回らない）。
-    SkyAsset asset;
-    asset.id = m_nextId++;
-    asset.name = source.name + ui::Tr(" のコピー", " Copy");
-    asset.sky = source.sky;
-    m_entries.push_back(std::move(asset));
-    return m_entries.back().id;
-}
-
 void SkyLibrary::Remove(rhi::Device& device, SkyAssetId id) {
     const auto it = std::find_if(m_entries.begin(), m_entries.end(),
                                  [id](const SkyAsset& asset) { return asset.id == id; });
@@ -311,20 +301,36 @@ bool SkyLibrary::BuildThumbnail(rhi::Device& device, rhi::PipelineCache& pipelin
     // あちらはビューポートに適用中の 1 枚だけで、一覧の他の天球には無い。
     rhi::GpuTexture equirect;
     if (asset.sky.source == SkySource::Hdri && !asset.sky.hdriPath.empty()) {
-        HdrImage image;
-        if (!LoadHdrImage(asset.sky.hdriPath, image)) {
-            return false;
+        // 直近に読んだのと同じファイル（パス・更新時刻・大きさが同じ）なら、縮めた画像と測った輝度を
+        // 使い回す。輝度のつまみを動かすたびに HDR を読み直すと、1 枚に数百ミリ秒かかって止まる。
+        // 更新時刻か大きさを取れなかったときは、同じかどうか分からないので読み直す。
+        std::error_code timeError, sizeError;
+        const auto writeTime = std::filesystem::last_write_time(asset.sky.hdriPath, timeError);
+        const auto fileSize = std::filesystem::file_size(asset.sky.hdriPath, sizeError);
+        const bool stamped = !timeError && !sizeError;
+        ThumbnailSource& cached = m_thumbnailSource;
+        if (!stamped || !cached.valid || cached.path != asset.sky.hdriPath ||
+            cached.writeTime != writeTime || cached.fileSize != fileSize) {
+            cached.valid = false;
+            HdrImage image;
+            if (!LoadHdrImage(asset.sky.hdriPath, image)) {
+                return false;
+            }
+            // `small` は Windows のヘッダがマクロにしているので、名前に使わない。
+            cached.reduced =
+                DownsampleEquirect(image, kThumbnailEquirectWidth, kThumbnailEquirectHeight);
+            cached.measuredSky = MedianSkyLuminance(image);
+            cached.path = asset.sky.hdriPath;
+            cached.writeTime = writeTime;
+            cached.fileSize = fileSize;
+            cached.valid = stamped;
         }
-        // `small` は Windows のヘッダがマクロにしているので、名前に使わない。
-        const HdrImage reduced =
-            DownsampleEquirect(image, kThumbnailEquirectWidth, kThumbnailEquirectHeight);
-        if (!UploadEquirect(device, reduced, equirect)) {
+        if (!UploadEquirect(device, cached.reduced, equirect)) {
             device.DeferRelease(equirect);
             return false;
         }
         constants.equirectIndex = equirect.SrvIndex();
-        constants.luminanceScale =
-            SkyLuminanceScale(asset.sky.skyLuminance, MedianSkyLuminance(image));
+        constants.luminanceScale = SkyLuminanceScale(asset.sky.skyLuminance, cached.measuredSky);
     }
 
     const bool executed = device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {

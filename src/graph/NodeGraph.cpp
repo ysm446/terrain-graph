@@ -409,13 +409,18 @@ bool NodeGraph::DeleteLink(GraphId linkId) {
 }
 
 CompiledCloud NodeGraph::CompileCloudShapes(GraphId shapeId) const {
+    // ノードごとの結果は cache に置き、**参照で返す**（要素の参照は挿入しても動かない）。
+    // 形状は数万個になり、ノードを選んでいる間は毎フレーム呼ばれるので、段ごとに値で返して
+    // 写しを重ねない。empty / overflow は「形状なし」「打ち切り」の共用の結果（書き換えない）。
     std::unordered_map<GraphId,CompiledCloud> cache;
     std::unordered_set<GraphId> active;
-    std::function<CompiledCloud(const Node*,int)> evaluate = [&](const Node* shape,int depth) -> CompiledCloud {
-        CompiledCloud result;
-        if (!shape) return result;
-        if (depth>128 || active.contains(shape->id)) { result.shapeOverflow=true; return result; }
+    CompiledCloud empty,overflow;
+    overflow.shapeOverflow=true;
+    std::function<CompiledCloud&(const Node*,int)> evaluate = [&](const Node* shape,int depth) -> CompiledCloud& {
+        if (!shape) return empty;
+        if (depth>128 || active.contains(shape->id)) return overflow;
         if (const auto found=cache.find(shape->id);found!=cache.end()) return found->second;
+        CompiledCloud result;
         active.insert(shape->id);
         std::unordered_set<uint64_t> identities;
         const auto append = [&](CloudPrimitive primitive) {
@@ -441,7 +446,7 @@ CompiledCloud NodeGraph::CompileCloudShapes(GraphId shapeId) const {
         } else if (const auto* merge=std::get_if<CloudMergeSettings>(&shape->settings)) {
             result.smoothness=std::clamp(merge->smoothness,0.0f,500.0f);
             for (const auto& pin:shape->inputs) {
-                const auto input=evaluate(FindUpstreamNodeForPin(pin.id),depth+1);
+                const CompiledCloud& input=evaluate(FindUpstreamNodeForPin(pin.id),depth+1);
                 result.shapeOverflow|=input.shapeOverflow;
                 result.smoothness=std::max(result.smoothness,input.smoothness);
                 for (const auto& primitive:input.primitives) append(primitive);
@@ -460,11 +465,34 @@ CompiledCloud NodeGraph::CompileCloudShapes(GraphId shapeId) const {
         }
         active.erase(shape->id);
         result.connected=!result.primitives.empty() && !result.shapeOverflow;
-        cache.emplace(shape->id,result);
-        return result;
+        return cache.emplace(shape->id,std::move(result)).first->second;
     };
-    return evaluate(FindNode(shapeId),0);
+    // cache も empty / overflow もここで捨てるので、最後の結果は動かして返す。
+    return std::move(evaluate(FindNode(shapeId),0));
 }
+
+namespace {
+
+// Model Output から Model Merge を入力順に遡り、行き着いたノード（Merge 以外）を visit へ渡す。
+// 同じノードへ複数の経路があっても、出口ごとに 1 回だけ。
+template <typename Visit>
+void ForEachModelSource(const NodeGraph& graph, const Node& output, Visit&& visit) {
+    std::unordered_set<GraphId> visited;
+    std::vector<const Node*> pending{graph.FindUpstreamNodeForPin(output.inputs[0].id)};
+    while (!pending.empty()) {
+        const Node* node = pending.back();
+        pending.pop_back();
+        if (!node || !visited.insert(node->id).second) continue;
+        if (node->kind == NodeKind::ModelMerge) {
+            for (auto it = node->inputs.rbegin(); it != node->inputs.rend(); ++it)
+                pending.push_back(graph.FindUpstreamNodeForPin(it->id));
+            continue;
+        }
+        visit(*node);
+    }
+}
+
+}  // namespace
 
 std::vector<CompiledModelScatter> NodeGraph::CompileModelScatters() const {
     std::vector<CompiledModelScatter> result;
@@ -472,29 +500,19 @@ std::vector<CompiledModelScatter> NodeGraph::CompileModelScatters() const {
     std::unordered_map<GraphId, size_t> placed;
     for (const auto& output : m_nodes) {
         if (output.kind != NodeKind::ModelOutput || output.inputs.empty()) continue;
-        std::unordered_set<GraphId> visited;
-        std::vector<const Node*> pending{FindUpstreamNodeForPin(output.inputs[0].id)};
-        while (!pending.empty()) {
-            const auto* node = pending.back();
-            pending.pop_back();
-            if (!node || !visited.insert(node->id).second) continue;
-            if (node->kind == NodeKind::ModelMerge) {
-                // 入力順に辿り、同じ配置へ複数経路があっても一度だけ描く。
-                for (auto it = node->inputs.rbegin(); it != node->inputs.rend(); ++it)
-                    pending.push_back(FindUpstreamNodeForPin(it->id));
-                continue;
-            }
-            if (node->kind != NodeKind::ModelScatter || node->inputs.empty()) continue;
-            const auto* source = FindUpstreamNodeForPin(node->inputs[0].id);
-            const auto* settings = std::get_if<ModelScatterSettings>(&node->settings);
-            if (!source || (source->kind != NodeKind::Crumbling && source->kind != NodeKind::Scatter) || !settings) continue;
-            if (const auto found = placed.find(node->id); found != placed.end()) {
+        // 入力順に辿り、同じ配置へ複数経路があっても一度だけ描く。
+        ForEachModelSource(*this, output, [&](const Node& node) {
+            if (node.kind != NodeKind::ModelScatter || node.inputs.empty()) return;
+            const auto* source = FindUpstreamNodeForPin(node.inputs[0].id);
+            const auto* settings = std::get_if<ModelScatterSettings>(&node.settings);
+            if (!source || (source->kind != NodeKind::Crumbling && source->kind != NodeKind::Scatter) || !settings) return;
+            if (const auto found = placed.find(node.id); found != placed.end()) {
                 result[found->second].outputs.push_back(output.id);
-                continue;
+                return;
             }
-            placed.emplace(node->id, result.size());
-            result.push_back({node->id, source->id, *settings, {output.id}});
-        }
+            placed.emplace(node.id, result.size());
+            result.push_back({node.id, source->id, *settings, {output.id}});
+        });
     }
     return result;
 }
@@ -524,19 +542,9 @@ std::vector<CompiledModelPlace> NodeGraph::CompileModelPlaces() const {
     // Model Output から遡る（Model Scatter と同じ辿り方。Model Merge を挟める）。
     for (const auto& output : m_nodes) {
         if (output.kind != NodeKind::ModelOutput || output.inputs.empty()) continue;
-        std::unordered_set<GraphId> visited;
-        std::vector<const Node*> pending{FindUpstreamNodeForPin(output.inputs[0].id)};
-        while (!pending.empty()) {
-            const auto* node = pending.back();
-            pending.pop_back();
-            if (!node || !visited.insert(node->id).second) continue;
-            if (node->kind == NodeKind::ModelMerge) {
-                for (auto it = node->inputs.rbegin(); it != node->inputs.rend(); ++it)
-                    pending.push_back(FindUpstreamNodeForPin(it->id));
-                continue;
-            }
-            if (auto* compiled = entry(*node)) compiled->outputs.push_back(output.id);
-        }
+        ForEachModelSource(*this, output, [&](const Node& node) {
+            if (auto* compiled = entry(node)) compiled->outputs.push_back(output.id);
+        });
     }
     // Pad の読み手。Grading のメッシュは 2 番目の入力（Base の次）。
     for (const Node& reader : m_nodes) {
@@ -666,6 +674,11 @@ std::vector<CompiledSnowPlume> NodeGraph::CompileSnowPlumes() const {
         result.push_back(plume);
     }
     return result;
+}
+
+bool NodeGraph::HasCloudOutput() const {
+    return std::any_of(m_nodes.begin(), m_nodes.end(),
+                       [](const Node& node) { return node.kind == NodeKind::CloudOutput; });
 }
 
 CompiledCloud NodeGraph::CompileCloud() const {
@@ -1056,6 +1069,12 @@ bool NodeGraph::MaskDependsOnHeight(const Node& maskNode, int depth) const {
     if (depth > kMaxDepth) {
         return false;
     }
+    // レイヤーでもある出どころ（堆積 / 崩落 / 水面 / 道路の均し など）は、そのレイヤーを合成した
+    // チェーンの中でしか焼けない。種類を並べ直さず IsLayerMaskSourceKind に揃える（ここに無い種類は
+    // 平らな板の上で op を作れず、プレビューが全面白になる。Sea と Grading が抜けていた）。
+    if (IsLayerMaskSourceKind(maskNode.kind)) {
+        return true;
+    }
     switch (maskNode.kind) {
         case NodeKind::MaskFlowline:
         case NodeKind::MaskFluvial:
@@ -1063,16 +1082,6 @@ bool NodeGraph::MaskDependsOnHeight(const Node& maskNode, int depth) const {
         case NodeKind::MaskSlope:
         case NodeKind::MaskCurvature:
         case NodeKind::WindField:
-        case NodeKind::Sediment:
-        case NodeKind::Crumbling:
-        case NodeKind::Lake:
-        case NodeKind::MeanderingRivers:
-        case NodeKind::SnowCover:
-        case NodeKind::Snow:
-        case NodeKind::River:
-        case NodeKind::Droplet:
-        case NodeKind::FluvialErosion:
-        case NodeKind::Scatter:
             return true;
         // パスは 2D で高さを読まないが、**地形の上に引いたもの**なので、
         // 平らな板ではなく地形の上に貼って見せる（線と地形の対応こそが見たいもの）。
@@ -1284,15 +1293,9 @@ bool NodeGraph::MaskUsesDefaultHeight(const Node& maskNode,
 // マスクのノードを op の列へ落とす（入力が先、出力が後）。
 // **同じノードは 1 つの op を共有する。** Mask Blend で合流したり、
 // 同じマスクを 2 つのレイヤーで使ったりしても、評価は 1 回で済む。
-bool NodeGraph::PathInputLinked(const Node& node) const {
+bool NodeGraph::InputLinked(const Node& node, ValueType type) const {
     for (const Pin& pin : node.inputs)
-        if (pin.valueType == ValueType::Path && FindLinkedNodeForPin(pin.id) != nullptr) return true;
-    return false;
-}
-
-bool NodeGraph::MeshInputLinked(const Node& node) const {
-    for (const Pin& pin : node.inputs)
-        if (pin.valueType == ValueType::Mesh && FindLinkedNodeForPin(pin.id) != nullptr) return true;
+        if (pin.valueType == type && FindLinkedNodeForPin(pin.id) != nullptr) return true;
     return false;
 }
 
@@ -1487,7 +1490,7 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
                                            : nullptr;
             if (pathSettings == nullptr) {
                 // 繋いだ Path をバイパスしているときは「足跡が無い」（全面 0）。
-                return PathInputLinked(maskNode) ? EmitEmptyMaskOp(ops, emitted) : -1;
+                return InputLinked(maskNode, ValueType::Path) ? EmitEmptyMaskOp(ops, emitted) : -1;
             }
             op.kind = compositor::MaskOpKind::Path;
             op.pathMask = settings->pathMask;
@@ -1507,7 +1510,7 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
                                            : nullptr;
             if (pathSettings == nullptr) {
                 // 繋いだ Path をバイパスしているときは「足跡が無い」（全面 0）。
-                return PathInputLinked(maskNode) ? EmitEmptyMaskOp(ops, emitted) : -1;
+                return InputLinked(maskNode, ValueType::Path) ? EmitEmptyMaskOp(ops, emitted) : -1;
             }
             op.kind = compositor::MaskOpKind::Area;
             op.areaMask = settings->areaMask;
@@ -1520,7 +1523,7 @@ int NodeGraph::EmitMaskOps(const MaskSourceRef& source, int defaultHeightLayer,
             // いれば「足跡が無い」（全面 0）。
             const Node* meshNode = UpstreamOf(maskNode, ValueType::Mesh);
             if (meshNode == nullptr) {
-                return MeshInputLinked(maskNode) ? EmitEmptyMaskOp(ops, emitted) : -1;
+                return InputLinked(maskNode, ValueType::Mesh) ? EmitEmptyMaskOp(ops, emitted) : -1;
             }
             op.kind = compositor::MaskOpKind::Mesh;
             op.meshMask = settings->meshMask;
@@ -1839,11 +1842,13 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace,
     // 効き方（係数 / カーブ / レベル / 反転）はレイヤー側の設定のまま。
     std::vector<EmittedMaskOp>& emitted = state.emitted;
     for (size_t i = 0; i < compiled.layers.size(); ++i) {
+        // 高さ由来のマスクで Base を繋いでいないときは「このレイヤーの直下」。
+        const int defaultHeightLayer = (i > 0) ? (static_cast<int>(i) - 1) : 0;
         if (layerNodes[i]->kind == NodeKind::FluvialErosion) {
             const MaskSourceRef hardnessSource = UpstreamMaskOf(*layerNodes[i], 1);
             if (hardnessSource.node != nullptr)
                 compiled.layers[i].hardnessMaskOp = EmitMaskOps(hardnessSource,
-                    i > 0 ? static_cast<int>(i) - 1 : 0, layerNodes, compiled.maskOps, emitted, 0);
+                    defaultHeightLayer, layerNodes, compiled.maskOps, emitted, 0);
         }
         // 散布の Variation は点を作るときにだけ読む。元ごとの評価器はコンパイルの後で
         // 点を作らせる（pointsId をここでは知らない）ので、繋がっていれば常に焼く。
@@ -1851,11 +1856,11 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace,
             const MaskSourceRef variationSource = UpstreamMaskOf(*layerNodes[i], 1);
             if (variationSource.node != nullptr)
                 compiled.layers[i].variationMaskOp = EmitMaskOps(variationSource,
-                    i > 0 ? static_cast<int>(i) - 1 : 0, layerNodes, compiled.maskOps, emitted, 0);
+                    defaultHeightLayer, layerNodes, compiled.maskOps, emitted, 0);
             const MaskSourceRef sizeSource = UpstreamMaskOf(*layerNodes[i], 2);
             if (sizeSource.node != nullptr)
                 compiled.layers[i].sizeMaskOp = EmitMaskOps(sizeSource,
-                    i > 0 ? static_cast<int>(i) - 1 : 0, layerNodes, compiled.maskOps, emitted, 0);
+                    defaultHeightLayer, layerNodes, compiled.maskOps, emitted, 0);
         }
         // 道路の均しは、繋いだ道路メッシュの足跡を自分の ID で置き場から引く（Mask Mesh と同じ流儀。
         // アプリが CompileRoadMeshes の maskNodes を見て置く）。繋いでいなければ 0（何もしない）。
@@ -1868,8 +1873,6 @@ CompiledGraph NodeGraph::CompileChainFrom(const Node* top, ChainTrace* trace,
         if (maskSource.node == nullptr) {
             continue;
         }
-        // 高さ由来のマスクで Base を繋いでいないときは「このレイヤーの直下」。
-        const int defaultHeightLayer = (i > 0) ? (static_cast<int>(i) - 1) : 0;
         const int op =
             EmitMaskOps(maskSource, defaultHeightLayer, layerNodes, compiled.maskOps, emitted, 0);
         if (op >= 0) {

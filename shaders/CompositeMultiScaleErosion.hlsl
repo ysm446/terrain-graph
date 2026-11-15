@@ -229,7 +229,8 @@ void CsResolve(uint3 tid : SV_DispatchThreadID) {
     float mask=1;
     if(g_mse.sizes.w != kInvalidTextureIndex) {
         Texture2D<float> maskTexture=ResourceDescriptorHeap[g_mse.sizes.w];
-        mask=saturate(maskTexture.Load(int3(p,0)));
+        // マスクは合成と解像度が違うことがある（Fluvial のマスクは独自の解像度）。UV で読む。
+        mask=saturate(maskTexture.SampleLevel(g_samplerLinearClamp,(float2(p)+0.5f)/float(g_mse.sizes.z),0));
     }
     output[p]=lerp(output[p],saturate(height/g_mse.limits.w),mask);
 }

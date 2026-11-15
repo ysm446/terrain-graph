@@ -88,7 +88,7 @@ bool Application::DrawLayerSettings(compositor::MaterialLayer& layer, bool isBas
     bool changed = false;
     const auto* assignedMaterial = m_materialLibrary.Find(layer.material);
     const bool layeredMaterial = assignedMaterial && assignedMaterial->layerMaterial;
-    if (layeredMaterial && !assignedMaterial->layerError.empty()) ui::HintText(assignedMaterial->layerError.c_str());
+    if (layeredMaterial && !assignedMaterial->layerError.empty()) ui::HintText("%s", assignedMaterial->layerError.c_str());
     if (layeredMaterial && assignedMaterial->layerMaterial &&
         std::any_of(assignedMaterial->layerMaterial->materials.begin(), assignedMaterial->layerMaterial->materials.end(),
                     [](const graph::PresetMaterial& m) {

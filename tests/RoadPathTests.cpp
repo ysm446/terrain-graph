@@ -16,6 +16,7 @@
 #include <cmath>
 #include <string>
 #include <variant>
+#include <vector>
 
 namespace {
 
@@ -196,6 +197,22 @@ void RunRoadPathTests() {
               "手動のポイントの位置では指定した角度");
         Check(manual < road.path.nextId && road.path.FindPoint(manual) == nullptr,
               "ポイントの ID は path の番号の空間から振る");
+        // まとめて引く版（路面の行ごとに使う）は、1 つずつ引いたのと同じ値。平滑化・手動と自動の
+        // ポイントが混ざった状態で比べる。
+        road.smoothBank = true;
+        road.bankSmoothMeters = 30.0f;
+        AddBankPoint(road, 0.2f);
+        std::vector<float> distances;
+        for (float d = 0.0f; d <= centerline.TotalLength(); d += 7.0f) distances.push_back(d);
+        const std::vector<float> batch = EvaluateBankAnglesRadians(road, centerline, distances);
+        bool sameAngles = batch.size() == distances.size() && !distances.empty();
+        for (size_t i = 0; sameAngles && i < distances.size(); ++i)
+            sameAngles = Near(batch[i], EvaluateBankAngleRadians(road, centerline, distances[i]), 1e-6f);
+        Check(sameAngles, "まとめて引いたバンク角は 1 つずつ引いた値と同じ");
+        const RoadProfileCurve empty{};
+        Check(EvaluateBankAnglesRadians(road, empty, distances).size() == distances.size() &&
+                  centerline.At(std::nanf("")).x == centerline.points.front().x,
+              "点の無い中心線は 0、NaN の道のりは先頭へ落ちる");
     }
 
     Section("Road Path: 1 本の線でないとき");
@@ -450,6 +467,13 @@ void RunRoadPathTests() {
         for (const auto& v : laneMesh.vertices) inDash = inDash && std::fmod(v.uv.y, 10.0f) <= 5.0f + 1e-3f;
         Check(inDash && lines[static_cast<size_t>(RoadMarkingKind::Center)].indices.empty(),
               "車線境界線は破線（5 m の線と 5 m の間隔）");
+        // 線 1 本は両端の輪に加えて、間の路面の行（1 m ごと）でも刻む。道のりは頂点の順に増える。
+        bool ordered = true;
+        for (size_t i = 1; i < laneMesh.vertices.size(); ++i)
+            ordered = ordered && laneMesh.vertices[i].uv.y >= laneMesh.vertices[i - 1].uv.y - 1e-4f;
+        const size_t dashes = 80;  // 800 m を 10 m 周期で
+        Check(ordered && laneMesh.vertices.size() >= dashes * 2 * 5 && laneMesh.vertices.size() <= (dashes + 1) * 2 * 8,
+              "破線の 1 本ごとに間の行を拾う（両端 + 間の行）");
 
         RoadMarkingSettings wide = settings;
         wide.edgeInsetMeters = 3.5f;

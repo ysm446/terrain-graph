@@ -96,6 +96,34 @@ float3 ShadeDirectionalLight(float3 normal, float3 viewDirection, float3 lightDi
 
 // --- IBL 用 --------------------------------------------------------------
 
+// 環境光（IBL）の分割和近似。拡散と鏡面の和を返す（強さと AO は呼び出し側で掛ける）。
+// irradiance は呼び出し側で引いた拡散の環境光（E / pi。雲あり / 雲なしを混ぜる経路があるので引数で受ける）。
+// roughness は下限（kMinPerceptualRoughness）で切った後の値。
+// **地形・配置モデル・生成メッシュ・マテリアルの球が必ずこの関数を通すこと**（別々に書くと見た目が食い違う）。
+float3 ShadeIblSplitSum(float3 normal, float3 viewDirection, float3 diffuseColor, float3 f0, float roughness,
+                        float3 irradiance, uint prefilteredIndex, uint brdfLutIndex, uint prefilteredMipCount)
+{
+    // saturate + 加算だと最大 1.00001 になり、FresnelSchlickRoughness の
+    // pow(1 - nDotV, 5) が負の底で NaN になる。clamp で上限も守る。
+    const float nDotV = clamp(dot(normal, viewDirection), 1e-4f, 1.0f);
+
+    TextureCube<float4> prefilteredMap = ResourceDescriptorHeap[prefilteredIndex];
+    Texture2D<float2> brdfLut = ResourceDescriptorHeap[brdfLutIndex];
+
+    const float3 fresnel = FresnelSchlickRoughness(f0, nDotV, roughness);
+    const float3 diffuseIbl = (1.0f - fresnel) * diffuseColor * irradiance;
+
+    const float3 reflectionDirection = reflect(-viewDirection, normal);
+    const float mipLevel = roughness * float(max(prefilteredMipCount, 1u) - 1u);
+    const float3 prefiltered =
+        prefilteredMap.SampleLevel(g_samplerLinearClamp, reflectionDirection, mipLevel).rgb;
+    const float2 environmentBrdf =
+        brdfLut.SampleLevel(g_samplerLinearClamp, float2(nDotV, roughness), 0.0f);
+    const float3 specularIbl = prefiltered * (f0 * environmentBrdf.x + environmentBrdf.y);
+
+    return diffuseIbl + specularIbl;
+}
+
 // Hammersley 点列。低食い違い量列で、環境マップの畳み込みに使う。
 float2 Hammersley(uint index, uint count)
 {

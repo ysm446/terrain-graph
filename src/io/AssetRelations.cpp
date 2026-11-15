@@ -144,6 +144,16 @@ AssetRelations InspectAssetRelations(ProjectWorkspace& workspace, const fs::path
             result.companionVersions.push_back(std::to_string(modified.time_since_epoch().count()) + ":" + std::to_string(size));
         }
     }
+    // 対象の正規化は 1 回だけ行う。文書の中の文字列ごとに SamePath で正規化し直すと、
+    // ノードの多い地形ファイルでは 1 文書あたり数万回ファイルシステムを引くことになる。
+    std::error_code targetError;
+    const auto canonicalTarget = fs::weakly_canonical(target, targetError);
+    const std::wstring targetName = target.filename().wstring();
+    const auto isTarget = [&](const fs::path& candidate) {
+        std::error_code candidateError;
+        const auto canonical = fs::weakly_canonical(candidate, candidateError);
+        return !targetError && !candidateError && _wcsicmp(canonical.c_str(), canonicalTarget.c_str()) == 0;
+    };
     // 文書が対象を参照しているか（uid か、解決したパスか、文字列のパスが一致する）。
     const auto references = [&](const nlohmann::json& document, const fs::path& owner) {
         bool hit = false;
@@ -151,7 +161,7 @@ AssetRelations InspectAssetRelations(ProjectWorkspace& workspace, const fs::path
             if (value.is_object() && value.contains("uid") && value.contains("path")) {
                 const auto reference = workspace.Resolve(value);
                 if ((!uid.empty() && ProjectWorkspace::String(value, "uid") == uid) ||
-                    (!reference.empty() && SamePath(reference, target))) hit = true;
+                    (!reference.empty() && isTarget(reference))) hit = true;
                 return;
             }
             if (value.is_structured()) { for (const auto& child : value) self(self, child); }
@@ -159,8 +169,10 @@ AssetRelations InspectAssetRelations(ProjectWorkspace& workspace, const fs::path
                 const auto text = value.get<std::string>();
                 if (text.empty()) return;
                 const auto path = FromUtf8(text);
+                // ファイル名が違う文字列は対象を指さない（種類名や列挙名が大半なので、ここで落とす）。
+                if (_wcsicmp(path.filename().c_str(), targetName.c_str()) != 0) return;
                 for (const auto& candidate : {owner.parent_path() / path, workspace.Root() / path})
-                    if (SamePath(candidate, target)) hit = true;
+                    if (isTarget(candidate)) hit = true;
             }
         };
         visit(visit, document);
@@ -182,7 +194,7 @@ AssetRelations InspectAssetRelations(ProjectWorkspace& workspace, const fs::path
             continue;
         }
         const auto path = it->path();
-        if (SamePath(path, target) || !IsDocument(path)) continue;
+        if (!IsDocument(path) || isTarget(path)) continue;
         nlohmann::json document;
         if (!ProjectWorkspace::ReadJson(path, document)) { result.complete = false; continue; }
         // プロジェクトの旧開始シーンは自動読み込みを廃止済み。

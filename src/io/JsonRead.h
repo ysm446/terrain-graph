@@ -50,8 +50,10 @@ inline uint32_t ReadUInt(const nlohmann::json& node, const char* key, uint32_t f
     if (member == nullptr || !member->is_number_integer()) {
         return fallback;
     }
+    // ReadInt と同じく、収まらない値は切り詰めずに既定値へ落とす。
     const int64_t value = member->get<int64_t>();
-    return (value < 0) ? fallback : static_cast<uint32_t>(value);
+    constexpr int64_t kMax = std::numeric_limits<uint32_t>::max();
+    return (value < 0 || value > kMax) ? fallback : static_cast<uint32_t>(value);
 }
 
 inline bool ReadBool(const nlohmann::json& node, const char* key, bool fallback) {

@@ -396,46 +396,39 @@ bool SaveExr(const std::filesystem::path& path, uint32_t width, uint32_t height,
     return true;
 }
 
-bool LoadLdrImage(const std::filesystem::path& path, LdrImage& outImage) {
+namespace {
+
+// Load* の共通部。先読みした結果があればそれを受け取り、無ければその場でデコードする。
+// ログは呼び出した側のスレッド（メインスレッド）で出す。
+// hdr と member は受け取る型（LdrImage / HdrImage）に合わせて渡す。
+template <typename Image, typename Decode>
+bool LoadImageOrPrefetched(const std::filesystem::path& path, Image& outImage, bool hdr,
+                           Image PrefetchedImage::*member, Decode decode) {
     std::string message;
     bool ok = false;
-    if (const auto prefetched = TakePrefetched(path, false)) {
+    if (const auto prefetched = TakePrefetched(path, hdr)) {
         ok = prefetched->ok;
-        outImage = std::move(prefetched->ldr);
+        outImage = std::move((*prefetched).*member);
         message = std::move(prefetched->message);
     } else {
-        ok = DecodeLdrImage(path, outImage, message);
+        ok = decode(path, outImage, message);
     }
     if (ok) TG_LOG_INFO("%s", message.c_str()); else TG_LOG_ERROR("%s", message.c_str());
     return ok;
+}
+
+}  // namespace
+
+bool LoadLdrImage(const std::filesystem::path& path, LdrImage& outImage) {
+    return LoadImageOrPrefetched(path, outImage, false, &PrefetchedImage::ldr, &DecodeLdrImage);
 }
 
 bool LoadHdrImage(const std::filesystem::path& path, HdrImage& outImage) {
-    std::string message;
-    bool ok = false;
-    if (const auto prefetched = TakePrefetched(path, true)) {
-        ok = prefetched->ok;
-        outImage = std::move(prefetched->hdrImage);
-        message = std::move(prefetched->message);
-    } else {
-        ok = DecodeHdrImage(path, outImage, message);
-    }
-    if (ok) TG_LOG_INFO("%s", message.c_str()); else TG_LOG_ERROR("%s", message.c_str());
-    return ok;
+    return LoadImageOrPrefetched(path, outImage, true, &PrefetchedImage::hdrImage, &DecodeHdrImage);
 }
 
 bool LoadExrImage(const std::filesystem::path& path, HdrImage& outImage) {
-    std::string message;
-    bool ok = false;
-    if (const auto prefetched = TakePrefetched(path, true)) {
-        ok = prefetched->ok;
-        outImage = std::move(prefetched->hdrImage);
-        message = std::move(prefetched->message);
-    } else {
-        ok = DecodeExrImage(path, outImage, message);
-    }
-    if (ok) TG_LOG_INFO("%s", message.c_str()); else TG_LOG_ERROR("%s", message.c_str());
-    return ok;
+    return LoadImageOrPrefetched(path, outImage, true, &PrefetchedImage::hdrImage, &DecodeExrImage);
 }
 
 }  // namespace tg

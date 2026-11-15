@@ -52,8 +52,10 @@ public:
             // 見つかった距離より遠い輪は見なくてよい（輪 r の升の最寄りは (r − 1) × 升 以上離れている）。
             if (best < static_cast<float>(ring - 1) * m_cell) break;
             for (int y = cy - ring; y <= cy + ring; ++y) {
-                for (int x = cx - ring; x <= cx + ring; ++x) {
-                    if (std::abs(x - cx) != ring && std::abs(y - cy) != ring) continue;  // 輪の内側は見た
+                // 輪の内側は見た。上下の辺は全部、間の行は左右の端だけを回る（輪ごとに正方形全体を
+                // 回すと、遠くまで探すときに輪の数の 3 乗の手間になる）。
+                const int stepX = (std::abs(y - cy) == ring || ring == 0) ? 1 : 2 * ring;
+                for (int x = cx - ring; x <= cx + ring; x += stepX) {
                     const auto found = m_cells.find(Key(x, y));
                     if (found == m_cells.end()) continue;
                     for (const size_t i : found->second) {
@@ -180,14 +182,21 @@ std::vector<FittedControlPoint> FitClothoidControlPoints(const std::vector<std::
     std::vector<FittedControlPoint> result;
     if (outMaxError) *outMaxError = 0.0f;
     std::vector<Vec2> line;
+    // line の点が polylineMeters の何番目だったか。重なった点を捨てると添字がずれるので、
+    // 返す source（属性の引き継ぎに使う）はこれで元の添字へ戻す。
+    std::vector<size_t> lineSource;
     line.reserve(polylineMeters.size());
-    for (const auto& p : polylineMeters) {
-        const Vec2 v{p[0], p[1]};
+    lineSource.reserve(polylineMeters.size());
+    for (size_t i = 0; i < polylineMeters.size(); ++i) {
+        const Vec2 v{polylineMeters[i][0], polylineMeters[i][1]};
         // 重なった点は捨てる（向きが決まらない）。
-        if (line.empty() || Length(v - line.back()) > 1e-4f) line.push_back(v);
+        if (line.empty() || Length(v - line.back()) > 1e-4f) {
+            line.push_back(v);
+            lineSource.push_back(i);
+        }
     }
     if (line.size() < 3) {
-        for (size_t i = 0; i < line.size(); ++i) result.push_back({line[i].x, line[i].y, i});
+        for (size_t i = 0; i < line.size(); ++i) result.push_back({line[i].x, line[i].y, lineSource[i]});
         return result;
     }
     const float tolerance = std::max(options.toleranceMeters, 0.01f);
@@ -323,7 +332,7 @@ std::vector<FittedControlPoint> FitClothoidControlPoints(const std::vector<std::
     }
     maxError = measureRange(-kAll, kAll, nullptr);
 
-    for (const Control& c : control) result.push_back({c.position.x, c.position.y, c.source});
+    for (const Control& c : control) result.push_back({c.position.x, c.position.y, lineSource[c.source]});
     if (outMaxError) *outMaxError = maxError;
     return result;
 }

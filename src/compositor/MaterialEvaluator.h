@@ -681,6 +681,20 @@ private:
     // 置き場から、それ以外（同期評価 / 書き出し）はフレームのアップロードリングから取る。
     // **評価器の中で device.Upload() を直接呼ばない**（キューの仕事はフレームより長生きする）。
     rhi::UploadAllocation AllocateConstants(rhi::Device& device, uint64_t size);
+    // 定数を置き場（AllocateConstants）へ写し、その GPU アドレスを返す。確保できなければ 0。
+    D3D12_GPU_VIRTUAL_ADDRESS UploadConstants(rhi::Device& device, const void* data,
+                                              uint64_t size);
+    // 単発のマスク焼きの共通部分。作業用テクスチャは UAV のまま読み、target の全面へ
+    // 1 ディスパッチで書いて、下流が SRV で読める状態にして返す。
+    bool RunMaskDispatch(rhi::Device& device, ID3D12GraphicsCommandList* commandList,
+                         ID3D12PipelineState* pass, rhi::GpuTexture& target,
+                         const void* constants, uint64_t constantsSize, const char* marker);
+    // いま記録している仕事が終わると立つフェンスと値（読み戻しの完了待ちに使う）。
+    // 非同期ならコンピュートキューの次の値、同期ならこのフレームの値。
+    void RecordingFence(rhi::Device& device, ID3D12Fence*& outFence, uint64_t& outValue) const;
+    // 多段侵食の読み戻しがまだ GPU で終わっていないか。終わるまでは評価を記録し直しても
+    // 同じ所で止まるだけなので、Update は待つ。
+    bool WaitingForPostprocess(const MaterialStack& stack) const;
     // 全体をタイルに分ける。
     std::vector<TileRect> MakeTiles() const;
     // 描画（頂点 / ドメイン / ピクセル）から読める状態へ。**グラフィックスキューでだけ**

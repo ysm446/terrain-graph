@@ -85,8 +85,11 @@ void AddStrip(const RoadSurface& road, const RoadMarkingSettings& settings, floa
         }
     };
     addRing(start);
-    for (const float distance : road.distances)
-        if (distance > start + 1e-4f && distance < end - 1e-4f) addRing(distance);
+    // 間の行。道のりは昇順なので、最初の行を二分探索で引く（破線は線 1 本ごとにここへ来るので、
+    // 毎回すべての行を見ると 線の数 × 行の数 になる）。
+    for (auto row = std::upper_bound(road.distances.begin(), road.distances.end(), start + 1e-4f);
+         row != road.distances.end() && *row < end - 1e-4f; ++row)
+        addRing(*row);
     addRing(end);
     const uint32_t rings = (static_cast<uint32_t>(out.vertices.size()) - first) / 2;
     for (uint32_t ring = 1; ring < rings; ++ring) {

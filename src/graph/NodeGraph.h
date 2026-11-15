@@ -682,6 +682,9 @@ public:
     // Avoid に繋いだマスクの op（チェーンの天面の Height から焼く）。avoidOp は無ければ -1。
     CompiledGraph CompilePathRouteInputs(GraphId pathNodeId, int& avoidOp) const;
     CompiledCloud CompileCloud() const;
+    // Cloud Output があるか（CompileCloud().hasOutput と同じ）。有無だけ知りたいときに、
+    // 雲の形状まで組み立てずに済ませる。
+    bool HasCloudOutput() const;
     std::vector<CompiledModelScatter> CompileModelScatters() const;
     // Model Output へ届く、または Pad を Mask Mesh / Grading が読んでいる Model Place。
     std::vector<CompiledModelPlace> CompileModelPlaces() const;
@@ -791,10 +794,8 @@ private:
                     std::vector<EmittedMaskOp>& emitted, int depth) const;
     // 全面 0 のマスク（バイパスしたソースの出力）。1 つだけ焼いて共有する。
     static int EmitEmptyMaskOp(compositor::MaskProgram& ops, std::vector<EmittedMaskOp>& emitted);
-    // Path の入力に線が繋がっているか（バイパスで読み替える前）。
-    bool PathInputLinked(const Node& node) const;
-    // Mesh の入力に線が繋がっているか（バイパスで読み替える前）。
-    bool MeshInputLinked(const Node& node) const;
+    // その型の入力（Path / Mesh）に線が繋がっているか（バイパスで読み替える前）。
+    bool InputLinked(const Node& node, ValueType type) const;
     // ノードの入力ピン（型を指定）に繋がっている上流ノード。無ければ nullptr。
     const Node* UpstreamOf(const Node& node, ValueType type, size_t which = 0) const;
     // Mask 入力に繋がっている出どころ。node が nullptr なら未接続。

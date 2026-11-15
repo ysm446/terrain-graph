@@ -1,4 +1,5 @@
 #include "renderer/Ephemeris.h"
+#include <algorithm>
 #include <cmath>
 
 namespace tg::renderer {
@@ -8,6 +9,9 @@ constexpr double kTwoPi = 2*kPi;
 constexpr double kArcSeconds = 206264.8062;          // 1 rad の秒角。
 constexpr double kObliquity = 23.43929111*kPi/180;   // 黄道傾斜角（J2000）。
 double Fraction(double x) { return x-std::floor(x); }
+// 丸めで引数が ±1 をわずかに越えると asin は NaN を返す（天頂・天の極の近く）。NaN は太陽の向きから
+// 影と大気の全体へ広がるので、範囲へ収めてから渡す。
+double SafeAsin(double x) { return std::asin(std::clamp(x, -1.0, 1.0)); }
 // 黄経・黄緯（rad）から赤道座標。
 EquatorialPosition FromEcliptic(double longitude, double latitude) {
     const double x = std::cos(longitude)*std::cos(latitude);
@@ -18,7 +22,7 @@ EquatorialPosition FromEcliptic(double longitude, double latitude) {
     EquatorialPosition result;
     result.rightAscension = static_cast<float>(std::atan2(ye, x));
     if (result.rightAscension < 0) result.rightAscension += static_cast<float>(kTwoPi);
-    result.declination = static_cast<float>(std::asin(ze));
+    result.declination = static_cast<float>(SafeAsin(ze));
     return result;
 }
 // 太陽の黄経（rad）。Montenbruck & Pfleger "MiniSun"。
@@ -89,7 +93,7 @@ HorizontalPosition ToHorizontal(EquatorialPosition position, float latitude, flo
     const double sinLat = std::sin(latitude), cosLat = std::cos(latitude);
     const double sinDec = std::sin(position.declination), cosDec = std::cos(position.declination);
     HorizontalPosition result;
-    result.elevation = static_cast<float>(std::asin(sinLat*sinDec+cosLat*cosDec*std::cos(H)));
+    result.elevation = static_cast<float>(SafeAsin(sinLat*sinDec+cosLat*cosDec*std::cos(H)));
     // 北向き・東向き成分から方位を取る。tan(dec) を使う式は天の極で不安定になる。
     const double north = -std::cos(H)*cosDec*sinLat+sinDec*cosLat;
     const double east = -std::sin(H)*cosDec;

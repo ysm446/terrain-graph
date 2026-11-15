@@ -28,7 +28,7 @@ bool Application::DrawLayerMaterialProperties(compositor::MaterialAsset& asset) 
     }
     std::vector<graph::PresetMaterial> layers;
     if (!graph::ExtractPresetLayers(material, layers, m_surfacePresetError)) {
-        ui::HintText(m_surfacePresetError.c_str()); return changed;
+        ui::HintText("%s", m_surfacePresetError.c_str()); return changed;
     }
     if (material.materialGraph) {
         ui::HintText("%s", ui::Tr("ノード形式の素材です。変換すると出力につながる層を取り込みます。未使用ノードは除かれます（Undo可能）", "This material uses nodes. Converting imports the layers connected to the output and removes unused nodes (undoable)"));
@@ -201,7 +201,7 @@ bool Application::DrawLayerMaterialProperties(compositor::MaterialAsset& asset) 
     ImGui::PopID();
     ImGui::EndDisabled();
     if (layersChanged && !readOnly) { material.materials = std::move(layers); changed = true; }
-    if (const auto* source = m_materialLibrary.Find(asset.id); source && !source->layerError.empty()) ui::HintText(source->layerError.c_str());
+    if (const auto* source = m_materialLibrary.Find(asset.id); source && !source->layerError.empty()) ui::HintText("%s", source->layerError.c_str());
     return changed;
 }
 }

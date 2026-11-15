@@ -345,6 +345,23 @@ int GroupIdFromEditorId(int id) {
 constexpr float kGroupPadding = 28.0f;
 constexpr float kGroupMinSize = 80.0f;
 
+// 枠 inner が、枠 outer の中にある小さい枠か（左上が outer の中にあり、面積が小さい）。
+// 畳んだ枠が中の小さい枠を隠す / 一緒に動かす判定で使う。title は見出しの高さ。
+bool GroupNestedIn(const graph::NodeGroup& inner, const graph::NodeGroup& outer, float title) {
+    if (inner.id == outer.id || inner.component != outer.component) return false;
+    return inner.x >= outer.x && inner.x <= outer.x + outer.width && inner.y >= outer.y &&
+           inner.y <= outer.y + title + outer.height && inner.width * inner.height < outer.width * outer.height;
+}
+
+// ノードを囲む箱（lo〜hi）に余白を付けて、枠の位置と大きさにする。
+// メモの吹き出しがノードの下に出るので、下は広めに空ける。
+void FitGroupToBounds(graph::NodeGroup& group, const ImVec2& lo, const ImVec2& hi, float title) {
+    group.x = lo.x - kGroupPadding;
+    group.y = lo.y - kGroupPadding - title;
+    group.width = std::max(hi.x - lo.x + kGroupPadding * 2.0f, kGroupMinSize);
+    group.height = std::max(hi.y - lo.y + kGroupPadding * 3.0f, kGroupMinSize);
+}
+
 // エディタへ渡してよい座標か。エディタは**知らないノードの位置を FLT_MAX で返す**ので、
 // それを信じて書き戻す・流し込むとノードが無限遠へ飛び、キャンバスの座標計算が
 // 壊れて操作できなくなる。読み込んだファイルの値の検証にも使う。
@@ -352,6 +369,32 @@ bool IsValidNodePosition(float x, float y) {
     constexpr float kMaxCoordinate = 1.0e6f;
     return std::isfinite(x) && std::isfinite(y) && std::abs(x) <= kMaxCoordinate &&
            std::abs(y) <= kMaxCoordinate;
+}
+
+// 雲の密度（消散係数）の行。Weather Layer と Cloud Noise で共通。**プロパティテーブルの中で呼ぶこと。**
+bool DrawCloudDensityRow(float* extinction, float defaultExtinction) {
+    bool changed = false;
+    changed |= ui::PropertyFloat(ui::Tr("密度", "Density"), extinction, 0.0001f, 0.2f, defaultExtinction,
+        ui::Tr("雲の中を進む光の減衰の強さ（消散係数、1/m）。密度 1 の場所で 1 m 進むごとに光がこの割合で失われます。\n"
+               "大きいほど光を通しにくく、輪郭が硬く雲影が濃くなります。実際の積雲はおよそ 0.02〜0.1 /m。",
+               "How strongly light is attenuated inside the cloud (extinction coefficient, 1/m). At density 1, this fraction of light is lost per meter.\nHigher values let less light through, with harder edges and darker cloud shadows. Real cumulus is about 0.02-0.1 /m."), "%.4f", ImGuiSliderFlags_Logarithmic);
+    return changed;
+}
+
+// 雲の多重散乱の 2 行（Indirect Light / 多重散乱の広がり）。Weather Layer・Cloud Noise・雲のレイヤーで共通。
+// **プロパティテーブルの中で呼ぶこと。**
+bool DrawCloudScatterRows(float* indirectLight, float* scatterSpread, float defaultIndirectLight,
+                          float defaultScatterSpread) {
+    bool changed = false;
+    changed |= ui::PropertyFloat("Indirect Light", indirectLight, 0.0f, 1.0f, defaultIndirectLight,
+        ui::Tr("雲の中で繰り返し散乱する太陽光の反射率。1 で各次数のエネルギーが単散乱と同じ上限、\n"
+               "0 は太陽光の多重散乱なし。光を足す方向には働かず、密度・透過率・地形への雲影は変えません。",
+               "Albedo of sunlight scattered repeatedly inside the cloud. At 1 each order is capped at the single-scattering energy,\n0 disables multiple scattering of sunlight. It never adds light and leaves density, transmittance, and cloud shadows on the terrain unchanged."), "%.2f");
+    changed |= ui::PropertyFloat(ui::Tr("多重散乱の広がり", "Scatter Spread"), scatterSpread, 0.05f, 0.9f, defaultScatterSpread,
+        ui::Tr("多重散乱した光が雲の中へ行き渡る度合い。高次ほど太陽方向の減衰を (1-広がり) の累乗で縮めます。\n"
+               "大きいほど陰の側まで光が回って柔らかく、小さいほど陰が締まります。エネルギーは増えません。",
+               "How far multiply scattered light spreads through the cloud. Higher orders shrink the sunward attenuation by powers of (1 - spread).\nHigher values carry light into the shaded side for a softer look; lower values keep shadows crisp. Energy does not increase."), "%.2f");
+    return changed;
 }
 
 }  // namespace
@@ -377,6 +420,7 @@ void Application::RequestGraphNodePlacement(bool navigate) {
     // グラフが丸ごと入れ替わったときは版が偶然一致し得るので、版で控えたコンパイル結果も捨てる。
     m_compiledCloudRevision = 0;
     m_snowPlumesRevision = 0;
+    m_cloudShapeSummary.revision = 0;
     // 全体の流し込みの後だけ画面へ収め直す。1 個の追加やアンドゥでは
     // 視点を動かさない（そのたびに視点が飛ぶと編集にならない）。
     if (navigate) {
@@ -803,6 +847,28 @@ void Application::PlaceGraphClipboard(const ImVec2& viewCenter, bool foreign) {
     TG_LOG_INFO(ui::Tr("ノードを貼り付けました: %zu 個", "Pasted nodes: %zu"), m_graphClipboard.size());
 }
 
+// 選んでいる雲の形状ノードのプロパティに出す数。球の生成（CompileCloudShapes）は重いので、
+// グラフの版とノードが同じ間は前の結果を返す。値を変えたフレームは版がまだ上がっていないので、
+// 表示が追いつくのは次のフレーム。
+const Application::CloudShapeSummary& Application::CloudShapeSummaryFor(graph::GraphId nodeId) {
+    CloudShapeSummary& summary = m_cloudShapeSummary;
+    if (summary.revision != m_graph.Revision() || summary.nodeId != nodeId) {
+        const graph::CompiledCloud generated = m_graph.CompileCloudShapes(nodeId);
+        summary = {};
+        summary.revision = m_graph.Revision();
+        summary.nodeId = nodeId;
+        summary.smoothness = generated.smoothness;
+        summary.primitiveCount = generated.primitives.size();
+        summary.shapeOverflow = generated.shapeOverflow;
+        if (generated.mapGuide) {
+            summary.hasMapGuide = true;
+            summary.edgeCount = generated.mapGuide->edgeCount;
+            summary.columnCount = generated.mapGuide->columnCount;
+        }
+    }
+    return summary;
+}
+
 const std::vector<graph::GraphId>& Application::GraphCycleNodes() {
     if (m_graphCycleRevision != m_graph.Revision()) {
         m_graphCycleRevision = m_graph.Revision();
@@ -1005,8 +1071,9 @@ void Application::DrawGraphNode(const graph::Node& node) {
     // **ラベルもピンの当たり判定に入れる。** 丸だけだと小さく、
     // 出力ピンのクリック（プレビューの切り替え）も接続も狙いにくい。
     const ImVec4 pinLabelColor(0.62f, 0.64f, 0.62f, 1.0f);
-    // 丸の中心。バイパス中の素通りの線を引くのに使う。
-    std::vector<ImVec2> inputCenters(node.inputs.size()), outputCenters(node.outputs.size());
+    // 丸の中心。バイパス中の素通りの線を引くのに使う（バイパスでなければ確保しない）。
+    std::vector<ImVec2> inputCenters(bypassed ? node.inputs.size() : 0);
+    std::vector<ImVec2> outputCenters(bypassed ? node.outputs.size() : 0);
 
     for (size_t inputIndex = 0; inputIndex < node.inputs.size(); ++inputIndex) {
         const graph::Pin& input = node.inputs[inputIndex];
@@ -1014,7 +1081,7 @@ void Application::DrawGraphNode(const graph::Node& node) {
         ImGui::SetCursorPos(ImVec2(rowStartX, inputY));
         ed::BeginPin(ed::PinId(input.id), ed::PinKind::Input);
         const PinGeometry geometry = DrawRoundPin(input, nodeLeftX);
-        inputCenters[inputIndex] = geometry.center;
+        if (bypassed) inputCenters[inputIndex] = geometry.center;
         ImGui::SameLine();
         ImGui::SetCursorPosY(inputY + 2.0f);
         ImGui::TextColored(pinLabelColor, "%s", input.label.c_str());
@@ -1038,7 +1105,7 @@ void Application::DrawGraphNode(const graph::Node& node) {
         ImGui::SameLine();
         ImGui::SetCursorPosY(outputY);
         const PinGeometry geometry = DrawRoundPin(output, nodeRightX, previewOutput);
-        outputCenters[outputIndex] = geometry.center;
+        if (bypassed) outputCenters[outputIndex] = geometry.center;
         // ラベルの左端から丸まで。
         ed::PinRect(ImVec2(labelMin.x, geometry.min.y), geometry.max);
         ed::EndPin();
@@ -1243,10 +1310,7 @@ void Application::UpdateGraphHiddenNodes() {
         for (const graph::GraphId id : GraphGroupMembers(group)) m_graphHiddenNodes.emplace(id, group.id);
         // 畳んだ枠の中にある小さい枠も隠す。
         for (const graph::NodeGroup& other : m_graph.Groups()) {
-            if (other.id == group.id || other.component != group.component) continue;
-            if (other.x >= group.x && other.x <= group.x + group.width && other.y >= group.y &&
-                other.y <= group.y + title + group.height && other.width * other.height < group.width * group.height)
-                m_graphHiddenGroups.insert(other.id);
+            if (GroupNestedIn(other, group, title)) m_graphHiddenGroups.insert(other.id);
         }
     }
 }
@@ -1259,11 +1323,7 @@ void Application::MoveCollapsedGraphGroup(graph::NodeGroup& group, const ImVec2&
         if (graph::Node* node = m_graph.FindMutableNode(id)) { node->posX += dx; node->posY += dy; }
     }
     for (graph::NodeGroup& other : m_graph.MutableGroups()) {
-        if (other.id == group.id || other.component != group.component) continue;
-        if (other.x >= group.x && other.x <= group.x + group.width && other.y >= group.y &&
-            other.y <= group.y + title + group.height && other.width * other.height < group.width * group.height) {
-            other.x += dx; other.y += dy;
-        }
+        if (GroupNestedIn(other, group, title)) { other.x += dx; other.y += dy; }
     }
     group.x = position.x;
     group.y = position.y;
@@ -1459,11 +1519,8 @@ void Application::RefitGraphGroups(const std::unordered_map<graph::GraphId, ImVe
             any = true;
         }
         if (!any || !changed) continue;
-        // CreateGraphGroup と同じ余白（下はメモの吹き出しのぶん広め）。エディタへは DrawGraphGroups が流し込む。
-        group.x = lo.x - kGroupPadding;
-        group.y = lo.y - kGroupPadding - title;
-        group.width = std::max(hi.x - lo.x + kGroupPadding * 2.0f, kGroupMinSize);
-        group.height = std::max(hi.y - lo.y + kGroupPadding * 3.0f, kGroupMinSize);
+        // CreateGraphGroup と同じ余白。エディタへは DrawGraphGroups が流し込む。
+        FitGroupToBounds(group, lo, hi, title);
     }
 }
 
@@ -1485,11 +1542,7 @@ void Application::CreateGraphGroup(const ImVec2& at) {
     graph::NodeGroup group;
     group.component = m_editComponent == 1 ? 1 : 0;
     if (any) {
-        // メモの吹き出しがノードの下に出るので、下は広めに空ける。
-        group.x = lo.x - kGroupPadding;
-        group.y = lo.y - kGroupPadding - title;
-        group.width = std::max(hi.x - lo.x + kGroupPadding * 2.0f, kGroupMinSize);
-        group.height = std::max(hi.y - lo.y + kGroupPadding * 3.0f, kGroupMinSize);
+        FitGroupToBounds(group, lo, hi, title);
     } else {
         group.x = at.x - group.width * 0.5f;
         group.y = at.y - group.height * 0.5f;
@@ -2131,6 +2184,31 @@ void Application::DrawGraphEditor() {
         ImGui::OpenPopup("graphNodeMenu");
         ed::Resume();
     }
+    // グラフ全体の並べ直し・重なりの解消・グループの項目。ノードのメニューと背景のメニューの両方に置く。
+    // **選択には依らない**（整列と違い、何も選んでいなくても効く）。ポップアップの中ではエディタを
+    // 止めているので、要求だけ置いて次のフレームで実行する。
+    const auto arrangeMenuItems = [&]() {
+        ImGui::Separator();
+        if (ImGui::MenuItem(ui::Tr("グラフ全体を左から右へ並べ直す", "Arrange Whole Graph Left to Right"))) m_pendingGraphArrange = true;
+        if (ImGui::MenuItem(m_selectedGraphNodes.size() >= 2
+                                ? ui::Tr("選択したノードの重なりを解消", "Resolve Overlaps in Selection")
+                                : ui::Tr("ノードの重なりを解消", "Resolve Node Overlaps")))
+            m_pendingGraphSpread = true;
+        ImGui::SetItemTooltip("%s", ui::Tr("重なっているノードを縦にずらして離す（横には動かさない）。\n"
+                                           "2 個以上を選んでいればその中だけ、そうでなければグラフ全体",
+                                           "Moves overlapping nodes apart vertically (never horizontally).\n"
+                                           "Only within the selection if 2 or more are selected, otherwise the whole graph"));
+        if (ImGui::MenuItem(m_selectedGraphNodes.empty() ? ui::Tr("空のグループを作る", "Create Empty Group")
+                                                         : ui::Tr("選択したノードをグループにまとめる", "Group Selected Nodes"),
+                            "G")) {
+            m_pendingGraphGroup = true;
+            m_pendingGraphGroupAt = ImGui::GetMousePosOnOpeningCurrentPopup();
+        }
+        ImGui::SetItemTooltip("%s", ui::Tr("ノードを囲む枠を作る（表示だけ。評価には影響しない）。\n"
+                                           "枠の見出しを掴むと中のノードごと動く",
+                                           "Creates a frame around nodes (display only, no effect on evaluation).\n"
+                                           "Drag the frame's title to move it with its nodes"));
+    };
     ed::Suspend();
     if (ImGui::BeginPopup("graphNodeMenu")) {
         std::vector<ed::NodeId> selection(static_cast<size_t>(std::max(ed::GetSelectedObjectCount(), 0)));
@@ -2153,28 +2231,7 @@ void Application::DrawGraphEditor() {
         ImGui::Separator();
         alignItem(ui::Tr("横に等間隔", "Distribute Horizontally"), nullptr, GraphAlign::DistributeX, 3);
         alignItem(ui::Tr("縦に等間隔", "Distribute Vertically"), nullptr, GraphAlign::DistributeY, 3);
-        // グラフ全体の並べ直し。**選択には依らない**（上の整列と違い、何も選んでいなくても効く）。
-        // ポップアップの中ではエディタを止めているので、要求だけ置いて次のフレームで実行する。
-        ImGui::Separator();
-        if (ImGui::MenuItem(ui::Tr("グラフ全体を左から右へ並べ直す", "Arrange Whole Graph Left to Right"))) m_pendingGraphArrange = true;
-        if (ImGui::MenuItem(m_selectedGraphNodes.size() >= 2
-                                ? ui::Tr("選択したノードの重なりを解消", "Resolve Overlaps in Selection")
-                                : ui::Tr("ノードの重なりを解消", "Resolve Node Overlaps")))
-            m_pendingGraphSpread = true;
-        ImGui::SetItemTooltip("%s", ui::Tr("重なっているノードを縦にずらして離す（横には動かさない）。\n"
-                                           "2 個以上を選んでいればその中だけ、そうでなければグラフ全体",
-                                           "Moves overlapping nodes apart vertically (never horizontally).\n"
-                                           "Only within the selection if 2 or more are selected, otherwise the whole graph"));
-        if (ImGui::MenuItem(m_selectedGraphNodes.empty() ? ui::Tr("空のグループを作る", "Create Empty Group")
-                                                         : ui::Tr("選択したノードをグループにまとめる", "Group Selected Nodes"),
-                            "G")) {
-            m_pendingGraphGroup = true;
-            m_pendingGraphGroupAt = ImGui::GetMousePosOnOpeningCurrentPopup();
-        }
-        ImGui::SetItemTooltip("%s", ui::Tr("ノードを囲む枠を作る（表示だけ。評価には影響しない）。\n"
-                                           "枠の見出しを掴むと中のノードごと動く",
-                                           "Creates a frame around nodes (display only, no effect on evaluation).\n"
-                                           "Drag the frame's title to move it with its nodes"));
+        arrangeMenuItems();
         ImGui::EndPopup();
     }
     if (ImGui::BeginPopup("addGraphNode")) {
@@ -2183,7 +2240,7 @@ void Application::DrawGraphEditor() {
         // 編集中のグラフ（地形 / 雲）に出す種類か。
         const auto offered = [&](graph::NodeKind kind) { return NodeKindOffered(kind, m_editComponent); };
         // Cloud Output は 1 つだけ。コンパイルは項目ごとではなくポップアップごとに 1 回。
-        const bool cloudOutputExists = m_graph.CompileCloud().hasOutput;
+        const bool cloudOutputExists = m_graph.HasCloudOutput();
         const auto addNodeMenuItem = [&](graph::NodeKind kind, const char* label) {
             if (!offered(kind)) return;
             const bool available = kind != graph::NodeKind::CloudOutput || !cloudOutputExists;
@@ -2300,26 +2357,7 @@ void Application::DrawGraphEditor() {
             graph::NodeKind::CloudOutput,
         });
         // ノードを選んでいなくても並べ直せるよう、背景のメニューにも置く。
-        ImGui::Separator();
-        if (ImGui::MenuItem(ui::Tr("グラフ全体を左から右へ並べ直す", "Arrange Whole Graph Left to Right"))) m_pendingGraphArrange = true;
-        if (ImGui::MenuItem(m_selectedGraphNodes.size() >= 2
-                                ? ui::Tr("選択したノードの重なりを解消", "Resolve Overlaps in Selection")
-                                : ui::Tr("ノードの重なりを解消", "Resolve Node Overlaps")))
-            m_pendingGraphSpread = true;
-        ImGui::SetItemTooltip("%s", ui::Tr("重なっているノードを縦にずらして離す（横には動かさない）。\n"
-                                           "2 個以上を選んでいればその中だけ、そうでなければグラフ全体",
-                                           "Moves overlapping nodes apart vertically (never horizontally).\n"
-                                           "Only within the selection if 2 or more are selected, otherwise the whole graph"));
-        if (ImGui::MenuItem(m_selectedGraphNodes.empty() ? ui::Tr("空のグループを作る", "Create Empty Group")
-                                                         : ui::Tr("選択したノードをグループにまとめる", "Group Selected Nodes"),
-                            "G")) {
-            m_pendingGraphGroup = true;
-            m_pendingGraphGroupAt = ImGui::GetMousePosOnOpeningCurrentPopup();
-        }
-        ImGui::SetItemTooltip("%s", ui::Tr("ノードを囲む枠を作る（表示だけ。評価には影響しない）。\n"
-                                           "枠の見出しを掴むと中のノードごと動く",
-                                           "Creates a frame around nodes (display only, no effect on evaluation).\n"
-                                           "Drag the frame's title to move it with its nodes"));
+        arrangeMenuItems();
         // めったに触らない表示の切り替えなので、パネルに行を取らずここへ置く。
         if (ImGui::MenuItem(ui::Tr("ノードのメモを表示", "Show Node Notes"), nullptr, &m_settings.Display().showNodeNotes)) {
             m_settings.Save();
@@ -3766,18 +3804,9 @@ void Application::DrawNodeProperties(graph::Node* selected) {
             changed |= ui::PropertyFloat(ui::Tr("細部の削り", "Detail Erosion"), &weather->detailStrength, 0.0f, 1.0f, defaults.detailStrength, nullptr, "%.2f");
             changed |= ui::PropertyFloat(ui::Tr("遠景の開始距離", "Far Start Distance"), &weather->farDistance, 0.0f, 200000.0f, defaults.farDistance, ui::Tr("この距離より先の雲を 1/4 解像度の別パスで描き、手前と合成します。0 で無効。層は地球と同心の球殻として扱い、遠くの雲は地平線へ沈みます。", "Clouds beyond this distance are drawn in a separate quarter-resolution pass and blended with the near ones. 0 disables it. The layer is treated as a shell concentric with the Earth, so distant clouds sink below the horizon."), "%.0f m");
             changed |= ui::PropertyBool(ui::Tr("距離 LOD", "Distance LOD"), &weather->distanceLod, defaults.distanceLod, ui::Tr("オンで遠景ほど刻みを伸ばし、刻みより細かいノイズを平均へ寄せ、25〜60 km より先で細部を省きます。オフは全距離を近景の刻みで評価するため負荷が上がります。", "When on, the step grows with distance, noise finer than the step fades to its average, and detail is skipped beyond 25-60 km. When off, every distance uses the near-field step, which costs more."));
-            changed |= ui::PropertyFloat(ui::Tr("密度", "Density"), &weather->extinction, 0.0001f, 0.2f, defaults.extinction,
-                ui::Tr("雲の中を進む光の減衰の強さ（消散係数、1/m）。密度 1 の場所で 1 m 進むごとに光がこの割合で失われます。\n"
-                       "大きいほど光を通しにくく、輪郭が硬く雲影が濃くなります。実際の積雲はおよそ 0.02〜0.1 /m。",
-                       "How strongly light is attenuated inside the cloud (extinction coefficient, 1/m). At density 1, this fraction of light is lost per meter.\nHigher values let less light through, with harder edges and darker cloud shadows. Real cumulus is about 0.02-0.1 /m."), "%.4f", ImGuiSliderFlags_Logarithmic);
-            changed |= ui::PropertyFloat("Indirect Light", &weather->indirectLight, 0.0f, 1.0f, defaults.indirectLight,
-                ui::Tr("雲の中で繰り返し散乱する太陽光の反射率。1 で各次数のエネルギーが単散乱と同じ上限、\n"
-                       "0 は太陽光の多重散乱なし。光を足す方向には働かず、密度・透過率・地形への雲影は変えません。",
-                       "Albedo of sunlight scattered repeatedly inside the cloud. At 1 each order is capped at the single-scattering energy,\n0 disables multiple scattering of sunlight. It never adds light and leaves density, transmittance, and cloud shadows on the terrain unchanged."), "%.2f");
-            changed |= ui::PropertyFloat(ui::Tr("多重散乱の広がり", "Scatter Spread"), &weather->scatterSpread, 0.05f, 0.9f, defaults.scatterSpread,
-                ui::Tr("多重散乱した光が雲の中へ行き渡る度合い。高次ほど太陽方向の減衰を (1-広がり) の累乗で縮めます。\n"
-                       "大きいほど陰の側まで光が回って柔らかく、小さいほど陰が締まります。エネルギーは増えません。",
-                       "How far multiply scattered light spreads through the cloud. Higher orders shrink the sunward attenuation by powers of (1 - spread).\nHigher values carry light into the shaded side for a softer look; lower values keep shadows crisp. Energy does not increase."), "%.2f");
+            changed |= DrawCloudDensityRow(&weather->extinction, defaults.extinction);
+            changed |= DrawCloudScatterRows(&weather->indirectLight, &weather->scatterSpread, defaults.indirectLight,
+                                            defaults.scatterSpread);
             changed |= ui::PropertyFloat("Ambient Light", &weather->ambientLight, 0.0f, 5.0f, defaults.ambientLight, nullptr, "%.2f");
             changed |= ui::PropertyInt(ui::Tr("シード", "Seed"), &weather->seed, 0, 10000, defaults.seed);
             ui::EndPropertyTable();
@@ -3815,10 +3844,10 @@ void Application::DrawNodeProperties(graph::Node* selected) {
                 changed |= ui::PropertyFloat(ui::Tr("広がり", "Spread"), &generate->spread, 0.0f, 1.0f, defaults.spread, ui::Tr("0で真上、1で水平まで方向が散らばります。", "0 points straight up; 1 scatters directions down to horizontal."), "%.2f");
             }
             changed |= ui::PropertyFloat(ui::Tr("つなぎの滑らかさ", "Join Smoothness"), &generate->smoothnessRatio, 0.0f, 3.0f, defaults.smoothnessRatio, ui::Tr("球の半径（サイズ×球の間隔）に対する比率。実際の値は下に表示します。球のくびれは最大で実際の値の1/4埋まります。", "Ratio to the sphere radius (size x sphere spacing). The actual value is shown below. Gaps between spheres fill by up to 1/4 of the actual value."), "%.2f");
-            const auto generated=m_graph.CompileCloudShapes(selected->id);
+            const CloudShapeSummary& generated = CloudShapeSummaryFor(selected->id);
             char text[48]; std::snprintf(text,sizeof(text),"%.0f m",generated.smoothness);
             ui::PropertyValue(ui::Tr("実際の滑らかさ", "Actual Smoothness"), "%s", text);
-            std::snprintf(text,sizeof(text),ui::Tr("%zu 個", "%zu"),generated.primitives.size());
+            std::snprintf(text,sizeof(text),ui::Tr("%zu 個", "%zu"),generated.primitiveCount);
             ui::PropertyValue(ui::Tr("合計形状数", "Total Shapes"), "%s", text);
             changed |= ui::PropertyBool(ui::Tr("配置ガイド", "Placement Guides"), &generate->showGuides, defaults.showGuides, ui::Tr("選択中に元形状の球を大円で表示します。多数の場合は表示のみ間引きます。", "While selected, shows the source spheres as great circles. With many spheres, only the display is thinned out."));
             ui::EndPropertyTable();
@@ -3848,13 +3877,13 @@ void Application::DrawNodeProperties(graph::Node* selected) {
             if (!map->removeIsolated) changed |= ui::PropertyFloat(ui::Tr("孤立点の半径", "Isolated Radius"), &map->isolatedRadius, 1.0f, 1000.0f, defaults.isolatedRadius, ui::Tr("メートル単位。", "In meters."), "%.0f m");
             changed |= ui::PropertyFloat(ui::Tr("つなぎの滑らかさ", "Join Smoothness"), &map->smoothness, 0.0f, 500.0f, defaults.smoothness, ui::Tr("メートル単位。", "In meters."), "%.0f m");
             changed |= ui::PropertyBool(ui::Tr("分布ガイド", "Distribution Guides"), &map->showGuides, defaults.showGuides, ui::Tr("散布範囲・ポイント・接続線・成長ラインを表示します。多数の場合は表示のみ間引きます。", "Shows the scatter range, points, edges, and growth lines. With many, only the display is thinned out."));
-            const auto generated=m_graph.CompileCloudShapes(selected->id);
-            if (generated.mapGuide) {
+            const CloudShapeSummary& generated = CloudShapeSummaryFor(selected->id);
+            if (generated.hasMapGuide) {
                 char text[96];
-                std::snprintf(text,sizeof(text),"%u / %u",generated.mapGuide->edgeCount,generated.mapGuide->columnCount);
+                std::snprintf(text,sizeof(text),"%u / %u",generated.edgeCount,generated.columnCount);
                 ui::PropertyValue(ui::Tr("接続線 / 成長ライン", "Edges / Growth Lines"), "%s", text);
             }
-            char text[48]; std::snprintf(text,sizeof(text),ui::Tr("%zu 個", "%zu"),generated.primitives.size());
+            char text[48]; std::snprintf(text,sizeof(text),ui::Tr("%zu 個", "%zu"),generated.primitiveCount);
             ui::PropertyValue(ui::Tr("合計形状数", "Total Shapes"), "%s", text);
             ui::EndPropertyTable();
             if (generated.shapeOverflow) ui::HintText("%s", ui::Tr("作業メモリ予算を超えました。ポイント数・接続距離・成長ライン密度を下げてください。", "Exceeded the working memory budget. Lower the points, connect distance, or growth line density."));
@@ -3917,18 +3946,9 @@ void Application::DrawNodeProperties(graph::Node* selected) {
                 changed |= ui::PropertyFloat(ui::Tr("雲底のぼかし幅", "Base Feather"), &cloudNoise->bottomFeather, 0.0f, 300.0f, defaults.bottomFeather,
                     ui::Tr("雲底から上方向に密度を立ち上げる幅。0では水平面で切り取ります。", "Height over which density ramps up from the base. 0 cuts flat at the plane."), "%.0f m");
             }
-            changed |= ui::PropertyFloat(ui::Tr("密度", "Density"), &cloudNoise->extinction, 0.0001f, 0.2f, defaults.extinction,
-                ui::Tr("雲の中を進む光の減衰の強さ（消散係数、1/m）。密度 1 の場所で 1 m 進むごとに光がこの割合で失われます。\n"
-                       "大きいほど光を通しにくく、輪郭が硬く雲影が濃くなります。実際の積雲はおよそ 0.02〜0.1 /m。",
-                       "How strongly light is attenuated inside the cloud (extinction coefficient, 1/m). At density 1, this fraction of light is lost per meter.\nHigher values let less light through, with harder edges and darker cloud shadows. Real cumulus is about 0.02-0.1 /m."), "%.4f", ImGuiSliderFlags_Logarithmic);
-            changed |= ui::PropertyFloat("Indirect Light", &cloudNoise->indirectLight, 0.0f, 1.0f, defaults.indirectLight,
-                ui::Tr("雲の中で繰り返し散乱する太陽光の反射率。1 で各次数のエネルギーが単散乱と同じ上限、\n"
-                       "0 は太陽光の多重散乱なし。光を足す方向には働かず、密度・透過率・地形への雲影は変えません。",
-                       "Albedo of sunlight scattered repeatedly inside the cloud. At 1 each order is capped at the single-scattering energy,\n0 disables multiple scattering of sunlight. It never adds light and leaves density, transmittance, and cloud shadows on the terrain unchanged."), "%.2f");
-            changed |= ui::PropertyFloat(ui::Tr("多重散乱の広がり", "Scatter Spread"), &cloudNoise->scatterSpread, 0.05f, 0.9f, defaults.scatterSpread,
-                ui::Tr("多重散乱した光が雲の中へ行き渡る度合い。高次ほど太陽方向の減衰を (1-広がり) の累乗で縮めます。\n"
-                       "大きいほど陰の側まで光が回って柔らかく、小さいほど陰が締まります。エネルギーは増えません。",
-                       "How far multiply scattered light spreads through the cloud. Higher orders shrink the sunward attenuation by powers of (1 - spread).\nHigher values carry light into the shaded side for a softer look; lower values keep shadows crisp. Energy does not increase."), "%.2f");
+            changed |= DrawCloudDensityRow(&cloudNoise->extinction, defaults.extinction);
+            changed |= DrawCloudScatterRows(&cloudNoise->indirectLight, &cloudNoise->scatterSpread, defaults.indirectLight,
+                                            defaults.scatterSpread);
             changed |= ui::PropertyFloat("Ambient Light", &cloudNoise->ambientLight, 0.0f, 5.0f, defaults.ambientLight, ui::Tr("形状を一体にしてノイズと密度を評価します。Volume をCloud Output へ接続。", "Combines the shapes into one and evaluates noise and density. Connect Volume to Cloud Output."), "%.2f");
             changed |= ui::PropertyInt(ui::Tr("シード", "Seed"), &cloudNoise->seed, 0, 10000, defaults.seed, ui::Tr("形状を一体にしてノイズと密度を評価します。Volume をCloud Output へ接続。", "Combines the shapes into one and evaluates noise and density. Connect Volume to Cloud Output."));
             ui::EndPropertyTable();
@@ -3980,14 +4000,8 @@ void Application::DrawNodeProperties(graph::Node* selected) {
         }
         ui::SectionHeader(ui::Tr("ライティング", "Lighting"));
         if (ui::BeginPropertyTable("cloudLightingRows")) {
-            changed |= ui::PropertyFloat("Indirect Light", &cloud->indirectLight, 0.0f, 1.0f, defaults.indirectLight,
-                ui::Tr("雲の中で繰り返し散乱する太陽光の反射率。1 で各次数のエネルギーが単散乱と同じ上限、\n"
-                       "0 は太陽光の多重散乱なし。光を足す方向には働かず、密度・透過率・地形への雲影は変えません。",
-                       "Albedo of sunlight scattered repeatedly inside the cloud. At 1 each order is capped at the single-scattering energy,\n0 disables multiple scattering of sunlight. It never adds light and leaves density, transmittance, and cloud shadows on the terrain unchanged."), "%.2f");
-            changed |= ui::PropertyFloat(ui::Tr("多重散乱の広がり", "Scatter Spread"), &cloud->scatterSpread, 0.05f, 0.9f, defaults.scatterSpread,
-                ui::Tr("多重散乱した光が雲の中へ行き渡る度合い。高次ほど太陽方向の減衰を (1-広がり) の累乗で縮めます。\n"
-                       "大きいほど陰の側まで光が回って柔らかく、小さいほど陰が締まります。エネルギーは増えません。",
-                       "How far multiply scattered light spreads through the cloud. Higher orders shrink the sunward attenuation by powers of (1 - spread).\nHigher values carry light into the shaded side for a softer look; lower values keep shadows crisp. Energy does not increase."), "%.2f");
+            changed |= DrawCloudScatterRows(&cloud->indirectLight, &cloud->scatterSpread, defaults.indirectLight,
+                                            defaults.scatterSpread);
             changed |= ui::PropertyFloat("Ambient Light", &cloud->ambientLight, 0.0f, 5.0f, defaults.ambientLight,
                 ui::Tr("雲が空と地面反射から受ける環境光の倍率。スカイライト強度に掛け合わせます。\n"
                        "0 は影響なし、1 は従来どおり。地形のスカイライト強度や雲の太陽光・密度は変えません。",

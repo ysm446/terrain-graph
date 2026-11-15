@@ -57,6 +57,23 @@ void RunPathFitTests() {
         Check(tight.size() >= fitted.size() && maxError <= 0.1f, "許容誤差を狭めると制御点が増え、誤差は収まる");
     }
 
+    Section("PathFit: 重なった点があっても source は元の添字");
+    {
+        // 重なった点は中で捨てる。返す source は、捨てる前の折れ線の添字のまま（属性の引き継ぎに使う）。
+        auto polyline = StraightArcStraight(80.0f, 2.0f);
+        const std::array<float, 2> repeated = polyline[10];
+        polyline.insert(polyline.begin() + 10, 3, repeated);  // 10 番目を 3 つ重ねる
+        PathClothoidFitOptions options;
+        options.toleranceMeters = 1.0f;
+        const auto fitted = FitClothoidControlPoints(polyline, options, nullptr);
+        bool ascending = fitted.size() >= 3 && fitted.front().source == 0;
+        for (size_t i = 1; i < fitted.size(); ++i) ascending = ascending && fitted[i].source > fitted[i - 1].source;
+        Check(ascending && fitted.back().source == polyline.size() - 1, "末尾の source は元の折れ線の末尾");
+        const std::vector<std::array<float, 2>> pair = {{0.0f, 0.0f}, {0.0f, 0.0f}, {10.0f, 0.0f}};
+        const auto two = FitClothoidControlPoints(pair, options, nullptr);
+        Check(two.size() == 2 && two[0].source == 0 && two[1].source == 2, "2 点に減る折れ線でも元の添字を返す");
+    }
+
     Section("PathFit: 鎖の置き換え");
     {
         PathSettings path;

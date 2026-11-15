@@ -630,7 +630,8 @@ void Application::DrawLightingPanel() {
             ui::SectionHeader(ui::Tr("雲", "Clouds"),
                               ui::Tr("太陽に合わせて空・環境光・雲影が変わります",
                               "The sky, ambient light and cloud shadows follow the sun"));
-            const bool nodeCloud = m_graph.CompileCloud().hasOutput;
+            // 版ごとの控えを使う（パネルを出している間、毎フレームコンパイルし直さない）。
+            const bool nodeCloud = CompiledCloudNow().hasOutput;
             if (nodeCloud) ui::HintText("%s", ui::Tr("雲はグラフの Cloud Noise・Cloud Layer・Cloud Output で設定します",
                                                      "Clouds are set with Cloud Noise, Cloud Layer and Cloud Output in the graph"));
             if (!nodeCloud && ui::BeginPropertyTable("cloudRows")) {

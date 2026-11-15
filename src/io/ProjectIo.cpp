@@ -3382,8 +3382,13 @@ bool WriteJsonFile(const fs::path& path, const json& document) {
         // 人が読める形で書く。差分も取りやすい。壊れた文字列が混ざっていても
         // 例外を出さない（不正な UTF-8 は置換文字にする）。
         stream << document.dump(2, ' ', false, json::error_handler_t::replace) << '\n';
-        if (!stream.good()) {
+        // 末尾はバッファに残っている。閉じるまで書き切ってから確かめる（デストラクタに任せると、
+        // 最後の書き込みの失敗を見落として、欠けたファイルで元を差し替えてしまう）。
+        stream.close();
+        if (stream.fail()) {
             TG_LOG_ERROR(ui::Tr("ファイルの書き込みに失敗しました: %s", "Failed to write the file: %s"), ToUtf8Portable(tempPath).c_str());
+            std::error_code removeError;
+            fs::remove(tempPath, removeError);
             return false;
         }
     }
@@ -3454,7 +3459,11 @@ void RemoveStalePaintMasks(const fs::path& directory, const std::vector<fs::path
     if (!fs::is_directory(directory, error)) {
         return;
     }
-    for (const fs::directory_entry& entry : fs::directory_iterator(directory, error)) {
+    // range-for の ++ は失敗すると例外を投げるので、increment(error) で回す。
+    std::error_code iterateError;
+    for (fs::directory_iterator it(directory, iterateError), end; !iterateError && it != end;
+         it.increment(iterateError)) {
+        const fs::directory_entry& entry = *it;
         if (!entry.is_regular_file(error)) {
             continue;
         }
@@ -4617,20 +4626,21 @@ SceneFingerprint FingerprintScene(const ProjectRefs& refs) {
     for (json& part : parts) part = {{"nodes", json::array()}, {"links", json::array()}};
     if (AssignGraphComponents(graph)) {
         std::set<int> pins[2];
-        for (auto node : graph["nodes"]) {
+        // graph はここで使い切るので、ノードやリンクは複製せずに移す（編集のたびに呼ばれる）。
+        for (auto& node : graph["nodes"]) {
             const int component = node.value("component", 0) == 1 ? 1 : 0;
             for (const auto* key : {"inputs", "outputs"})
                 for (const auto& pin : node[key]) pins[component].insert(pin.get<int>());
             parts[component]["nodes"].push_back(std::move(node));
         }
-        for (const auto& link : graph["links"])
-            parts[pins[1].contains(link["start"].get<int>()) ? 1 : 0]["links"].push_back(link);
+        for (auto& link : graph["links"])
+            parts[pins[1].contains(link["start"].get<int>()) ? 1 : 0]["links"].push_back(std::move(link));
         // グループは自分の component で分ける（枠を動かしただけでも、その部品が未保存になる）。
         if (graph.contains("groups"))
             for (const auto& group : graph["groups"])
                 parts[group.value("component", 0) == 1 ? 1 : 0]["groups"].push_back(group);
     } else {
-        parts[0] = graph;
+        parts[0] = std::move(graph);
     }
 
     json preview = WritePreview(refs.renderer);
@@ -4648,8 +4658,8 @@ SceneFingerprint FingerprintScene(const ProjectRefs& refs) {
     }
 
     SceneFingerprint result;
-    result.terrain = hash({{"graph", parts[0]}, {"geometry", geometry}, {"paintResolution", paintResolution}});
-    result.cloud = hash({{"graph", parts[1]}, {"paintResolution", paintResolution}});
+    result.terrain = hash({{"graph", std::move(parts[0])}, {"geometry", geometry}, {"paintResolution", paintResolution}});
+    result.cloud = hash({{"graph", std::move(parts[1])}, {"paintResolution", paintResolution}});
     result.atmosphere = hash(atmosphere);
     result.scene = hash({{"preview", preview},
                          {"components", refs.components ? *refs.components : json()},

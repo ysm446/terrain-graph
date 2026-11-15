@@ -204,7 +204,9 @@ void Application::UpdateModelPlacePads(std::vector<graph::GraphId>& aliveFootpri
     const float sizeMeters = std::max(m_renderer.PlaneSize(), 1e-3f);
     const float heightMeters = std::max(m_renderer.DisplacementScale(), 1e-3f);
     const float baseElevation = TerrainBaseElevation();
-    for (const auto& place : m_graph.CompileModelPlaces()) {
+    // 同じフレームの PrepareModelPlaces が組んだ結果を使う（PrepareRoadMeshes から呼ばれ、その間に
+    // グラフは変わらない。毎フレーム 2 度コンパイルしない）。
+    for (const auto& place : m_modelPlaces) {
         if (place.padReaders.empty()) continue;
         // 敷地の形（接地点を原点にしたモデル空間の x, z）。指定が無ければモデルの外形の矩形。
         std::vector<std::array<float, 2>> outline = place.settings.padPolygon;
@@ -649,7 +651,7 @@ void Application::DrawModelPreviewWindow() {
         }
         ui::EndPropertyTable();
     }
-    if (!asset.error.empty()) ui::HintText(asset.error.c_str());
+    if (!asset.error.empty()) ui::HintText("%s", asset.error.c_str());
     // インポスターを焼いてあれば、メッシュの段の後ろにインポスターの段を足す。
     if (asset.geometry && (asset.geometry->lods.size() > 1 || asset.impostor.baked)) {
         const size_t count = asset.geometry->lods.size() + (asset.impostor.baked ? 1 : 0);

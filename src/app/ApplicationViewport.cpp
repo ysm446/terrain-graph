@@ -502,7 +502,8 @@ void Application::DrawCloudShapeGizmo(const ImVec2& viewportMin, const ImVec2& v
         if (pa.visible && pb.visible) drawList->AddLine(pa.screen,pb.screen,color,ui::Scaled(1.25f));
     };
     if (const auto* animation=std::get_if<graph::CloudAnimationSettings>(&node->settings)) {
-        const auto cloud=m_graph.CompileCloud();
+        // 版ごとの控えを使う（選んでいる間、毎フレームコンパイルし直さない）。
+        const graph::CompiledCloud& cloud=CompiledCloudNow();
         if (cloud.connected && cloud.sourceId==node->id) {
             const float x=animation->centerX,z=animation->centerZ,w=animation->width*0.5f,d=animation->depth*0.5f;
             const float bottom=cloud.cloud.centerY-cloud.cloud.thickness*0.5f,top=bottom+cloud.cloud.thickness;

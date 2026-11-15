@@ -11,6 +11,7 @@
 #include <imgui.h>
 #include <algorithm>
 #include <functional>
+#include <string_view>
 #include <utility>
 #include <unordered_map>
 
@@ -21,6 +22,12 @@ std::string Extension(const fs::path& path) {
     auto ext = ToUtf8Portable(path.extension());
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return char(std::tolower(c)); });
     return ext;
+}
+// パスの末尾のファイル名（最後の区切りの後ろ）。文字列を確保せずに比べるための view。
+std::wstring_view FileNameView(const fs::path& path) {
+    const std::wstring_view text = path.native();
+    const size_t slash = text.find_last_of(L"\\/");
+    return slash == std::wstring_view::npos ? text : text.substr(slash + 1);
 }
 bool IsImage(const std::string& ext) {
     return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".exr" ||
@@ -96,8 +103,13 @@ bool Application::IsAssetLoaded(const fs::path& path) const {
     return false;
 }
 ImTextureID Application::AssetThumbnailHandle(const fs::path& path) {
+    // 見えているアセットごとに毎フレーム呼ばれる。正規化（文字列の確保を伴う）は、問い合わせ側は 1 度だけ、
+    // テクスチャ側はファイル名が同じものだけに絞る（正規化はファイル名を変えない）。
+    const fs::path normalized = path.lexically_normal();
+    const std::wstring_view name = FileNameView(normalized);
     for (const auto& a : m_textureLibrary.Entries())
-        if (a.path.lexically_normal() == path.lexically_normal()) return static_cast<ImTextureID>(a.PreviewHandle().ptr);
+        if (FileNameView(a.path) == name && a.path.lexically_normal() == normalized)
+            return static_cast<ImTextureID>(a.PreviewHandle().ptr);
     for (const auto& a : m_materialLibrary.Entries())
         if (a.assetPath == path) return static_cast<ImTextureID>(a.thumbnail.srv.gpu.ptr);
     for (const auto& a : m_skyLibrary.Entries())
@@ -591,6 +603,8 @@ void Application::DrawSceneSwitchDialog() {
 }
 void Application::RefreshAssetBrowser() {
     m_assetEntries.clear();
+    // フォルダの作成・改名・移動・削除もここを通る。階層の子フォルダの控えも捨てる。
+    m_assetFolderChildren.clear();
     std::error_code error;
     fs::directory_iterator it(m_assetDirectory, fs::directory_options::skip_permission_denied, error), end;
     for (; it != end && !error; it.increment(error)) {
@@ -1028,6 +1042,12 @@ void Application::DrawAssetBrowser() {
     const float minimum = std::min(ui::Scaled(120.0f), usable * 0.5f);
     float folderWidth = std::clamp(ui::Scaled(m_settings.Ui().assetFolderWidth), minimum, usable - minimum);
     if (ImGui::BeginChild("folders", ImVec2(folderWidth, 0), ImGuiChildFlags_Borders)) {
+        // 子フォルダの控えは 1 秒ごとに捨てる（エクスプローラなど、アプリの外で足したフォルダを拾うため）。
+        constexpr double kFolderRescanSeconds = 1.0;
+        if (ImGui::GetTime() - m_assetFolderChildrenTime > kFolderRescanSeconds) {
+            m_assetFolderChildren.clear();
+            m_assetFolderChildrenTime = ImGui::GetTime();
+        }
         const auto tree = [&](auto&& self, const fs::path& directory, int depth) -> void {
             if (depth > 32) return;
             const auto label = ToUtf8Display(directory.filename());
@@ -1080,11 +1100,21 @@ void Application::DrawAssetBrowser() {
                 if (edit != ui::CaptionEdit::Editing) FinishAssetRename(edit == ui::CaptionEdit::Commit);
             }
             if (open) {
-                std::error_code error;
-                fs::directory_iterator it(directory, fs::directory_options::skip_permission_denied, error), end;
-                for (; it != end && !error; it.increment(error))
-                    if (it->is_directory(error) && !it->is_symlink(error) &&
-                        !it->path().filename().wstring().starts_with(L".")) self(self, it->path(), depth + 1);
+                // 子フォルダは控えから引く（毎フレーム走査しない）。無ければ今だけ走査して控える。
+                auto cached = m_assetFolderChildren.find(directory);
+                if (cached == m_assetFolderChildren.end()) {
+                    std::vector<fs::path> children;
+                    std::error_code error;
+                    fs::directory_iterator it(directory, fs::directory_options::skip_permission_denied, error), end;
+                    for (; it != end && !error; it.increment(error))
+                        if (it->is_directory(error) && !it->is_symlink(error) &&
+                            !it->path().filename().wstring().starts_with(L".")) children.push_back(it->path());
+                    cached = m_assetFolderChildren.emplace(directory, std::move(children)).first;
+                }
+                // 子の行を描く間に表へ項目が足されても、要素（vector）の場所は動かない。表を捨てるのは
+                // 木を描く前と RefreshAssetBrowser（フレームの外）だけ。
+                const std::vector<fs::path>& children = cached->second;
+                for (const fs::path& child : children) self(self, child, depth + 1);
                 ImGui::TreePop();
             }
             ImGui::PopID();

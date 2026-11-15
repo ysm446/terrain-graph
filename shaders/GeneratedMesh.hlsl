@@ -11,15 +11,8 @@
 #include "Brdf.hlsli"
 #include "CompositeCommon.hlsli"
 #include "LayerMaterial.hlsli"
+#include "SceneShadow.hlsli"
 
-// ShadowCascades.h の SceneShadowData と同じ並び。
-struct SceneShadowData {
-    float4x4 view;
-    float4x4 matrices[4];
-    uint4 indices;
-    float4 splits, biases;
-    float nearDistance, texel, blend; uint count;
-};
 // 材質の表の区間。start から先がこの区間で、start を中心に幅 transition で前の区間から移る。
 // material は材質の枠（0〜3 がこの帯、4〜7 が内側の帯）、boundary は境界の枠（無ければ kInvalidTextureIndex）。
 struct TrackSpan { float start, transition; uint material, boundary; };
@@ -55,36 +48,8 @@ struct GeneratedMeshConstants {
 };
 ConstantBuffer<GeneratedMeshConstants> g_generated : register(b1);
 
-float GeneratedShadow(float3 position, float nDotL, uint cascade) {
-    const uint index = g_generated.shadows.indices[cascade];
-    if (index == kInvalidTextureIndex) return 1;
-    const float4 clip = mul(g_generated.shadows.matrices[cascade], float4(position, 1));
-    const float3 ndc = clip.xyz / clip.w;
-    const float2 uv = ndc.xy * float2(0.5, -0.5) + 0.5;
-    if (clip.w <= 0 || any(uv < 0) || any(uv > 1) || ndc.z > 1) return 1;
-    Texture2D<float> shadowMap = ResourceDescriptorHeap[NonUniformResourceIndex(index)];
-    float visibility = 0;
-    const float bias = g_generated.shadows.biases[cascade] * (1 + 3 * (1 - saturate(nDotL)));
-    [unroll] for (int y = -1; y <= 1; ++y) [unroll] for (int x = -1; x <= 1; ++x)
-        visibility += ndc.z - bias <= shadowMap.SampleLevel(g_samplerPointClamp, uv + float2(x, y) * g_generated.shadows.texel, 0) ? 1 : 0;
-    return visibility / 9;
-}
-float GeneratedVisibility(float3 position, float nDotL) {
-    if (g_generated.shadows.count == 0) return 1;
-    if (g_generated.shadows.count == 1) return GeneratedShadow(position, nDotL, 0);
-    const float distance = -mul(g_generated.shadows.view, float4(position, 1)).z;
-    const uint lastCascade = g_generated.shadows.count - 1;
-    if (distance > g_generated.shadows.splits[lastCascade]) return 1;
-    uint cascade = 0;
-    while (cascade < lastCascade && distance > g_generated.shadows.splits[cascade]) ++cascade;
-    const float visibility = GeneratedShadow(position, nDotL, cascade);
-    const float start = cascade == 0 ? g_generated.shadows.nearDistance : g_generated.shadows.splits[cascade - 1];
-    const float end = g_generated.shadows.splits[cascade];
-    const float blendStart = end - (end - start) * g_generated.shadows.blend;
-    if (distance <= blendStart) return visibility;
-    const float next = cascade < lastCascade ? GeneratedShadow(position, nDotL, min(cascade + 1, lastCascade)) : 1;
-    return lerp(visibility, next, smoothstep(blendStart, end, distance));
-}
+#define TG_SCENE_SHADOWS g_generated.shadows
+#include "SceneShadow.hlsli"
 
 struct VertexInput { float3 position : POSITION; float3 normal : NORMAL; float4 tangent : TANGENT; float2 uv : TEXCOORD0; };
 struct PixelInput { float4 clip : SV_POSITION; float3 position : POSITION; float3 normal : NORMAL; float4 tangent : TANGENT; float2 uv : TEXCOORD0; };
@@ -106,26 +71,19 @@ float3 ShadeGenerated(float3 position, float3 normal, float3 viewDirection, floa
     SplitBaseColor(baseColor, metallic, diffuseColor, f0);
     const float clampedRoughness = clamp(roughness, kMinPerceptualRoughness, 1.0f);
     const float3 lightDirection = normalize(g_generated.lightDirection);
-    float visibility = GeneratedVisibility(position, dot(normal, lightDirection));
+    float visibility = SceneShadowVisibility(position, dot(normal, lightDirection));
     if (g_generated.atmosphericMode != 0)
         visibility *= CloudShadow(position, g_generated.atmosphere, g_generated.cloudNoiseIndex);
     float3 radiance = ShadeDirectionalLight(normal, viewDirection, lightDirection, g_generated.lightColor,
                                             g_generated.lightIlluminance, diffuseColor, f0, clampedRoughness) * visibility;
     if (g_generated.irradianceIndex != kInvalidTextureIndex) {
-        const float nDotV = clamp(dot(normal, viewDirection), 1e-4f, 1.0f);
-        TextureCube<float4> prefilteredMap = ResourceDescriptorHeap[g_generated.prefilteredIndex];
-        Texture2D<float2> brdfLut = ResourceDescriptorHeap[g_generated.brdfLutIndex];
         const float3 irradiance = SampleAmbientIrradiance(
             g_generated.irradianceIndex, g_generated.atmosphericMode != 0 ? g_generated.clearIrradianceIndex : kInvalidTextureIndex,
             normal, position.y, g_generated.ambientLow, g_generated.ambientHigh, g_generated.ambientOcclusion);
-        const float3 fresnel = FresnelSchlickRoughness(f0, nDotV, clampedRoughness);
-        const float3 diffuseIbl = (1.0f - fresnel) * diffuseColor * irradiance;
-        const float3 reflectionDirection = reflect(-viewDirection, normal);
-        const float mipLevel = clampedRoughness * float(max(g_generated.prefilteredMipCount, 1u) - 1u);
-        const float3 prefiltered = prefilteredMap.SampleLevel(g_samplerLinearClamp, reflectionDirection, mipLevel).rgb;
-        const float2 environmentBrdf = brdfLut.SampleLevel(g_samplerLinearClamp, float2(nDotV, clampedRoughness), 0.0f);
-        const float3 specularIbl = prefiltered * (f0 * environmentBrdf.x + environmentBrdf.y);
-        radiance += (diffuseIbl + specularIbl) * g_generated.iblIntensity * ambientOcclusion;
+        radiance += ShadeIblSplitSum(normal, viewDirection, diffuseColor, f0, clampedRoughness, irradiance,
+                                     g_generated.prefilteredIndex, g_generated.brdfLutIndex,
+                                     g_generated.prefilteredMipCount) *
+                    g_generated.iblIntensity * ambientOcclusion;
     }
     return radiance;
 }

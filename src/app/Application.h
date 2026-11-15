@@ -448,6 +448,14 @@ private:
     nlohmann::json ProbeNodeParameters(const graph::Node& node);
     // --dump-catalog の行の収集と、--evaluate-report の範囲の検査。DrawUi の最後で 1 度だけ行う。
     void RunPropertyProbes();
+    // 設定の行を調べるための、画面の外の見えないウィンドウを始める（閉じるのは呼んだ側の ImGui::End）。
+    // --dump-catalog / --evaluate-report と遠隔操作で共通。name は ImGui のウィンドウ名。
+    bool BeginProbeWindow(const char* name);
+    // 記録した数値の行の今の値が、UI の範囲の外にあるか（エディタで選ぶと範囲へ丸まる値）。
+    static bool PropertyOutsideUiRange(const ui::PropertyRecord& record);
+    // 保存のキーの書き方の変換。JSON Pointer（"/layer/height/scale"）↔ "." 区切り（"layer.height.scale"）。
+    static std::string SettingsPathFromPointer(const std::string& pointer);
+    static std::string SettingsPointerFromPath(const std::string& path);
     // io::NodeCatalog に、集めた設定の行（parameters）を合わせたノードカタログ。
     nlohmann::json BuildNodeCatalog();
     nlohmann::json m_catalogParameters = nlohmann::json::object();  // kind → parameters
@@ -757,6 +765,10 @@ private:
         std::vector<RoadStrip> shoulders;
         std::vector<RoadMarkingCache> markings;
         float lengthMeters = 0;
+        // Mask Mesh へ置いた足跡の元（帯の形のキーと地形の実寸）と、置いた足跡のハッシュ。
+        // どちらも前と同じなら足跡を作り直さない（毎フレーム全頂点を写してハッシュし直さない）。
+        uint64_t footprintKey = 0;
+        uint64_t footprintHash = 0;
     };
     std::unordered_map<graph::GraphId, RoadChainCache> m_roadMeshCache;
     // ノードごとのプロパティに出す状態（毎フレーム作り直す）。
@@ -779,7 +791,25 @@ private:
     // グラフを丸ごと入れ替えたら（読み込み・リセット・アンドゥ）版が偶然一致し得るので 0 へ戻す。
     graph::CompiledCloud m_compiledCloud;
     uint64_t m_compiledCloudRevision = 0;
+    // 今のグラフの版の雲のコンパイル結果（版が変わっていれば求め直して控える）。UI が毎フレーム
+    // 自前でコンパイルし直さないための入口。
+    const graph::CompiledCloud& CompiledCloudNow();
     uint64_t m_snowPlumesRevision = 0;
+    // 選んでいる雲の形状ノード（Shape Generate / Map Generate）のプロパティに出す数
+    // （CompileCloudShapes の結果の要約）。グラフの版とノードが同じ間は求め直さない
+    // （プロパティを出している間、毎フレーム球を生成し直さない）。版 0 は「控えなし」。
+    struct CloudShapeSummary {
+        uint64_t revision = 0;
+        graph::GraphId nodeId = 0;
+        float smoothness = 0.0f;
+        size_t primitiveCount = 0;
+        bool shapeOverflow = false;
+        bool hasMapGuide = false;
+        uint32_t edgeCount = 0;
+        uint32_t columnCount = 0;
+    };
+    CloudShapeSummary m_cloudShapeSummary;
+    const CloudShapeSummary& CloudShapeSummaryFor(graph::GraphId nodeId);
     // マスクの再コンパイルと評価器の作成。作成に失敗したら偽。
     bool PrepareCloudMask(CloudMaskSlot& slot, graph::GraphId maskNode, graph::GraphId maskPin);
     uint64_t m_compiledGraphRevision = 0;
@@ -1033,6 +1063,17 @@ private:
         std::string autoReport;
     };
     RoadProfileEditState m_roadProfileEdit;
+    // BuildRoadCenterline の結果の控え。**同じフレームの中でだけ**使う（Road Path を選んでいる間、
+    // ビューポートの入力・重ね描き・プロパティが同じ中心線を引くので、2 回目からは写しを返す）。
+    // 設定と地形の指紋が違えば引き直す。const な関数から書くので mutable。
+    struct RoadCenterlineMemo {
+        int frame = -1;
+        graph::GraphId nodeId = 0;
+        uint64_t fingerprint = 0;
+        graph::RoadProfileCurve base;
+        graph::RoadProfileCurve centerline;
+    };
+    mutable RoadCenterlineMemo m_roadCenterlineMemo;
     // パスのクリップボード（アプリ内）。鎖や点の集合をコピーして、カーソルの所へ貼る。
     // 別の Path ノードへも貼れる。
     graph::PathClip m_pathClipboard;
@@ -1095,6 +1136,11 @@ private:
     std::filesystem::path m_assetDirectory;
     std::filesystem::path m_pendingAssetReveal, m_assetRevealTarget;
     std::vector<std::filesystem::directory_entry> m_assetEntries;
+    // フォルダ階層の、開いているフォルダの子フォルダの控え（フォルダ → 子フォルダ）。毎フレーム
+    // ディレクトリを走査しないために持つ。一覧を読み直すとき（RefreshAssetBrowser）と、一定時間ごとに
+    // 捨てる（アプリの外で足したフォルダも、少し遅れて出る）。
+    std::unordered_map<std::filesystem::path, std::vector<std::filesystem::path>> m_assetFolderChildren;
+    double m_assetFolderChildrenTime = 0.0;
     // 一覧で選んでいるもの（複数）。Shift の範囲選択は m_assetSelectionAnchor を起点にする。
     std::vector<std::filesystem::path> m_selectedAssets;
     std::filesystem::path m_assetSelectionAnchor;

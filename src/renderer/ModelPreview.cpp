@@ -77,6 +77,31 @@ void FillColorVariation(ModelConstants& constants, const compositor::ColorVariat
     constants.variationHigh[2] = variation.highBrightness;
 }
 
+// モデルの外形がちょうど収まる既定の視点へ合わせる（プレビューの「全体を表示」とサムネイルで共通）。
+void FrameGeometry(Camera& camera, const ModelGeometry& geometry) {
+    using namespace DirectX;
+    const XMVECTOR lo = XMLoadFloat3(&geometry.minimum), hi = XMLoadFloat3(&geometry.maximum);
+    XMFLOAT3 center;
+    XMStoreFloat3(&center, XMVectorScale(XMVectorAdd(lo, hi), 0.5f));
+    const float radius = std::max(0.0001f, XMVectorGetX(XMVector3Length(XMVectorSubtract(hi, lo))) * 0.5f);
+    camera.SetViewportSize(kOutputSize, kOutputSize);
+    camera.SetSceneRadius(radius);
+    camera.Frame(center, radius);
+}
+
+// インポスターの画像と撮った球を定数へ写す（配置のインポスター段と、プレビューの確認表示で共通）。
+void FillImpostor(ModelConstants& constants, const ImpostorTextures& impostor) {
+    constants.aoValue = 1.0f;
+    constants.impostorColor = impostor.color.SrvIndex();
+    constants.impostorNormal = impostor.normal.SrvIndex();
+    constants.impostorCenter[0] = impostor.center.x;
+    constants.impostorCenter[1] = impostor.center.y;
+    constants.impostorCenter[2] = impostor.center.z;
+    constants.impostorRadius = impostor.radius;
+    constants.impostorFrames = impostor.settings.frames;
+    constants.impostorFullSphere = impostor.settings.fullSphere ? 1u : 0u;
+}
+
 }  // namespace
 void ModelPreview::Destroy(rhi::Device& device) {
     for (auto& mesh : m_meshes) mesh.Release(device);
@@ -115,15 +140,7 @@ void ModelPreview::FocusView() {
 }
 void ModelPreview::FrameView() {
     if (!m_geometry) return;
-    using namespace DirectX;
-    auto lo = XMLoadFloat3(&m_geometry->minimum), hi = XMLoadFloat3(&m_geometry->maximum);
-    XMFLOAT3 center;
-    XMStoreFloat3(&center, XMVectorScale(XMVectorAdd(lo, hi), 0.5f));
-    const float radius =
-        std::max(0.0001f, XMVectorGetX(XMVector3Length(XMVectorSubtract(hi, lo))) * 0.5f);
-    m_camera.SetViewportSize(kOutputSize, kOutputSize);
-    m_camera.SetSceneRadius(radius);
-    m_camera.Frame(center, radius);
+    FrameGeometry(m_camera, *m_geometry);
 }
 bool ModelPreview::Prepare(rhi::Device& device, const ModelAsset& asset, int lod, bool impostorLevel) {
     if (!asset.geometry) {
@@ -360,15 +377,8 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
     rhi::GpuTexture& output = thumbnail ? m_thumbnail : m_output;
     Camera thumbnailCamera;
     if (thumbnail) {
-        using namespace DirectX;
-        const XMVECTOR lo = XMLoadFloat3(&m_geometry->minimum), hi = XMLoadFloat3(&m_geometry->maximum);
-        XMFLOAT3 center;
-        XMStoreFloat3(&center, XMVectorScale(XMVectorAdd(lo, hi), 0.5f));
-        const float radius = std::max(0.0001f, XMVectorGetX(XMVector3Length(XMVectorSubtract(hi, lo))) * 0.5f);
         thumbnailCamera.Reset();
-        thumbnailCamera.SetViewportSize(kOutputSize, kOutputSize);
-        thumbnailCamera.SetSceneRadius(radius);
-        thumbnailCamera.Frame(center, radius);
+        FrameGeometry(thumbnailCamera, *m_geometry);
     }
     const Camera& camera = thumbnail ? thumbnailCamera : m_camera;
     // パーツのマテリアルごとに PSO を選ぶ。アルファ抜きは早期深度テストが効きにくいので、
@@ -477,8 +487,36 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
             DirectX::XMStoreFloat4x4(&constants.viewProjection,
                 DirectX::XMMatrixTranspose(DirectX::XMLoadFloat4x4(&instances->viewProjection)));
             std::memcpy(constants.cameraPosition, &instances->cameraPosition, sizeof(constants.cameraPosition));
+            // 配置の指定のうち、パーツにも区画にも依らない値。影・雲影の入力（合わせて 700 バイト超）を
+            // 含むので、パーツ × 区画ごとに詰め直さず、ここで 1 回だけ詰める。
+            const auto& draw = *instances;
+            constants.points = draw.points; constants.rows = draw.rows;
+            constants.visibleIndices = m_visibleInstances.srv.index; constants.seed = draw.seed;
+            constants.scaleMin = draw.scaleMin; constants.scaleMax = draw.scaleMax;
+            constants.align = draw.align; constants.offset = draw.offset;
+            constants.usePointSize = draw.exactPlacement ? 2u : (draw.usePointSize ? 1u : 0u); constants.sceneMode = 1;
+            constants.shadows = draw.shadows;
+            constants.atmosphere = draw.atmosphere;
+            constants.cloudNoiseIndex = draw.cloudNoiseIndex;
+            constants.atmosphericMode = draw.atmosphericMode;
+            constants.clearIrradianceIndex = draw.ambient.clearIrradianceIndex;
+            constants.ambientLow = draw.ambient.low;
+            constants.ambientHigh = draw.ambient.high;
+            constants.ambientOcclusion = draw.ambient.occlusion;
+            const auto& lo = m_geometry->minimum; const auto& hi = m_geometry->maximum;
+            constants.pivot[0] = (lo.x+hi.x)*0.5f; constants.pivot[1] = lo.y; constants.pivot[2] = (lo.z+hi.z)*0.5f;
+            constants.modelSize = std::max({hi.x-lo.x,hi.y-lo.y,hi.z-lo.z,0.0001f});
+            constants.variationLow[3] = draw.sizeShrink;
         }
     }
+    // LOD の色分け表示。ベースカラーを段の色にする（メッシュ段とインポスター段で共通）。
+    const auto applyLodTint = [&](ModelConstants& constants, size_t part) {
+        const size_t lod = std::min<size_t>(m_firstLod + m_parts[part].lod, std::size(kLodDebugColors) - 1);
+        constants.lodView = 1;
+        constants.baseColorTint[0] = kLodDebugColors[lod].x;
+        constants.baseColorTint[1] = kLodDebugColors[lod].y;
+        constants.baseColorTint[2] = kLodDebugColors[lod].z;
+    };
     // インポスターは 1 枚に全パーツを焼くので、色むらの応え方は 1 つ（焼いたときに
     // 色むらを持っていたマテリアルの先頭）。マテリアル表を引くので描画ごとに求めず 1 回にする。
     const compositor::ColorVariation impostorVariation =
@@ -509,45 +547,14 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
         }
         const auto& draw = *instances;
         ModelConstants constants = sceneConstants;
-        constants.aoValue = 1.0f;
-        constants.points = draw.points; constants.rows = draw.rows;
-        constants.visibleIndices = m_visibleInstances.srv.index; constants.seed = draw.seed;
-        constants.scaleMin = draw.scaleMin; constants.scaleMax = draw.scaleMax;
-        constants.align = draw.align; constants.offset = draw.offset;
-        constants.usePointSize = draw.exactPlacement ? 2u : (draw.usePointSize ? 1u : 0u); constants.sceneMode = 1;
-        constants.shadows = draw.shadows;
-        constants.atmosphere = draw.atmosphere;
-        constants.cloudNoiseIndex = draw.cloudNoiseIndex;
-        constants.atmosphericMode = draw.atmosphericMode;
-        constants.clearIrradianceIndex = draw.ambient.clearIrradianceIndex;
-        constants.ambientLow = draw.ambient.low;
-        constants.ambientHigh = draw.ambient.high;
-        constants.ambientOcclusion = draw.ambient.occlusion;
-        const auto& lo = m_geometry->minimum; const auto& hi = m_geometry->maximum;
-        constants.pivot[0] = (lo.x+hi.x)*0.5f; constants.pivot[1] = lo.y; constants.pivot[2] = (lo.z+hi.z)*0.5f;
-        constants.modelSize = std::max({hi.x-lo.x,hi.y-lo.y,hi.z-lo.z,0.0001f});
         constants.visibleOffset = static_cast<uint32_t>(segment * draw.count);
-        if (draw.lodView) {
-            const size_t lod = std::min<size_t>(m_firstLod + m_parts[i].lod, std::size(kLodDebugColors) - 1);
-            constants.lodView = 1;
-            constants.baseColorTint[0] = kLodDebugColors[lod].x;
-            constants.baseColorTint[1] = kLodDebugColors[lod].y;
-            constants.baseColorTint[2] = kLodDebugColors[lod].z;
-        }
-        constants.impostorColor = impostor->color.SrvIndex();
-        constants.impostorNormal = impostor->normal.SrvIndex();
-        constants.impostorCenter[0] = impostor->center.x;
-        constants.impostorCenter[1] = impostor->center.y;
-        constants.impostorCenter[2] = impostor->center.z;
-        constants.impostorRadius = impostor->radius;
-        constants.impostorFrames = impostor->settings.frames;
-        constants.impostorFullSphere = impostor->settings.fullSphere ? 1u : 0u;
+        if (draw.lodView) applyLodTint(constants, i);
+        FillImpostor(constants, *impostor);
         constants.impostorShadow = shadow ? 1u : 0u;
         constants.impostorVariation = impostor->variation.IsValid() ? impostor->variation.SrvIndex()
                                                                     : compositor::kInvalidTextureIndex;
         // 受ける画素は重みのアトラスで絞る。
         FillColorVariation(constants, impostorVariation, draw.attributes);
-        constants.variationLow[3] = draw.sizeShrink;
         std::memcpy(cb.cpu, &constants, sizeof(constants));
         commandList->SetGraphicsRootConstantBufferView(1, cb.gpuAddress);
         commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -561,14 +568,17 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
         const auto slot = m_parts[i].slot;
         const auto* material =
             slot < model.materials.size() ? materials.Find(model.materials[slot]) : nullptr;
-        const compositor::MaterialAsset fallback;
+        // 既定のマテリアルは不変なので 1 つを使い回す（パーツ × 区画 × 影の段ごとに作り直さない）。
+        static const compositor::MaterialAsset fallback;
         const auto& asset = material ? *material : fallback;
         // 不透明度は不透明度のマップ（無ければベースカラーのアルファ）から読むので、
         // どちらも無ければ抜かない。半透明もモデルでは切り抜きとして描く。
         const uint32_t opacityIndex = textures.SrvIndex(asset.opacity.texture, false);
+        // ベースカラーだけ sRGB として読む。それ以外はリニア（サムネイルと同じ）。
+        const uint32_t baseColorIndex = textures.SrvIndex(asset.baseColor, true);
         const bool cutout = asset.AlphaCutoff() > 0.0f &&
                             (opacityIndex != compositor::kInvalidTextureIndex ||
-                             textures.SrvIndex(asset.baseColor, true) != compositor::kInvalidTextureIndex);
+                             baseColorIndex != compositor::kInvalidTextureIndex);
         auto* pipeline = pipelineFor(cutout, asset.twoSided, fade);
         if (!pipeline) return;
         if (pipeline != current) {
@@ -576,8 +586,7 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
             current = pipeline;
         }
         ModelConstants constants = sceneConstants;
-        // ベースカラーだけ sRGB として読む。それ以外はリニア（サムネイルと同じ）。
-        constants.baseColorIndex = textures.SrvIndex(asset.baseColor, true);
+        constants.baseColorIndex = baseColorIndex;
         constants.normalIndex = textures.SrvIndex(asset.normal, false);
         constants.roughnessIndex = textures.SrvIndex(asset.roughness.texture, false);
         constants.metallicIndex = textures.SrvIndex(asset.metallic.texture, false);
@@ -598,37 +607,16 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
         constants.opacityChannel = static_cast<uint32_t>(asset.opacity.channel);
         if (instances) {
             const auto& draw = *instances;
-            constants.points = draw.points; constants.rows = draw.rows;
-            constants.visibleIndices = m_visibleInstances.srv.index; constants.seed = draw.seed;
+            // 株をモデルへ振り分ける重みの範囲は、インポスター段には渡さない（従来どおり 0 のまま）。
             constants.weightStart = draw.weightStart; constants.weightEnd = draw.weightEnd;
-            constants.scaleMin = draw.scaleMin; constants.scaleMax = draw.scaleMax;
-            constants.align = draw.align; constants.offset = draw.offset;
-            constants.usePointSize = draw.exactPlacement ? 2u : (draw.usePointSize ? 1u : 0u); constants.sceneMode = 1;
-            constants.shadows = draw.shadows;
-            constants.atmosphere = draw.atmosphere;
-            constants.cloudNoiseIndex = draw.cloudNoiseIndex;
-            constants.atmosphericMode = draw.atmosphericMode;
-            constants.clearIrradianceIndex = draw.ambient.clearIrradianceIndex;
-            constants.ambientLow = draw.ambient.low;
-            constants.ambientHigh = draw.ambient.high;
-            constants.ambientOcclusion = draw.ambient.occlusion;
-            const auto& lo = m_geometry->minimum; const auto& hi = m_geometry->maximum;
-            constants.pivot[0] = (lo.x+hi.x)*0.5f; constants.pivot[1] = lo.y;
-            constants.pivot[2] = (lo.z+hi.z)*0.5f;
             constants.visibleOffset = static_cast<uint32_t>(segment * draw.count);
             FillColorVariation(constants, asset.colorVariation, draw.attributes);
-            constants.variationLow[3] = draw.sizeShrink;
             if (draw.lodView) {
-                const size_t lod = std::min<size_t>(m_firstLod + m_parts[i].lod, std::size(kLodDebugColors) - 1);
-                constants.lodView = 1;
-                constants.baseColorTint[0] = kLodDebugColors[lod].x;
-                constants.baseColorTint[1] = kLodDebugColors[lod].y;
-                constants.baseColorTint[2] = kLodDebugColors[lod].z;
+                applyLodTint(constants, i);
                 constants.colorAdjust[0] = 0.0f;
                 constants.colorAdjust[1] = 1.0f;
                 constants.brightness = 1.0f;
             }
-            constants.modelSize = std::max({hi.x-lo.x,hi.y-lo.y,hi.z-lo.z,0.0001f});
         }
 
 
@@ -654,15 +642,7 @@ uint32_t ModelPreview::Render(rhi::Device& device, rhi::PipelineCache& pipelineC
         const auto cb = device.Upload().Allocate(sizeof(ModelConstants), 256);
         if (pipeline && cb.IsValid()) {
             ModelConstants constants = sceneConstants;
-            constants.aoValue = 1.0f;
-            constants.impostorColor = impostor->color.SrvIndex();
-            constants.impostorNormal = impostor->normal.SrvIndex();
-            constants.impostorCenter[0] = impostor->center.x;
-            constants.impostorCenter[1] = impostor->center.y;
-            constants.impostorCenter[2] = impostor->center.z;
-            constants.impostorRadius = impostor->radius;
-            constants.impostorFrames = impostor->settings.frames;
-            constants.impostorFullSphere = impostor->settings.fullSphere ? 1u : 0u;
+            FillImpostor(constants, *impostor);
             std::memcpy(cb.cpu, &constants, sizeof(constants));
             commandList->SetPipelineState(pipeline);
             commandList->SetGraphicsRootConstantBufferView(1, cb.gpuAddress);

@@ -367,9 +367,10 @@ json TextContent(const std::string& text) {
 
 json CallTool(AppPipe& pipe, const std::string& name, json arguments) {
     if (!arguments.is_object()) arguments = json::object();
-    const json tools = Tools();
+    // ツールの定義は変わらないので、呼び出しのたびに組み直さない。
+    static const json kTools = Tools();
     bool known = false;
-    for (const json& tool : tools) known |= tool["name"] == name;
+    for (const json& tool : kTools) known |= tool["name"] == name;
     if (!known) {
         return {{"content", json::array({TextContent("知らないツールです: " + name)})}, {"isError", true}};
     }

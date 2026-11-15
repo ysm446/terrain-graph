@@ -1273,34 +1273,15 @@ PsOutput PsMain(VsOutput input)
                       shadow * (g_mesh.atmosphericMode != 0 ?
                           CloudShadow(input.worldPosition, g_mesh.atmosphere, g_mesh.cloudNoiseIndex) : 1.0);
 
-    // --- IBL（分割和近似） -------------------------------------------------
-    // saturate + 加算だと最大 1.00001 になり、FresnelSchlickRoughness の
-    // pow(1 - nDotV, 5) が負の底で NaN になる。clamp で上限も守る。
-    const float nDotV = clamp(dot(normal, viewDirection), 1e-4f, 1.0f);
-
-    TextureCube<float4> prefilteredMap = ResourceDescriptorHeap[g_mesh.prefilteredIndex];
-    Texture2D<float2> brdfLut = ResourceDescriptorHeap[g_mesh.brdfLutIndex];
-
+    // --- IBL（分割和近似。Brdf.hlsli の ShadeIblSplitSum） -------------------------
     // irradiance マップには E / pi（平均放射輝度）が入っているので、
     // diffuseColor を掛けるだけでよい。雲の上の地形は、雲なしの環境で照らす。
     const float3 irradiance = SampleAmbientIrradiance(g_mesh.irradianceIndex, g_mesh.clearIrradianceIndex, normal,
                                                       input.worldPosition.y, g_mesh.ambientLow, g_mesh.ambientHigh,
                                                       g_mesh.ambientOcclusion);
-
-    const float3 fresnel = FresnelSchlickRoughness(f0, nDotV, roughness);
-    const float3 kD = 1.0f - fresnel;
-    const float3 diffuseIbl = kD * diffuseColor * irradiance;
-
-    const float3 reflectionDirection = reflect(-viewDirection, normal);
-    const float mipLevel = roughness * float(max(g_mesh.prefilteredMipCount, 1u) - 1u);
-    const float3 prefiltered =
-        prefilteredMap.SampleLevel(g_samplerLinearClamp, reflectionDirection, mipLevel).rgb;
-
-    const float2 environmentBrdf =
-        brdfLut.SampleLevel(g_samplerLinearClamp, float2(nDotV, roughness), 0.0f);
-    const float3 specularIbl = prefiltered * (f0 * environmentBrdf.x + environmentBrdf.y);
-
-    radiance += (diffuseIbl + specularIbl) * g_mesh.iblIntensity * ambientOcclusion;
+    radiance += ShadeIblSplitSum(normal, viewDirection, diffuseColor, f0, roughness, irradiance,
+                                 g_mesh.prefilteredIndex, g_mesh.brdfLutIndex, g_mesh.prefilteredMipCount) *
+                g_mesh.iblIntensity * ambientOcclusion;
 
     PsOutput output;
     // シーンカラーは R16G16B16A16_FLOAT。half の上限（65504）を超えると Inf になり、

@@ -12,6 +12,7 @@
 #include <Windows.h>
 #include <objbase.h>
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <fstream>
 #include <functional>
@@ -61,8 +62,7 @@ void MapTextures(json& material, const std::function<json(const json&)>& convert
 }
 
 std::string ProjectWorkspace::String(const json& value, const char* key) {
-    const auto it = value.find(key);
-    return it != value.end() && it->is_string() ? it->get<std::string>() : std::string{};
+    return ReadString(value, key);
 }
 std::string ProjectWorkspace::NewId() { return NewUid(); }
 bool ProjectWorkspace::ReadJson(const fs::path& path, json& document) {
@@ -146,6 +146,10 @@ bool ProjectWorkspace::Open(const fs::path& root) {
 }
 bool ProjectWorkspace::Scan() {
     m_paths.clear();
+    // 今回見つかったファイルだけを残す（消えたファイルの分を持ち続けない）。
+    std::unordered_map<std::wstring, ScannedUid> previous;
+    previous.swap(m_scanCache);
+    const auto scanTime = fs::file_time_type::clock::now();
     std::error_code error;
     fs::recursive_directory_iterator it(m_root, fs::directory_options::skip_permission_denied, error), end;
     for (; it != end && !error; it.increment(error)) {
@@ -156,9 +160,22 @@ bool ProjectWorkspace::Scan() {
         }
         const auto path = it->path();
         if (!IsNative(path) && path.extension() != L".meta") continue;
-        json body;
-        if (!ReadJson(path, body)) continue;
-        const auto uid = String(body, "uid");
+        // 更新日時と大きさが前回と同じなら、前回読んだ uid を使う（ファイルを開かない）。
+        std::error_code statError;
+        const auto modified = it->last_write_time(statError);
+        const auto size = statError ? std::uintmax_t{0} : it->file_size(statError);
+        std::string uid;
+        const auto cached = previous.find(path.native());
+        if (!statError && cached != previous.end() && cached->second.modified == modified && cached->second.size == size) {
+            uid = cached->second.uid;
+        } else {
+            json body;
+            if (!ReadJson(path, body)) continue;
+            uid = String(body, "uid");
+        }
+        // 書かれたばかりのファイルは覚えない。更新日時の刻みの中で、同じ大きさのまま
+        // もう一度書き換えられると見分けられないため（uid はどれも同じ長さ）。
+        if (!statError && scanTime - modified > std::chrono::seconds(2)) m_scanCache.emplace(path.native(), ScannedUid{modified, size, uid});
         if (uid.empty()) continue;
         auto target = path;
         if (path.extension() == L".meta") target.replace_extension();

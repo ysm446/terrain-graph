@@ -138,13 +138,6 @@ std::string NormalizePinName(const std::string& name) {
     return normalized;
 }
 
-// JSON Pointer（"/layer/height/scale"）を "." 区切りのパスへ。
-std::string DottedPath(const std::string& pointer) {
-    std::string path = pointer.empty() ? pointer : pointer.substr(1);
-    std::replace(path.begin(), path.end(), '/', '.');
-    return path;
-}
-
 bool NearlyEqual(const json& a, const json& b) {
     if (a.is_number() && b.is_number()) {
         const double x = a.get<double>(), y = b.get<double>();
@@ -175,8 +168,24 @@ json IdArray(const std::vector<graph::PathElementId>& ids) {
     return array;
 }
 
+// その種類を置けるグラフ（list_node_kinds と describe_node_kind の graphs）。
+json OfferedGraphs(graph::NodeKind kind) {
+    json graphs = json::array();
+    if (NodeKindOffered(kind, 0)) graphs.push_back("terrain");
+    if (NodeKindOffered(kind, 1)) graphs.push_back("cloud");
+    return graphs;
+}
+
 const char* const kPathCurveNames[] = {"line", "quadratic", "cubic", "clothoid"};
 const char* const kPathRouteNames[] = {"none", "road", "flow", "trail"};
+
+// パスの点の値（幅・ぼかし・強さ・高さのずれ）。書いたキーだけ変える（add_path と set_path_points で共通）。
+void ApplyPathPointValues(graph::PathPoint& point, const json& item) {
+    point.widthMeters = static_cast<float>(NumberOf(item, "width").value_or(point.widthMeters));
+    point.featherMeters = static_cast<float>(NumberOf(item, "feather").value_or(point.featherMeters));
+    point.intensity = std::clamp(static_cast<float>(NumberOf(item, "intensity").value_or(point.intensity)), 0.0f, 1.0f);
+    point.heightOffsetMeters = static_cast<float>(NumberOf(item, "heightOffset").value_or(point.heightOffsetMeters));
+}
 
 template <size_t N>
 std::optional<uint32_t> EnumIndex(const char* const (&names)[N], const std::string& value) {
@@ -296,6 +305,12 @@ bool Application::RemoteControlWanted() const {
 
 void Application::UpdateRemoteServer() {
     const bool wanted = RemoteControlWanted();
+    if (!wanted && !m_remote.Running()) {
+        // 既定（閉じたまま）。毎フレーム呼ばれるので、パイプの名前を組む前に抜ける。
+        m_remoteError.clear();
+        m_remoteAttemptedPipe.clear();
+        return;
+    }
     const std::string name = m_options.remotePipe.empty() ? m_settings.Remote().pipeName : m_options.remotePipe;
     const std::wstring pipe(name.begin(), name.end());  // ASCII だけ（設定と起動引数で確かめてある）
     if (m_remote.Running() && (!wanted || pipe != m_remotePipe)) {
@@ -665,14 +680,8 @@ json RemoteCommands::TerrainJson() const {
 
 template <typename F>
 void RemoteCommands::InProbeWindow(F&& body) {
-    // 画面の外のウィンドウで描く（RunPropertyProbes と同じ。透明にすると ImGui が中身ごと飛ばす）。
-    ImGui::SetNextWindowPos(ImVec2(-20000.0f, -20000.0f));
-    ImGui::SetNextWindowSize(ImVec2(720.0f, 540.0f));
-    constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
-                                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
-                                        ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBringToFrontOnFocus |
-                                        ImGuiWindowFlags_NoBackground;
-    if (ImGui::Begin("##remoteProbe", nullptr, kFlags)) body();
+    // 画面の外のウィンドウで描く（RunPropertyProbes と同じ窓の作り）。
+    if (m_app.BeginProbeWindow("##remoteProbe")) body();
     ImGui::End();
 }
 
@@ -774,12 +783,9 @@ json RemoteCommands::NodeKinds(const json& params) {
         const std::string kind = entry["kind"].get<std::string>();
         const graph::NodeDefinition* definition = graph::FindNodeDefinitionByName(kind);
         if (definition == nullptr) continue;
-        json graphs = json::array();
-        if (NodeKindOffered(definition->kind, 0)) graphs.push_back("terrain");
-        if (NodeKindOffered(definition->kind, 1)) graphs.push_back("cloud");
         if (component >= 0 && !NodeKindOffered(definition->kind, component)) continue;
         json item = {{"kind", kind}, {"title", entry["title"]}, {"description", entry["description"]},
-                     {"graphs", std::move(graphs)}, {"inputs", entry["inputs"]}, {"outputs", entry["outputs"]}};
+                     {"graphs", OfferedGraphs(definition->kind)}, {"inputs", entry["inputs"]}, {"outputs", entry["outputs"]}};
         if (entry.contains("variadicInputs")) item["variadicInputs"] = true;
         if (defaults) {
             item["defaults"] = entry["defaults"];
@@ -959,7 +965,8 @@ bool RemoteCommands::NodeDetails(Job& job) {
     // UI の行（範囲・単位・説明）。カタログの parameters と同じ取り方で、今の値も添える。
     if (BoolOf(job.params, "parameters", true)) {
         json parameters = json::object();
-        const json settings = result["settings"];
+        // 写しを作らずに読む（パスの設定は数百 KB になる。result へキーを足すのは読み終えた後）。
+        const json& settings = result["settings"];
         InProbeWindow([&] {
             const std::vector<ui::PropertyRecord> records = m_app.RecordNodeProperties(node);
             const json baseFlat = io::WriteNodeJson(node).flatten();
@@ -968,9 +975,8 @@ bool RemoteCommands::NodeDetails(Job& job) {
                 if (path.empty() || parameters.contains(path)) continue;
                 json item = m_app.DescribeProperty(node, record, path);
                 item.erase("default");  // UI のリセットの値。今の値と紛らわしいので出さない
-                std::string pointer = "/" + path;
-                std::replace(pointer.begin(), pointer.end(), '.', '/');
-                if (settings.contains(json::json_pointer(pointer))) item["value"] = settings.at(json::json_pointer(pointer));
+                const json::json_pointer at(Application::SettingsPointerFromPath(path));
+                if (settings.contains(at)) item["value"] = settings.at(at);
                 parameters[path] = std::move(item);
             }
         });
@@ -1002,10 +1008,7 @@ bool RemoteCommands::DescribeKind(Job& job) {
     json catalog = m_app.BuildNodeCatalog();
     for (json& entry : catalog["nodes"]) {
         if (entry["kind"] != kind) continue;
-        json graphs = json::array();
-        if (NodeKindOffered(definition->kind, 0)) graphs.push_back("terrain");
-        if (NodeKindOffered(definition->kind, 1)) graphs.push_back("cloud");
-        entry["graphs"] = std::move(graphs);
+        entry["graphs"] = OfferedGraphs(definition->kind);
         job.result = std::move(entry);
         return true;
     }
@@ -1021,7 +1024,7 @@ bool RemoteCommands::ApplyOps(Job& job) {
     }
     Application& app = m_app;
     // 失敗したら操作列の前へ戻すための控え。グラフは複製しても数百 KB で済む（アンドゥと同じ考え方）。
-    const graph::NodeGraph savedGraph = app.m_graph;
+    graph::NodeGraph savedGraph = app.m_graph;
     const graph::GraphId savedSelected = app.m_selectedGraphNode;
     const graph::GraphId savedPreview = app.m_previewGraphNode, savedPreviewPin = app.m_previewGraphPin;
     const size_t savedToPlace = app.m_graphNodesToPlace.size();
@@ -1044,7 +1047,7 @@ bool RemoteCommands::ApplyOps(Job& job) {
         rangeError = !error.empty();
     }
     if (!error.empty()) {
-        app.m_graph = savedGraph;
+        app.m_graph = std::move(savedGraph);  // 控えはもう使わないので移す
         app.m_selectedGraphNode = savedSelected;
         app.m_previewGraphNode = savedPreview;
         app.m_previewGraphPin = savedPreviewPin;
@@ -1099,9 +1102,7 @@ std::string RemoteCommands::CheckRanges(const OpContext& context) {
             const std::vector<ui::PropertyRecord> records = m_app.RecordNodeProperties(node);
             json baseFlat;
             for (const ui::PropertyRecord& record : records) {
-                if (record.type != ui::PropertyRecord::Type::Float && record.type != ui::PropertyRecord::Type::Int) continue;
-                const double tolerance = 1.0e-5 * std::max(1.0, std::max(std::abs(record.minValue), std::abs(record.maxValue)));
-                if (record.shown >= record.minValue - tolerance && record.shown <= record.maxValue + tolerance) continue;
+                if (!Application::PropertyOutsideUiRange(record)) continue;
                 if (baseFlat.is_null()) baseFlat = io::WriteNodeJson(node).flatten();
                 const std::string path = m_app.FindPropertyPath(node, record, baseFlat);
                 // 操作で変えたキーだけを咎める（もとから範囲の外にある値は触らない）。
@@ -1298,7 +1299,7 @@ bool RemoteCommands::OpCreateNode(const json& op, OpContext& context, json& resu
         error = Printf("%s は%sグラフに置けない種類です", kind.c_str(), component == 1 ? "雲" : "地形");
         return false;
     }
-    if (definition->kind == graph::NodeKind::CloudOutput && app.m_graph.CompileCloud().hasOutput) {
+    if (definition->kind == graph::NodeKind::CloudOutput && app.m_graph.HasCloudOutput()) {
         error = "Cloud Output は 1 つだけ置ける（もうある）";
         return false;
     }
@@ -1412,7 +1413,7 @@ bool RemoteCommands::ApplySettings(graph::Node& node, const json& patch, OpConte
     const json patchFlat = patch.flatten();
     for (const auto& [pointer, value] : patchFlat.items()) {
         if (value.is_null()) continue;  // 既定値へ戻す指定
-        const std::string path = DottedPath(pointer);
+        const std::string path = Application::SettingsPathFromPointer(pointer);
         touched.insert(path);
         const auto found = writtenFlat.find(pointer);
         if (found != writtenFlat.end()) {
@@ -1618,12 +1619,7 @@ bool RemoteCommands::OpAddPath(const json& op, OpContext& context, json& result,
             error = "点を置けませんでした";
             return false;
         }
-        if (!pair) {
-            point->widthMeters = static_cast<float>(NumberOf(item, "width").value_or(point->widthMeters));
-            point->featherMeters = static_cast<float>(NumberOf(item, "feather").value_or(point->featherMeters));
-            point->intensity = std::clamp(static_cast<float>(NumberOf(item, "intensity").value_or(point->intensity)), 0.0f, 1.0f);
-            point->heightOffsetMeters = static_cast<float>(NumberOf(item, "heightOffset").value_or(point->heightOffsetMeters));
-        }
+        if (!pair) ApplyPathPointValues(*point, item);
         if (previous != 0) joined.emplace_back(previous, id);
         created.push_back(id);
         previous = id;
@@ -1682,10 +1678,7 @@ bool RemoteCommands::OpSetPathPoints(const json& op, OpContext& context, json& r
         }
         if (u) point->u = static_cast<float>(*u);
         if (v) point->v = static_cast<float>(*v);
-        point->widthMeters = static_cast<float>(NumberOf(item, "width").value_or(point->widthMeters));
-        point->featherMeters = static_cast<float>(NumberOf(item, "feather").value_or(point->featherMeters));
-        point->intensity = std::clamp(static_cast<float>(NumberOf(item, "intensity").value_or(point->intensity)), 0.0f, 1.0f);
-        point->heightOffsetMeters = static_cast<float>(NumberOf(item, "heightOffset").value_or(point->heightOffsetMeters));
+        ApplyPathPointValues(*point, item);
     }
     return true;
 }
@@ -1702,10 +1695,10 @@ bool RemoteCommands::OpSetPathStyle(const json& op, OpContext& context, json& re
         error = "edges（エッジの ID の配列か \"all\"）と style を渡してください";
         return false;
     }
+    // "all" は全部のエッジ。対象の表を作って引くと（エッジ数）² になるので、表は ID の配列のときだけ。
+    const bool all = edges->is_string();
     std::vector<graph::PathElementId> targets;
-    if (edges->is_string()) {
-        for (const graph::PathEdge& edge : path->edges) targets.push_back(edge.id);
-    } else {
+    if (!all) {
         for (const json& id : *edges) {
             if (!id.is_number_integer() || path->FindEdge(id.get<int>()) == nullptr) {
                 error = "エッジ " + id.dump() + " がこのパスにありません";
@@ -1717,7 +1710,7 @@ bool RemoteCommands::OpSetPathStyle(const json& op, OpContext& context, json& re
     size_t changed = 0;
     bool routed = false;
     for (graph::PathEdge& edge : path->edges) {
-        if (std::find(targets.begin(), targets.end(), edge.id) == targets.end()) continue;
+        if (!all && std::find(targets.begin(), targets.end(), edge.id) == targets.end()) continue;
         // エッジごとに今の設定から読み、書いたキーだけを変える。
         graph::PathEdgeStyle edgeStyle = graph::GetPathEdgeStyle(edge);
         if (!ReadEdgeStyle(*style, edgeStyle, error)) return false;
@@ -1934,6 +1927,7 @@ bool RemoteCommands::Save(Job& job, Phase phase) {
             job.error = "まだ保存先の無いシーン（か一時プレビュー中）です。初めての保存は UI で行ってください";
             return true;
         }
+        job.scratch["logMark"] = app.m_remoteLogSequence;
         app.RequestSaveProject(false);
         job.stage = 1;
         return false;
@@ -1941,6 +1935,17 @@ bool RemoteCommands::Save(Job& job, Phase phase) {
     // 保存は ProcessPendingFileWork（フレームの前）が行う。
     if (!app.m_pendingProjectSave.empty()) return false;
     app.RefreshSceneDirty();
+    // 保存に失敗しても m_pendingProjectSave は空になる。未保存が残っていて、頼んだ後にエラーのログが
+    // 出ていれば、成功ではなく失敗として返す。
+    if (app.m_sceneDirty != 0) {
+        const json* mark = Member(job.scratch, "logMark");
+        const uint64_t since = (mark != nullptr && mark->is_number_unsigned()) ? mark->get<uint64_t>() : app.m_remoteLogSequence;
+        for (const Application::RemoteLogEntry& entry : app.m_remoteLog) {
+            if (entry.sequence <= since || entry.level != LogLevel::Error) continue;
+            job.error = "シーンを保存できませんでした: " + entry.text;
+            return true;
+        }
+    }
     job.result = {{"scene", ToUtf8Portable(app.m_projectPath)}, {"unsaved", app.UnsavedItemNames()}};
     return true;
 }

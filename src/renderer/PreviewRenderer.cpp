@@ -493,6 +493,22 @@ void PreviewRenderer::ProcessPendingWork(rhi::Device& device,
 
 LightSettings PreviewRenderer::EffectiveLight() const {
     if (!m_atmosphericMode) return m_light;
+    const auto& p = m_atmosphereSettings;
+    // 下の透過率の積分（32 区間の exp）は、配置モデルの描画ごと（影の段 × 配置の数）にも呼ばれる。
+    // 結果を決める入力が前回と同じ間は、求めた値を使い回す。
+    const EffectiveLightKey key{{m_atmosphericLight.azimuth, m_atmosphericLight.elevation, m_atmosphericLight.illuminance,
+                                 m_atmosphericLight.color.x, m_atmosphericLight.color.y, m_atmosphericLight.color.z,
+                                 p.moonAzimuth, p.moonElevation, p.moonIlluminance, p.moonPhase,
+                                 p.altitude, p.density, p.mie},
+                                p.nightEnabled};
+    if (m_effectiveLightValid && std::memcmp(&key, &m_effectiveLightKey, sizeof(key)) == 0) return m_effectiveLight;
+    m_effectiveLight = ComputeAtmosphericLight();
+    m_effectiveLightKey = key;
+    m_effectiveLightValid = true;
+    return m_effectiveLight;
+}
+
+LightSettings PreviewRenderer::ComputeAtmosphericLight() const {
     LightSettings result = m_atmosphericLight;
     const auto& p = m_atmosphereSettings;
     if (p.nightEnabled && result.elevation < 0.0f) {
@@ -1010,7 +1026,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
             return target.SrvIndex();
         };
         if (useCascades) {
-            const auto cascades = BuildShadowCascades(m_camera, EffectiveLight().Direction(),
+            const auto cascades = BuildShadowCascades(m_camera, light.Direction(),
                 BoundingRadius(), float(m_width) / float(std::max(m_height, 1u)), shadowResolution, activeCascadeCount,
                 m_shadowSplitLambda);
             constants.shadowCascadeCount = activeCascadeCount;
@@ -1139,7 +1155,7 @@ void PreviewRenderer::Render(rhi::Device& device, rhi::PipelineCache& pipelineCa
             SkyboxConstants skyboxConstants = {};
             // メッシュ側と同じ理由で転置は入れない。
             XMStoreFloat4x4(&skyboxConstants.inverseViewProjection,
-                            XMMatrixInverse(nullptr, XMMatrixMultiply(view, projection)));
+                            XMMatrixInverse(nullptr, viewProjection));
             skyboxConstants.cameraPosition = m_camera.Position();
             skyboxConstants.intensity = m_activeSky.iblIntensity;
             if (m_skyboxBlur) {
@@ -1317,6 +1333,7 @@ void PreviewRenderer::DrawHeightGuideOverlay(rhi::Device& device,
         return;
     }
     std::vector<GuideLine> lines;
+    lines.reserve(16);  // 矩形 3 枚（12 本）+ 縦の辺 4 本
     const float kHalf = m_planeSize * 0.5f;
     const XMFLOAT2 corners[4] = {{-kHalf, -kHalf}, {kHalf, -kHalf}, {kHalf, kHalf},
                                  {-kHalf, kHalf}};

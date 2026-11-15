@@ -30,7 +30,8 @@ void UndoHistory::Push(DocumentSnapshot&& before, uint32_t editId) {
 }
 
 DocumentSnapshot UndoHistory::Undo(const DocumentSnapshot& current) {
-    DocumentSnapshot restored = m_undo.back();
+    // 直後に捨てる段なので、複製せずに移す（1 段はグラフとマテリアルの丸ごとの写し）。
+    DocumentSnapshot restored = std::move(m_undo.back());
     m_undo.pop_back();
     m_redo.push_back(current);
     // 戻した直後の編集が、直前のドラッグと同じ段にまとめられないようにする。
@@ -39,7 +40,7 @@ DocumentSnapshot UndoHistory::Undo(const DocumentSnapshot& current) {
 }
 
 DocumentSnapshot UndoHistory::Redo(const DocumentSnapshot& current) {
-    DocumentSnapshot restored = m_redo.back();
+    DocumentSnapshot restored = std::move(m_redo.back());
     m_redo.pop_back();
     m_undo.push_back(current);
     m_lastEditId = 0;

@@ -61,6 +61,66 @@ std::vector<uint8_t> ConvertToHalf4(const HdrImage& image) {
     return packed;
 }
 
+// ミップ生成の途中と終わりで、テクスチャを読む状態。
+constexpr D3D12_RESOURCE_STATES kMipReadState =
+    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+
+// ミップ 0 から残りのミップを作る記録。前提と結果は TextureLibrary::GenerateMips と同じ
+// （全ミップが COPY_DEST で始まり、終わると全体が kMipReadState）。texture.state は
+// 実行できたことを確かめてから呼び出し側が書き換える。
+void RecordMips(ID3D12GraphicsCommandList* commandList, rhi::PipelineCache& pipelineCache,
+                ID3D12PipelineState* pipeline, const rhi::GpuTexture& texture) {
+    struct MipConstants {
+        uint32_t sourceIndex;
+        uint32_t outputIndex;
+        uint32_t outputWidth;
+        uint32_t outputHeight;
+    };
+
+    PIXBeginEvent(commandList, PIX_COLOR(160, 200, 120), "TextureMips");
+    commandList->SetComputeRootSignature(pipelineCache.GlobalRootSignature());
+    commandList->SetPipelineState(pipeline);
+
+    uint32_t width = texture.width;
+    uint32_t height = texture.height;
+
+    for (uint32_t mip = 1; mip < texture.mipLevels; ++mip) {
+        // 参照元ミップを読み取り状態へ。ミップ 0 だけは COPY_DEST から遷移する
+        // （アップロード先）。それ以降は前の反復で UAV として書いたもの。
+        TransitionMip(commandList, texture, mip - 1,
+                      (mip == 1) ? D3D12_RESOURCE_STATE_COPY_DEST
+                                 : D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                      kMipReadState);
+
+        // **書き込み先ミップも遷移させる。** テクスチャは全サブリソースが
+        // COPY_DEST で作られるので、アップロードしたミップ 0 以外は
+        // ここまで一度も遷移していない。これを忘れると UAV への書き込みが
+        // COPY_DEST 状態のまま行われ、次の反復の「前の状態」も食い違う。
+        TransitionMip(commandList, texture, mip, D3D12_RESOURCE_STATE_COPY_DEST,
+                      D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+        width = std::max<uint32_t>(width >> 1, 1);
+        height = std::max<uint32_t>(height >> 1, 1);
+
+        const MipConstants constants{texture.MipSrvIndex(mip - 1), texture.MipUavIndex(mip),
+                                     width, height};
+        commandList->SetComputeRoot32BitConstants(0, sizeof(constants) / sizeof(uint32_t),
+                                                  &constants, 0);
+        commandList->Dispatch(DispatchCount(width), DispatchCount(height), 1);
+
+        const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(texture.resource.Get());
+        commandList->ResourceBarrier(1, &barrier);
+    }
+
+    // 最後のミップも読み取り状態へ移し、リソース全体を揃える。
+    const uint32_t lastMip = texture.mipLevels - 1;
+    TransitionMip(commandList, texture, lastMip,
+                  (texture.mipLevels == 1) ? D3D12_RESOURCE_STATE_COPY_DEST
+                                           : D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                  kMipReadState);
+    PIXEndEvent(commandList);
+}
+
 }  // namespace
 
 void TextureLibrary::Destroy(rhi::Device& device) {
@@ -321,24 +381,29 @@ bool TextureLibrary::LoadInto(rhi::Device& device, rhi::PipelineCache& pipelineC
     }
     staging.resource->Unmap(0, nullptr);
 
+    // ミップ 0 のアップロードとミップ生成は 1 回の即時実行にまとめる。即時実行は GPU の
+    // 完了を待つので、分けるとテクスチャ 1 枚につき待ちが 1 回増える（シーンを開くときは
+    // 素材の枚数ぶん効く）。
+    ID3D12PipelineState* mipPipeline = pipelineCache.GetCompute(L"TextureMips.hlsl", L"CsMain");
+    if (mipPipeline == nullptr) {
+        device.DeferRelease(staging);
+        return failCleanup();
+    }
     const bool uploaded = device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {
         PIXBeginEvent(commandList, PIX_COLOR(160, 200, 120), "UploadTexture");
         const CD3DX12_TEXTURE_COPY_LOCATION destinationLocation(entry.texture.resource.Get(), 0);
         const CD3DX12_TEXTURE_COPY_LOCATION sourceLocation(staging.resource.Get(), footprint);
         commandList->CopyTextureRegion(&destinationLocation, 0, 0, 0, &sourceLocation, nullptr);
         PIXEndEvent(commandList);
+        // ここまで全ミップが作成時の COPY_DEST のまま（ミップ生成の前提）。
+        RecordMips(commandList, pipelineCache, mipPipeline, entry.texture);
     });
     device.Defer(staging.resource);
     device.Defer(staging.allocation);
     if (!uploaded) {
         return failCleanup();
     }
-
-    // アップロード直後はミップ 0 のみ COPY_DEST。残りは作成時の状態のまま。
-    entry.texture.state = D3D12_RESOURCE_STATE_COPY_DEST;
-    if (!GenerateMips(device, pipelineCache, entry.texture)) {
-        return failCleanup();
-    }
+    entry.texture.state = kMipReadState;
     // **ミップ用のビューはここまでしか使わない。** 以降は本体の SRV（と sRGB /
     // チャンネル別の SRV）で読むだけなので、ミップ数 × 2 枠を抱えたままにしない。
     // 2K の素材 1 枚で 24 枠あり、放っておくと素材を並べただけで SRV ヒープが尽きる。
@@ -476,63 +541,12 @@ bool TextureLibrary::GenerateMips(rhi::Device& device, rhi::PipelineCache& pipel
         return false;
     }
 
-    constexpr D3D12_RESOURCE_STATES kReadState =
-        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-
-    struct MipConstants {
-        uint32_t sourceIndex;
-        uint32_t outputIndex;
-        uint32_t outputWidth;
-        uint32_t outputHeight;
-    };
-
     const bool executed = device.ExecuteImmediate([&](ID3D12GraphicsCommandList* commandList) {
-        PIXBeginEvent(commandList, PIX_COLOR(160, 200, 120), "TextureMips");
-        commandList->SetComputeRootSignature(pipelineCache.GlobalRootSignature());
-        commandList->SetPipelineState(pipeline);
-
-        uint32_t width = texture.width;
-        uint32_t height = texture.height;
-
-        for (uint32_t mip = 1; mip < texture.mipLevels; ++mip) {
-            // 参照元ミップを読み取り状態へ。ミップ 0 だけは COPY_DEST から遷移する
-            // （アップロード先）。それ以降は前の反復で UAV として書いたもの。
-            TransitionMip(commandList, texture, mip - 1,
-                          (mip == 1) ? D3D12_RESOURCE_STATE_COPY_DEST
-                                     : D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                          kReadState);
-
-            // **書き込み先ミップも遷移させる。** テクスチャは全サブリソースが
-            // COPY_DEST で作られるので、アップロードしたミップ 0 以外は
-            // ここまで一度も遷移していない。これを忘れると UAV への書き込みが
-            // COPY_DEST 状態のまま行われ、次の反復の「前の状態」も食い違う。
-            TransitionMip(commandList, texture, mip, D3D12_RESOURCE_STATE_COPY_DEST,
-                          D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-
-            width = std::max<uint32_t>(width >> 1, 1);
-            height = std::max<uint32_t>(height >> 1, 1);
-
-            const MipConstants constants{texture.MipSrvIndex(mip - 1), texture.MipUavIndex(mip),
-                                         width, height};
-            commandList->SetComputeRoot32BitConstants(0, sizeof(constants) / sizeof(uint32_t),
-                                                      &constants, 0);
-            commandList->Dispatch(DispatchCount(width), DispatchCount(height), 1);
-
-            const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(texture.resource.Get());
-            commandList->ResourceBarrier(1, &barrier);
-        }
-
-        // 最後のミップも読み取り状態へ移し、リソース全体を揃える。
-        const uint32_t lastMip = texture.mipLevels - 1;
-        TransitionMip(commandList, texture, lastMip,
-                      (texture.mipLevels == 1) ? D3D12_RESOURCE_STATE_COPY_DEST
-                                               : D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                      kReadState);
-        PIXEndEvent(commandList);
+        RecordMips(commandList, pipelineCache, pipeline, texture);
     });
 
     if (executed) {
-        texture.state = kReadState;
+        texture.state = kMipReadState;
     }
     return executed;
 }

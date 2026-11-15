@@ -90,6 +90,10 @@ bool BuildRoadCenterline(const RoadPathSettings& road, float sizeMeters, const R
 // バンク角（ラジアン）。curve は縦断反映後の中心線。Raw は平滑化なし。
 float EvaluateBankAngleRadiansRaw(const RoadPathSettings& road, const RoadProfileCurve& curve, float distance);
 float EvaluateBankAngleRadians(const RoadPathSettings& road, const RoadProfileCurve& curve, float distance);
+// 道のりの列をまとめて引く版（結果は EvaluateBankAngleRadians を 1 つずつ呼んだのと同じ）。
+// バンク角ポイントの並べ替えと、ポイントの位置の自動角を 1 回だけ求める。路面の行ごとに引くときはこちら。
+std::vector<float> EvaluateBankAnglesRadians(const RoadPathSettings& road, const RoadProfileCurve& curve,
+                                             const std::vector<float>& distances);
 // 曲率半径と設計速度・摩擦係数から求める自動バンクの大きさ（符号なし）。
 float ComputeAutoBankRadians(float radius, float designSpeedKmh, float friction);
 

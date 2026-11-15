@@ -44,6 +44,10 @@ bool BuildRoadMesh(const RoadPathSettings& road, const RoadProfileCurve& centerl
         directions[i] = {dx / length, dz / length};
     }
 
+    // バンク角は行ごとに引く。1 つずつ引くと、行ごとにバンク角ポイントを並べ直すので、まとめて求める。
+    const std::vector<float> banks =
+        road.bankEnabled ? EvaluateBankAnglesRadians(road, centerline, centerline.arcLengths) : std::vector<float>{};
+
     out.vertices.resize(rows * stride);
     for (size_t i = 0; i < rows; ++i) {
         // 頂点の向きは前後の区間の平均。角では断面を 1/cos だけ広げて幅を保つ（マイター）。
@@ -58,7 +62,7 @@ bool BuildRoadMesh(const RoadPathSettings& road, const RoadProfileCurve& centerl
         // 進行方向に向かって右（Road Path と同じ。右手系 Y-up で (-dz, 0, dx)）。
         const XMFLOAT3 right{-forward.y, 0.0f, forward.x};
         const float distance = centerline.arcLengths[i];
-        const float bank = road.bankEnabled ? EvaluateBankAngleRadians(road, centerline, distance) : 0.0f;
+        const float bank = road.bankEnabled ? banks[i] : 0.0f;
         // 正のバンクで左（-right）が上がる。横位置 l（右が正）の点は right*cos - up*sin だけずれる。
         const float c = std::cos(bank);
         const float s = std::sin(bank);

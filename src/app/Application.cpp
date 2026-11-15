@@ -41,36 +41,30 @@ constexpr bool kEnableDebugLayer = true;
 constexpr bool kEnableDebugLayer = false;
 #endif
 
-// シェーダの探索先。環境変数 TG_SHADER_DIR で差し替えられるようにしておく。
-std::filesystem::path ResolveShaderRoot() {
-    const DWORD needed = ::GetEnvironmentVariableW(L"TG_SHADER_DIR", nullptr, 0);
+// 環境変数で差し替えられるフォルダ。変数が無い（か空）なら fallback。
+std::filesystem::path DirectoryFromEnvironment(const wchar_t* variable, const char* fallback) {
+    const DWORD needed = ::GetEnvironmentVariableW(variable, nullptr, 0);
     if (needed > 0) {
         std::wstring value;
         value.resize(needed);
-        const DWORD written = ::GetEnvironmentVariableW(L"TG_SHADER_DIR", value.data(), needed);
+        const DWORD written = ::GetEnvironmentVariableW(variable, value.data(), needed);
         if (written > 0) {
             value.resize(written);
             return std::filesystem::path(value);
         }
     }
-    return std::filesystem::path(TG_SHADER_DIR);
+    return std::filesystem::path(fallback);
+}
+
+// シェーダの探索先。環境変数 TG_SHADER_DIR で差し替えられるようにしておく。
+std::filesystem::path ResolveShaderRoot() {
+    return DirectoryFromEnvironment(L"TG_SHADER_DIR", TG_SHADER_DIR);
 }
 
 // スクリーンショットの置き場所。環境変数 TG_DATA_DIR で差し替えられる。
 // data/ は .gitignore で外してあるので、撮ったものがリポジトリに混ざらない。
 std::filesystem::path ResolveScreenshotDirectory() {
-    std::filesystem::path dataDir(TG_DATA_DIR);
-    const DWORD needed = ::GetEnvironmentVariableW(L"TG_DATA_DIR", nullptr, 0);
-    if (needed > 0) {
-        std::wstring value;
-        value.resize(needed);
-        const DWORD written = ::GetEnvironmentVariableW(L"TG_DATA_DIR", value.data(), needed);
-        if (written > 0) {
-            value.resize(written);
-            dataDir = std::filesystem::path(value);
-        }
-    }
-    return dataDir / L"screenshots";
+    return DirectoryFromEnvironment(L"TG_DATA_DIR", TG_DATA_DIR) / L"screenshots";
 }
 
 // 撮った時刻をそのままファイル名にする。連番だと前回の続きが分からない。
@@ -83,6 +77,18 @@ std::string ScreenshotFileName(const char* suffix = "") {
     char buffer[64] = {};
     std::strftime(buffer, sizeof(buffer), "terrain_graph_%Y%m%d_%H%M%S", &local);
     return std::string(buffer) + suffix + ".png";
+}
+
+// スクリーンショットの保存先を用意する。作れなければログと通知を出して偽を返す（F12 と F9 で共通）。
+bool PrepareScreenshotDirectory(const std::filesystem::path& directory, ui::ToastQueue& toasts) {
+    std::error_code error;
+    std::filesystem::create_directories(directory, error);
+    if (!error) return true;
+    TG_LOG_ERROR(ui::Tr("スクリーンショットの保存先を作れませんでした: %s", "Could not create the screenshot folder: %s"),
+                 ToUtf8Display(directory).c_str());
+    toasts.Push(ui::Tr("スクリーンショットを保存できませんでした", "Could not save the screenshot"),
+                ui::Tr("保存先を作れません", "Could not create the folder"));
+    return false;
 }
 
 // Shift + F12 の撮影で、縮めてから撮るまでに描くフレーム数。配置の計算し直し・
@@ -267,15 +273,7 @@ void Application::Shutdown() {
 // 手前に別のウィンドウが重なっていても、画面外へはみ出していても欠けない。
 void Application::RequestScreenshot(bool unscaled) {
     const std::filesystem::path directory = ResolveScreenshotDirectory();
-    std::error_code error;
-    std::filesystem::create_directories(directory, error);
-    if (error) {
-        TG_LOG_ERROR(ui::Tr("スクリーンショットの保存先を作れませんでした: %s", "Could not create the screenshot folder: %s"),
-                     ToUtf8Display(directory).c_str());
-        m_toasts.Push(ui::Tr("スクリーンショットを保存できませんでした", "Could not save the screenshot"),
-                      ui::Tr("保存先を作れません", "Could not create the folder"));
-        return;
-    }
+    if (!PrepareScreenshotDirectory(directory, m_toasts)) return;
 
     const std::filesystem::path path = directory / FromUtf8(ScreenshotFileName(unscaled ? "_100" : ""));
     m_device.RequestBackBufferCapture(
@@ -350,15 +348,7 @@ void Application::ProcessUnscaledScreenshot() {
 // 読み戻しは同期なので、フレームを送り終えてから GPU を待って呼ぶ。
 void Application::SaveViewportScreenshot() {
     const std::filesystem::path directory = ResolveScreenshotDirectory();
-    std::error_code error;
-    std::filesystem::create_directories(directory, error);
-    if (error) {
-        TG_LOG_ERROR(ui::Tr("スクリーンショットの保存先を作れませんでした: %s", "Could not create the screenshot folder: %s"),
-                     ToUtf8Display(directory).c_str());
-        m_toasts.Push(ui::Tr("スクリーンショットを保存できませんでした", "Could not save the screenshot"),
-                      ui::Tr("保存先を作れません", "Could not create the folder"));
-        return;
-    }
+    if (!PrepareScreenshotDirectory(directory, m_toasts)) return;
 
     const std::filesystem::path path = directory / FromUtf8(ScreenshotFileName("_viewport"));
     m_device.WaitForGpu();
@@ -505,11 +495,7 @@ int Application::Run() {
         // 環境マップやマテリアル解像度の作り直しは GPU 待機を伴うため、
         // フレームの外で処理する。
         // 雲のコンパイルはグラフの版が変わったときだけ（GraphCycleNodes と同じ）。結果は読むだけ。
-        if (m_compiledCloudRevision != m_graph.Revision()) {
-            m_compiledCloudRevision = m_graph.Revision();
-            m_compiledCloud = m_graph.CompileCloud();
-        }
-        const graph::CompiledCloud& compiledCloud = m_compiledCloud;
+        const graph::CompiledCloud& compiledCloud = CompiledCloudNow();
         if (!PrepareCloudMask(m_cloudMasks[0], compiledCloud.maskNode, compiledCloud.layer ? compiledCloud.maskPin : 0)) return 1;
         if (!PrepareCloudMask(m_cloudMasks[1], compiledCloud.typeMaskNode, compiledCloud.weather ? compiledCloud.typeMaskPin : 0)) return 1;
         PrepareSnowPlumes();
@@ -874,6 +860,14 @@ int Application::Run() {
 
     }
     return 0;
+}
+
+const graph::CompiledCloud& Application::CompiledCloudNow() {
+    if (m_compiledCloudRevision != m_graph.Revision()) {
+        m_compiledCloudRevision = m_graph.Revision();
+        m_compiledCloud = m_graph.CompileCloud();
+    }
+    return m_compiledCloud;
 }
 
 bool Application::PrepareCloudMask(CloudMaskSlot& slot, graph::GraphId maskNode, graph::GraphId maskPin) {

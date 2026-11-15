@@ -12,14 +12,7 @@
 // 半解像度の雲（透過率と平均距離）を読み、雲の向こう側にあるぶんを透過率で薄めて決める。
 #include "AtmosphereCommon.hlsli"
 
-// ModelPreview.hlsl と同じ並び（C++ の SceneShadowData）。
-struct SceneShadowData {
-    float4x4 view;
-    float4x4 matrices[4];
-    uint4 indices;
-    float4 splits, biases;
-    float nearDistance, texel, blend; uint count;
-};
+#include "SceneShadow.hlsli"
 
 // SnowPlume.cpp の SnowPlumeConstants と同じ並び。
 struct SnowPlumeConstants {

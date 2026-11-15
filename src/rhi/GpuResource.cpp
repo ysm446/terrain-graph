@@ -173,25 +173,35 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
         return false;
     };
 
-    if (desc.createSrv) {
-        outTexture.srv = m_srvHeap->Allocate();
-        if (!outTexture.srv.IsValid()) {
-            return failViews();
-        }
+    // SRV の記述。全ミップを見せるもの（firstMip = 0, mipCount = 全部）と、
+    // ミップ 1 枚だけを見せるもの（mipCount = 1）で、範囲だけが違う。
+    const auto makeSrvDesc = [&](uint32_t firstMip, uint32_t mipCount) {
         D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
         srvDesc.Format = (desc.srvFormat != DXGI_FORMAT_UNKNOWN) ? desc.srvFormat : desc.format;
         srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         if (desc.isCube) {
             srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
-            srvDesc.TextureCube.MipLevels = desc.mipLevels;
+            srvDesc.TextureCube.MostDetailedMip = firstMip;
+            srvDesc.TextureCube.MipLevels = mipCount;
         } else if (outTexture.arraySize > 1) {
             srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
-            srvDesc.Texture2DArray.MipLevels = desc.mipLevels;
+            srvDesc.Texture2DArray.MostDetailedMip = firstMip;
+            srvDesc.Texture2DArray.MipLevels = mipCount;
             srvDesc.Texture2DArray.ArraySize = outTexture.arraySize;
         } else {
             srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-            srvDesc.Texture2D.MipLevels = desc.mipLevels;
+            srvDesc.Texture2D.MostDetailedMip = firstMip;
+            srvDesc.Texture2D.MipLevels = mipCount;
         }
+        return srvDesc;
+    };
+
+    if (desc.createSrv) {
+        outTexture.srv = m_srvHeap->Allocate();
+        if (!outTexture.srv.IsValid()) {
+            return failViews();
+        }
+        const D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = makeSrvDesc(0, desc.mipLevels);
         m_device->CreateShaderResourceView(outTexture.resource.Get(), &srvDesc, outTexture.srv.cpu);
     }
 
@@ -232,24 +242,7 @@ bool ResourceAllocator::CreateTexture2D(const TextureDesc& desc, GpuTexture& out
                 return failViews();
             }
 
-            D3D12_SHADER_RESOURCE_VIEW_DESC mipSrvDesc = {};
-            mipSrvDesc.Format =
-                (desc.srvFormat != DXGI_FORMAT_UNKNOWN) ? desc.srvFormat : desc.format;
-            mipSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-            if (desc.isCube) {
-                mipSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
-                mipSrvDesc.TextureCube.MostDetailedMip = mip;
-                mipSrvDesc.TextureCube.MipLevels = 1;
-            } else if (outTexture.arraySize > 1) {
-                mipSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
-                mipSrvDesc.Texture2DArray.MostDetailedMip = mip;
-                mipSrvDesc.Texture2DArray.MipLevels = 1;
-                mipSrvDesc.Texture2DArray.ArraySize = outTexture.arraySize;
-            } else {
-                mipSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-                mipSrvDesc.Texture2D.MostDetailedMip = mip;
-                mipSrvDesc.Texture2D.MipLevels = 1;
-            }
+            const D3D12_SHADER_RESOURCE_VIEW_DESC mipSrvDesc = makeSrvDesc(mip, 1);
             m_device->CreateShaderResourceView(outTexture.resource.Get(), &mipSrvDesc, handle.cpu);
             outTexture.mipSrvs[mip] = handle;
         }

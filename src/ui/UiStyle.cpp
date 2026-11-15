@@ -12,7 +12,9 @@
 #include <array>
 #include <cstring>
 #include <limits>
+#include <map>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <vector>
 
@@ -73,6 +75,15 @@ constexpr ImVec4 kError = ImVec4(0.784f, 0.482f, 0.447f, 1.0f);  // #C87B72
 // ツールチップの折り返し幅（フォントサイズ比）。
 constexpr float kTooltipWrapRatio = 22.0f;
 
+// 折り返して出すツールチップ。長い説明が 1 行のまま画面を横切らないようにする。
+void WrappedTooltip(const char* text) {
+    ImGui::BeginTooltip();
+    ImGui::PushTextWrapPos(ImGui::GetFontSize() * kTooltipWrapRatio);
+    ImGui::TextUnformatted(text);
+    ImGui::PopTextWrapPos();
+    ImGui::EndTooltip();
+}
+
 void DrawTooltip(const char* tooltip) {
     if (tooltip == nullptr || tooltip[0] == '\0') {
         return;
@@ -80,11 +91,7 @@ void DrawTooltip(const char* tooltip) {
     if (!ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
         return;
     }
-    ImGui::BeginTooltip();
-    ImGui::PushTextWrapPos(ImGui::GetFontSize() * kTooltipWrapRatio);
-    ImGui::TextUnformatted(tooltip);
-    ImGui::PopTextWrapPos();
-    ImGui::EndTooltip();
+    WrappedTooltip(tooltip);
 }
 
 // 数値行のツールチップ。**直接入力できることは気づきにくい**ので必ず添える。
@@ -126,11 +133,18 @@ bool ResetDotCore(bool isDefault, bool& hovered) {
     return pressed;
 }
 
-bool ResetDot(bool isDefault, const std::string& defaultText) {
+// 既定値マーカーのツールチップ。defaultText は既定値を画面に出す形にした文字列。
+void ResetTooltip(const char* defaultText) {
+    ImGui::SetTooltip(Tr("既定値に戻す\n既定値: %s", "Reset to default\nDefault: %s"), defaultText);
+}
+
+// 既定値の文字列が最初から手元にある行（真偽・選択肢）向け。
+// 書式化が要る行は ResetDotCore を直接使い、ホバー中だけ文字列を作る。
+bool ResetDot(bool isDefault, const char* defaultText) {
     bool hovered = false;
     const bool pressed = ResetDotCore(isDefault, hovered);
     if (hovered) {
-        ImGui::SetTooltip(Tr("既定値に戻す\n既定値: %s", "Reset to default\nDefault: %s"), defaultText.c_str());
+        ResetTooltip(defaultText);
     }
     return pressed;
 }
@@ -376,8 +390,12 @@ void DrawEye(ImDrawList* drawList, const ImVec2& center, float size, bool open, 
 
 }  // namespace
 
-bool EyeToggle(const char* id, bool* value, float size) {
-    const ImVec2 min = ImGui::GetCursorScreenPos();
+namespace {
+
+// 図形で描くオン / オフの切り替えの共通部。size 角の当たり判定を置き、押されたら値を反転する。
+// outMin に左上、outColor に図形の色を返す。値が変わったら true。
+bool IconToggle(const char* id, bool* value, float size, ImVec2& outMin, ImU32& outColor) {
+    outMin = ImGui::GetCursorScreenPos();
 
     ImGui::InvisibleButton(id, ImVec2(size, size));
     const bool hovered = ImGui::IsItemHovered();
@@ -388,10 +406,19 @@ bool EyeToggle(const char* id, bool* value, float size) {
         changed = true;
     }
 
-    // 表示中は本文の色、非表示は補助文字の色。ホバー中だけ本文の色へ持ち上げて、
+    // オンは本文の色、オフは補助文字の色。ホバー中だけ本文の色へ持ち上げて、
     // 押せることを示す。色はテーマから引く（直書きしない）。
-    const ImU32 color = (*value || hovered) ? ImGui::GetColorU32(ImGuiCol_Text)
-                                            : ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    outColor = (*value || hovered) ? ImGui::GetColorU32(ImGuiCol_Text)
+                                   : ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    return changed;
+}
+
+}  // namespace
+
+bool EyeToggle(const char* id, bool* value, float size) {
+    ImVec2 min;
+    ImU32 color = 0;
+    const bool changed = IconToggle(id, value, size, min, color);
     DrawEye(ImGui::GetWindowDrawList(), ImVec2(min.x + size * 0.5f, min.y + size * 0.5f), size,
             *value, color);
 
@@ -399,16 +426,9 @@ bool EyeToggle(const char* id, bool* value, float size) {
 }
 
 bool WireframeToggle(const char* id, bool* value, float size) {
-    const ImVec2 min = ImGui::GetCursorScreenPos();
-    ImGui::InvisibleButton(id, ImVec2(size, size));
-    const bool hovered = ImGui::IsItemHovered();
-    bool changed = false;
-    if (ImGui::IsItemClicked()) {
-        *value = !*value;
-        changed = true;
-    }
-    const ImU32 color = (*value || hovered) ? ImGui::GetColorU32(ImGuiCol_Text)
-                                            : ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    ImVec2 min;
+    ImU32 color = 0;
+    const bool changed = IconToggle(id, value, size, min, color);
     // 目と同じ大きさに見えるよう、枠の内側を少し空けた四角を縦に 2 つへ割り、それぞれに対角線を引く。
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     const float inset = size * 0.14f;
@@ -649,11 +669,7 @@ void DrawHelpMarker(const char* help, float size, bool coverLine) {
     const ImVec2 glyph = ImGui::CalcTextSize("?");
     draw->AddText(ImVec2(center.x - glyph.x * 0.5f, center.y - glyph.y * 0.5f), color, "?");
     if (hovered) {
-        ImGui::BeginTooltip();
-        ImGui::PushTextWrapPos(ImGui::GetFontSize() * kTooltipWrapRatio);
-        ImGui::TextUnformatted(help);
-        ImGui::PopTextWrapPos();
-        ImGui::EndTooltip();
+        WrappedTooltip(help);
     }
     ImGui::PopID();
 }
@@ -851,8 +867,7 @@ bool PropertyFloat(const char* label, float* value, float minValue, float maxVal
     bool resetHovered = false;
     const bool resetPressed = ResetDotCore(NearlyEqual(*value, defaultValue), resetHovered);
     if (resetHovered) {
-        ImGui::SetTooltip(Tr("既定値に戻す\n既定値: %s", "Reset to default\nDefault: %s"),
-                          FormatFloat(defaultValue, format).c_str());
+        ResetTooltip(FormatFloat(defaultValue, format).c_str());
     }
     if (resetPressed) {
         *value = std::clamp(defaultValue, minValue, maxValue);
@@ -878,7 +893,12 @@ bool PropertyInt(const char* label, int* value, int minValue, int maxValue, int 
         : ImGui::SliderInt("##value", &shown, minValue, maxValue);
     bool changed = CommitDeferredInput(value, shown, edited, minValue, maxValue);
 
-    if (ResetDot(*value == defaultValue, std::to_string(defaultValue))) {
+    bool resetHovered = false;
+    const bool resetPressed = ResetDotCore(*value == defaultValue, resetHovered);
+    if (resetHovered) {
+        ResetTooltip(std::to_string(defaultValue).c_str());
+    }
+    if (resetPressed) {
         *value = std::clamp(defaultValue, minValue, maxValue);
         changed = true;
     }
@@ -930,14 +950,20 @@ bool PropertyColorImpl(const char* label, float* rgb, const float* defaultRgb,
     const bool isDefault = NearlyEqual(rgb[0], defaultRgb[0]) &&
                            NearlyEqual(rgb[1], defaultRgb[1]) &&
                            NearlyEqual(rgb[2], defaultRgb[2]);
-    // 出す数字はピッカーに合わせる。リニア値を出しても、
-    // ピッカーに見えている数字と違うので手掛かりにならない。
-    char defaultText[64] = {};
-    std::snprintf(defaultText, sizeof(defaultText), "%.2f, %.2f, %.2f",
-                  linear ? LinearToSrgb(defaultRgb[0]) : defaultRgb[0],
-                  linear ? LinearToSrgb(defaultRgb[1]) : defaultRgb[1],
-                  linear ? LinearToSrgb(defaultRgb[2]) : defaultRgb[2]);
-    if (ResetDot(isDefault, defaultText)) {
+    bool resetHovered = false;
+    const bool resetPressed = ResetDotCore(isDefault, resetHovered);
+    if (resetHovered) {
+        // 出す数字はピッカーに合わせる。リニア値を出しても、
+        // ピッカーに見えている数字と違うので手掛かりにならない。
+        // 変換と書式化は、ツールチップを出すとき（ホバー中）だけ行う。
+        char defaultText[64] = {};
+        std::snprintf(defaultText, sizeof(defaultText), "%.2f, %.2f, %.2f",
+                      linear ? LinearToSrgb(defaultRgb[0]) : defaultRgb[0],
+                      linear ? LinearToSrgb(defaultRgb[1]) : defaultRgb[1],
+                      linear ? LinearToSrgb(defaultRgb[2]) : defaultRgb[2]);
+        ResetTooltip(defaultText);
+    }
+    if (resetPressed) {
         rgb[0] = defaultRgb[0];
         rgb[1] = defaultRgb[1];
         rgb[2] = defaultRgb[2];
@@ -1089,6 +1115,44 @@ std::array<std::string, 2> SplitCaptionLines(const char* text, float width) {
     return lines;
 }
 
+// SplitCaptionLines の結果の控え。
+//
+// 一覧は同じ名前を毎フレーム描く。割るには 1 文字ずつ伸ばしながら幅を測るので、
+// 升目の数 × 文字数ぶんの計測と文字列の確保が毎フレーム走っていた。名前ごとに控えておき、
+// 割り方が変わる条件（幅・フォント・文字の大きさ）が違うときだけ割り直す。
+struct CaptionCacheEntry {
+    float width = -1.0f;
+    float fontSize = 0.0f;
+    const ImFont* font = nullptr;
+    std::array<std::string, 2> lines;
+};
+
+const std::array<std::string, 2>& CachedCaptionLines(const char* text, float width) {
+    // 名前を変えたり削除したりした分が残り続けないよう、増えすぎたら捨てて作り直す。
+    constexpr size_t kMaxEntries = 4096;
+    static std::map<std::string, CaptionCacheEntry, std::less<>> cache;
+
+    const std::string_view key(text);
+    auto found = cache.find(key);
+    if (found == cache.end()) {
+        if (cache.size() >= kMaxEntries) {
+            cache.clear();
+        }
+        found = cache.emplace(std::string(key), CaptionCacheEntry{}).first;
+    }
+
+    CaptionCacheEntry& entry = found->second;
+    const ImFont* font = ImGui::GetFont();
+    const float fontSize = ImGui::GetFontSize();
+    if (entry.width != width || entry.fontSize != fontSize || entry.font != font) {
+        entry.lines = SplitCaptionLines(text, width);
+        entry.width = width;
+        entry.fontSize = fontSize;
+        entry.font = font;
+    }
+    return entry.lines;
+}
+
 }  // namespace
 
 std::string EllipsizeMiddle(const char* text, float width) {
@@ -1135,12 +1199,8 @@ namespace {
 char g_comboFilter[96] = {};
 
 // ASCII だけ小文字へ揃える（日本語はそのまま部分一致で比べる）。
-std::string LowerAscii(std::string_view text) {
-    std::string result(text);
-    for (char& c : result) {
-        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
-    }
-    return result;
+char LowerAscii(char c) {
+    return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
 }
 }  // namespace
 
@@ -1156,7 +1216,10 @@ void ComboFilterInput() {
 
 bool ComboFilterPass(std::string_view text) {
     if (g_comboFilter[0] == '\0') return true;
-    return LowerAscii(text).find(LowerAscii(g_comboFilter)) != std::string::npos;
+    // 項目ごとに毎フレーム呼ばれるので、小文字にした写しを作らずにその場で比べる。
+    const std::string_view filter(g_comboFilter);
+    return std::search(text.begin(), text.end(), filter.begin(), filter.end(),
+                       [](char a, char b) { return LowerAscii(a) == LowerAscii(b); }) != text.end();
 }
 
 bool ComboFilterActive() { return g_comboFilter[0] != '\0'; }
@@ -1234,7 +1297,7 @@ void GridCaption(const char* text, float width) {
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
 
     // 2 行目が空でも行は描く。**空行を飛ばすと升目の高さが揃わない。**
-    for (const std::string& line : SplitCaptionLines(text, width)) {
+    for (const std::string& line : CachedCaptionLines(text, width)) {
         // サムネイルの幅の中で中央へ寄せる。左詰めだと升目の並びが揺れて見える。
         const float textWidth = ImGui::CalcTextSize(line.c_str()).x;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (width - textWidth) * 0.5f));

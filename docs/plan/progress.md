@@ -1,7 +1,36 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-08-31 05:46
-更新日時: 2026-10-31 22:35
+更新日時: 2026-11-15 21:10
+
+## 全体のレビューと手直し 2 回目（2026-11-15 21:10）
+
+ユーザー依頼「プロジェクトをレビューし、重複している関数をまとめてクリーンナップ・最適化、処理速度を上げる工夫を」。サブシステムごとに 8 本（rhi/core/ui、compositor、graph+tests、io、renderer、app のグラフ・プロパティ UI、app 本体・遠隔操作・MCP、shaders）を並列に走らせ、各担当が自分の範囲だけを直し、まとめてビルド・検証した。親が差分を読んだのは io・shaders の全部と、app のキャッシュ（道路の中心線・足跡・Application.h）、compositor の `Update` の待ちの部分まで。compositor の残り・renderer・graph・rhi/core/ui・app の残りの差分は担当の報告とビルド・テスト・起動での確認に頼っている。59 ファイル、+1,820 / −1,390 行。ユーザー向けの変更は [CHANGELOG.md](../../CHANGELOG.md)。シェーダの担当は利用上限で途中終了した（入った変更は下のとおりで、全シェーダのコンパイルは親が確かめた。残りの所見は未調査）。
+
+直した不具合:
+- graph: `MaskDependsOnHeight` に Sea（Liquid）と Grading が無く、マスクのプレビューが平らな板で評価されていた（`IsLayerMaskSourceKind` に寄せて一覧を 1 つに）。`FitClothoidControlPoints` の `source` が重複を除いた後の番号だった。`RoadProfileCurve::At` の NaN で範囲外を読む。
+- compositor: `PaintMaskStore::ProcessPendingWork` の解像度変更後の遷移漏れ、捨てる履歴への `Capture` が残って早く解放され得た、`ApplyRiver` / `ApplyMultiScaleErosion` / `ApplyDroplet` / `RunMaskOp` の失敗経路で状態を戻していなかった。
+- io: `WriteJsonFile` が閉じる前に成否を見ていた、`ExpandSceneComponents` / `MigrateSceneComponents` / `DuplicateScene` の手書きファイルでの例外、`directory_iterator` の range-for（++ が投げる）、`ReadUInt` の切り詰め。
+- app: `ui::HintText(x.c_str())` を書式として渡していた 4 か所、遠隔操作の `save_scene` が失敗を返さない。
+- renderer: `Ephemeris` の `asin` の引数の丸め。
+- shaders: `CompositeDroplet` / `CompositeMultiScaleErosion` の Resolve がマスクを `Load` で読んでいた（解像度が違うとずれる。UV で読む）。
+
+まとめた重複: `MaterialEvaluator` の単発マスク焼き 6 つ → `RunMaskDispatch`、定数の確保と転送 21 か所 → `UploadConstants`、フェンスの選び方 → `RecordingFence`、読み戻し → `ReadbackTextureNow`、足跡の三角形の詰め込み → `PackFootprintTriangles`、7 チャンネルの遷移 → `TransitionTextureSet`。シェーダのカスケード影（ModelPreview / GeneratedMesh / SnowPlume）→ `SceneShadow.hlsli`、IBL の分割和 4 か所 → `Brdf.hlsli` の `ShadeIblSplitSum`。`NodeGraph` の Model Output → Merge の走査、`PathInputLinked` / `MeshInputLinked`。Probe と Remote の `DottedPath`・範囲の検査・見えないウィンドウ、`OfferedGraphs`、`ApplyPathPointValues`。グラフの枠の幾何・並べ直しのメニュー・雲の濃さと散乱の行。`FileDialog` の 3 つの定型、`ImageIo` の読み込み 3 つ、`GpuResource` の SRV の記述、`UiStyle` のツールチップとアイコンのトグル。未使用の `ProjectFileFilters` / `MaterialFileFilters` / `SkyLibrary::Duplicate` を削除。
+
+速くしたもの: 道路のバンク角をまとめて引く（`EvaluateBankAnglesRadians`）、区画線の行の二分探索、経路探索の細かい地形を一括で 1 回だけ作る、`SegmentGrid::Nearest` の周だけの走査、`CompileCloudShapes` の複製、多段侵食の読み戻し待ちの間の記録し直しをやめる（`WaitingForPostprocess`）、Fluvial Erosion の定数（1 ステップ 6 → 2）、Flowline のテクスチャを伸ばすだけに、テクスチャ読み込みの `ExecuteImmediate` を 1 回に、`ProjectWorkspace::Scan` の uid の控え（更新日時と大きさ。2 秒以内に書かれたものは控えない）、`InspectAssetRelations` の正規化、`FingerprintScene` / `ExpandSceneComponents` の JSON の複製、インスタンス描画の定数を `Render` ごとに 1 回詰める、`EffectiveLight` のメモ、天球サムネイルの HDR の控え、フォルダ階層の子の控え（1 秒）、`AssetThumbnailHandle`、`CompiledCloudNow` / `HasCloudOutput`、道路中心線の同じフレームの中の控え、Mask Mesh の足跡を鍵が同じなら作り直さない、雲の形状の要約の控え、アンドゥのスナップショットの移動、プロパティ行の既定値の文字列を載せたときだけ作る、アセット名の折り返しの控え。
+
+検証: Debug ビルド（警告 0）、CTest 6 件（graph の修正と高速化それぞれにテストを追加）、全シェーダ 231 エントリポイントの DXC コンパイル（警告 0）。Debug で albura-pass と kiso-komagatake を `--screenshot-ui` で開き、ログの警告・エラー 0、道路・均し・影・配置・IBL を目視（`data/Test/review-1115/`）。Release で変更前のバイナリと比べ、西伊豆の既定カメラのビューポートは実質同じ絵（差のある画素 0.002%）、`--dump-catalog` は一致、tengudake（`build/review-root`）の `--evaluate-report` は秒数以外一致。同じ複製で `--save-project` → 開き直してノード数・配置数・エラー 0 が同じ。
+**フレーム時間は変わっていない**（西伊豆の既定カメラ 600 フレーム: 変更前 11.10 / 11.20 ms、変更後 11.05 / 11.55 ms）。描画は GPU が律速で、今回減らしたのは CPU 側と編集・読み込み・評価の経路。
+**未確認**: 対話の操作全般（Road Path のドラッグ、Sea / Grading のプレビューの見え方、アセットのフォルダ木、ペイントのアンドゥ、ファイルダイアログ、天球の輝度のつまみ、雲のノードのプロパティ）、遠隔操作（MCP）の実行、`--gpu-validation`、Fluvial Erosion / Flowline / Multi-Scale Erosion を使うシーンでの結果の一致、経路探索とクロソイドの実シーンでの結果。Release の `terrain_graph_mcp.exe` は使用中で差し替えられなかった（古いまま。中身はツール一覧の使い回しだけ）。
+
+持ち越した所見（設計判断や見た目の変化を伴うもの）:
+- 影: 配置を影の段ごとに毎フレーム描き直している。カメラと中身が変わらない間は段を描き直さない（app から「影の中身の版」を渡す）。`ModelAsset` の頂点の溶接（法線マップの陰影とインポスターがわずかに変わる）。
+- `PipelineCache` に世代を持たせて PSO のポインタを控える。マテリアル / テクスチャのライブラリに改版番号（`SurfaceMaterialGpu` の毎フレームのコンパイル、`CopyMaterialValues`、パーツごとの検索）。`CpuHeightfield` に版（道路の中心線をフレームをまたいで控える）。
+- `MultiScaleBreach` が UI スレッドで走る（数秒止まり得る）。`Device::ExecuteImmediate` が補助フェンスまで待つ。経路探索の `Upsample` が地形全体を細かくする（メモリ）。
+- ペイントが保存ごとに 2 回書かれる、同じ名前の `.assets` の衝突、アトミックな JSON の書き込みが 3 つある。
+- アセットの一覧が見えていないタイルまで毎フレーム処理する、サムネイルの控えが 128 個まで、`CompileCloudShapes` が雲の形状ノードの選択中に毎フレーム走る（ビューポートのガイド）、遠隔の `recompute_routes` がドラッグ中でも走る。
+- マスクだけの上流を差し込む位置が最初の Mask 入力しか見ていない疑い（`CompileChainFrom`。未確認）。`ApplicationLayerMaterial.cpp` の空のレイヤー列での `clamp`。
+- シェーダの残り（ガウスぼかし 5 か所、河川と流水の方向の表、`EvaluateLayerMaterial` の基底の評価、`CompositeThumbnail` のボックスフィルタ、地形の PCF の共通化）は未着手。
 
 ## 西伊豆の中低木を濃い群落へ調整（2026-10-31 19:16）
 

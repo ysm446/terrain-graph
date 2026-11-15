@@ -19,8 +19,11 @@ constexpr size_t kComponentBackupsToKeep = 5;
 void PruneBackups(const fs::path& directory, const std::wstring& stem, const std::wstring& extension, const fs::path& justWritten) {
     std::error_code error;
     std::vector<std::pair<fs::file_time_type, fs::path>> backups;
-    for (const auto& entry : fs::directory_iterator(directory, error)) {
-        if (error || !entry.is_regular_file(error)) continue;
+    // range-for の ++ は失敗すると例外を投げるので、increment(error) で回す。
+    std::error_code iterateError;
+    for (fs::directory_iterator it(directory, iterateError), end; !iterateError && it != end; it.increment(iterateError)) {
+        const auto& entry = *it;
+        if (!entry.is_regular_file(error)) continue;
         const auto name = entry.path().filename().wstring();
         if (entry.path().extension().wstring() != extension) continue;
         if (name != stem + extension && !name.starts_with(stem + L"_")) continue;
@@ -39,8 +42,10 @@ void PruneUnreferencedPaints(const ProjectWorkspace& workspace, const fs::path& 
     if (body.contains("paintMasks") && body["paintMasks"].is_array())
         for (const auto& paint : body["paintMasks"])
             if (paint.contains("source")) keep.insert(workspace.Resolve(paint["source"]).filename());
-    for (const auto& entry : fs::directory_iterator(directory, error)) {
-        if (error || !entry.is_regular_file(error)) continue;
+    std::error_code iterateError;
+    for (fs::directory_iterator it(directory, iterateError), end; !iterateError && it != end; it.increment(iterateError)) {
+        const auto& entry = *it;
+        if (!entry.is_regular_file(error)) continue;
         auto file = entry.path();
         const bool meta = file.extension() == L".meta";
         if (meta) file.replace_extension();
@@ -384,7 +389,8 @@ bool ExpandSceneComponents(ProjectWorkspace& workspace, json& document) {
         if (path.empty() || !workspace.ReadAsset(path, Kind(component), body)) return false;
         // ピンを名前で指したリンクなどを、ID の付け替えの前に正規の形へ直す。
         if (body.contains("graph")) NormalizeGraphJson(body["graph"]);
-        if (!GraphValid(body.value("graph", json()))) return false;
+        // value() は数 MB のグラフを丸ごと複製して返すので、参照のまま検査する。
+        if (const auto found = body.find("graph"); found == body.end() || !GraphValid(*found)) return false;
         std::map<int, int> resources[4];
         for (int table = 0; table < 4; ++table) {
             const auto values = body.value(Tables[table], json::array());
@@ -410,7 +416,8 @@ bool ExpandSceneComponents(ProjectWorkspace& workspace, json& document) {
                 destination.push_back(std::move(value));
             }
         }
-        auto graph = body["graph"];
+        // body のグラフはこの後使わないので、複製せずに移す。
+        auto graph = std::move(body["graph"]);
         if (!RemapResources(graph["nodes"], resources)) return false;
         std::map<int, int> ids;
         const auto remap = [&](json& id) {
@@ -431,11 +438,11 @@ bool ExpandSceneComponents(ProjectWorkspace& workspace, json& document) {
         for (auto& node : graph["nodes"]) {
             remap(node["id"]); node["component"] = component;
             for (const auto* key : {"inputs", "outputs"}) for (auto& pin : node[key]) remap(pin);
-            result["graph"]["nodes"].push_back(node);
+            result["graph"]["nodes"].push_back(std::move(node));
         }
         for (auto& link : graph["links"]) {
             for (const auto* key : {"id", "start", "end"}) remap(link[key]);
-            result["graph"]["links"].push_back(link);
+            result["graph"]["links"].push_back(std::move(link));
         }
         // グループ（枠）は ID の付け替えに関わらない（別の番号）。どの部品のものかだけ書き足す。
         if (graph.contains("groups") && graph["groups"].is_array())
@@ -445,7 +452,12 @@ bool ExpandSceneComponents(ProjectWorkspace& workspace, json& document) {
             }
         result["paintResolution"] = ReadInt(body, "paintResolution", 1024);
         if (!component && body.contains("geometry") && body["geometry"].is_object())
-            for (const auto& [key, value] : body["geometry"].items()) result["preview"][key] = value;
+            for (const auto& [key, value] : body["geometry"].items()) {
+                // 手で編集されたシーンの preview がオブジェクトでないと、operator[] が投げる。
+                auto& preview = result["preview"];
+                if (!preview.is_null() && !preview.is_object()) return false;
+                preview[key] = value;
+            }
     }
     result["_components"] = document["components"];
     document = std::move(result);
@@ -478,8 +490,10 @@ fs::path MigrateSceneComponents(ProjectWorkspace& workspace, const fs::path& sou
     const auto destination = workspace.UniquePath(source.parent_path(), ToUtf8Display(source.stem()) + "_migrated", ".tgscene");
     if (destination.empty()) return {};
     // 元のペイントへの絶対パスは保存処理だけに渡す。
-    for (auto& paint : document["paintMasks"])
+    for (auto& paint : document["paintMasks"]) {
+        if (!paint.is_object()) return {};
         paint["file"] = ToUtf8Portable(source.parent_path() / (source.stem().wstring() + L".assets") / FromUtf8(ProjectWorkspace::String(paint, "file")));
+    }
     document.erase("sceneUid");
     if (!SaveSceneComponents(workspace, destination, document)) return {};
     TG_LOG_INFO(ui::Tr("元のシーンを保持して分離しました: %s", "Split the scene and kept the original: %s"), ToUtf8Display(destination).c_str());
@@ -546,6 +560,8 @@ fs::path DuplicateScene(ProjectWorkspace& workspace, const fs::path& scene, cons
         // ペイントは部品ごとの原本なので、共有せずにコピーする（片方で塗るともう片方も変わらないように）。
         if (body.contains("paintMasks") && body["paintMasks"].is_array()) {
             for (auto& paint : body["paintMasks"]) {
+                // 手で編集されたファイルでは要素がオブジェクトとは限らない（value() は投げる）。
+                if (!paint.is_object()) return fail(ui::Tr("ペイントが見つかりません", "Paint not found"));
                 const fs::path input = workspace.Resolve(paint.value("source", json::object()));
                 const fs::path directory = target / (stem + L".assets");
                 const fs::path output = workspace.UniquePath(directory, "paint", ".png");

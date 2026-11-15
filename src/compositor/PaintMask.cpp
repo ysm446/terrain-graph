@@ -400,6 +400,9 @@ void PaintMaskStore::ProcessPendingWork(rhi::Device& device, rhi::PipelineCache&
             commandList->SetComputeRoot32BitConstants(0, sizeof(constants) / sizeof(uint32_t),
                                                       &constants, 0);
             commandList->Dispatch(DispatchCount(resolution), DispatchCount(resolution), 1);
+            // 合成パスが読む状態で渡す。積んだ要求が無いと Process は状態を揃えないので、
+            // ここで戻さないと UAV のまま合成に読まれる。
+            TransitionIfNeeded(commandList, item.texture, kReadState);
         }
         PIXEndEvent(commandList);
     });
@@ -486,10 +489,25 @@ void PaintMaskStore::QueueSnapshot(rhi::Device& device, PaintMaskId id) {
         return;
     }
 
+    // 捨てる履歴テクスチャへの退避（Capture）がまだ積まれたままなら、要求ごと取り下げる。
+    // 合成の評価中は Process が走らず、要求が何フレームも残ることがある。その間に
+    // 遅延解放が済むと、要求が持つ写しが最後の参照になり、コピーを記録した直後
+    // （GPU が実行する前）にテクスチャが解放されてしまう。
+    const auto dropPendingCapture = [this](const rhi::GpuTexture& history) {
+        ID3D12Resource* resource = history.resource.Get();
+        std::erase_if(m_pending, [resource](const Op& op) {
+            return op.type == OpType::Capture && op.history.resource.Get() == resource;
+        });
+    };
+
     // 新しい操作を積んだのでリドゥは無効になる。
+    for (const Snapshot& snapshot : m_redo) {
+        dropPendingCapture(snapshot.texture);
+    }
     ReleaseSnapshots(device, m_redo);
 
     if (m_undo.size() > kMaxUndoSteps) {
+        dropPendingCapture(m_undo.front().texture);
         device.DeferRelease(m_undo.front().texture);
         m_undo.erase(m_undo.begin());
     }

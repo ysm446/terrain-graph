@@ -57,6 +57,34 @@ ComPtr<IFileDialog> CreateFileDialog(const CLSID& clsid, const wchar_t* title,
     return dialog;
 }
 
+// ダイアログを出し、選ばれた 1 件のパスを返す。取り消したときと失敗したときは空。
+std::filesystem::path ShowAndGetPath(IFileDialog* dialog) {
+    if (FAILED(dialog->Show(::GetActiveWindow()))) {
+        return {};  // 取り消し。
+    }
+
+    ComPtr<IShellItem> item;
+    if (FAILED(dialog->GetResult(&item))) {
+        return {};
+    }
+    return ToPath(item.Get());
+}
+
+// 既定のオプションを残したまま、extra を足す。
+void AddOptions(IFileDialog* dialog, DWORD extra) {
+    DWORD options = 0;
+    dialog->GetOptions(&options);
+    dialog->SetOptions(options | extra);
+}
+
+// 開いたときに見せるフォルダ。シェルのアイテムにできなければ何もしない（前回のフォルダが開く）。
+void SetInitialFolder(IFileDialog* dialog, const std::filesystem::path& folder) {
+    ComPtr<IShellItem> item;
+    if (SUCCEEDED(::SHCreateItemFromParsingName(folder.c_str(), nullptr, IID_PPV_ARGS(&item)))) {
+        dialog->SetFolder(item.Get());
+    }
+}
+
 }  // namespace
 
 std::vector<FileFilter> ImageFileFilters() {
@@ -75,37 +103,13 @@ std::vector<FileFilter> HdriFileFilters() {
     };
 }
 
-std::vector<FileFilter> ProjectFileFilters() {
-    return {
-        {ui::Tr(L"terrain-graph プロジェクト (*.tgproj)", L"terrain-graph Project (*.tgproj)"), L"*.tgproj"},
-        {ui::Tr(L"material-mixer プロジェクト (*.mmproj)", L"material-mixer Project (*.mmproj)"), L"*.mmproj"},
-        {ui::Tr(L"すべてのファイル (*.*)", L"All Files (*.*)"), L"*.*"},
-    };
-}
-
-std::vector<FileFilter> MaterialFileFilters() {
-    return {
-        {ui::Tr(L"terrain-graph マテリアル (*.tgmat)", L"terrain-graph Material (*.tgmat)"), L"*.tgmat"},
-        {ui::Tr(L"material-mixer マテリアル (*.mmmat)", L"material-mixer Material (*.mmmat)"), L"*.mmmat"},
-        {ui::Tr(L"すべてのファイル (*.*)", L"All Files (*.*)"), L"*.*"},
-    };
-}
-
 std::filesystem::path ShowOpenFileDialog(const wchar_t* title,
                                          const std::vector<FileFilter>& filters) {
     ComPtr<IFileDialog> dialog = CreateFileDialog(CLSID_FileOpenDialog, title, filters);
     if (!dialog) {
         return {};
     }
-    if (FAILED(dialog->Show(::GetActiveWindow()))) {
-        return {};  // 取り消し。
-    }
-
-    ComPtr<IShellItem> item;
-    if (FAILED(dialog->GetResult(&item))) {
-        return {};
-    }
-    return ToPath(item.Get());
+    return ShowAndGetPath(dialog.Get());
 }
 
 std::filesystem::path ShowPickFolderDialog(const wchar_t* title,
@@ -116,27 +120,11 @@ std::filesystem::path ShowPickFolderDialog(const wchar_t* title,
         return {};
     }
 
-    DWORD options = 0;
-    dialog->GetOptions(&options);
-    dialog->SetOptions(options | FOS_PICKFOLDERS);
-
+    AddOptions(dialog.Get(), FOS_PICKFOLDERS);
     if (!initialPath.empty()) {
-        ComPtr<IShellItem> folder;
-        if (SUCCEEDED(::SHCreateItemFromParsingName(initialPath.c_str(), nullptr,
-                                                    IID_PPV_ARGS(&folder)))) {
-            dialog->SetFolder(folder.Get());
-        }
+        SetInitialFolder(dialog.Get(), initialPath);
     }
-
-    if (FAILED(dialog->Show(::GetActiveWindow()))) {
-        return {};  // 取り消し。
-    }
-
-    ComPtr<IShellItem> item;
-    if (FAILED(dialog->GetResult(&item))) {
-        return {};
-    }
-    return ToPath(item.Get());
+    return ShowAndGetPath(dialog.Get());
 }
 
 std::vector<std::filesystem::path> ShowOpenFilesDialog(const wchar_t* title,
@@ -146,9 +134,7 @@ std::vector<std::filesystem::path> ShowOpenFilesDialog(const wchar_t* title,
         return {};
     }
 
-    DWORD options = 0;
-    dialog->GetOptions(&options);
-    dialog->SetOptions(options | FOS_ALLOWMULTISELECT);
+    AddOptions(dialog.Get(), FOS_ALLOWMULTISELECT);
 
     if (FAILED(dialog->Show(::GetActiveWindow()))) {
         return {};  // 取り消し。
@@ -199,28 +185,13 @@ std::filesystem::path ShowSaveFileDialog(const wchar_t* title,
         const std::filesystem::path parent = initialPath.parent_path();
         std::error_code error;
         if (!parent.empty() && std::filesystem::is_directory(parent, error)) {
-            ComPtr<IShellItem> folder;
-            if (SUCCEEDED(::SHCreateItemFromParsingName(parent.c_str(), nullptr,
-                                                        IID_PPV_ARGS(&folder)))) {
-                dialog->SetFolder(folder.Get());
-            }
+            SetInitialFolder(dialog.Get(), parent);
         }
         dialog->SetFileName(initialPath.filename().wstring().c_str());
     }
 
-    DWORD options = 0;
-    dialog->GetOptions(&options);
-    dialog->SetOptions(options | FOS_OVERWRITEPROMPT);
-
-    if (FAILED(dialog->Show(::GetActiveWindow()))) {
-        return {};  // 取り消し。
-    }
-
-    ComPtr<IShellItem> item;
-    if (FAILED(dialog->GetResult(&item))) {
-        return {};
-    }
-    return ToPath(item.Get());
+    AddOptions(dialog.Get(), FOS_OVERWRITEPROMPT);
+    return ShowAndGetPath(dialog.Get());
 }
 
 }  // namespace tg

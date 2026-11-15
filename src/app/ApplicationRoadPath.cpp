@@ -89,6 +89,64 @@ bool PropertyAlong(const char* label, float* u, float total, const char* tooltip
     return false;
 }
 
+// 中心線の形に効く値の指紋（平面の点・エッジ・縦断ポイント）。構造体の詰め物を拾わないよう、
+// 値を 1 つずつ混ぜる。BuildRoadCenterline の同じフレームの控えの照合にだけ使う。
+template <typename T>
+void MixValue(uint64_t& hash, const T& value) {
+    const auto* bytes = reinterpret_cast<const unsigned char*>(&value);
+    for (size_t i = 0; i < sizeof(T); ++i) {
+        hash ^= bytes[i];
+        hash *= 1099511628211ull;
+    }
+}
+uint64_t RoadCenterlineFingerprint(const graph::RoadPathSettings& road) {
+    uint64_t hash = 14695981039346656037ull;
+    MixValue(hash, road.path.points.size());
+    for (const graph::PathPoint& point : road.path.points) {
+        MixValue(hash, point.id);
+        MixValue(hash, point.u);
+        MixValue(hash, point.v);
+        MixValue(hash, point.widthMeters);
+        MixValue(hash, point.featherMeters);
+        MixValue(hash, point.intensity);
+        MixValue(hash, point.heightOffsetMeters);
+    }
+    MixValue(hash, road.path.edges.size());
+    for (const graph::PathEdge& edge : road.path.edges) {
+        MixValue(hash, edge.id);
+        MixValue(hash, edge.from);
+        MixValue(hash, edge.to);
+        MixValue(hash, edge.curve);
+        MixValue(hash, edge.rounding);
+        MixValue(hash, edge.clothoidRatio);
+        MixValue(hash, edge.overrideValues);
+        MixValue(hash, edge.widthMeters);
+        MixValue(hash, edge.featherMeters);
+        MixValue(hash, edge.intensity);
+        MixValue(hash, edge.meanderMeters);
+        MixValue(hash, edge.meanderWavelengthMeters);
+        MixValue(hash, edge.route);
+        MixValue(hash, edge.routed);
+        MixValue(hash, edge.routedFromU);
+        MixValue(hash, edge.routedFromV);
+        MixValue(hash, edge.routedToU);
+        MixValue(hash, edge.routedToV);
+        MixValue(hash, edge.waypoints.size());
+        for (const graph::PathRouteWaypoint& waypoint : edge.waypoints) {
+            MixValue(hash, waypoint.u);
+            MixValue(hash, waypoint.v);
+        }
+    }
+    MixValue(hash, road.verticalPoints.size());
+    for (const graph::RoadVerticalPoint& point : road.verticalPoints) {
+        MixValue(hash, point.id);
+        MixValue(hash, point.u);
+        MixValue(hash, point.vclMeters);
+        MixValue(hash, point.offsetMeters);
+    }
+    return hash;
+}
+
 }  // namespace
 
 bool Application::RoadBaseConnected(const graph::Node& node) const {
@@ -176,17 +234,41 @@ bool Application::BuildRoadCenterline(const graph::Node& node, graph::RoadProfil
         return false;
     }
     const float scale = m_renderer.DisplacementScale();
+    const float planeSize = m_renderer.PlaneSize();
+    // Road Path を選んでいる間は、ビューポートの入力・重ね描き・プロパティが同じ中心線を 1 フレームに
+    // 何度も引く（1 m ごとに地形を拾うので長い道路では重い）。同じフレームで、同じノード・同じ地形・
+    // 同じ設定なら最初の結果の写しを返す。フレームをまたいでは使わない（Base の地形は評価が進むと
+    // 場所を変えずに中身だけ変わるので、中身の版を見分けられない）。
+    uint64_t fingerprint = RoadCenterlineFingerprint(settings->road);
+    MixValue(fingerprint, heightfield);
+    MixValue(fingerprint, heightfield->values.data());
+    MixValue(fingerprint, heightfield->values.size());
+    MixValue(fingerprint, scale);
+    MixValue(fingerprint, planeSize);
+    const int frame = ImGui::GetFrameCount();
+    RoadCenterlineMemo& memo = m_roadCenterlineMemo;
+    if (memo.frame == frame && memo.nodeId == node.id && memo.fingerprint == fingerprint) {
+        base = memo.base;
+        centerline = memo.centerline;
+        return true;
+    }
+    memo.frame = -1;
     // ワールドの高さ（PathWorldPosition と同じ換算。読む元だけが Base の地形）。
     const graph::RoadHeightSampler height = [heightfield, scale](float u, float v) {
         return (heightfield->Sample(u, v) - 0.5f) * scale;
     };
-    if (!graph::BuildRoadBaseline(settings->road, m_renderer.PlaneSize(), height, base, error)) {
+    if (!graph::BuildRoadBaseline(settings->road, planeSize, height, base, error)) {
         return false;
     }
     const std::vector<float> heights = graph::EvaluateVerticalProfile(settings->road, base);
     std::vector<XMFLOAT3> points = base.points;
     for (size_t i = 0; i < points.size(); ++i) points[i].y = heights[i];
     centerline = graph::BuildRoadProfileCurve(points);
+    memo.frame = frame;
+    memo.nodeId = node.id;
+    memo.fingerprint = fingerprint;
+    memo.base = base;
+    memo.centerline = centerline;
     return true;
 }
 
@@ -610,9 +692,12 @@ bool Application::DrawRoadPathSettings(graph::Node& node) {
                                          defaults.bankSmoothMeters, ui::Tr("ぼかす範囲（m）", "Blur range (m)"), "%.0f m");
         }
         if (valid && road.bankEnabled) {
+            // まとめて引く（1 点ずつ呼ぶと、そのたびにバンクのポイントを並べ直す）。
+            std::vector<float> distances;
+            for (float d = 0.0f; d <= total; d += std::max(1.0f, total / 200.0f)) distances.push_back(d);
             float largest = 0.0f;
-            for (float d = 0.0f; d <= total; d += std::max(1.0f, total / 200.0f)) {
-                largest = std::max(largest, std::abs(graph::EvaluateBankAngleRadians(road, centerline, d)));
+            for (const float angle : graph::EvaluateBankAnglesRadians(road, centerline, distances)) {
+                largest = std::max(largest, std::abs(angle));
             }
             ui::PropertyValue(ui::Tr("最大", "Max"), "%.1f°", XMConvertToDegrees(largest));
         }

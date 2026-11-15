@@ -147,6 +147,25 @@ std::vector<float> Upsample(const float* values, uint32_t resolution, int factor
     return out;
 }
 
+// 細かくした地形の写し。terrain は中の配列を指すので、作ったあとは写したり動かしたりしない。
+struct RefinedTerrain {
+    std::vector<float> heights;
+    std::vector<float> avoid;
+    PathRouteTerrain terrain;
+};
+
+void BuildRefinedTerrain(const PathRouteTerrain& terrain, int refine, RefinedTerrain& out) {
+    out.heights = Upsample(terrain.heights, terrain.resolution, refine);
+    out.avoid.clear();
+    out.terrain = terrain;
+    out.terrain.resolution = terrain.resolution * static_cast<uint32_t>(refine);
+    out.terrain.heights = out.heights.data();
+    if (terrain.avoid != nullptr) {
+        out.avoid = Upsample(terrain.avoid, terrain.resolution, refine);
+        out.terrain.avoid = out.avoid.data();
+    }
+}
+
 }  // namespace
 
 int TrailRefineFactor(const PathRouteTerrain& terrain) {
@@ -166,18 +185,11 @@ bool FindPathRoute(const PathRouteTerrain& terrain, const PathRouteQuery& query,
                        : (query.mode == PathRoute::Trail) ? TrailRefineFactor(terrain)
                                                           : 1;
     if (refine > 1) {
-        const std::vector<float> heights = Upsample(terrain.heights, terrain.resolution, refine);
-        std::vector<float> avoid;
-        PathRouteTerrain fine = terrain;
-        fine.resolution = terrain.resolution * static_cast<uint32_t>(refine);
-        fine.heights = heights.data();
-        if (terrain.avoid != nullptr) {
-            avoid = Upsample(terrain.avoid, terrain.resolution, refine);
-            fine.avoid = avoid.data();
-        }
+        RefinedTerrain fine;
+        BuildRefinedTerrain(terrain, refine, fine);
         PathRouteQuery fineQuery = query;
         fineQuery.refine = 1;
-        return FindPathRoute(fine, fineQuery, outWaypoints);
+        return FindPathRoute(fine.terrain, fineQuery, outWaypoints);
     }
     const int resolution = static_cast<int>(terrain.resolution);
     const auto cellOf = [resolution](float coordinate) {
@@ -393,7 +405,13 @@ bool FindPathRoute(const PathRouteTerrain& terrain, const PathRouteQuery& query,
     return true;
 }
 
-bool RoutePathEdge(PathSettings& path, PathElementId edgeId, const PathRouteTerrain& terrain) {
+namespace {
+
+// RoutePathEdge の中身。trailTerrain は、登山道の自動の倍率で細かくした地形（無ければ nullptr で、
+// FindPathRoute がその場で作る）。まとめて計算するときに、エッジごとに地形全体を引き伸ばし直さない
+// ためのもの（結果は同じ）。
+bool RoutePathEdgeWith(PathSettings& path, PathElementId edgeId, const PathRouteTerrain& terrain,
+                       const PathRouteTerrain* trailTerrain) {
     PathEdge* edge = nullptr;
     for (PathEdge& candidate : path.edges) {
         if (candidate.id == edgeId) {
@@ -433,7 +451,13 @@ bool RoutePathEdge(PathSettings& path, PathElementId edgeId, const PathRouteTerr
                      0.25f * widthMeters / std::max(terrain.sizeMeters, 1e-3f));
     }
     std::vector<PathRouteWaypoint> waypoints;
-    if (!FindPathRoute(terrain, query, waypoints)) {
+    if (edge->route == PathRoute::Trail && trailTerrain != nullptr) {
+        // 細かくした地形をそのまま渡す（refine = 1 で、もう引き伸ばさない）。
+        query.refine = 1;
+        if (!FindPathRoute(*trailTerrain, query, waypoints)) {
+            return false;
+        }
+    } else if (!FindPathRoute(terrain, query, waypoints)) {
         return false;
     }
     edge->waypoints = std::move(waypoints);
@@ -443,6 +467,12 @@ bool RoutePathEdge(PathSettings& path, PathElementId edgeId, const PathRouteTerr
     edge->routedToU = b->u;
     edge->routedToV = b->v;
     return true;
+}
+
+}  // namespace
+
+bool RoutePathEdge(PathSettings& path, PathElementId edgeId, const PathRouteTerrain& terrain) {
+    return RoutePathEdgeWith(path, edgeId, terrain, nullptr);
 }
 
 size_t RoutePathEdges(PathSettings& path, const PathRouteTerrain& terrain, bool force,
@@ -463,9 +493,23 @@ size_t RoutePathEdges(PathSettings& path, const PathRouteTerrain& terrain, bool 
         }
         ids.push_back(edge.id);
     }
+    // 登山道は地形を引き伸ばした格子で探す。引き伸ばしは地形全体（数千万セル）なので、
+    // エッジごとではなく 1 回だけ作って使い回す。
+    const int trailRefine = TrailRefineFactor(terrain);
+    RefinedTerrain fine;
+    bool fineBuilt = false;
     size_t routed = 0;
     for (const PathElementId id : ids) {
-        if (RoutePathEdge(path, id, terrain)) {
+        const PathEdge* edge = path.FindEdge(id);
+        const PathRouteTerrain* trailTerrain = nullptr;
+        if (trailRefine > 1 && edge != nullptr && edge->route == PathRoute::Trail) {
+            if (!fineBuilt) {
+                BuildRefinedTerrain(terrain, trailRefine, fine);
+                fineBuilt = true;
+            }
+            trailTerrain = &fine.terrain;
+        }
+        if (RoutePathEdgeWith(path, id, terrain, trailTerrain)) {
             ++routed;
         }
     }

@@ -370,7 +370,8 @@ void CsResolve(uint3 dispatchThreadId : SV_DispatchThreadID)
     if (g_droplet.indices6.x != kInvalidTextureIndex)
     {
         Texture2D<float> mask = ResourceDescriptorHeap[g_droplet.indices6.x];
-        delta *= saturate(mask.Load(int3(texel, 0)));
+        // マスクは合成と解像度が違うことがある（Fluvial のマスクは独自の解像度）。UV で読む。
+        delta *= saturate(mask.SampleLevel(g_samplerLinearClamp, uv, 0.0f));
     }
     heightTarget[texel] = saturate(heightTarget[texel] + delta / g_droplet.params2.z);
 }

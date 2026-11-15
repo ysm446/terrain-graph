@@ -3,15 +3,9 @@
 #include "CompositeCommon.hlsli"
 #include "Tonemap.hlsli"
 #include "ImpostorCommon.hlsli"
+#include "SceneShadow.hlsli"
 
 // ModelPreview.cpp と同じ並び。単位はm、UVは読み込み時に画像座標へ変換済み。
-struct SceneShadowData {
-    float4x4 view;
-    float4x4 matrices[4];
-    uint4 indices;
-    float4 splits, biases;
-    float nearDistance, texel, blend; uint count;
-};
 struct ModelConstants
 {
     uint baseColorIndex, normalIndex, roughnessIndex, metallicIndex;
@@ -54,35 +48,8 @@ struct ModelConstants
 
 ConstantBuffer<ModelConstants> g_model : register(b1);
 
-float ModelShadow(float3 position, float nDotL, uint cascade) {
-    uint index = g_model.shadows.indices[cascade];
-    if (index == kInvalidTextureIndex) return 1;
-    float4 clip = mul(g_model.shadows.matrices[cascade],float4(position,1));
-    float3 ndc = clip.xyz/clip.w;
-    float2 uv = ndc.xy*float2(0.5,-0.5)+0.5;
-    if (clip.w <= 0 || any(uv<0) || any(uv>1) || ndc.z>1) return 1;
-    Texture2D<float> shadowMap=ResourceDescriptorHeap[NonUniformResourceIndex(index)];
-    float visibility=0;
-    float bias=g_model.shadows.biases[cascade]*(1+3*(1-saturate(nDotL)));
-    [unroll] for(int y=-1;y<=1;++y) [unroll] for(int x=-1;x<=1;++x)
-        visibility += ndc.z-bias <= shadowMap.SampleLevel(g_samplerPointClamp,uv+float2(x,y)*g_model.shadows.texel,0) ? 1 : 0;
-    return visibility/9;
-}
-float ModelVisibility(float3 position, float nDotL) {
-    if (g_model.shadows.count==0) return 1;
-    if (g_model.shadows.count==1) return ModelShadow(position,nDotL,0);
-    float distance=-mul(g_model.shadows.view,float4(position,1)).z;
-    const uint lastCascade=g_model.shadows.count-1;
-    if(distance>g_model.shadows.splits[lastCascade]) return 1;
-    uint cascade=0; while(cascade<lastCascade && distance>g_model.shadows.splits[cascade]) ++cascade;
-    float visibility=ModelShadow(position,nDotL,cascade);
-    float start=cascade==0?g_model.shadows.nearDistance:g_model.shadows.splits[cascade-1];
-    float end=g_model.shadows.splits[cascade];
-    float blendStart=end-(end-start)*g_model.shadows.blend;
-    if(distance<=blendStart) return visibility;
-    float next=cascade<lastCascade?ModelShadow(position,nDotL,min(cascade+1,lastCascade)):1;
-    return lerp(visibility,next,smoothstep(blendStart,end,distance));
-}
+#define TG_SCENE_SHADOWS g_model.shadows
+#include "SceneShadow.hlsli"
 
 float MapLod(uint index, float2 deltaX, float2 deltaY)
 {
@@ -211,7 +178,7 @@ float4 ShadeModel(float3 position, float3 normal, float3 viewDirection, float3 b
 
     const float3 lightDirection = normalize(g_model.lightDirection);
     // 直射光にはシャドウマップと雲影の両方を掛ける（地形の MeshPbr と同じ）。
-    float visibility = ModelVisibility(position,dot(normal,lightDirection));
+    float visibility = SceneShadowVisibility(position,dot(normal,lightDirection));
     if (g_model.sceneMode != 0 && g_model.atmosphericMode != 0)
         visibility *= CloudShadow(position, g_model.atmosphere, g_model.cloudNoiseIndex);
     float3 radiance = ShadeDirectionalLight(normal, viewDirection, lightDirection,
@@ -220,32 +187,15 @@ float4 ShadeModel(float3 position, float3 normal, float3 viewDirection, float3 b
 
     if (g_model.irradianceIndex != kInvalidTextureIndex)
     {
-        // MeshPbr と同じ分割和近似。nDotV は 1 を超えると NaN になるので clamp で守る。
-        const float nDotV = clamp(dot(normal, viewDirection), 1e-4f, 1.0f);
-
-        TextureCube<float4> prefilteredMap = ResourceDescriptorHeap[g_model.prefilteredIndex];
-        Texture2D<float2> brdfLut = ResourceDescriptorHeap[g_model.brdfLutIndex];
-
         // 雲の上に置かれたモデルは、雲なしの環境で照らす（地形の MeshPbr と同じ）。
         const bool blendAmbient = g_model.sceneMode != 0 && g_model.atmosphericMode != 0;
         const float3 irradiance = SampleAmbientIrradiance(
             g_model.irradianceIndex, blendAmbient ? g_model.clearIrradianceIndex : kInvalidTextureIndex, normal,
             position.y, g_model.ambientLow, g_model.ambientHigh, g_model.ambientOcclusion);
-        const float3 fresnel = FresnelSchlickRoughness(f0, nDotV, clampedRoughness);
-        const float3 diffuseIbl = (1.0f - fresnel) * diffuseColor * irradiance;
-
-        const float3 reflectionDirection = reflect(-viewDirection, normal);
-        const float mipLevel =
-            clampedRoughness * float(max(g_model.prefilteredMipCount, 1u) - 1u);
-        const float3 prefiltered =
-            prefilteredMap.SampleLevel(g_samplerLinearClamp, reflectionDirection, mipLevel).rgb;
-        const float2 environmentBrdf =
-            brdfLut.SampleLevel(g_samplerLinearClamp, float2(nDotV, clampedRoughness), 0.0f);
-        const float3 specularIbl = prefiltered * (f0 * environmentBrdf.x + environmentBrdf.y);
-
-        radiance += (diffuseIbl + specularIbl) * g_model.iblIntensity * ambientOcclusion;
+        radiance += ShadeIblSplitSum(normal, viewDirection, diffuseColor, f0, clampedRoughness, irradiance,
+                                     g_model.prefilteredIndex, g_model.brdfLutIndex, g_model.prefilteredMipCount) *
+                    g_model.iblIntensity * ambientOcclusion;
     }
-
 
     if (g_model.sceneMode != 0) return float4(radiance,1);
     return float4(LinearToSrgb(ApplyTonemap(radiance*g_model.exposure,g_model.tonemapMode)),1);

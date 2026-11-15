@@ -17,6 +17,7 @@
 
 #include <array>
 #include <variant>
+#include <vector>
 #include <cmath>
 
 namespace {
@@ -2049,5 +2050,79 @@ void RunNodeGraphTests() {
         };
         Check(styled && mid != 0 && path.edges.size() == 2 && keeps(head) && keeps(tail),
               "エッジを割った両方の半分が稜線 / Avoid の重みと蛇行を引き継ぐ");
+    }
+
+    Section("ノードグラフ — Sea と Grading の Mask 出力のプレビュー");
+    {
+        // レイヤーでもある出どころの Mask は、そのレイヤーを合成したチェーンの上でしか焼けない。
+        // 平らな板に貼る扱いにすると op が作れず、プレビューが全面白になる。
+        for (const NodeKind kind : {NodeKind::Liquid, NodeKind::RoadGrading}) {
+            NodeGraph graph;
+            const auto baseId = graph.CreateNode(NodeKind::Heightmap);
+            const auto sourceId = graph.CreateNode(kind);
+            const auto* base = graph.FindNode(baseId);
+            const auto* source = graph.FindNode(sourceId);
+            const bool linked = graph.CreateLink(base->outputs[0].id, source->inputs[0].id);
+            const auto expected = kind == NodeKind::Liquid ? tg::compositor::MaskOpKind::Liquid
+                                                           : tg::compositor::MaskOpKind::RoadGrading;
+            bool allFound = linked && source->outputs.size() == 4;
+            for (size_t i = 1; allFound && i < source->outputs.size(); ++i) {
+                const auto preview = graph.CompileLayersTo(sourceId, source->outputs[i].id);
+                // 地形 + そのレイヤー + 覆い + 塗り。塗りはそのレイヤーの op を読む。
+                bool found = preview.layers.size() == 4 &&
+                             preview.layers.back().mask.source == tg::compositor::MaskSource::Node &&
+                             preview.layers.back().mask.maskOp >= 0;
+                if (found) {
+                    const auto& op = preview.maskOps[static_cast<size_t>(preview.layers.back().mask.maskOp)];
+                    const uint32_t channel = kind == NodeKind::Liquid ? op.liquidMask.channel : op.dropletMask.channel;
+                    found = op.kind == expected && channel == i - 1 && op.heightSourceLayer == 1;
+                }
+                allFound = found;
+            }
+            Check(allFound, kind == NodeKind::Liquid ? "Sea の Water / Depth / Shore を地形の上でプレビューする"
+                                                     : "Grading の Road / Cut / Fill を地形の上でプレビューする");
+        }
+    }
+
+    Section("ノードグラフ — Cloud Output の有無");
+    {
+        NodeGraph graph;
+        Check(!graph.HasCloudOutput() && !graph.CompileCloud().hasOutput, "Cloud Output が無ければ偽");
+        graph.CreateNode(NodeKind::CloudOutput);
+        Check(graph.HasCloudOutput() && graph.CompileCloud().hasOutput, "Cloud Output があれば真（CompileCloud と同じ）");
+    }
+
+    Section("パス — 登山道をまとめて計算しても 1 本ずつと同じ経路");
+    {
+        // まとめて計算するときは、引き伸ばした地形を 1 回だけ作って使い回す。結果は変えない。
+        constexpr int kSize = 96;
+        std::vector<float> heights(static_cast<size_t>(kSize) * kSize);
+        for (int y = 0; y < kSize; ++y)
+            for (int x = 0; x < kSize; ++x)
+                heights[static_cast<size_t>(y) * kSize + x] =
+                    0.5f + 0.2f * std::sin(static_cast<float>(x) * 0.21f) * std::cos(static_cast<float>(y) * 0.17f);
+        tg::graph::PathRouteTerrain terrain;
+        terrain.resolution = kSize;
+        terrain.heights = heights.data();
+        terrain.sizeMeters = 480.0f;  // 1 セル 5 m。登山道は 3 倍に細かくする
+        terrain.heightMeters = 200.0f;
+        tg::graph::PathSettings path;
+        const auto a = tg::graph::AddPathPoint(path, 0.15f, 0.2f, 0);
+        const auto b = tg::graph::AddPathPoint(path, 0.5f, 0.6f, a);
+        tg::graph::AddPathPoint(path, 0.85f, 0.3f, b);
+        for (tg::graph::PathEdge& edge : path.edges) edge.route = tg::graph::PathRoute::Trail;
+        path.edges.back().route = tg::graph::PathRoute::Road;  // 道路は元の格子のまま探す
+        path.edges.front().route = tg::graph::PathRoute::Trail;
+        tg::graph::PathSettings single = path;
+        const size_t routed = tg::graph::RoutePathEdges(path, terrain, true);
+        bool same = tg::graph::TrailRefineFactor(terrain) > 1 && routed == path.edges.size();
+        for (size_t i = 0; same && i < single.edges.size(); ++i) {
+            same = tg::graph::RoutePathEdge(single, single.edges[i].id, terrain) &&
+                   single.edges[i].waypoints.size() == path.edges[i].waypoints.size() && path.edges[i].routed;
+            for (size_t k = 0; same && k < single.edges[i].waypoints.size(); ++k)
+                same = single.edges[i].waypoints[k].u == path.edges[i].waypoints[k].u &&
+                       single.edges[i].waypoints[k].v == path.edges[i].waypoints[k].v;
+        }
+        Check(same && !path.edges.front().waypoints.empty(), "まとめた計算と 1 本ずつの計算で内部点が一致する");
     }
 }

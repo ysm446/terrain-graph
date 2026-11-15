@@ -443,6 +443,8 @@ private:
     // 手続き的な空へ落とす（アセットの中身は書き換えない）。
     void ApplyActiveSky(rhi::Device& device, rhi::PipelineCache& pipelineCache);
 
+    // 大気モードの実効ライト（夜は月へ切り替え、色は大気の透過率）を求める。EffectiveLight の中身。
+    LightSettings ComputeAtmosphericLight() const;
     // ライトから見たビュー×投影。プレビューの被写体を囲む平行投影。
     DirectX::XMMATRIX LightViewProjection() const;
     void ReleaseTargets(rhi::Device& device);
@@ -495,6 +497,15 @@ private:
     AtmosphereSettings m_atmosphereSettings;
     CelestialSettings m_celestial;
     LightSettings m_atmosphericLight{0.9f, 0.9f, 120000.0f, {1.0f, 1.0f, 1.0f}};
+    // EffectiveLight（大気モード）の結果と、それを決めた入力。設定は参照で外から書き換えられるので、
+    // 汚れの印ではなく入力そのものを比べる（memcmp するため 4 バイトの値だけを並べ、詰め物を作らない）。
+    struct EffectiveLightKey {
+        float values[13];
+        uint32_t nightEnabled;
+    };
+    mutable EffectiveLightKey m_effectiveLightKey{};
+    mutable LightSettings m_effectiveLight;
+    mutable bool m_effectiveLightValid = false;
     bool m_atmosphericMode = false;
     float m_atmosphericEnvironmentIntensity = DefaultSkylightIntensity;
     compositor::MaterialEvaluator m_evaluator;

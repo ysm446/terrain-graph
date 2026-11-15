@@ -436,9 +436,22 @@ void Application::PrepareRoadMeshes() {
         // 帯で足跡は路面に含まれるので入れない。鎖のどのメッシュに繋いだ Mask Mesh も鎖全体を読む。
         // 下流を省いている間は足跡を更新しない（本体スタックの改版が毎フレーム起きないように。読み手は上で生かした）。
         if (!compiled.maskNodes.empty() && !cut) {
-            compositor::MeshFootprint footprint;
             const float sizeMeters = std::max(m_renderer.PlaneSize(), 1e-3f);
             const float heightMeters = std::max(m_renderer.DisplacementScale(), 1e-3f);
+            // 足跡は帯の形（キー）と地形の実寸だけで決まる。どれも前と同じで、置いた足跡がそのまま
+            // 残っていれば作り直さない（道路が長いと、毎フレーム全頂点を写してハッシュし直すのが重い）。
+            uint64_t footprintKey = HashValue(14695981039346656037ull, cache.road.key);
+            for (const RoadStrip& strip : cache.shoulders) footprintKey = HashValue(footprintKey, strip.key);
+            footprintKey = HashValue(footprintKey, sizeMeters);
+            footprintKey = HashValue(footprintKey, heightMeters);
+            bool upToDate = footprintKey == cache.footprintKey;
+            for (const graph::GraphId maskId : compiled.maskNodes) {
+                aliveFootprints.push_back(maskId);
+                const compositor::MeshFootprint* placed = m_meshFootprints.Find(static_cast<uint32_t>(maskId));
+                upToDate = upToDate && placed != nullptr && placed->hash == cache.footprintHash;
+            }
+            if (upToDate) continue;
+            compositor::MeshFootprint footprint;
             const auto append = [&](const renderer::MeshData& mesh) {
                 const uint32_t baseVertex = static_cast<uint32_t>(footprint.vertices.size());
                 footprint.vertices.reserve(footprint.vertices.size() + mesh.vertices.size());
@@ -455,9 +468,13 @@ void Application::PrepareRoadMeshes() {
             append(cache.road.mesh);
             for (const RoadStrip& strip : cache.shoulders) append(strip.mesh);
             for (const graph::GraphId maskId : compiled.maskNodes) {
-                aliveFootprints.push_back(maskId);
                 m_meshFootprints.Set(static_cast<uint32_t>(maskId), footprint);
             }
+            // 置いた足跡のハッシュ（Set が計算する）を控える。ほかの元が同じ鍵を上書きしたら置き直す。
+            const compositor::MeshFootprint* placed =
+                m_meshFootprints.Find(static_cast<uint32_t>(compiled.maskNodes.front()));
+            cache.footprintKey = footprintKey;
+            cache.footprintHash = placed != nullptr ? placed->hash : 0;
         }
     }
     for (auto it = m_roadMeshCache.begin(); it != m_roadMeshCache.end();) {

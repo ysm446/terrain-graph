@@ -419,28 +419,14 @@ void CsMain(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     if (g_sphere.irradianceIndex != kInvalidTextureIndex)
     {
-        // MeshPbr と同じ分割和近似。nDotV は 1 を超えると NaN になるので clamp で守る。
-        const float nDotV = clamp(dot(normal, viewDirection), 1e-4f, 1.0f);
-
+        // MeshPbr と同じ分割和近似（Brdf.hlsli の ShadeIblSplitSum）。
         TextureCube<float4> irradianceMap = ResourceDescriptorHeap[g_sphere.irradianceIndex];
-        TextureCube<float4> prefilteredMap = ResourceDescriptorHeap[g_sphere.prefilteredIndex];
-        Texture2D<float2> brdfLut = ResourceDescriptorHeap[g_sphere.brdfLutIndex];
-
         const float3 irradiance =
             irradianceMap.SampleLevel(g_samplerLinearClamp, normal, 0.0f).rgb;
-        const float3 fresnel = FresnelSchlickRoughness(f0, nDotV, clampedRoughness);
-        const float3 diffuseIbl = (1.0f - fresnel) * diffuseColor * irradiance;
-
-        const float3 reflectionDirection = reflect(-viewDirection, normal);
-        const float mipLevel =
-            clampedRoughness * float(max(g_sphere.prefilteredMipCount, 1u) - 1u);
-        const float3 prefiltered =
-            prefilteredMap.SampleLevel(g_samplerLinearClamp, reflectionDirection, mipLevel).rgb;
-        const float2 environmentBrdf =
-            brdfLut.SampleLevel(g_samplerLinearClamp, float2(nDotV, clampedRoughness), 0.0f);
-        const float3 specularIbl = prefiltered * (f0 * environmentBrdf.x + environmentBrdf.y);
-
-        radiance += (diffuseIbl + specularIbl) * g_sphere.iblIntensity * ambientOcclusion;
+        radiance += ShadeIblSplitSum(normal, viewDirection, diffuseColor, f0, clampedRoughness, irradiance,
+                                     g_sphere.prefilteredIndex, g_sphere.brdfLutIndex,
+                                     g_sphere.prefilteredMipCount) *
+                    g_sphere.iblIntensity * ambientOcclusion;
     }
 
     const float3 color = lerp(background, radiance, coverage) * g_sphere.exposure;

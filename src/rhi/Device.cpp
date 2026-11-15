@@ -558,16 +558,10 @@ ID3D12GraphicsCommandList* Device::BeginFrame(const float clearColor[4]) {
         D3D12_RESOURCE_STATE_RENDER_TARGET);
     m_commandList->ResourceBarrier(1, &toRenderTarget);
 
-    const D3D12_CPU_DESCRIPTOR_HANDLE rtv = m_backBufferRtvs[m_frameIndex].cpu;
-    m_commandList->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
-    m_commandList->ClearRenderTargetView(rtv, clearColor, 0, nullptr);
-
-    const auto viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, static_cast<float>(m_width),
-                                           static_cast<float>(m_height));
-    const auto scissor = CD3DX12_RECT(0, 0, static_cast<LONG>(m_width),
-                                      static_cast<LONG>(m_height));
-    m_commandList->RSSetViewports(1, &viewport);
-    m_commandList->RSSetScissorRects(1, &scissor);
+    // ターゲット・ビューポート・シザーは、途中で描画先を戻すときと同じ設定。
+    BindBackBuffer(m_commandList.Get());
+    m_commandList->ClearRenderTargetView(m_backBufferRtvs[m_frameIndex].cpu, clearColor, 0,
+                                         nullptr);
 
     ID3D12DescriptorHeap* heaps[] = {m_srvHeap.Heap()};
     m_commandList->SetDescriptorHeaps(1, heaps);

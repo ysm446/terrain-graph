@@ -155,14 +155,18 @@ void RemoteServer::ThreadMain() {
             if (got == 0) {
                 continue;
             }
+            // 改行は今回届いた分からだけ探す。ここへ来た時点の pending に改行は残っていないので、
+            // 長い 1 行が何回にも分かれて届いても、毎回頭から探し直さない。
+            size_t searchFrom = pending.size();
             pending.append(buffer.data(), got);
             if (pending.size() > kMaxLineBytes) {
                 break;
             }
             size_t newline = 0;
-            while (alive && (newline = pending.find('\n')) != std::string::npos) {
+            while (alive && (newline = pending.find('\n', searchFrom)) != std::string::npos) {
                 std::string line = pending.substr(0, newline);
                 pending.erase(0, newline + 1);
+                searchFrom = 0;
                 if (!line.empty() && line.back() == '\r') line.pop_back();
                 if (line.empty()) continue;
                 uint64_t ticket = 0;

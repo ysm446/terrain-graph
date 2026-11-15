@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/ImageIo.h"
 #include "renderer/Environment.h"
 #include "rhi/Device.h"
 #include "rhi/PipelineCache.h"
@@ -60,7 +61,6 @@ public:
     void Destroy(rhi::Device& device);
 
     SkyAssetId Add(const std::string& name);
-    SkyAssetId Duplicate(const SkyAsset& source);
     void Remove(rhi::Device& device, SkyAssetId id);
     // すべて破棄する。プロジェクトを開く前に呼ぶ。フレームの外で呼ぶこと。
     void Clear(rhi::Device& device);
@@ -90,6 +90,18 @@ public:
 
 private:
     bool BuildThumbnail(rhi::Device& device, rhi::PipelineCache& pipelineCache, SkyAsset& asset);
+
+    // 直近にサムネイル用に読んだ HDRI を縮めたものと、その空の代表輝度（較正の分母）。
+    // 較正値だけを変えた作り直しでは、ファイルを読み直さずにこれを使う。1 枚ぶんだけ持つ（約 0.5 MB）。
+    struct ThumbnailSource {
+        bool valid = false;
+        std::filesystem::path path;
+        std::filesystem::file_time_type writeTime{};
+        std::uintmax_t fileSize = 0;
+        HdrImage reduced;
+        float measuredSky = 0.0f;
+    };
+    ThumbnailSource m_thumbnailSource;
 
     std::vector<SkyAsset> m_entries;
     SkyAssetId m_nextId = 1;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <unordered_map>
@@ -50,6 +51,14 @@ private:
     std::unordered_map<std::string, std::filesystem::path> m_paths;
     std::unordered_map<std::string, std::filesystem::path> m_imports;
     std::unordered_map<std::string, std::string> m_knownUids;
+    // Scan() が前回読んだ uid。更新日時と大きさが同じファイルは開かずに使い回す
+    // （数 MB の .tgterrain を、保存や関連の確認のたびに全部パースしないため）。
+    struct ScannedUid {
+        std::filesystem::file_time_type modified{};
+        std::uintmax_t size = 0;
+        std::string uid;
+    };
+    std::unordered_map<std::wstring, ScannedUid> m_scanCache;
 };
 
 }  // namespace tg::io

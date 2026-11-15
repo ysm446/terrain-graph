@@ -55,14 +55,37 @@ const char* TypeName(ui::PropertyRecord::Type type) {
     return "";
 }
 
-// JSON Pointer（"/layer/height/scale"）を "." 区切りのパスへ。
-std::string DottedPath(const std::string& pointer) {
+}  // namespace
+
+std::string Application::SettingsPathFromPointer(const std::string& pointer) {
     std::string path = pointer.empty() ? pointer : pointer.substr(1);
     std::replace(path.begin(), path.end(), '/', '.');
     return path;
 }
 
-}  // namespace
+std::string Application::SettingsPointerFromPath(const std::string& path) {
+    std::string pointer = "/" + path;
+    std::replace(pointer.begin(), pointer.end(), '.', '/');
+    return pointer;
+}
+
+bool Application::PropertyOutsideUiRange(const ui::PropertyRecord& record) {
+    if (record.type != ui::PropertyRecord::Type::Float && record.type != ui::PropertyRecord::Type::Int) return false;
+    const double tolerance = 1.0e-5 * std::max(1.0, std::max(std::abs(record.minValue), std::abs(record.maxValue)));
+    return !(record.shown >= record.minValue - tolerance && record.shown <= record.maxValue + tolerance);
+}
+
+bool Application::BeginProbeWindow(const char* name) {
+    // 画面の外のウィンドウで描く。表は画面外でも中身を描く（スクロールする子ウィンドウでなければ）。
+    // 透明（Alpha 0）にすると ImGui が中身ごと飛ばすので、位置で隠す。
+    ImGui::SetNextWindowPos(ImVec2(-20000.0f, -20000.0f));
+    ImGui::SetNextWindowSize(ImVec2(720.0f, 540.0f));
+    constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+                                        ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBringToFrontOnFocus |
+                                        ImGuiWindowFlags_NoBackground;
+    return ImGui::Begin(name, nullptr, kFlags);
+}
 
 std::vector<ui::PropertyRecord> Application::RecordNodeProperties(graph::Node& node) {
     std::vector<ui::PropertyRecord> records;
@@ -142,7 +165,7 @@ std::string Application::FindPropertyPath(graph::Node& node, const ui::PropertyR
     }
     }
     // 1 つに決まらない（何も変わらない・連動して複数変わる）行は対応づけない。
-    return changed.size() == 1 ? DottedPath(changed.front()) : std::string();
+    return changed.size() == 1 ? SettingsPathFromPointer(changed.front()) : std::string();
 }
 
 json Application::DescribeProperty(graph::Node& node, const ui::PropertyRecord& record, const std::string& path) {
@@ -168,11 +191,7 @@ json Application::DescribeProperty(graph::Node& node, const ui::PropertyRecord& 
         int& value = *static_cast<int*>(record.value);
         const int old = value;
         json values = json::array();
-        const std::string pointer = "/" + [&] {
-            std::string text = path;
-            std::replace(text.begin(), text.end(), '.', '/');
-            return text;
-        }();
+        const std::string pointer = SettingsPointerFromPath(path);
         for (int i = 0; i < static_cast<int>(record.items.size()); ++i) {
             value = i;
             const json flat = io::WriteNodeJson(node).flatten();
@@ -247,9 +266,7 @@ json Application::ProbeNodeParameters(const graph::Node& original) {
         // 一時オブジェクトの items() を回すと、ループの間に元が消える。変数に受ける。
         const json enums = io::EnumFieldsOf(node);
         for (const auto& [path, values] : enums.items()) {
-            std::string pointer = "/" + path;
-            std::replace(pointer.begin(), pointer.end(), '.', '/');
-            const json::json_pointer at(pointer);
+            const json::json_pointer at(SettingsPointerFromPath(path));
             for (const json& value : values) {
                 if (settings.at(at) == value) continue;
                 json changed = settings;
@@ -356,9 +373,7 @@ json Application::BuildNodeCatalog() {
         const json defaults = node["defaults"];
         // default は新しく置いたときの値。UI のリセットの値が違えば uiResetValue に残す。
         for (auto& [path, parameter] : parameters.items()) {
-            std::string pointer = "/" + path;
-            std::replace(pointer.begin(), pointer.end(), '.', '/');
-            const json::json_pointer at(pointer);
+            const json::json_pointer at(SettingsPointerFromPath(path));
             if (!defaults.contains(at)) continue;
             const json& actual = defaults.at(at);
             if (parameter.contains("default") && parameter["default"] != actual &&
@@ -391,15 +406,7 @@ json Application::BuildNodeCatalog() {
 
 void Application::RunPropertyProbes() {
     m_propertyProbeDone = true;
-    // 画面の外のウィンドウで描く。表は画面外でも中身を描く（スクロールする子ウィンドウでなければ）。
-    // 透明（Alpha 0）にすると ImGui が中身ごと飛ばすので、位置で隠す。
-    ImGui::SetNextWindowPos(ImVec2(-20000.0f, -20000.0f));
-    ImGui::SetNextWindowSize(ImVec2(720.0f, 540.0f));
-    constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
-                                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
-                                        ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBringToFrontOnFocus |
-                                        ImGuiWindowFlags_NoBackground;
-    if (ImGui::Begin("##propertyProbe", nullptr, kFlags)) {
+    if (BeginProbeWindow("##propertyProbe")) {
         if (!m_options.catalogPath.empty()) {
             // 種類ごとに 1 つだけ置いたノードを描く。今のグラフの ID と混ざらないよう、空のグラフに差し替える。
             graph::NodeGraph saved = std::move(m_graph);
@@ -419,9 +426,7 @@ void Application::RunPropertyProbes() {
                 const std::vector<ui::PropertyRecord> records = RecordNodeProperties(node);
                 json baseFlat;
                 for (const ui::PropertyRecord& record : records) {
-                    if (record.type != ui::PropertyRecord::Type::Float && record.type != ui::PropertyRecord::Type::Int) continue;
-                    const double tolerance = 1.0e-5 * std::max(1.0, std::max(std::abs(record.minValue), std::abs(record.maxValue)));
-                    if (record.shown >= record.minValue - tolerance && record.shown <= record.maxValue + tolerance) continue;
+                    if (!PropertyOutsideUiRange(record)) continue;
                     if (baseFlat.is_null()) baseFlat = io::WriteNodeJson(node).flatten();
                     const std::string path = FindPropertyPath(node, record, baseFlat);
                     char text[512];

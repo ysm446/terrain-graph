@@ -77,6 +77,87 @@ float AutoBankAt(const RoadPathSettings& road, const RoadProfileCurve& curve, fl
            TurnSignXZ(p0, p1, p2);
 }
 
+// バンク角ポイントを道のりの順に並べ、ポイントの位置の自動角まで求めたもの。問い合わせる道のりに
+// 依らないので、1 本の中心線で何度も角度を引くとき（路面の行ごと、平滑化の標本ごと）に使い回す。
+struct BankPointEvaluated {
+    float distance = 0.0f;
+    float autoRadians = 0.0f;
+    bool manual = false;
+    float manualRadians = 0.0f;
+};
+struct BankContext {
+    std::vector<ResolvedPoint> speeds;
+    std::vector<BankPointEvaluated> evaluated;
+};
+BankContext BuildBankContext(const RoadPathSettings& road, const RoadProfileCurve& curve) {
+    BankContext context;
+    if (curve.points.size() < 2) return context;
+    const float total = curve.TotalLength();
+    context.speeds.reserve(road.bankPoints.size());
+    context.evaluated.reserve(road.bankPoints.size());
+    for (const RoadBankPoint& point : road.bankPoints) {
+        const float pointDistance = std::clamp(point.u, 0.0f, 1.0f) * total;
+        context.speeds.push_back({pointDistance, std::max(0.0f, point.designSpeedKmh)});
+        context.evaluated.push_back({pointDistance, 0.0f, point.manual,
+                                     XMConvertToRadians(std::clamp(point.angleDegrees, -90.0f, 90.0f))});
+    }
+    std::sort(context.speeds.begin(), context.speeds.end(),
+              [](const ResolvedPoint& a, const ResolvedPoint& b) { return a.distance < b.distance; });
+    std::sort(context.evaluated.begin(), context.evaluated.end(),
+              [](const BankPointEvaluated& a, const BankPointEvaluated& b) { return a.distance < b.distance; });
+    for (BankPointEvaluated& point : context.evaluated)
+        point.autoRadians = AutoBankAt(road, curve, point.distance, context.speeds);
+    return context;
+}
+
+// 平滑化なしのバンク角（EvaluateBankAngleRadiansRaw の中身）。
+float BankAngleRaw(const RoadPathSettings& road, const RoadProfileCurve& curve, const BankContext& context,
+                   float distance) {
+    if (curve.points.size() < 2) return 0.0f;
+    const std::vector<BankPointEvaluated>& evaluated = context.evaluated;
+    const float autoRadians = AutoBankAt(road, curve, distance, context.speeds);
+    if (evaluated.empty()) return autoRadians;
+
+    if (evaluated.front().manual && distance <= evaluated.front().distance + kEps)
+        return evaluated.front().manualRadians;
+    if (evaluated.back().manual && distance >= evaluated.back().distance - kEps)
+        return evaluated.back().manualRadians;
+    for (size_t i = 1; i < evaluated.size(); ++i) {
+        const BankPointEvaluated& prev = evaluated[i - 1];
+        const BankPointEvaluated& next = evaluated[i];
+        if (distance < prev.distance - kEps || distance > next.distance + kEps) continue;
+        if (!prev.manual && !next.manual) break;
+        const float start = prev.manual ? prev.manualRadians : prev.autoRadians;
+        const float end = next.manual ? next.manualRadians : next.autoRadians;
+        const float span = next.distance - prev.distance;
+        if (span <= kEps) return end;
+        const float t = std::clamp((distance - prev.distance) / span, 0.0f, 1.0f);
+        return start + (end - start) * t;
+    }
+    return autoRadians;
+}
+
+// 平滑化ありのバンク角（EvaluateBankAngleRadians の中身）。
+float BankAngleSmoothed(const RoadPathSettings& road, const RoadProfileCurve& curve, const BankContext& context,
+                        float distance) {
+    const float raw = BankAngleRaw(road, curve, context, distance);
+    if (!road.smoothBank || road.bankSmoothMeters <= 1e-4f || curve.points.size() < 2) return raw;
+    const float total = curve.TotalLength();
+    const float clamped = std::clamp(distance, 0.0f, total);
+    const int halfCount = std::clamp(static_cast<int>(std::ceil(road.bankSmoothMeters / 5.0f)), 2, 8);
+    float weightedSum = 0.0f;
+    float weightSum = 0.0f;
+    for (int index = -halfCount; index <= halfCount; ++index) {
+        const float normalized = static_cast<float>(index) / static_cast<float>(halfCount);
+        const float sampleDistance = std::clamp(clamped + normalized * road.bankSmoothMeters, 0.0f, total);
+        constexpr float kSigma = 0.45f;
+        const float weight = std::exp(-0.5f * normalized * normalized / (kSigma * kSigma));
+        weightedSum += BankAngleRaw(road, curve, context, sampleDistance) * weight;
+        weightSum += weight;
+    }
+    return weightSum > 1e-5f ? weightedSum / weightSum : raw;
+}
+
 // 平面の標本（実寸 XZ と高さのずれ）。
 struct PlanSample {
     float x = 0.0f;
@@ -87,7 +168,8 @@ struct PlanSample {
 
 XMFLOAT3 RoadProfileCurve::At(float distance) const {
     if (points.empty()) return {};
-    if (points.size() == 1 || distance <= 0.0f) return points.front();
+    // NaN も先頭へ落とす（下の二分探索が末尾の外を返して、配列の外を読むため）。
+    if (points.size() == 1 || !(distance > 0.0f)) return points.front();
     if (distance >= arcLengths.back()) return points.back();
     const auto it = std::upper_bound(arcLengths.begin(), arcLengths.end(), distance);
     const size_t index = static_cast<size_t>(std::max<std::ptrdiff_t>(1, it - arcLengths.begin()));
@@ -252,65 +334,20 @@ float ComputeAutoBankRadians(float radius, float designSpeedKmh, float friction)
 }
 
 float EvaluateBankAngleRadiansRaw(const RoadPathSettings& road, const RoadProfileCurve& curve, float distance) {
-    if (curve.points.size() < 2) return 0.0f;
-    const float total = curve.TotalLength();
-    struct Evaluated {
-        float distance = 0.0f;
-        float autoRadians = 0.0f;
-        bool manual = false;
-        float manualRadians = 0.0f;
-    };
-    std::vector<ResolvedPoint> speeds;
-    std::vector<Evaluated> evaluated;
-    for (const RoadBankPoint& point : road.bankPoints) {
-        const float pointDistance = std::clamp(point.u, 0.0f, 1.0f) * total;
-        speeds.push_back({pointDistance, std::max(0.0f, point.designSpeedKmh)});
-        evaluated.push_back({pointDistance, 0.0f, point.manual,
-                             XMConvertToRadians(std::clamp(point.angleDegrees, -90.0f, 90.0f))});
-    }
-    std::sort(speeds.begin(), speeds.end(), [](const ResolvedPoint& a, const ResolvedPoint& b) { return a.distance < b.distance; });
-    std::sort(evaluated.begin(), evaluated.end(), [](const Evaluated& a, const Evaluated& b) { return a.distance < b.distance; });
-
-    const float autoRadians = AutoBankAt(road, curve, distance, speeds);
-    if (evaluated.empty()) return autoRadians;
-    for (Evaluated& point : evaluated) point.autoRadians = AutoBankAt(road, curve, point.distance, speeds);
-
-    if (evaluated.front().manual && distance <= evaluated.front().distance + kEps)
-        return evaluated.front().manualRadians;
-    if (evaluated.back().manual && distance >= evaluated.back().distance - kEps)
-        return evaluated.back().manualRadians;
-    for (size_t i = 1; i < evaluated.size(); ++i) {
-        const Evaluated& prev = evaluated[i - 1];
-        const Evaluated& next = evaluated[i];
-        if (distance < prev.distance - kEps || distance > next.distance + kEps) continue;
-        if (!prev.manual && !next.manual) break;
-        const float start = prev.manual ? prev.manualRadians : prev.autoRadians;
-        const float end = next.manual ? next.manualRadians : next.autoRadians;
-        const float span = next.distance - prev.distance;
-        if (span <= kEps) return end;
-        const float t = std::clamp((distance - prev.distance) / span, 0.0f, 1.0f);
-        return start + (end - start) * t;
-    }
-    return autoRadians;
+    return BankAngleRaw(road, curve, BuildBankContext(road, curve), distance);
 }
 
 float EvaluateBankAngleRadians(const RoadPathSettings& road, const RoadProfileCurve& curve, float distance) {
-    const float raw = EvaluateBankAngleRadiansRaw(road, curve, distance);
-    if (!road.smoothBank || road.bankSmoothMeters <= 1e-4f || curve.points.size() < 2) return raw;
-    const float total = curve.TotalLength();
-    const float clamped = std::clamp(distance, 0.0f, total);
-    const int halfCount = std::clamp(static_cast<int>(std::ceil(road.bankSmoothMeters / 5.0f)), 2, 8);
-    float weightedSum = 0.0f;
-    float weightSum = 0.0f;
-    for (int index = -halfCount; index <= halfCount; ++index) {
-        const float normalized = static_cast<float>(index) / static_cast<float>(halfCount);
-        const float sampleDistance = std::clamp(clamped + normalized * road.bankSmoothMeters, 0.0f, total);
-        constexpr float kSigma = 0.45f;
-        const float weight = std::exp(-0.5f * normalized * normalized / (kSigma * kSigma));
-        weightedSum += EvaluateBankAngleRadiansRaw(road, curve, sampleDistance) * weight;
-        weightSum += weight;
-    }
-    return weightSum > 1e-5f ? weightedSum / weightSum : raw;
+    return BankAngleSmoothed(road, curve, BuildBankContext(road, curve), distance);
+}
+
+std::vector<float> EvaluateBankAnglesRadians(const RoadPathSettings& road, const RoadProfileCurve& curve,
+                                             const std::vector<float>& distances) {
+    std::vector<float> angles(distances.size(), 0.0f);
+    if (curve.points.size() < 2) return angles;
+    const BankContext context = BuildBankContext(road, curve);
+    for (size_t i = 0; i < distances.size(); ++i) angles[i] = BankAngleSmoothed(road, curve, context, distances[i]);
+    return angles;
 }
 
 RoadProfileFrame EvaluateRoadProfileFrame(const RoadPathSettings& road, const RoadProfileCurve& centerline,
