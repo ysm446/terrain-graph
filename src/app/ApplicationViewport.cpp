@@ -73,7 +73,12 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
     if (highlighted) {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::WarnColor());
     }
-    if (ImGui::Button(label)) {
+    // ビューポートに重ねる 2 つのボタンは、メニューバーと同じ暗さの地にする（ユーザー指定 2026-11-24）。
+    // 明るい 3D の上でも浮きすぎない。ホバー・押下の色はテーマのまま。
+    ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_MenuBarBg));
+    const bool viewClicked = ImGui::Button(label);
+    ImGui::PopStyleColor();
+    if (viewClicked) {
         ImGui::OpenPopup("##viewportViewMenu");
     }
     if (highlighted) {
@@ -104,7 +109,10 @@ void Application::DrawViewportOverlay(const ImVec2& viewportMin, const ImVec2& v
     if (hiding) {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::WarnColor());
     }
-    if (ImGui::Button(ui::Tr("表示", "Display"))) {
+    ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_MenuBarBg));
+    const bool displayClicked = ImGui::Button(ui::Tr("表示", "Display"));
+    ImGui::PopStyleColor();
+    if (displayClicked) {
         ImGui::OpenPopup("##viewportDisplayMenu");
     }
     if (hiding) {

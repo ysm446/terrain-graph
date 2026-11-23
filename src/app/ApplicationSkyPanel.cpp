@@ -82,8 +82,10 @@ void Application::DrawSkyPreviewWindow() {
         // まだ絵が無いときは枠だけ描く。ImTextureID の 0 を AddImage へ渡すと
         // デバッグビルドの ImGui がアサートで落ちる。
         if (m_skyPreviewVisible && m_skySphere.HasOutput()) {
-            ImGui::GetWindowDrawList()->AddImage(
-                static_cast<ImTextureID>(m_skySphere.OutputHandle().ptr), min, max);
+            // 枠と同じ角丸で切る（角が枠の外に残らないように）。
+            ImGui::GetWindowDrawList()->AddImageRounded(
+                static_cast<ImTextureID>(m_skySphere.OutputHandle().ptr), min, max, ImVec2(0.0f, 0.0f),
+                ImVec2(1.0f, 1.0f), IM_COL32_WHITE, ImGui::GetStyle().FrameRounding);
         }
         ImGui::GetWindowDrawList()->AddRect(min, max, ImGui::GetColorU32(ImGuiCol_Border),
                                             ImGui::GetStyle().FrameRounding, 0, ui::Scaled(1.0f));

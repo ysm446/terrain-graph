@@ -39,6 +39,8 @@ constexpr ImVec4 kHeaderBg = Gray(0.196f);      // #323232
 constexpr ImVec4 kHeaderHovered = Gray(0.235f); // #3C3C3C
 constexpr ImVec4 kHeaderActive = Gray(0.290f);  // #4A4A4A
 constexpr ImVec4 kBorder = Gray(0.110f);        // #1C1C1C（明度 11%。ユーザー指定 2026-11-24）
+// 項目の見出しの帯（SectionHeader）。ウィンドウの地 #1E1E1E より一段明るい。
+constexpr ImVec4 kSectionBand = Gray(0.153f);   // #272727
 // タブ。**選択中のタブだけを板として描く。** 非選択は板を出さず帯の上に文字だけ置き、
 // マウスを乗せたときだけ薄い板を出す（明度は 帯 < ホバー < 選択）。
 constexpr ImVec4 kTab = Gray(0.0f, 0.0f);       // 透明 非選択（板なし）
@@ -215,7 +217,9 @@ Thumbnail ThumbnailButton(const char* id, ImTextureID texture, float size, bool 
     // 天球のサムネイルは HDR の読み込みを伴うので 1 フレームに 1 枚ずつ作られ、
     // 未生成の枠が必ず一覧に並ぶ。
     if (texture != ImTextureID_Invalid) {
-        ImGui::GetWindowDrawList()->AddImage(texture, min, max);
+        // 絵も枠と同じ角丸で切る。四角のまま描くと、角丸の枠の外に角が残る。
+        ImGui::GetWindowDrawList()->AddImageRounded(texture, min, max, ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f),
+                                                    IM_COL32_WHITE, ImGui::GetStyle().FrameRounding);
     }
     ThumbnailFrame(min, max, selected, state.hovered);
     return state;
@@ -228,12 +232,16 @@ void ThumbnailImage(ImTextureID texture, float size) {
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     const float rounding = ImGui::GetStyle().FrameRounding;
     if (texture != ImTextureID_Invalid) {
-        drawList->AddImage(texture, min, max, ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f),
-                           IM_COL32_WHITE);
+        // 絵も枠と同じ角丸で切る。四角のまま描くと、角丸の枠の外に角が残る。
+        drawList->AddImageRounded(texture, min, max, ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f),
+                                  IM_COL32_WHITE, rounding);
     }
     // まだ中身が無いときも場所は空けておく。行ごとに幅が変わると読みにくい。
-    // 枠は中身の有無に関わらず引く。行に並ぶ箱の大きさを揃えて見せるため。
-    drawList->AddRect(min, max, ImGui::GetColorU32(ImGuiCol_Border), rounding, 0, Scaled(1.0f));
+    // 輪郭の線は絵があるときは引かない（ユーザー指定 2026-11-24「輪郭のラインが必要ない」）。
+    // 中身が無いときだけ、空きの場所が分かるように枠を引く。
+    if (texture == ImTextureID_Invalid) {
+        drawList->AddRect(min, max, ImGui::GetColorU32(ImGuiCol_Border), rounding, 0, Scaled(1.0f));
+    }
 
     ImGui::Dummy(ImVec2(size, size));
 }
@@ -677,14 +685,40 @@ void EndPropertyTable() {
     ImGui::EndTable();
 }
 
+// 項目の見出しは**幅いっぱいの帯**に文字を置く（ユーザー指定 2026-11-24「帯のスタイルにしたい」）。
+// 見た目だけで、畳む機能は持たない（三角も付けない）。
+//
+// **見出しの下の要素は一段右へ字下げする**（ユーザー指定 2026-11-24「項目の下にある要素の
+// パラメータ類は右へ段落的なオフセット」）。見出しを描いた後に Indent し、同じウィンドウの
+// 次の見出しでは先に戻してから帯を描く（帯は常に字下げなしの幅いっぱい）。字下げしたかどうかは
+// ウィンドウの StateStorage にフレーム番号で覚える。ImGui は Begin のたびに字下げを 0 に戻すので、
+// 最後の見出しの後の字下げを戻す必要は無い。
 void SectionHeader(const char* label) {
-    ImGui::SeparatorText(label);
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    static const ImGuiID kIndentKey = ImHashStr("##tgSectionIndentFrame");
+    const float indent = Scaled(16.0f);
+    if (window->StateStorage.GetInt(kIndentKey, -1) == ImGui::GetFrameCount()) {
+        ImGui::Unindent(indent);
+    }
+    const char* labelEnd = ImGui::FindRenderedTextEnd(label);
+    const float lineHeight = ImGui::GetTextLineHeight();
+    const float height = lineHeight + Scaled(12.0f);
+    const ImVec2 min = ImGui::GetCursorScreenPos();
+    const float width = std::max(ImGui::GetContentRegionAvail().x, 1.0f);
+    const ImVec2 max(min.x + width, min.y + height);
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    drawList->AddRectFilled(min, max, ImGui::GetColorU32(kSectionBand));
+    drawList->AddText(ImVec2(min.x + Scaled(8.0f), min.y + (height - lineHeight) * 0.5f),
+                      ImGui::GetColorU32(ImGuiCol_Text), label, labelEnd);
+    ImGui::Dummy(ImVec2(width, height));
+    ImGui::Indent(indent);
+    window->StateStorage.SetInt(kIndentKey, ImGui::GetFrameCount());
 }
 
 namespace {
 
-// 「?」の印を size 角で描く。coverLine が真なら、下を通る線（見出しの罫線）を地の色で隠す。
-void DrawHelpMarker(const char* help, float size, bool coverLine) {
+// 「?」の印を size 角で描く。
+void DrawHelpMarker(const char* help, float size) {
     ImGui::PushID(help);
     const ImVec2 min = ImGui::GetCursorScreenPos();
     ImGui::InvisibleButton("##help", ImVec2(size, size));
@@ -692,9 +726,6 @@ void DrawHelpMarker(const char* help, float size, bool coverLine) {
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const ImVec2 center(min.x + size * 0.5f, min.y + size * 0.5f);
     const float radius = size * 0.42f;
-    if (coverLine) {
-        draw->AddCircleFilled(center, radius + Scaled(2.0f), ImGui::GetColorU32(ImGuiCol_WindowBg));
-    }
     const ImU32 color = ImGui::GetColorU32(hovered ? ImGuiCol_Text : ImGuiCol_TextDisabled);
     draw->AddCircle(center, radius, color, 0, Scaled(1.0f));
     // 「?」は ASCII の字形なので、どのフォントでも出る。
@@ -709,20 +740,20 @@ void DrawHelpMarker(const char* help, float size, bool coverLine) {
 }  // namespace
 
 void SectionHeader(const char* label, const char* help) {
-    ImGui::SeparatorText(label);
+    SectionHeader(label);
     if (help == nullptr || help[0] == '\0') {
         return;
     }
-    // 見出しの文字のすぐ右に印を重ねる（行は増やさない）。SeparatorText は左寄せ
-    // （SeparatorTextAlign.x = 0）なので、文字は左端から SeparatorTextPadding.x の所に出る。
+    // 帯の文字のすぐ右に印を重ねる（行は増やさない）。文字は帯の左端から 8 の所に出る。
+    // 帯には罫線が無いので、印の下を地の色で隠さない。
     const ImVec2 after = ImGui::GetCursorScreenPos();
     const ImVec2 min = ImGui::GetItemRectMin();
     const ImVec2 max = ImGui::GetItemRectMax();
-    const ImGuiStyle& style = ImGui::GetStyle();
     const float size = ImGui::GetTextLineHeight();
-    const float x = min.x + style.SeparatorTextPadding.x + ImGui::CalcTextSize(label).x + style.ItemInnerSpacing.x;
+    const float labelWidth = ImGui::CalcTextSize(label, nullptr, true).x;
+    const float x = min.x + Scaled(8.0f) + labelWidth + ImGui::GetStyle().ItemInnerSpacing.x;
     ImGui::SetCursorScreenPos(ImVec2(x, min.y + (max.y - min.y - size) * 0.5f));
-    DrawHelpMarker(help, size, true);
+    DrawHelpMarker(help, size);
     ImGui::SetCursorScreenPos(after);
 }
 
@@ -1374,7 +1405,7 @@ void HelpMarker(const char* help) {
     if (cursor.y >= previousMin.y && cursor.y <= previousMax.y) {
         ImGui::SetCursorScreenPos(ImVec2(cursor.x, previousMin.y + (previousMax.y - previousMin.y - size) * 0.5f));
     }
-    DrawHelpMarker(help, size, false);
+    DrawHelpMarker(help, size);
 }
 
 void HintText(const char* format, ...) {

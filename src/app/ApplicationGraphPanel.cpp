@@ -220,7 +220,9 @@ ImVec4 PinTypeColor(graph::ValueType valueType) {
 
 // ノードの地の色と余白。**余白は上下左右とも同じ幅にし、名前・ピン・ラベル・サムネイルは
 // すべてその内側に収める**（ユーザー指定 2026-11-24）。
-constexpr ImVec4 kNodeBackground(0.150f, 0.150f, 0.150f, 0.98f);
+// 地は背景より暗い #1A1A1A（彩度なし）。既定の枠はこの色と同じにして見せない（ユーザー指定 2026-11-24）。
+constexpr ImVec4 kNodeBackground(0.102f, 0.102f, 0.102f, 0.98f);
+constexpr ImVec4 kNodeBorder(0.102f, 0.102f, 0.102f, 1.0f);
 // ピンの丸は縁から余白の幅ぶん内側に置き、リンクの端はノードの縁で止める（ユーザー指定 2026-11-24）。
 // ラベルは丸のすぐ横（丸の中心から kPinLabelOffset）に置く。
 constexpr float kNodePadding = 14.0f;
@@ -290,8 +292,9 @@ void DrawGraphDots(const ImVec2& screenMin, const ImVec2& screenMax) {
     const ImVec2 canvasMin = ed::ScreenToCanvas(screenMin);
     const ImVec2 canvasMax = ed::ScreenToCanvas(screenMax);
     constexpr float kBaseSpacing = 24.0f;
-    const ImU32 backgroundColor = ColorToU32(ImVec4(0.112f, 0.112f, 0.112f, 1.0f));
-    const ImU32 dotColor = ColorToU32(ImVec4(0.26f, 0.26f, 0.26f, 0.46f));
+    // 背景 #242424。ドットは背景よりわずかに明るい #2B2B2B。彩度は持たせない（ユーザー指定 2026-11-24）。
+    const ImU32 backgroundColor = ColorToU32(ImVec4(0.141f, 0.141f, 0.141f, 1.0f));
+    const ImU32 dotColor = ColorToU32(ImVec4(0.169f, 0.169f, 0.169f, 1.0f));
 
     ed::Suspend();
     drawList->PushClipRect(screenMin, screenMax, true);
@@ -918,7 +921,7 @@ void Application::DrawGraphNode(const graph::Node& node) {
     const ImVec4 nodeBorderColor = (missingSettings != nullptr || inCycle) ? ImGui::ColorConvertU32ToFloat4(ui::ErrorColor())
                                  : bypassed ? ImGui::ColorConvertU32ToFloat4(ui::WarnColor())
                                  : isPreview ? ImVec4(0.72f, 0.76f, 0.62f, 1.0f)
-                                             : ImVec4(0.22f, 0.22f, 0.22f, 1.0f);
+                                             : kNodeBorder;
     ImVec4 nodeBackground = kNodeBackground;
     if (bypassed) nodeBackground.w *= kBypassBackgroundAlpha;
     const ImVec4 activeNodeBorderColor(0.59f, 0.64f, 0.68f, 1.0f);
