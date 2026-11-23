@@ -221,17 +221,19 @@ ImVec4 PinTypeColor(graph::ValueType valueType) {
 // ノードの地の色と余白。**余白は上下左右とも同じ幅にし、名前・ピン・ラベル・サムネイルは
 // すべてその内側に収める**（ユーザー指定 2026-11-24）。
 constexpr ImVec4 kNodeBackground(0.150f, 0.150f, 0.150f, 0.98f);
-// ピンの丸はノードの縁に置き、ラベルは縁から余白の幅ぶん内側に置く。
+// ピンの丸は縁から余白の幅ぶん内側に置き、リンクの端はノードの縁で止める（ユーザー指定 2026-11-24）。
+// ラベルは丸のすぐ横（丸の中心から kPinLabelOffset）に置く。
 constexpr float kNodePadding = 14.0f;
+constexpr float kPinLabelOffset = 12.0f;
 // バイパス中のノードの地（格子が透ける）と中身（名前・サムネイル・ピン）の濃さ。
 constexpr float kBypassBackgroundAlpha = 0.4f;
 constexpr float kBypassContentAlpha = 0.4f;
 
 // ピンの矩形。当たり判定をラベルまで広げるので、丸の位置は別に持つ。
 struct PinGeometry {
-    ImVec2 min;     // 丸の矩形（縦は行の高さ）
+    ImVec2 min;     // 縁から丸までの矩形（縦は行の高さ）
     ImVec2 max;
-    ImVec2 center;  // 接続点（リンクの端）
+    ImVec2 center;  // 丸の中心
 };
 
 // 破線。バイパス中のノードの素通りの線に使う。線の端はピンの丸の縁から少し離す。
@@ -252,20 +254,22 @@ void DrawDashedLine(ImDrawList* drawList, ImVec2 from, ImVec2 to, ImU32 color) {
 // ラベルまで含めて掴めるようにするため（出力ピンはクリックでプレビューも切り替える）。
 // filled が真なら丸を塗る。**ビューポートに出ている出力**の印に使う。
 //
-// **丸はノードの縁（center.x が枠線の上）に置く。** リンクはノードより下の層に描かれるので、
-// 丸をノードの内側に置くと、線がノードの下へ潜ってから届き、裏に付いて見える。
-// 縁に置けば線は丸の外周まで見え、丸に刺さって見える。
-// 丸は場所を取らない（Dummy を置かない）。ラベルは呼び出し側が余白の内側に置く。
-PinGeometry DrawRoundPin(const graph::Pin& pin, ImVec2 center, bool filled = false) {
+// **丸は縁から余白の幅ぶん内側（center）に置き、リンクの端は縁（edgeX）で止める。**
+// リンクはノードより下の層に描かれるので、端を丸にするとノードの下へ潜って見えなくなる。
+// 縁と丸の間には何も描かない（ユーザー指定 2026-11-24「間は空けたまま」）。
+// 丸は場所を取らない（Dummy を置かない）。ラベルは呼び出し側が丸の横に置く。
+PinGeometry DrawRoundPin(const graph::Pin& pin, ImVec2 center, float edgeX, bool filled = false) {
     constexpr float kRadius = 4.3f;
     const ImVec2 halfSize(7.0f, 10.0f);
     PinGeometry geometry;
     geometry.center = center;
-    geometry.min = ImVec2(center.x - halfSize.x, center.y - halfSize.y);
-    geometry.max = ImVec2(center.x + halfSize.x, center.y + halfSize.y);
-    // リンクの端は丸の中心の 1 点。幅のある矩形にすると、相手に近い角へ端がずれて
-    // 丸から離れた所で止まり、隣のピンとの見分けがつきにくくなる。
-    ed::PinPivotRect(geometry.center, geometry.center);
+    // 当たり判定は縁から丸まで（縁の近くでも掴める）。
+    geometry.min = ImVec2(std::min(edgeX, center.x) - halfSize.x, center.y - halfSize.y);
+    geometry.max = ImVec2(std::max(edgeX, center.x) + halfSize.x, center.y + halfSize.y);
+    // リンクの端は縁の上の 1 点。幅のある矩形にすると、相手に近い角へ端がずれて
+    // 隣のピンとの見分けがつきにくくなる。
+    const ImVec2 pivot(edgeX, center.y);
+    ed::PinPivotRect(pivot, pivot);
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     const ImU32 pinColor = ColorToU32(PinTypeColor(pin.valueType));
     if (filled) {
@@ -883,15 +887,15 @@ void Application::DrawGraphNode(const graph::Node& node) {
     // 200px 固定にしていたときは、Mask Blend の Foreground / Background のような
     // 長い名前が出力の Mask と重なっていた。
     constexpr float kNodeMinWidth = 200.0f;
-    // ピンの丸は縁に置いて場所を取らないので、要る幅はラベルの合計だけ。
+    // ピンの丸は中身の端（縁から余白の幅ぶん内側）に置き、ラベルはその横から始まる。
     float rowWidth = 0.0f;
     for (size_t row = 0; row < std::max(node.inputs.size(), node.outputs.size()); ++row) {
         float width = 0.0f;
         if (row < node.inputs.size()) {
-            width += ImGui::CalcTextSize(node.inputs[row].label.c_str()).x;
+            width += kPinLabelOffset + ImGui::CalcTextSize(node.inputs[row].label.c_str()).x;
         }
         if (row < node.outputs.size()) {
-            width += ImGui::CalcTextSize(node.outputs[row].label.c_str()).x;
+            width += ImGui::CalcTextSize(node.outputs[row].label.c_str()).x + kPinLabelOffset;
         }
         rowWidth = std::max(rowWidth, width);
     }
@@ -1033,13 +1037,13 @@ void Application::DrawGraphNode(const graph::Node& node) {
     for (size_t inputIndex = 0; inputIndex < node.inputs.size(); ++inputIndex) {
         const graph::Pin& input = node.inputs[inputIndex];
         const float inputY = rowY + static_cast<float>(inputIndex) * 24.0f;
-        // ラベルは左の縁から余白の幅ぶん内側（中身の左端）に置く。丸は縁の上、ラベルの縦の中央。
-        ImGui::SetCursorPos(ImVec2(rowStartX, inputY + 2.0f));
+        // 丸は左の縁から余白の幅ぶん内側（中身の左端）、ラベルの縦の中央。ラベルは丸の横から。
+        ImGui::SetCursorPos(ImVec2(rowStartX + kPinLabelOffset, inputY + 2.0f));
         ed::BeginPin(ed::PinId(input.id), ed::PinKind::Input);
         ImGui::TextColored(pinLabelColor, "%s", input.label.c_str());
         const ImVec2 labelMin = ImGui::GetItemRectMin(), labelMax = ImGui::GetItemRectMax();
         const PinGeometry geometry =
-            DrawRoundPin(input, ImVec2(nodeLeftX, (labelMin.y + labelMax.y) * 0.5f));
+            DrawRoundPin(input, ImVec2(contentLeftX, (labelMin.y + labelMax.y) * 0.5f), nodeLeftX);
         if (bypassed) inputCenters[inputIndex] = geometry.center;
         // 丸からラベルの右端まで。**縦は丸の高さに揃える**（行が重ならないように）。
         ed::PinRect(geometry.min, ImVec2(labelMax.x, geometry.max.y));
@@ -1054,13 +1058,14 @@ void Application::DrawGraphNode(const graph::Node& node) {
                                                  (m_previewGraphPin == 0 && outputIndex == 0));
         const float outputY = rowY + static_cast<float>(outputIndex) * 24.0f;
         const float labelWidth = ImGui::CalcTextSize(output.label.c_str()).x;
-        // ラベルは右の縁から余白の幅ぶん内側（中身の右端）で終わるように置く。
-        ImGui::SetCursorPos(ImVec2(rowStartX + contentWidth - labelWidth, outputY + 2.0f));
+        // 丸は右の縁から余白の幅ぶん内側（中身の右端）。ラベルは丸の手前で終わる。
+        ImGui::SetCursorPos(ImVec2(rowStartX + contentWidth - kPinLabelOffset - labelWidth, outputY + 2.0f));
         ed::BeginPin(ed::PinId(output.id), ed::PinKind::Output);
         ImGui::TextColored(pinLabelColor, "%s", output.label.c_str());
         const ImVec2 labelMin = ImGui::GetItemRectMin(), labelMax = ImGui::GetItemRectMax();
         const PinGeometry geometry =
-            DrawRoundPin(output, ImVec2(nodeRightX, (labelMin.y + labelMax.y) * 0.5f), previewOutput);
+            DrawRoundPin(output, ImVec2(nodeRightX - kNodePadding, (labelMin.y + labelMax.y) * 0.5f), nodeRightX,
+                         previewOutput);
         if (bypassed) outputCenters[outputIndex] = geometry.center;
         // ラベルの左端から丸まで。
         ed::PinRect(ImVec2(labelMin.x, geometry.min.y), geometry.max);
