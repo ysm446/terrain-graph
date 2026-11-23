@@ -83,6 +83,11 @@ inline constexpr float kTextInputWidth = 190.0f;
 
 // グレー基調のテーマを適用する。ImGui のコンテキストを作った直後に 1 回だけ呼ぶ。
 void ApplyTheme(float dpiScale);
+// タブの帯の下の線（境界）を枠線の色で描き重ねる。
+// DrawCurrentTabBarBorder は BeginTabBar 〜 EndTabBar の間（タブを出した後）に呼ぶ。
+// DrawDockTabBarBorders はドックの枠のタブの帯すべてに描く。フレームの最後（ImGui::Render の前）に 1 回呼ぶ。
+void DrawCurrentTabBarBorder();
+void DrawDockTabBarBorders();
 ImU32 TransformAxisColor(int axis);
 
 // 96 DPI 基準の寸法を現在の DPI へ合わせる。

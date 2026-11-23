@@ -2929,6 +2929,7 @@ void Application::DrawGraphPanel() {
             } else if (!reselect && shown >= 0) {
                 OpenComponentEditor(shown);  // タブをクリックした
             }
+            ui::DrawCurrentTabBarBorder();
             ImGui::EndTabBar();
         }
         ImGui::EndDisabled();

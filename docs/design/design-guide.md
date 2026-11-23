@@ -1,7 +1,7 @@
 # design-guide — UI の設計ガイド
 
 作成日時: 2026-08-31 14:36
-更新日時: 2026-11-24 00:33
+更新日時: 2026-11-24 00:42
 
 ## ビューポートのホイール: カーソルの下の点へズーム
 
@@ -1083,7 +1083,7 @@ if (ui::BeginPropertyTable("layerBasicRows")) {
 | 入力欄・ボタン | `#2B2B2B` | `FrameBg` / `Button` |
 | 同（ホバー / 押下） | `#363636` / `#414141` | `*Hovered` / `*Active` |
 | 見出し・選択 | `#323232` | `Header` |
-| 枠線 | `#343434` | `Border` |
+| 枠線・境界線 | `#1C1C1C`（明度 11%。2026-11-24 に `#343434` から変更） | `Border`（タブの帯の下の線・区画のスプリッタにも使う） |
 | 区切り線 | `#383838` | `Separator` |
 | つまみ | `#606060` / `#828282` | `SliderGrab` / `*Active` |
 | 文字 | `#CDCDCD` | `Text` |
@@ -1105,6 +1105,12 @@ if (ui::BeginPropertyTable("layerBasicRows")) {
 「マウスオーバーしたら薄くタブを描いてほしい」）で、旧「帯 < 非選択 < 選択」の 3 段から変えた。
 **選択中のタブの上辺に線を引かない**（`TabBarOverlineSize = 0`）。旧版は `#666666` の線を引いていたが、
 立体っぽく見えるので外した（ユーザー指定 2026-11-24）。
+**境界らしい線は枠線の色（`Border`、`#1C1C1C`）に揃える**（ユーザー指定 2026-11-24「この色をタブの下のラインなど、境界らしいところに適用」）。
+- タブの帯の下の線: ImGui は選択中のタブの色で描き、色だけを変える設定が無いので、同じ位置に枠線の色で描き重ねる。
+  ドックの枠は `ui::DrawDockTabBarBorders()`（`ImGuiLayer::EndFrame` で Render の前に 1 回）、
+  自前の `BeginTabBar` は `ui::DrawCurrentTabBarBorder()`（タブを出した後、`EndTabBar` の前）。
+- 区画のスプリッタ（`VerticalSplitter` / `FlushSplitter` / `HorizontalSplitter`）の線。カーソルを載せた・掴んだときの色はそのまま。
+- 見出しの罫線（`SeparatorText`）と表の細い罫線は境界ではないので `Separator`（`#383838`）のまま。
 **フォーカスの有無では色を変えない**（`TabDimmed*` も同じ値にする）。
 見たいのは「どのタブを開いているか」であって、枠がアクティブかどうかではない。
 タブの帯は `TitleBg` / `TitleBgActive` なので、**この 2 つを同じ色にする。**

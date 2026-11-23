@@ -38,7 +38,7 @@ constexpr ImVec4 kFrameBgActive = Gray(0.255f); // #414141
 constexpr ImVec4 kHeaderBg = Gray(0.196f);      // #323232
 constexpr ImVec4 kHeaderHovered = Gray(0.235f); // #3C3C3C
 constexpr ImVec4 kHeaderActive = Gray(0.290f);  // #4A4A4A
-constexpr ImVec4 kBorder = Gray(0.204f);        // #343434
+constexpr ImVec4 kBorder = Gray(0.110f);        // #1C1C1C（明度 11%。ユーザー指定 2026-11-24）
 // タブ。**選択中のタブだけを板として描く。** 非選択は板を出さず帯の上に文字だけ置き、
 // マウスを乗せたときだけ薄い板を出す（明度は 帯 < ホバー < 選択）。
 constexpr ImVec4 kTab = Gray(0.0f, 0.0f);       // 透明 非選択（板なし）
@@ -626,6 +626,39 @@ void ApplyTheme(float dpiScale) {
     style.ScaleAllSizes(g_dpiScale);
 }
 
+namespace {
+
+// タブの帯の下の線を枠線の色で描き重ねる。ImGui はこの線を選択中のタブの色（TabSelected）で
+// 描き、色だけを変える設定が無いので、同じ位置（帯の下端から TabBarBorderSize）に上から描く。
+void DrawTabBarBorderLine(ImDrawList* drawList, const ImGuiTabBar& tabBar) {
+    const float thickness = ImGui::GetStyle().TabBarBorderSize;
+    if (thickness <= 0.0f) return;
+    const float y = tabBar.BarRect.Max.y;
+    const ImVec2 min(tabBar.SeparatorMinX, y - thickness), max(tabBar.SeparatorMaxX, y);
+    drawList->PushClipRect(min, max, false);
+    drawList->AddRectFilled(min, max, ImGui::GetColorU32(ImGuiCol_Border));
+    drawList->PopClipRect();
+}
+
+}  // namespace
+
+void DrawCurrentTabBarBorder() {
+    if (const ImGuiTabBar* tabBar = GImGui->CurrentTabBar) {
+        DrawTabBarBorderLine(ImGui::GetWindowDrawList(), *tabBar);
+    }
+}
+
+void DrawDockTabBarBorders() {
+    ImGuiContext& g = *GImGui;
+    for (const ImGuiStoragePair& pair : g.DockContext.Nodes.Data) {
+        const auto* node = static_cast<const ImGuiDockNode*>(pair.val_p);
+        if (node == nullptr || node->TabBar == nullptr || node->HostWindow == nullptr) continue;
+        // このフレームに描かれた帯だけ（タブを隠したノードや畳んだ窓は描かない）。
+        if (node->TabBar->CurrFrameVisible != g.FrameCount) continue;
+        DrawTabBarBorderLine(node->HostWindow->DrawList, *node->TabBar);
+    }
+}
+
 bool BeginPropertyTable(const char* id, const char* widestLabel) {
     if (!ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingStretchProp)) {
         return false;
@@ -1189,7 +1222,7 @@ bool VerticalSplitter(const char* id, float* width, float minWidth, float maxWid
     const auto min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
     const float center = (min.x + max.x) * 0.5f;
     const auto color = ImGui::GetColorU32(active ? ImGuiCol_SeparatorActive :
-                                        hovered ? ImGuiCol_SeparatorHovered : ImGuiCol_Separator);
+                                        hovered ? ImGuiCol_SeparatorHovered : ImGuiCol_Border);  // 区画の境界は枠線の色
     ImGui::GetWindowDrawList()->AddLine(ImVec2(center, min.y), ImVec2(center, max.y), color, Scaled(1.0f));
     return released;
 }
@@ -1237,7 +1270,7 @@ bool FlushSplitter(const char* id, bool vertical, float* size, float minSize, fl
     }
     const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
     const ImU32 color = ImGui::GetColorU32(active ? ImGuiCol_SeparatorActive :
-                                           hovered ? ImGuiCol_SeparatorHovered : ImGuiCol_Separator);
+                                           hovered ? ImGuiCol_SeparatorHovered : ImGuiCol_Border);  // 区画の境界は枠線の色
     const float thickness = Scaled(1.0f);
     if (vertical) ImGui::GetWindowDrawList()->AddLine(ImVec2(min.x, min.y), ImVec2(min.x, max.y), color, thickness);
     else ImGui::GetWindowDrawList()->AddLine(ImVec2(min.x, min.y), ImVec2(max.x, min.y), color, thickness);
@@ -1280,7 +1313,7 @@ bool HorizontalSplitter(const char* id, float* height, float minHeight, float ma
     const float centerY = (min.y + max.y) * 0.5f;
     const ImU32 color = ImGui::GetColorU32(active      ? ImGuiCol_SeparatorActive
                                            : hovered   ? ImGuiCol_SeparatorHovered
-                                                       : ImGuiCol_Separator);
+                                                       : ImGuiCol_Border);  // 区画の境界は枠線の色
     ImGui::GetWindowDrawList()->AddLine(ImVec2(min.x, centerY), ImVec2(max.x, centerY), color,
                                         Scaled(1.0f));
 

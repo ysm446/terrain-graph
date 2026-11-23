@@ -238,6 +238,7 @@ void ImGuiLayer::BeginFrame() {
 }
 
 void ImGuiLayer::EndFrame(ID3D12GraphicsCommandList* commandList) {
+    ui::DrawDockTabBarBorders();
     ImGui::Render();
     ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), commandList);
 }
