@@ -667,21 +667,79 @@ void DrawDockTabBarBorders() {
     }
 }
 
+namespace {
+
+// 描いている途中のプロパティの表。PropertyLabel が項目名の幅を測って一番長いものを残し、
+// EndPropertyTable でウィンドウの StateStorage へ書く。次のフレームの BeginPropertyTable が
+// それを項目名の列の幅に使う（表の幅は描く前に決めるので、測れるのは前のフレームの値）。
+struct PropertyTableState {
+    ImGuiID key = 0;
+    float widestLabel = 0.0f;
+    float offset = 0.0f;      // 表の左端（ウィンドウの中での X。見出しの下の字下げを含む）
+    float maxAligned = 0.0f;  // 揃える幅の上限
+};
+std::vector<PropertyTableState> g_propertyTables;
+
+// ウィンドウ全体で値の欄が始まる位置（表の左端 + 一番長い項目名、ウィンドウの中での X）。
+// 字下げの違う表（見出しの上と下）でも値の欄の左端が揃うよう、幅ではなく位置で持つ。
+// 今のフレームで集めている値と、前のフレームで集め終えた値を持つ。
+const ImGuiID kWindowLabelFrameKey = ImHashStr("##tgPropertyLabelFrame");
+const ImGuiID kWindowLabelGatherKey = ImHashStr("##tgPropertyLabelGather");
+const ImGuiID kWindowLabelLastKey = ImHashStr("##tgPropertyLabelLast");
+// 揃える幅の上限（ウィンドウの中身の幅に対する割合）。狭い窓で値の欄が潰れないように。
+constexpr float kLabelColumnMaxRatio = 0.4f;
+
+}  // namespace
+
+// **項目名の列は、ウィンドウ全体で一番長い項目名に揃える**（ユーザー指定 2026-11-24
+// 「項目とパラメータが重ならないように。一番長い項目の長さに他をそろえる」。最初は節ごとに
+// 揃えたが、値の欄の左端が節ごとにずれるので、ウィンドウ全体に変えた）。
+// ただし揃える幅はウィンドウの中身の幅の 4 割まで。それより長い項目名がある表（節）だけは、
+// その表の中で項目名の幅まで広げる（重ならないことを優先）。
+// 幅は前のフレームに測った値を使うので、項目名が変わった最初の 1 フレームだけは前の幅で描く。
 bool BeginPropertyTable(const char* id, const char* widestLabel) {
+    ImGuiStorage& storage = ImGui::GetCurrentWindow()->StateStorage;
+    // フレームが変わって最初の表で、前のフレームに集めたウィンドウ全体の値を確定させる。
+    const int frame = ImGui::GetFrameCount();
+    if (storage.GetInt(kWindowLabelFrameKey, -1) != frame) {
+        storage.SetFloat(kWindowLabelLastKey, storage.GetFloat(kWindowLabelGatherKey, 0.0f));
+        storage.SetFloat(kWindowLabelGatherKey, 0.0f);
+        storage.SetInt(kWindowLabelFrameKey, frame);
+    }
+    const ImGuiID key = ImGui::GetID(id) ^ ImHashStr("##tgPropertyLabelWidth");
+    const float maxAligned = ImGui::GetContentRegionAvail().x * kLabelColumnMaxRatio;
+    const float offset = ImGui::GetCursorPosX();
     if (!ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingStretchProp)) {
         return false;
     }
     // ラベル列は文字が入る幅なので、文字サイズにも追従させる（大きくして切れないように）。
     const float baseWidth = TextScaled(CurrentLanguage() == Language::English ? kLabelColumnWidthEnglish
                                                                               : kLabelColumnWidth);
-    const float labelWidth = widestLabel ? std::max(baseWidth,
-        ImGui::CalcTextSize(widestLabel).x + ImGui::CalcTextSize("：").x) : baseWidth;
+    const float hintWidth =
+        widestLabel ? ImGui::CalcTextSize(widestLabel).x + ImGui::CalcTextSize("：").x : 0.0f;
+    // この表に要る幅（呼び出し側の指定と、前のフレームに測った値）と、ウィンドウで揃える幅（上限つき）。
+    const float tableWidth = std::max(hintWidth, storage.GetFloat(key, 0.0f));
+    const float windowWidth = std::min(storage.GetFloat(kWindowLabelLastKey, 0.0f) - offset, maxAligned);
+    const float labelWidth = std::max({baseWidth, tableWidth, windowWidth});
     ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed, labelWidth);
     ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch);
+    g_propertyTables.push_back({key, hintWidth, offset, maxAligned});
     return true;
 }
 
 void EndPropertyTable() {
+    if (!g_propertyTables.empty()) {
+        const PropertyTableState state = g_propertyTables.back();
+        g_propertyTables.pop_back();
+        // 表の中の窓（ImGui::GetCurrentWindow）は BeginTable と同じ窓。EndTable の前に書く。
+        ImGuiStorage& storage = ImGui::GetCurrentWindow()->StateStorage;
+        storage.SetFloat(state.key, state.widestLabel);
+        // 上限を超える表は揃える対象に入れない（その表だけで広げる）。入れると他の表まで上限まで広がる。
+        if (state.widestLabel <= state.maxAligned) {
+            storage.SetFloat(kWindowLabelGatherKey,
+                             std::max(storage.GetFloat(kWindowLabelGatherKey, 0.0f), state.offset + state.widestLabel));
+        }
+    }
     ImGui::EndTable();
 }
 
@@ -763,6 +821,11 @@ void PropertyLabel(const char* label, const char* tooltip) {
     ImGui::AlignTextToFramePadding();
     // 「パラメータ名：値」と読めるよう、ラベルの末尾にコロンを付ける。
     ImGui::Text("%s：", label);
+    // 表の項目名の列をこの幅まで広げる（次のフレームから。BeginPropertyTable を参照）。
+    if (!g_propertyTables.empty()) {
+        float& widest = g_propertyTables.back().widestLabel;
+        widest = std::max(widest, ImGui::GetItemRectSize().x);
+    }
     DrawTooltip(tooltip);
     ImGui::TableSetColumnIndex(1);
     ImGui::PushID(label);
