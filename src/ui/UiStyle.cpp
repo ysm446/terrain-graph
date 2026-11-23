@@ -39,14 +39,11 @@ constexpr ImVec4 kHeaderBg = Gray(0.196f);      // #323232
 constexpr ImVec4 kHeaderHovered = Gray(0.235f); // #3C3C3C
 constexpr ImVec4 kHeaderActive = Gray(0.290f);  // #4A4A4A
 constexpr ImVec4 kBorder = Gray(0.204f);        // #343434
-// タブ。**明度の 3 段（帯 < 非選択 < 選択）だけで状態を表す。**
-// 帯（タブを並べる下地）を一番暗くすることで、タブが板として浮いて見える。
-constexpr ImVec4 kTab = Gray(0.169f);           // #2B2B2B 非選択
-constexpr ImVec4 kTabHovered = Gray(0.212f);    // #363636
+// タブ。**選択中のタブだけを板として描く。** 非選択は板を出さず帯の上に文字だけ置き、
+// マウスを乗せたときだけ薄い板を出す（明度は 帯 < ホバー < 選択）。
+constexpr ImVec4 kTab = Gray(0.0f, 0.0f);       // 透明 非選択（板なし）
+constexpr ImVec4 kTabHovered = Gray(0.169f);    // #2B2B2B 薄い板
 constexpr ImVec4 kTabSelected = Gray(0.243f);   // #3E3E3E 選択
-// 選択中のタブの上辺に引く線。**色は付けない。**
-// 明度だけで階層を作る方針に合わせ、中身との繋がりを示す控えめな線に留める。
-constexpr ImVec4 kTabOverline = Gray(0.400f);   // #666666
 constexpr ImVec4 kSeparator = Gray(0.220f);     // #383838
 constexpr ImVec4 kGrab = Gray(0.376f);          // #606060
 constexpr ImVec4 kGrabActive = Gray(0.510f);    // #828282
@@ -527,6 +524,8 @@ void ApplyTheme(float dpiScale) {
     style.GrabRounding = 3.0f;
     // タブはフレームと同じ丸み。丸まるのは上の 2 つの角だけなので、帯の上に板が並ぶ見え方は保てる。
     style.TabRounding = 4.0f;
+    // 選択中のタブの上辺に線を引かない（立体っぽく見えるので。ユーザー指定 2026-11-24）。板の明度だけで示す。
+    style.TabBarOverlineSize = 0.0f;
     style.ScrollbarRounding = 6.0f;
 
     style.WindowBorderSize = 1.0f;
@@ -598,10 +597,10 @@ void ApplyTheme(float dpiScale) {
     colors[ImGuiCol_Tab] = kTab;
     colors[ImGuiCol_TabHovered] = kTabHovered;
     colors[ImGuiCol_TabSelected] = kTabSelected;
-    colors[ImGuiCol_TabSelectedOverline] = kTabOverline;
+    colors[ImGuiCol_TabSelectedOverline] = kTabSelected; // 上辺の線は引かない（TabBarOverlineSize = 0）
     colors[ImGuiCol_TabDimmed] = kTab;
     colors[ImGuiCol_TabDimmedSelected] = kTabSelected;
-    colors[ImGuiCol_TabDimmedSelectedOverline] = kTabOverline;
+    colors[ImGuiCol_TabDimmedSelectedOverline] = kTabSelected;
 
     colors[ImGuiCol_DockingPreview] = ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.35f);
     colors[ImGuiCol_DockingEmptyBg] = kWindowBg;
