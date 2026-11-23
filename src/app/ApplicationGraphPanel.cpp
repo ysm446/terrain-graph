@@ -2991,8 +2991,13 @@ void Application::DrawGraphPanel() {
     }
 
     // プロパティの中は元の余白で並べる（パネルの余白を消したぶんを、この区画の内側で取る）。
+    // 地はプレビュー設定などのウィンドウと同じ（WindowBg）にする（ユーザー指定 2026-11-24）。
+    // 子領域の既定（ChildBg）だと一段明るく、ほかのプロパティの窓と色が揃わない。
+    // 色は BeginChild の時点で読まれるので、すぐ戻す（中の子領域は既定の色のまま）。
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, panelPadding);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::GetStyleColorVec4(ImGuiCol_WindowBg));
     ImGui::BeginChild("graphPropertyPane", ImVec2(0.0f, 0.0f), ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleColor();
     ImGui::PopStyleVar();
 
     // **プレビュー対象は選択とは別。** どれが画面に出ているかをここに出し、
